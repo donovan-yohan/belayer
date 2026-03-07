@@ -8,7 +8,10 @@ Go's built-in `go test` with `testing` package. No external test framework.
 
 ## Test Files
 
-_To be populated as tests are written._
+| File | Coverage |
+|------|----------|
+| `internal/db/db_test.go` | Open, Migrate (idempotent), foreign keys |
+| `internal/config/config_test.go` | Default config, JSON round-trip |
 
 ## Conventions
 

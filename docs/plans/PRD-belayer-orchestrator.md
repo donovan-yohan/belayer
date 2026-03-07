@@ -8,7 +8,7 @@ Belayer is a standalone Go CLI tool that orchestrates autonomous coding agents a
 
 | # | Goal | Status | Attempts | Design Doc | Plan |
 |---|------|--------|----------|------------|------|
-| 1 | Project scaffolding & core architecture | pending | 0 | - | - |
+| 1 | Project scaffolding & core architecture | complete | 1 | [design](../design-docs/2026-03-06-project-scaffolding-design.md) | [plan](../exec-plans/completed/2026-03-06-project-scaffolding-plan.md) |
 | 2 | Instance & repository management | pending | 0 | - | - |
 | 3 | Bundled lead execution loop | pending | 0 | - | - |
 | 4 | Coordinator engine (state machine + agentic nodes) | pending | 0 | - | - |
@@ -96,4 +96,10 @@ Jira/Text -> Intake -> Sufficiency Check (agentic) -> Decomposition (agentic)
 ```
 
 ## Reflections & Lessons
-_Populated during execution._
+
+### Goal 1 (2026-03-06)
+- Pure Go SQLite (`modernc.org/sqlite`) worked cleanly — no CGO complications
+- Cobra provides `completion` command for free which is a nice bonus
+- The `cmd/belayer/main.go` -> `internal/cli/root.go` -> individual command files pattern keeps things clean
+- Embedding SQL migrations via `embed.FS` is simple and avoids external tools
+- Config approach (JSON in `~/.belayer/config.json`) is straightforward; instance registry is just name->path map

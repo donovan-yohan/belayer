@@ -15,9 +15,19 @@ Agentic nodes receive structured input (from SQLite), produce structured output 
 
 ## SQLite Schema
 
-_To be designed during Goal 1._
+Defined in `internal/db/migrations/001_initial.sql`. Key tables:
 
-Key tables: instances, tasks, leads, verdicts, events, agentic_decisions.
+| Table | Purpose |
+|-------|---------|
+| `schema_migrations` | Tracks applied migration versions |
+| `instances` | Long-lived workspaces with repos |
+| `tasks` | Work items submitted by users |
+| `task_repos` | Per-repo decomposition of a task |
+| `leads` | Execution loop state per repo per task |
+| `events` | Audit trail of all state changes |
+| `agentic_decisions` | Outputs from ephemeral Claude sessions |
+
+Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and foreign keys enabled.
 
 ## Lead Execution Loop
 

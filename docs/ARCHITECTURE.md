@@ -29,7 +29,14 @@ Lead (bundled execution loop per repo)
 
 ## Code Map
 
-_To be populated as modules are implemented._
+| Module | Path | Purpose |
+|--------|------|---------|
+| CLI entry | `cmd/belayer/main.go` | Binary entry point |
+| CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task, status, tui) |
+| Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
+| Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
+| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql) |
+| Model | `internal/model/` | Domain types and status enums |
 
 ## Data Flow
 
