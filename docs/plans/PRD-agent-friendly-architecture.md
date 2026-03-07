@@ -10,7 +10,7 @@ Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CL
 |---|------|--------|----------|------------|------|
 | 1 | CLI and data layer — pure data publisher with SQLite | complete | 1 | [design](../design-docs/2026-03-07-cli-data-layer-design.md) | [plan](../exec-plans/completed/2026-03-07-cli-data-layer-plan.md) |
 | 2 | Setter daemon — DAG executor with tmux management | complete | 1 | [design](../design-docs/2026-03-07-setter-daemon-design.md) | [plan](../exec-plans/completed/2026-03-07-setter-daemon-plan.md) |
-| 3 | Lead spawning — AgentSpawner interface and per-goal sessions | pending | 0 | - | - |
+| 3 | Lead spawning — AgentSpawner interface and per-goal sessions | complete | 1 | [design](../design-docs/2026-03-07-lead-spawning-design.md) | [plan](../exec-plans/completed/2026-03-07-lead-spawning-plan.md) |
 | 4 | Spotter — cross-repo review with redistribution | pending | 0 | - | - |
 | 5 | Belayer manage — interactive agent session for task creation | pending | 0 | - | - |
 
@@ -62,3 +62,11 @@ Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CL
 - Log rotation (truncate first half) and compression (gzip on completion) keep disk usage bounded without losing recent context
 - Goal spawning uses a placeholder command for now — Goal 3 will implement the real AgentSpawner that sends actual agent commands to tmux windows
 - Spotter integration is also placeholder — auto-completes tasks when all goals finish. Goal 4 will implement real review logic
+
+### Goal 3 - Lead Spawning
+- The design doc's `AgentHandle` and `DoneSignaler` interfaces were unnecessary — the setter already handles completion detection via DONE.json polling in `TaskRunner.CheckCompletions()` and tmux window lifecycle via `TmuxManager`. Adding separate abstractions would duplicate existing functionality.
+- The `AgentSpawner` interface only needs `Spawn(ctx, SpawnOpts) error` — one method instead of three. The setter manages everything else (kill via tmux, done via filesystem polling). Simpler is better.
+- Shell quoting for the prompt is critical to prevent injection — single-quote wrapping with embedded single-quote escaping handles all cases
+- The `internal/lead/` package provides clean vendor isolation: `spawner.go` (interface), `claude.go` (Claude impl), `prompt.go` (template). Swapping vendors means adding one new file and changing one line in `cli/setter.go`.
+- Prompt template uses `text/template` which is simple and sufficient — no need for external template libraries
+- Adding the `spawner` field to `TaskRunner` required updating all test setup code (8 test functions), but the mock pattern (`mockSpawner`) was trivial and consistent with the existing `mockTmux` pattern

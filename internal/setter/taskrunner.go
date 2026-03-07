@@ -1,6 +1,7 @@
 package setter
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -39,11 +41,12 @@ type TaskRunner struct {
 	store       *store.Store
 	tmux        tmux.TmuxManager
 	logMgr      *logmgr.LogManager
+	spawner     lead.AgentSpawner
 	startedAt   map[string]time.Time // goalID -> when it started running
 }
 
 // NewTaskRunner creates a TaskRunner for the given task.
-func NewTaskRunner(task *model.Task, instanceDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager) *TaskRunner {
+func NewTaskRunner(task *model.Task, instanceDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *TaskRunner {
 	return &TaskRunner{
 		task:        task,
 		worktrees:   make(map[string]string),
@@ -51,6 +54,7 @@ func NewTaskRunner(task *model.Task, instanceDir string, s *store.Store, tm tmux
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
+		spawner:     sp,
 		startedAt:   make(map[string]time.Time),
 	}
 }
@@ -111,7 +115,7 @@ func (tr *TaskRunner) Init() ([]QueuedGoal, error) {
 	return queued, nil
 }
 
-// SpawnGoal creates a tmux window for a goal and starts it.
+// SpawnGoal creates a tmux window for a goal and launches an agent session.
 func (tr *TaskRunner) SpawnGoal(goal model.Goal) error {
 	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
 
@@ -126,11 +130,25 @@ func (tr *TaskRunner) SpawnGoal(goal model.Goal) error {
 		log.Printf("warning: pipe-pane for %s failed: %v", windowName, err)
 	}
 
-	// Send placeholder command — Goal 3 implements real AgentSpawner
+	// Build prompt and spawn agent
 	worktreePath := tr.worktrees[goal.RepoName]
-	cmd := fmt.Sprintf("cd %s && echo 'Lead session for goal %s: %s'", worktreePath, goal.ID, goal.Description)
-	if err := tr.tmux.SendKeys(tr.tmuxSession, windowName, cmd); err != nil {
-		return fmt.Errorf("sending keys to %s: %w", windowName, err)
+	prompt, err := lead.BuildPrompt(lead.PromptData{
+		Spec:        tr.task.Spec,
+		GoalID:      goal.ID,
+		RepoName:    goal.RepoName,
+		Description: goal.Description,
+	})
+	if err != nil {
+		return fmt.Errorf("building prompt for %s: %w", goal.ID, err)
+	}
+
+	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
+		TmuxSession: tr.tmuxSession,
+		WindowName:  windowName,
+		WorkDir:     worktreePath,
+		Prompt:      prompt,
+	}); err != nil {
+		return fmt.Errorf("spawning agent for %s: %w", goal.ID, err)
 	}
 
 	// Update status in DAG and SQLite

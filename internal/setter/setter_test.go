@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -81,14 +82,29 @@ func (m *mockTmux) PipePane(session, windowName, logPath string) error {
 	return nil
 }
 
-func setupTestEnv(t *testing.T) (*store.Store, *mockTmux, *logmgr.LogManager, string) {
+// mockSpawner implements lead.AgentSpawner for tests.
+type mockSpawner struct {
+	spawned []lead.SpawnOpts
+}
+
+func newMockSpawner() *mockSpawner {
+	return &mockSpawner{}
+}
+
+func (m *mockSpawner) Spawn(_ context.Context, opts lead.SpawnOpts) error {
+	m.spawned = append(m.spawned, opts)
+	return nil
+}
+
+func setupTestEnv(t *testing.T) (*store.Store, *mockTmux, *logmgr.LogManager, *mockSpawner, string) {
 	t.Helper()
 	db := testutil.SetupTestDB(t)
 	s := store.New(db)
 	tm := newMockTmux()
+	sp := newMockSpawner()
 	tmpDir := t.TempDir()
 	lm := logmgr.New(filepath.Join(tmpDir, "logs"))
-	return s, tm, lm, tmpDir
+	return s, tm, lm, sp, tmpDir
 }
 
 func insertTestTask(t *testing.T, s *store.Store, taskID string, goals []model.Goal) {
@@ -105,7 +121,7 @@ func insertTestTask(t *testing.T, s *store.Store, taskID string, goals []model.G
 }
 
 func TestTaskRunner_Init(t *testing.T) {
-	s, tm, lm, tmpDir := setupTestEnv(t)
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-1", RepoName: "api", Description: "goal 1", DependsOn: []string{}, Status: model.GoalStatusPending},
@@ -131,6 +147,7 @@ func TestTaskRunner_Init(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
+		spawner:     sp,
 		startedAt:   make(map[string]time.Time),
 	}
 
@@ -159,7 +176,7 @@ func TestTaskRunner_Init(t *testing.T) {
 }
 
 func TestTaskRunner_SpawnGoal(t *testing.T) {
-	s, tm, lm, tmpDir := setupTestEnv(t)
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-1", RepoName: "api", Description: "test goal", DependsOn: []string{}, Status: model.GoalStatusPending},
@@ -174,6 +191,7 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
+		spawner:     sp,
 		tmuxSession: "belayer-task-task-1",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -203,10 +221,19 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 		}
 	}
 	assert.True(t, foundStarted)
+
+	// Check spawner was called with correct opts
+	require.Len(t, sp.spawned, 1)
+	assert.Equal(t, "belayer-task-task-1", sp.spawned[0].TmuxSession)
+	assert.Equal(t, "api-api-1", sp.spawned[0].WindowName)
+	assert.Equal(t, filepath.Join(tmpDir, "api"), sp.spawned[0].WorkDir)
+	assert.Contains(t, sp.spawned[0].Prompt, "test goal")
+	assert.Contains(t, sp.spawned[0].Prompt, "test spec")
+	assert.Contains(t, sp.spawned[0].Prompt, "DONE.json")
 }
 
 func TestTaskRunner_CheckCompletions(t *testing.T) {
-	s, tm, lm, tmpDir := setupTestEnv(t)
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-2", RepoName: "api", Description: "first", DependsOn: []string{}, Status: model.GoalStatusPending},
@@ -225,6 +252,7 @@ func TestTaskRunner_CheckCompletions(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
+		spawner:     sp,
 		tmuxSession: "belayer-task-task-2",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -256,7 +284,7 @@ func TestTaskRunner_CheckCompletions(t *testing.T) {
 }
 
 func TestTaskRunner_CheckStaleGoals(t *testing.T) {
-	s, tm, lm, tmpDir := setupTestEnv(t)
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
@@ -274,6 +302,7 @@ func TestTaskRunner_CheckStaleGoals(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
+		spawner:     sp,
 		tmuxSession: "belayer-task-task-3",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -300,7 +329,7 @@ func TestTaskRunner_CheckStaleGoals(t *testing.T) {
 }
 
 func TestTaskRunner_StaleTimeout(t *testing.T) {
-	s, tm, lm, tmpDir := setupTestEnv(t)
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-4", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
@@ -318,6 +347,7 @@ func TestTaskRunner_StaleTimeout(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
+		spawner:     sp,
 		tmuxSession: "belayer-task-task-4",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -340,7 +370,7 @@ func TestTaskRunner_StaleTimeout(t *testing.T) {
 }
 
 func TestTaskRunner_HasStuckGoals(t *testing.T) {
-	s, tm, lm, _ := setupTestEnv(t)
+	s, tm, lm, sp, _ := setupTestEnv(t)
 
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-5", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
@@ -353,6 +383,7 @@ func TestTaskRunner_HasStuckGoals(t *testing.T) {
 		store:     s,
 		tmux:      tm,
 		logMgr:    lm,
+		spawner:   sp,
 		startedAt: make(map[string]time.Time),
 	}
 
@@ -371,7 +402,7 @@ func TestTaskRunner_HasStuckGoals(t *testing.T) {
 }
 
 func TestSetter_MaxLeadsCap(t *testing.T) {
-	s, tm, lm, tmpDir := setupTestEnv(t)
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	// Create a task with 3 independent goals
 	goals := []model.Goal{
@@ -392,6 +423,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
+		spawner:     sp,
 		tmuxSession: "belayer-task-task-6",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -407,10 +439,11 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 			MaxLeads:     2,
 			InstanceName: "test-instance",
 		},
-		store:  s,
-		tmux:   tm,
-		logMgr: lm,
-		tasks:  map[string]*TaskRunner{"task-6": runner},
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   map[string]*TaskRunner{"task-6": runner},
 	}
 
 	// Queue all 3 goals
@@ -427,7 +460,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 }
 
 func TestSetter_CrashRecovery(t *testing.T) {
-	s, tm, lm, tmpDir := setupTestEnv(t)
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-7", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
@@ -454,10 +487,11 @@ func TestSetter_CrashRecovery(t *testing.T) {
 			InstanceDir:  tmpDir,
 			MaxLeads:     8,
 		},
-		store:  s,
-		tmux:   tm,
-		logMgr: lm,
-		tasks:  make(map[string]*TaskRunner),
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   make(map[string]*TaskRunner),
 	}
 
 	// Run recovery
@@ -483,7 +517,7 @@ func TestSetter_CrashRecovery(t *testing.T) {
 }
 
 func TestSetter_RunTickCycle(t *testing.T) {
-	s, tm, lm, tmpDir := setupTestEnv(t)
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	setter := &Setter{
 		config: Config{
@@ -493,10 +527,11 @@ func TestSetter_RunTickCycle(t *testing.T) {
 			PollInterval: 100 * time.Millisecond,
 			StaleTimeout: 30 * time.Minute,
 		},
-		store:  s,
-		tmux:   tm,
-		logMgr: lm,
-		tasks:  make(map[string]*TaskRunner),
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   make(map[string]*TaskRunner),
 	}
 
 	// Run one tick with no tasks — should not error

@@ -11,6 +11,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/setter"
 	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/spf13/cobra"
@@ -57,7 +58,8 @@ func newSetterCmd() *cobra.Command {
 			}
 
 			tm := tmux.NewRealTmux()
-			s := setter.New(cfg, database.Conn(), tm)
+			sp := lead.NewClaudeSpawner(tm)
+			s := setter.New(cfg, database.Conn(), tm, sp)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
