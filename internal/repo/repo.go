@@ -86,6 +86,78 @@ func WorktreeRemove(bareRepoDir, worktreePath string) error {
 	return nil
 }
 
+// WorktreeDiff returns the git diff for changes on the current branch relative to the default branch.
+// Uses three-dot diff (main...HEAD) to capture only branch-specific changes.
+func WorktreeDiff(worktreePath string) (string, error) {
+	// Determine the default branch name
+	baseBranch := detectBaseBranch(worktreePath)
+
+	cmd := exec.Command("git", "-C", worktreePath, "diff", baseBranch+"...HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git diff %s...HEAD in %s: %s: %w", baseBranch, worktreePath, strings.TrimSpace(string(output)), err)
+	}
+	return string(output), nil
+}
+
+// WorktreeDiffStat returns a summary of changes (files changed, insertions, deletions).
+func WorktreeDiffStat(worktreePath string) (string, error) {
+	baseBranch := detectBaseBranch(worktreePath)
+
+	cmd := exec.Command("git", "-C", worktreePath, "diff", "--stat", baseBranch+"...HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git diff --stat %s...HEAD in %s: %s: %w", baseBranch, worktreePath, strings.TrimSpace(string(output)), err)
+	}
+	return string(output), nil
+}
+
+// detectBaseBranch determines the default branch name (main, master, etc.).
+func detectBaseBranch(worktreePath string) string {
+	// Try to get the remote HEAD reference
+	cmd := exec.Command("git", "-C", worktreePath, "symbolic-ref", "refs/remotes/origin/HEAD")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		ref := strings.TrimSpace(string(output))
+		// refs/remotes/origin/main -> main
+		parts := strings.Split(ref, "/")
+		if len(parts) > 0 {
+			return parts[len(parts)-1]
+		}
+	}
+
+	// Fallback: check if main or master exists
+	for _, branch := range []string{"main", "master"} {
+		cmd := exec.Command("git", "-C", worktreePath, "rev-parse", "--verify", branch)
+		if err := cmd.Run(); err == nil {
+			return branch
+		}
+	}
+
+	return "main"
+}
+
+// PushBranch pushes the current branch to the origin remote.
+func PushBranch(worktreePath string) error {
+	cmd := exec.Command("git", "-C", worktreePath, "push", "-u", "origin", "HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git push in %s: %s: %w", worktreePath, strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// CreatePR creates a pull request using the GitHub CLI and returns the PR URL.
+func CreatePR(worktreePath, title, body string) (string, error) {
+	cmd := exec.Command("gh", "pr", "create", "--title", title, "--body", body)
+	cmd.Dir = worktreePath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gh pr create in %s: %s: %w", worktreePath, strings.TrimSpace(string(output)), err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 // WorktreeList lists all worktrees for a bare repo.
 func WorktreeList(bareRepoDir string) ([]string, error) {
 	cmd := exec.Command("git", "-C", bareRepoDir, "worktree", "list", "--porcelain")

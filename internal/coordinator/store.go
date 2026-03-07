@@ -232,6 +232,17 @@ func (s *Store) GetLeadsForTaskByLeadID(leadID string) (*model.Lead, error) {
 	return &l, nil
 }
 
+// CountAlignmentAttempts counts the number of alignment_started events for a task.
+func (s *Store) CountAlignmentAttempts(taskID string) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM events WHERE task_id = ? AND type = ?`
+	err := s.db.QueryRow(query, taskID, string(model.EventAlignmentStarted)).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("counting alignment attempts: %w", err)
+	}
+	return count, nil
+}
+
 // GetTaskRepoByID retrieves a single task repo by its ID.
 func (s *Store) GetTaskRepoByID(taskRepoID string) (*model.TaskRepo, error) {
 	query := `SELECT id, task_id, repo_name, spec, worktree_path, created_at

@@ -7,3 +7,4 @@
 | [2026-03-06-lead-execution-loop-design](2026-03-06-lead-execution-loop-design.md) | Goal 3: Bundled lead execution loop | 2026-03-06 |
 | [2026-03-06-coordinator-engine-design](2026-03-06-coordinator-engine-design.md) | Goal 4: Coordinator engine (state machine + agentic nodes) | 2026-03-06 |
 | [2026-03-06-task-intake-decomposition-design](2026-03-06-task-intake-decomposition-design.md) | Goal 5: Task intake & decomposition | 2026-03-06 |
+| [2026-03-06-cross-repo-integration-design](2026-03-06-cross-repo-integration-design.md) | Goal 6: Cross-repo integration & alignment | 2026-03-06 |

@@ -11,6 +11,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/repo"
 )
 
 // LeadRunner abstracts lead execution for testing.
@@ -23,24 +24,37 @@ type WorktreeCreator interface {
 	CreateWorktree(instanceDir, taskID, repoName string) (string, error)
 }
 
+// DiffCollector abstracts git diff collection for testing.
+type DiffCollector interface {
+	CollectDiff(worktreePath string) (string, error)
+	CollectDiffStat(worktreePath string) (string, error)
+}
+
+// PRCreator abstracts PR creation for testing.
+type PRCreator interface {
+	PushAndCreatePR(worktreePath, title, body string) (prURL string, err error)
+}
+
 // CoordinatorConfig holds configuration for the coordinator engine.
 type CoordinatorConfig struct {
-	PollInterval   time.Duration
-	MaxLeadRetries int
-	BaseRetryDelay time.Duration
-	MaxRetryDelay  time.Duration
-	AgenticModel   string
-	RepoNames      []string // Available repo names from the instance
+	PollInterval         time.Duration
+	MaxLeadRetries       int
+	BaseRetryDelay       time.Duration
+	MaxRetryDelay        time.Duration
+	AgenticModel         string
+	RepoNames            []string // Available repo names from the instance
+	MaxAlignmentAttempts int
 }
 
 // DefaultConfig returns a CoordinatorConfig with sensible defaults.
 func DefaultConfig() CoordinatorConfig {
 	return CoordinatorConfig{
-		PollInterval:   2 * time.Second,
-		MaxLeadRetries: 3,
-		BaseRetryDelay: 5 * time.Second,
-		MaxRetryDelay:  5 * time.Minute,
-		AgenticModel:   "claude-sonnet-4-6",
+		PollInterval:         2 * time.Second,
+		MaxLeadRetries:       3,
+		BaseRetryDelay:       5 * time.Second,
+		MaxRetryDelay:        5 * time.Minute,
+		AgenticModel:         "claude-sonnet-4-6",
+		MaxAlignmentAttempts: 2,
 	}
 }
 
@@ -51,6 +65,8 @@ type Coordinator struct {
 	store          *Store
 	leadRunner     LeadRunner
 	worktrees      WorktreeCreator
+	diffCollector  DiffCollector
+	prCreator      PRCreator
 	instanceDir    string
 	instanceID     string
 	config         CoordinatorConfig
@@ -69,8 +85,9 @@ func NewCoordinator(
 	instanceDir string,
 	instanceID string,
 	cfg CoordinatorConfig,
+	opts ...CoordinatorOption,
 ) *Coordinator {
-	return &Coordinator{
+	c := &Coordinator{
 		store:       store,
 		leadRunner:  leadRunner,
 		worktrees:   worktrees,
@@ -81,6 +98,30 @@ func NewCoordinator(
 		activeLeads: make(map[string]context.CancelFunc),
 		done:        make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	// Set defaults for optional interfaces
+	if c.diffCollector == nil {
+		c.diffCollector = &defaultDiffCollector{}
+	}
+	if c.prCreator == nil {
+		c.prCreator = &defaultPRCreator{}
+	}
+	return c
+}
+
+// CoordinatorOption configures optional coordinator dependencies.
+type CoordinatorOption func(*Coordinator)
+
+// WithDiffCollector sets a custom diff collector.
+func WithDiffCollector(dc DiffCollector) CoordinatorOption {
+	return func(c *Coordinator) { c.diffCollector = dc }
+}
+
+// WithPRCreator sets a custom PR creator.
+func WithPRCreator(pr PRCreator) CoordinatorOption {
+	return func(c *Coordinator) { c.prCreator = pr }
 }
 
 // Start launches the coordinator polling loop. It blocks until ctx is cancelled.
@@ -206,8 +247,17 @@ type SufficiencyOutput struct {
 
 // AlignmentOutput is the expected JSON structure from the alignment agentic node.
 type AlignmentOutput struct {
-	Pass     bool   `json:"pass"`
-	Feedback string `json:"feedback"`
+	Pass            bool                 `json:"pass"`
+	Feedback        string               `json:"feedback"`
+	Criteria        []AlignmentCriterion `json:"criteria,omitempty"`
+	MisalignedRepos []string             `json:"misaligned_repos,omitempty"`
+}
+
+// AlignmentCriterion is an individual pass/fail check in the alignment review.
+type AlignmentCriterion struct {
+	Name    string `json:"name"`
+	Pass    bool   `json:"pass"`
+	Details string `json:"details"`
 }
 
 // StuckOutput is the expected JSON structure from the stuck analysis agentic node.
@@ -513,6 +563,9 @@ func (c *Coordinator) retryLead(ctx context.Context, leadID string) {
 	c.spawnLeadGoroutine(ctx, taskRepos.TaskID, newLeadID, taskRepos.WorktreePath, taskRepos.Spec)
 }
 
+// maxDiffSize is the maximum combined diff size in bytes before falling back to stat-only.
+const maxDiffSize = 50 * 1024
+
 // startAlignment triggers the alignment agentic node when all leads are complete.
 func (c *Coordinator) startAlignment(ctx context.Context, task model.Task) {
 	if err := c.store.UpdateTaskStatus(task.ID, model.TaskStatusAligning); err != nil {
@@ -524,6 +577,25 @@ func (c *Coordinator) startAlignment(ctx context.Context, task model.Task) {
 
 	// Run alignment in a goroutine to not block the tick
 	go func() {
+		// Check alignment attempt count
+		attempts, err := c.store.CountAlignmentAttempts(task.ID)
+		if err != nil {
+			log.Printf("coordinator: error counting alignment attempts for task %s: %v", task.ID, err)
+		}
+
+		maxAttempts := c.config.MaxAlignmentAttempts
+		if maxAttempts <= 0 {
+			maxAttempts = 2
+		}
+
+		if attempts > maxAttempts {
+			log.Printf("coordinator: task %s exceeded max alignment attempts (%d), marking as failed", task.ID, maxAttempts)
+			_ = c.store.UpdateTaskStatus(task.ID, model.TaskStatusFailed)
+			_ = c.insertEvent(task.ID, "", model.EventAlignmentFailed,
+				fmt.Sprintf(`{"error":"exceeded max alignment attempts (%d)"}`, maxAttempts))
+			return
+		}
+
 		alignNode := NewAgenticNode(c.store, model.AgenticAlignment, c.config.AgenticModel)
 
 		// Build context about what was done in each repo
@@ -534,14 +606,66 @@ func (c *Coordinator) startAlignment(ctx context.Context, task model.Task) {
 			return
 		}
 
+		// Collect diffs and stats from each repo
 		repoSummary := ""
+		totalDiffSize := 0
+		repoDiffs := make(map[string]string)
+		repoStats := make(map[string]string)
+
 		for _, tr := range taskRepos {
-			repoSummary += fmt.Sprintf("- Repo: %s\n  Spec: %s\n  Worktree: %s\n\n", tr.RepoName, tr.Spec, tr.WorktreePath)
+			diff, err := c.diffCollector.CollectDiff(tr.WorktreePath)
+			if err != nil {
+				log.Printf("coordinator: error collecting diff for %s: %v", tr.RepoName, err)
+				diff = "(diff unavailable)"
+			}
+			repoDiffs[tr.RepoName] = diff
+			totalDiffSize += len(diff)
+
+			stat, err := c.diffCollector.CollectDiffStat(tr.WorktreePath)
+			if err != nil {
+				log.Printf("coordinator: error collecting diff stat for %s: %v", tr.RepoName, err)
+				stat = "(stat unavailable)"
+			}
+			repoStats[tr.RepoName] = stat
+		}
+
+		// Build the prompt with diffs (or stats if too large)
+		useDiffs := totalDiffSize <= maxDiffSize
+		for _, tr := range taskRepos {
+			repoSummary += fmt.Sprintf("## Repo: %s\nSpec: %s\n\n", tr.RepoName, tr.Spec)
+			if useDiffs {
+				repoSummary += fmt.Sprintf("### Diff:\n```\n%s\n```\n\n", repoDiffs[tr.RepoName])
+			}
+			repoSummary += fmt.Sprintf("### Diff Stats:\n```\n%s\n```\n\n", repoStats[tr.RepoName])
+		}
+
+		diffNote := ""
+		if !useDiffs {
+			diffNote = "\nNote: Full diffs were too large and have been omitted. Only diff stats are included.\n"
 		}
 
 		alignPrompt := fmt.Sprintf(
-			"Review cross-repo alignment for this task. Check that implementations across repos are consistent (API contracts, shared types, feature parity).\n\nTask: %s\n\nRepos:\n%s\nRespond with JSON: {\"pass\": true/false, \"feedback\": \"detailed feedback\"}",
-			task.Description, repoSummary,
+			`Review cross-repo alignment for this task. Check that implementations across repos are consistent.
+%s
+Task: %s
+
+%s
+Evaluate these criteria:
+1. API contract consistency (endpoints, request/response shapes match across repos)
+2. Shared type compatibility (data models, enums, constants are consistent)
+3. Feature parity (all repos implement their assigned part of the task)
+4. Integration points (service URLs, event names, message formats align)
+
+Respond with JSON:
+{
+  "pass": true/false,
+  "feedback": "overall feedback",
+  "criteria": [{"name": "criterion_name", "pass": true/false, "details": "explanation"}],
+  "misaligned_repos": ["repo-name-1"]
+}
+
+Only include misaligned_repos if pass is false. List only the repos that need fixes.`,
+			diffNote, task.Description, repoSummary,
 		)
 
 		result, err := alignNode.Execute(ctx, task.ID, alignPrompt)
@@ -560,15 +684,112 @@ func (c *Coordinator) startAlignment(ctx context.Context, task model.Task) {
 		}
 
 		if alignOutput.Pass {
+			// Create PRs for each repo
+			c.createPRs(ctx, task, taskRepos)
 			_ = c.store.UpdateTaskStatus(task.ID, model.TaskStatusComplete)
 			_ = c.insertEvent(task.ID, "", model.EventAlignmentPassed, `{"pass":true}`)
 		} else {
 			log.Printf("coordinator: alignment failed for task %s: %s", task.ID, alignOutput.Feedback)
-			_ = c.store.UpdateTaskStatus(task.ID, model.TaskStatusFailed)
 			_ = c.insertEvent(task.ID, "", model.EventAlignmentFailed,
 				fmt.Sprintf(`{"pass":false,"feedback":%q}`, alignOutput.Feedback))
+
+			// Attempt re-dispatch if under max attempts
+			if attempts < maxAttempts {
+				c.redispatchMisaligned(ctx, task, taskRepos, alignOutput)
+			} else {
+				log.Printf("coordinator: max alignment attempts reached for task %s, marking as failed", task.ID)
+				_ = c.store.UpdateTaskStatus(task.ID, model.TaskStatusFailed)
+			}
 		}
 	}()
+}
+
+// createPRs pushes branches and creates PRs for each repo in the task.
+func (c *Coordinator) createPRs(ctx context.Context, task model.Task, taskRepos []model.TaskRepo) {
+	prURLs := make(map[string]string)
+	for _, tr := range taskRepos {
+		prURL, err := c.prCreator.PushAndCreatePR(
+			tr.WorktreePath,
+			fmt.Sprintf("[belayer] %s (%s)", task.Description, tr.RepoName),
+			fmt.Sprintf("Automated changes for task %s\n\nSpec:\n%s", task.ID, tr.Spec),
+		)
+		if err != nil {
+			log.Printf("coordinator: PR creation failed for %s: %v", tr.RepoName, err)
+			prURLs[tr.RepoName] = fmt.Sprintf("error: %s", err.Error())
+		} else {
+			prURLs[tr.RepoName] = prURL
+		}
+	}
+
+	// Record PR URLs as event
+	prPayload, _ := json.Marshal(prURLs)
+	_ = c.insertEvent(task.ID, "", model.EventPRsCreated, string(prPayload))
+}
+
+// redispatchMisaligned creates new leads for repos that failed alignment.
+func (c *Coordinator) redispatchMisaligned(ctx context.Context, task model.Task, taskRepos []model.TaskRepo, alignOutput AlignmentOutput) {
+	// Build set of misaligned repo names
+	misaligned := make(map[string]bool)
+	for _, name := range alignOutput.MisalignedRepos {
+		misaligned[name] = true
+	}
+
+	// If no specific repos listed, re-dispatch all
+	if len(misaligned) == 0 {
+		for _, tr := range taskRepos {
+			misaligned[tr.RepoName] = true
+		}
+	}
+
+	for _, tr := range taskRepos {
+		if !misaligned[tr.RepoName] {
+			continue
+		}
+
+		// Create new lead with alignment feedback appended to spec
+		enhancedSpec := fmt.Sprintf("%s\n\n--- ALIGNMENT FEEDBACK ---\nThe previous implementation failed alignment review.\nFeedback: %s\n\nPlease fix the issues identified above.",
+			tr.Spec, alignOutput.Feedback)
+
+		newLeadID := fmt.Sprintf("lead-%s-%d", tr.ID, time.Now().UnixNano())
+		newLead := &model.Lead{
+			ID:         newLeadID,
+			TaskRepoID: tr.ID,
+			Status:     model.LeadStatusPending,
+			Attempt:    0,
+		}
+		if err := c.store.InsertLead(newLead); err != nil {
+			log.Printf("coordinator: error inserting re-dispatch lead %s: %v", newLeadID, err)
+			continue
+		}
+
+		c.spawnLeadGoroutine(ctx, task.ID, newLeadID, tr.WorktreePath, enhancedSpec)
+	}
+
+	// Transition task back to running
+	if err := c.store.UpdateTaskStatus(task.ID, model.TaskStatusRunning); err != nil {
+		log.Printf("coordinator: error updating task %s back to running: %v", task.ID, err)
+	}
+}
+
+// defaultDiffCollector uses the repo package for git operations.
+type defaultDiffCollector struct{}
+
+func (d *defaultDiffCollector) CollectDiff(worktreePath string) (string, error) {
+	return repo.WorktreeDiff(worktreePath)
+}
+
+func (d *defaultDiffCollector) CollectDiffStat(worktreePath string) (string, error) {
+	return repo.WorktreeDiffStat(worktreePath)
+}
+
+// defaultPRCreator uses the repo package for push and PR creation.
+type defaultPRCreator struct{}
+
+func (p *defaultPRCreator) PushAndCreatePR(worktreePath, title, body string) (string, error) {
+	if err := repo.PushBranch(worktreePath); err != nil {
+		return "", fmt.Errorf("pushing branch: %w", err)
+	}
+	return repo.CreatePR(worktreePath, title, body)
 }
 
 // shutdown cancels all active leads.

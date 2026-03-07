@@ -77,7 +77,10 @@ The coordinator (`internal/coordinator/`) is the central orchestration layer:
 - **Agentic nodes**: Runs ephemeral `claude -p --model <model> --output-format json <prompt>` for judgment calls; stores all decisions in `agentic_decisions` table
 - **Instance-aware decomposition**: Decomposition prompt includes available repo names from instance config, constraining the agentic node to valid repos
 - **Sufficiency skip**: Tasks pre-checked at intake skip the coordinator's sufficiency check
-- **Interfaces**: `LeadRunner` and `WorktreeCreator` interfaces enable mock-based testing
+- **Interfaces**: `LeadRunner`, `WorktreeCreator`, `DiffCollector`, and `PRCreator` interfaces enable mock-based testing
+- **Cross-repo alignment**: When all leads complete, collects git diffs from worktrees, evaluates per-criterion alignment (API contracts, shared types, feature parity, integration points), re-dispatches misaligned repos with feedback on failure, creates PRs on success
+- **Alignment retry**: Max alignment attempts (default 2) prevents infinite re-dispatch loops; alignment attempts counted via `alignment_started` events
+- **PR creation**: Best-effort push + `gh pr create` per repo; PR URLs recorded as `prs_created` events; failures don't block task completion
 
 ## See Also
 

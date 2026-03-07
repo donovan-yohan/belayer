@@ -13,9 +13,8 @@ Belayer is a standalone Go CLI tool that orchestrates autonomous coding agents a
 | 3 | Bundled lead execution loop | complete | 1 | [design](../design-docs/2026-03-06-lead-execution-loop-design.md) | [plan](../exec-plans/completed/2026-03-06-lead-execution-loop-plan.md) |
 | 4 | Coordinator engine (state machine + agentic nodes) | complete | 1 | [design](../design-docs/2026-03-06-coordinator-engine-design.md) | [plan](../exec-plans/completed/2026-03-06-coordinator-engine-plan.md) |
 | 5 | Task intake & decomposition | complete | 1 | [design](../design-docs/2026-03-06-task-intake-decomposition-design.md) | [plan](../exec-plans/completed/2026-03-06-task-intake-decomposition-plan.md) |
-| 6 | Cross-repo integration & alignment | pending | 0 | - | - |
+| 6 | Cross-repo integration & alignment | complete | 1 | [design](../design-docs/2026-03-06-cross-repo-integration-design.md) | [plan](../exec-plans/completed/2026-03-06-cross-repo-integration-plan.md) |
 | 7 | TUI dashboard | pending | 0 | - | - |
-| 8 | claude-remote-cli integration API | pending | 0 | - | - |
 
 ## Acceptance Criteria
 
@@ -28,7 +27,6 @@ Belayer is a standalone Go CLI tool that orchestrates autonomous coding agents a
 | 5 | Text input accepted via `belayer task create "description"`; Jira ticket intake via `belayer task create --jira <ticket-ids>`; context sufficiency check as agentic node (returns sufficient/insufficient with gaps); interactive brainstorm mode when insufficient (CLI Q&A that enriches task spec); per-repo task decomposition as agentic node; multiple tickets grouped into single task |
 | 6 | Integration agentic node triggered when all leads for a task report complete; collects git diffs from each repo worktree; reviews cross-repo alignment (API contracts, shared types, feature parity); produces structured verdict (pass/fail per criterion); on failure: identifies misaligned repos and re-dispatches leads with alignment feedback; on pass: proceeds to PR creation |
 | 7 | bubbletea TUI shows: instance list, active tasks with per-repo lead progress bars, real-time streaming of lead output (selectable), integration verdicts, task history; keyboard navigation (j/k, enter, q, tab between panes); responsive layout; updates via SQLite polling |
-| 8 | HTTP server (optional, started with `belayer serve`) exposes: GET /instances, GET /tasks, GET /leads, GET /events (SSE stream); WebSocket endpoint for real-time events; claude-remote-cli can connect and render belayer state in its web UI |
 
 ## Context & Decisions
 
@@ -142,3 +140,12 @@ Jira/Text -> Intake -> Sufficiency Check (agentic) -> Decomposition (agentic)
 - `--no-brainstorm` flag enables non-interactive/CI usage where stdin isn't available
 - `PipelineConfig` with `io.Reader`/`io.Writer` for stdin/stdout makes brainstorm fully testable without real terminal
 - Graceful degradation: if sufficiency check fails (e.g., claude not available), pipeline continues with unchecked description rather than failing the entire task creation
+
+### Goal 6 (2026-03-06)
+- Variadic `CoordinatorOption` pattern (`WithDiffCollector`, `WithPRCreator`) allows extending the coordinator without breaking existing callers — no changes needed to CLI or existing tests
+- Counting alignment attempts via `alignment_started` events avoids schema migration — event table is already the audit trail
+- Re-dispatch logic (transition task back to `running` with new leads) reuses existing lead spawning infrastructure; alignment feedback appended to spec gives the lead corrective context
+- Three-dot git diff (`main...HEAD`) captures branch-specific changes without upstream drift; `detectBaseBranch` handles main/master detection
+- 50KB diff size cap prevents overwhelming agentic node context; falls back to diff stats gracefully
+- Best-effort PR creation (task completes even if push/PR fails) is pragmatic — the code changes exist in worktrees regardless
+- Mock `DiffCollector` and `PRCreator` make the alignment flow fully testable without git repos or GitHub

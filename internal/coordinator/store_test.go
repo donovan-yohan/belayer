@@ -355,6 +355,39 @@ func TestInsertAgenticDecision_ForeignKeyConstraint(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestCountAlignmentAttempts(t *testing.T) {
+	store := setupTestDB(t)
+
+	task := makeTask("task-align-count")
+	require.NoError(t, store.InsertTask(task))
+
+	// Zero attempts initially
+	count, err := store.CountAlignmentAttempts("task-align-count")
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+
+	// Insert alignment_started events
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		_, err := store.db.Exec(
+			`INSERT INTO events (id, task_id, lead_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			fmt.Sprintf("evt-align-%d", i), "task-align-count", "", string(model.EventAlignmentStarted), "{}", now,
+		)
+		require.NoError(t, err)
+	}
+
+	// Insert a different event type to make sure it's not counted
+	_, err = store.db.Exec(
+		`INSERT INTO events (id, task_id, lead_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"evt-other", "task-align-count", "", string(model.EventAlignmentPassed), "{}", now,
+	)
+	require.NoError(t, err)
+
+	count, err = store.CountAlignmentAttempts("task-align-count")
+	require.NoError(t, err)
+	assert.Equal(t, 3, count)
+}
+
 func TestGetTasksByStatus_OnlyMatchingStatus(t *testing.T) {
 	store := setupTestDB(t)
 

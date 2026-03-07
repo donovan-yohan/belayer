@@ -3,6 +3,7 @@ package coordinator
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,6 +44,56 @@ func (m *mockWorktreeCreator) CreateWorktree(instanceDir, taskID, repoName strin
 		}
 	}
 	return filepath.Join(instanceDir, "tasks", taskID, repoName), nil
+}
+
+// mockDiffCollector returns canned diff/stat strings for testing.
+type mockDiffCollector struct {
+	diffs map[string]string // worktreePath -> diff
+	stats map[string]string // worktreePath -> stat
+}
+
+func (m *mockDiffCollector) CollectDiff(worktreePath string) (string, error) {
+	if m.diffs != nil {
+		if d, ok := m.diffs[worktreePath]; ok {
+			return d, nil
+		}
+	}
+	return "diff --git a/main.go b/main.go\n+// mock change", nil
+}
+
+func (m *mockDiffCollector) CollectDiffStat(worktreePath string) (string, error) {
+	if m.stats != nil {
+		if s, ok := m.stats[worktreePath]; ok {
+			return s, nil
+		}
+	}
+	return " main.go | 1 +\n 1 file changed, 1 insertion(+)", nil
+}
+
+// mockPRCreator records PR creation calls for testing.
+type mockPRCreator struct {
+	calls  []prCreateCall
+	err    error
+	prURLs map[string]string // worktreePath -> URL
+}
+
+type prCreateCall struct {
+	worktreePath string
+	title        string
+	body         string
+}
+
+func (m *mockPRCreator) PushAndCreatePR(worktreePath, title, body string) (string, error) {
+	m.calls = append(m.calls, prCreateCall{worktreePath, title, body})
+	if m.err != nil {
+		return "", m.err
+	}
+	if m.prURLs != nil {
+		if url, ok := m.prURLs[worktreePath]; ok {
+			return url, nil
+		}
+	}
+	return "https://github.com/org/repo/pull/1", nil
 }
 
 // setupCoordTestDB uses a temp file for SQLite to support concurrent goroutine access.
@@ -157,7 +208,10 @@ func TestProcessRunningTask_AllLeadsComplete(t *testing.T) {
 
 	runner := &mockLeadRunner{}
 	wt := &mockWorktreeCreator{}
-	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig())
+	dc := &mockDiffCollector{}
+	pr := &mockPRCreator{}
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig(),
+		WithDiffCollector(dc), WithPRCreator(pr))
 
 	task := &model.Task{
 		ID:          "task-align-1",
@@ -199,6 +253,9 @@ func TestProcessRunningTask_AllLeadsComplete(t *testing.T) {
 	decisions, err := store.GetAgenticDecisionsForTask("task-align-1")
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, len(decisions), 1)
+
+	// PR should have been created
+	assert.Len(t, pr.calls, 1)
 }
 
 func TestProcessRunningTask_LeadFailed_SchedulesRetry(t *testing.T) {
@@ -392,7 +449,10 @@ func TestFullLifecycle(t *testing.T) {
 		},
 	}
 	wt := &mockWorktreeCreator{}
-	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig())
+	dc := &mockDiffCollector{}
+	pr := &mockPRCreator{}
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig(),
+		WithDiffCollector(dc), WithPRCreator(pr))
 
 	task := &model.Task{
 		ID:          fmt.Sprintf("task-lifecycle-%d", time.Now().UnixNano()),
@@ -600,4 +660,340 @@ func TestActiveLeadTracking(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	assert.Equal(t, 0, coord.ActiveLeadCount())
+}
+
+func TestAlignmentFailure_RedispatchesMisalignedRepos(t *testing.T) {
+	store, _ := setupCoordTestDB(t)
+
+	// Create mock claude that returns alignment failure
+	mockDir := t.TempDir()
+	mockScript := filepath.Join(mockDir, "claude")
+	script := `#!/bin/bash
+PROMPT=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -p) shift ;;
+        --model|--output-format) shift; shift ;;
+        *) PROMPT="$1"; shift ;;
+    esac
+done
+if echo "$PROMPT" | grep -qi "alignment"; then
+    echo '{"pass": false, "feedback": "API types mismatch between frontend and backend", "criteria": [{"name": "api_contract", "pass": false, "details": "type mismatch"}], "misaligned_repos": ["frontend"]}'
+else
+    echo '{"result": "mock"}'
+fi
+`
+	require.NoError(t, os.WriteFile(mockScript, []byte(script), 0755))
+	t.Setenv("PATH", mockDir+":"+os.Getenv("PATH"))
+
+	leadStore := lead.NewStore(store.db)
+	runner := &mockLeadRunner{
+		runFunc: func(ctx context.Context, cfg lead.RunConfig) (*lead.RunResult, error) {
+			if err := leadStore.SetLeadStarted(cfg.LeadID); err != nil {
+				return nil, err
+			}
+			if err := leadStore.SetLeadFinished(cfg.LeadID, model.LeadStatusComplete, "done"); err != nil {
+				return nil, err
+			}
+			return &lead.RunResult{Status: model.LeadStatusComplete, Output: "done"}, nil
+		},
+	}
+	wt := &mockWorktreeCreator{}
+	dc := &mockDiffCollector{}
+	pr := &mockPRCreator{}
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig(),
+		WithDiffCollector(dc), WithPRCreator(pr))
+
+	task := &model.Task{
+		ID:          "task-redispatch-1",
+		InstanceID:  "test-instance",
+		Description: "test redispatch on alignment failure",
+		Source:      "text",
+		Status:      model.TaskStatusRunning,
+	}
+	require.NoError(t, store.InsertTask(task))
+
+	// Two repos: frontend (will fail alignment) and backend (will pass)
+	tr1 := &model.TaskRepo{
+		ID: "tr-rd-frontend", TaskID: "task-redispatch-1", RepoName: "frontend",
+		Spec: "build UI", WorktreePath: "/tmp/test/tasks/task-redispatch-1/frontend",
+	}
+	tr2 := &model.TaskRepo{
+		ID: "tr-rd-backend", TaskID: "task-redispatch-1", RepoName: "backend",
+		Spec: "build API", WorktreePath: "/tmp/test/tasks/task-redispatch-1/backend",
+	}
+	require.NoError(t, store.InsertTaskRepo(tr1))
+	require.NoError(t, store.InsertTaskRepo(tr2))
+
+	// Both leads complete
+	require.NoError(t, store.InsertLead(&model.Lead{
+		ID: "lead-rd-fe", TaskRepoID: "tr-rd-frontend", Status: model.LeadStatusComplete, Attempt: 1,
+	}))
+	require.NoError(t, store.InsertLead(&model.Lead{
+		ID: "lead-rd-be", TaskRepoID: "tr-rd-backend", Status: model.LeadStatusComplete, Attempt: 1,
+	}))
+
+	ctx := context.Background()
+	coord.processTick(ctx)
+
+	// Wait for alignment goroutine
+	time.Sleep(500 * time.Millisecond)
+
+	// Task should be back to running (re-dispatched)
+	updated, err := store.GetTask("task-redispatch-1")
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusRunning, updated.Status)
+
+	// New lead should have been created for frontend only
+	leads, err := store.GetLeadsForTask("task-redispatch-1")
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(leads), 3) // 2 original + 1 re-dispatch
+
+	// No PRs should have been created
+	assert.Len(t, pr.calls, 0)
+}
+
+func TestAlignmentFailure_MaxAttemptsExceeded(t *testing.T) {
+	store, _ := setupCoordTestDB(t)
+
+	// Create mock claude that always returns alignment failure
+	mockDir := t.TempDir()
+	mockScript := filepath.Join(mockDir, "claude")
+	script := `#!/bin/bash
+PROMPT=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -p) shift ;;
+        --model|--output-format) shift; shift ;;
+        *) PROMPT="$1"; shift ;;
+    esac
+done
+if echo "$PROMPT" | grep -qi "alignment"; then
+    echo '{"pass": false, "feedback": "still broken", "criteria": [], "misaligned_repos": ["api"]}'
+else
+    echo '{"result": "mock"}'
+fi
+`
+	require.NoError(t, os.WriteFile(mockScript, []byte(script), 0755))
+	t.Setenv("PATH", mockDir+":"+os.Getenv("PATH"))
+
+	runner := &mockLeadRunner{}
+	wt := &mockWorktreeCreator{}
+	dc := &mockDiffCollector{}
+	pr := &mockPRCreator{}
+
+	cfg := testConfig()
+	cfg.MaxAlignmentAttempts = 1
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", cfg,
+		WithDiffCollector(dc), WithPRCreator(pr))
+
+	task := &model.Task{
+		ID:          "task-maxalign-1",
+		InstanceID:  "test-instance",
+		Description: "test max alignment attempts",
+		Source:      "text",
+		Status:      model.TaskStatusRunning,
+	}
+	require.NoError(t, store.InsertTask(task))
+
+	tr := &model.TaskRepo{
+		ID: "tr-maxalign", TaskID: "task-maxalign-1", RepoName: "api",
+		Spec: "implement", WorktreePath: "/tmp/test/tasks/task-maxalign-1/api",
+	}
+	require.NoError(t, store.InsertTaskRepo(tr))
+
+	require.NoError(t, store.InsertLead(&model.Lead{
+		ID: "lead-maxalign", TaskRepoID: "tr-maxalign", Status: model.LeadStatusComplete, Attempt: 1,
+	}))
+
+	// Simulate that we've already had 2 alignment_started events (> max of 1)
+	now := time.Now().UTC()
+	for i := 0; i < 2; i++ {
+		_, err := store.db.Exec(
+			`INSERT INTO events (id, task_id, lead_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			fmt.Sprintf("evt-maxalign-%d", i), "task-maxalign-1", "", string(model.EventAlignmentStarted), "{}", now,
+		)
+		require.NoError(t, err)
+	}
+
+	ctx := context.Background()
+	coord.processTick(ctx)
+
+	// Wait for alignment goroutine
+	time.Sleep(300 * time.Millisecond)
+
+	// Task should be failed (exceeded max attempts)
+	updated, err := store.GetTask("task-maxalign-1")
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailed, updated.Status)
+}
+
+func TestAlignmentPass_CreatesPRs(t *testing.T) {
+	store, _ := setupCoordTestDB(t)
+	setupMockClaude(t)
+
+	runner := &mockLeadRunner{}
+	wt := &mockWorktreeCreator{}
+	dc := &mockDiffCollector{}
+	pr := &mockPRCreator{
+		prURLs: map[string]string{
+			"/tmp/test/tasks/task-pr-1/api":     "https://github.com/org/api/pull/42",
+			"/tmp/test/tasks/task-pr-1/frontend": "https://github.com/org/frontend/pull/7",
+		},
+	}
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig(),
+		WithDiffCollector(dc), WithPRCreator(pr))
+
+	task := &model.Task{
+		ID:          "task-pr-1",
+		InstanceID:  "test-instance",
+		Description: "test PR creation",
+		Source:      "text",
+		Status:      model.TaskStatusRunning,
+	}
+	require.NoError(t, store.InsertTask(task))
+
+	tr1 := &model.TaskRepo{
+		ID: "tr-pr-api", TaskID: "task-pr-1", RepoName: "api",
+		Spec: "api spec", WorktreePath: "/tmp/test/tasks/task-pr-1/api",
+	}
+	tr2 := &model.TaskRepo{
+		ID: "tr-pr-fe", TaskID: "task-pr-1", RepoName: "frontend",
+		Spec: "fe spec", WorktreePath: "/tmp/test/tasks/task-pr-1/frontend",
+	}
+	require.NoError(t, store.InsertTaskRepo(tr1))
+	require.NoError(t, store.InsertTaskRepo(tr2))
+
+	require.NoError(t, store.InsertLead(&model.Lead{
+		ID: "lead-pr-api", TaskRepoID: "tr-pr-api", Status: model.LeadStatusComplete, Attempt: 1,
+	}))
+	require.NoError(t, store.InsertLead(&model.Lead{
+		ID: "lead-pr-fe", TaskRepoID: "tr-pr-fe", Status: model.LeadStatusComplete, Attempt: 1,
+	}))
+
+	ctx := context.Background()
+	coord.processTick(ctx)
+
+	// Wait for alignment + PR creation
+	time.Sleep(500 * time.Millisecond)
+
+	// Task should be complete
+	updated, err := store.GetTask("task-pr-1")
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusComplete, updated.Status)
+
+	// Both PRs should have been created
+	assert.Len(t, pr.calls, 2)
+
+	// PR event should be recorded
+	var eventCount int
+	err = store.db.QueryRow(
+		`SELECT COUNT(*) FROM events WHERE task_id = ? AND type = ?`,
+		"task-pr-1", string(model.EventPRsCreated),
+	).Scan(&eventCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, eventCount)
+}
+
+func TestAlignmentPass_PRFailureDoesNotBlockCompletion(t *testing.T) {
+	store, _ := setupCoordTestDB(t)
+	setupMockClaude(t)
+
+	runner := &mockLeadRunner{}
+	wt := &mockWorktreeCreator{}
+	dc := &mockDiffCollector{}
+	pr := &mockPRCreator{err: fmt.Errorf("push failed: no remote")}
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig(),
+		WithDiffCollector(dc), WithPRCreator(pr))
+
+	task := &model.Task{
+		ID:          "task-prfail-1",
+		InstanceID:  "test-instance",
+		Description: "test PR failure",
+		Source:      "text",
+		Status:      model.TaskStatusRunning,
+	}
+	require.NoError(t, store.InsertTask(task))
+
+	tr := &model.TaskRepo{
+		ID: "tr-prfail", TaskID: "task-prfail-1", RepoName: "api",
+		Spec: "spec", WorktreePath: "/tmp/test/tasks/task-prfail-1/api",
+	}
+	require.NoError(t, store.InsertTaskRepo(tr))
+
+	require.NoError(t, store.InsertLead(&model.Lead{
+		ID: "lead-prfail", TaskRepoID: "tr-prfail", Status: model.LeadStatusComplete, Attempt: 1,
+	}))
+
+	ctx := context.Background()
+	coord.processTick(ctx)
+
+	// Wait for alignment goroutine
+	time.Sleep(300 * time.Millisecond)
+
+	// Task should still complete even though PR creation failed
+	updated, err := store.GetTask("task-prfail-1")
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusComplete, updated.Status)
+
+	// PR attempt was made
+	assert.Len(t, pr.calls, 1)
+}
+
+func TestAlignmentCollectsDiffs(t *testing.T) {
+	store, _ := setupCoordTestDB(t)
+	setupMockClaude(t)
+
+	runner := &mockLeadRunner{}
+	wt := &mockWorktreeCreator{}
+	dc := &mockDiffCollector{
+		diffs: map[string]string{
+			"/tmp/test/tasks/task-diff-1/api": "diff content for api",
+		},
+		stats: map[string]string{
+			"/tmp/test/tasks/task-diff-1/api": " api.go | 5 +++++\n 1 file changed",
+		},
+	}
+	pr := &mockPRCreator{}
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig(),
+		WithDiffCollector(dc), WithPRCreator(pr))
+
+	task := &model.Task{
+		ID:          "task-diff-1",
+		InstanceID:  "test-instance",
+		Description: "test diff collection",
+		Source:      "text",
+		Status:      model.TaskStatusRunning,
+	}
+	require.NoError(t, store.InsertTask(task))
+
+	tr := &model.TaskRepo{
+		ID: "tr-diff-1", TaskID: "task-diff-1", RepoName: "api",
+		Spec: "implement endpoints", WorktreePath: "/tmp/test/tasks/task-diff-1/api",
+	}
+	require.NoError(t, store.InsertTaskRepo(tr))
+
+	require.NoError(t, store.InsertLead(&model.Lead{
+		ID: "lead-diff-1", TaskRepoID: "tr-diff-1", Status: model.LeadStatusComplete, Attempt: 1,
+	}))
+
+	ctx := context.Background()
+	coord.processTick(ctx)
+
+	// Wait for alignment goroutine
+	time.Sleep(300 * time.Millisecond)
+
+	// Verify alignment decision was stored with diff content in the prompt
+	decisions, err := store.GetAgenticDecisionsForTask("task-diff-1")
+	require.NoError(t, err)
+
+	found := false
+	for _, d := range decisions {
+		if d.NodeType == model.AgenticAlignment {
+			assert.Contains(t, d.Input, "diff content for api")
+			assert.Contains(t, d.Input, "api.go | 5")
+			found = true
+		}
+	}
+	assert.True(t, found, "alignment decision should have been recorded")
 }

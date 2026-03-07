@@ -54,7 +54,7 @@ if echo "$PROMPT" | grep -qi "sufficiency"; then
 elif echo "$PROMPT" | grep -qi "decompos"; then
     echo '{"repos": [{"name": "api", "spec": "implement the feature"}]}'
 elif echo "$PROMPT" | grep -qi "alignment"; then
-    echo '{"pass": true, "criteria": [{"name": "api_contract", "pass": true}]}'
+    echo '{"pass": true, "feedback": "all repos aligned", "criteria": [{"name": "api_contract", "pass": true, "details": "consistent"}, {"name": "shared_types", "pass": true, "details": "compatible"}, {"name": "feature_parity", "pass": true, "details": "complete"}, {"name": "integration_points", "pass": true, "details": "aligned"}], "misaligned_repos": []}'
 elif echo "$PROMPT" | grep -qi "stuck"; then
     echo '{"diagnosis": "test", "recovery": "retry", "should_retry": true}'
 else

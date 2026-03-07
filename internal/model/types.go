@@ -39,6 +39,7 @@ const (
 	EventAlignmentStarted EventType = "alignment_started"
 	EventAlignmentPassed  EventType = "alignment_passed"
 	EventAlignmentFailed  EventType = "alignment_failed"
+	EventPRsCreated       EventType = "prs_created"
 )
 
 // AgenticNodeType identifies which ephemeral Claude session produced a decision.
