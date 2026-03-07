@@ -42,6 +42,7 @@ Lead (bundled execution loop per repo)
 | Lead | `internal/lead/` | Lead execution runner, store, embedded shell script |
 | Intake | `internal/intake/` | Task intake pipeline (text/Jira parsing, sufficiency check, interactive brainstorm) |
 | Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
+| TUI | `internal/tui/` | bubbletea dashboard (model, views, styles, keys, read-only store) |
 
 ## Data Flow
 

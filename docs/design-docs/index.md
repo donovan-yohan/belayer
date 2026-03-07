@@ -8,3 +8,4 @@
 | [2026-03-06-coordinator-engine-design](2026-03-06-coordinator-engine-design.md) | Goal 4: Coordinator engine (state machine + agentic nodes) | 2026-03-06 |
 | [2026-03-06-task-intake-decomposition-design](2026-03-06-task-intake-decomposition-design.md) | Goal 5: Task intake & decomposition | 2026-03-06 |
 | [2026-03-06-cross-repo-integration-design](2026-03-06-cross-repo-integration-design.md) | Goal 6: Cross-repo integration & alignment | 2026-03-06 |
+| [2026-03-06-tui-dashboard-design](2026-03-06-tui-dashboard-design.md) | Goal 7: TUI dashboard | 2026-03-06 |

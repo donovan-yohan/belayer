@@ -14,7 +14,7 @@ Belayer is a standalone Go CLI tool that orchestrates autonomous coding agents a
 | 4 | Coordinator engine (state machine + agentic nodes) | complete | 1 | [design](../design-docs/2026-03-06-coordinator-engine-design.md) | [plan](../exec-plans/completed/2026-03-06-coordinator-engine-plan.md) |
 | 5 | Task intake & decomposition | complete | 1 | [design](../design-docs/2026-03-06-task-intake-decomposition-design.md) | [plan](../exec-plans/completed/2026-03-06-task-intake-decomposition-plan.md) |
 | 6 | Cross-repo integration & alignment | complete | 1 | [design](../design-docs/2026-03-06-cross-repo-integration-design.md) | [plan](../exec-plans/completed/2026-03-06-cross-repo-integration-plan.md) |
-| 7 | TUI dashboard | pending | 0 | - | - |
+| 7 | TUI dashboard | complete | 1 | [design](../design-docs/2026-03-06-tui-dashboard-design.md) | [plan](../exec-plans/completed/2026-03-06-tui-dashboard-plan.md) |
 
 ## Acceptance Criteria
 
@@ -149,3 +149,12 @@ Jira/Text -> Intake -> Sufficiency Check (agentic) -> Decomposition (agentic)
 - 50KB diff size cap prevents overwhelming agentic node context; falls back to diff stats gracefully
 - Best-effort PR creation (task completes even if push/PR fails) is pragmatic — the code changes exist in worktrees regardless
 - Mock `DiffCollector` and `PRCreator` make the alignment flow fully testable without git repos or GitHub
+
+### Goal 7 (2026-03-06)
+- `:memory:` SQLite with Go's `database/sql` connection pool creates separate databases per connection — must use temp-file SQLite for TUI store tests (same lesson as Goal 4, also applies to non-concurrent code with multiple queries)
+- TUI-specific `tui.Store` (read-only) is cleaner than importing coordinator/lead stores — decouples TUI from internal write APIs and allows optimized queries (joins, denormalized views)
+- bubbletea `tea.Tick` at 1-second intervals for SQLite polling is simple and sufficient — no need for channels or event buses
+- Three-pane layout (task list, detail, events) with tab cycling covers all dashboard needs without complexity of a more elaborate navigation scheme
+- `StatusBadge` function maps status strings to lipgloss-styled output — centralizes color choices for consistency
+- Instance ID in the tasks table is actually the instance name (not a UUID) — TUI passes `instanceName` directly as both instance ID and display name
+- lipgloss `JoinHorizontal`/`JoinVertical` with `Border` styles handles responsive pane layout without a grid framework

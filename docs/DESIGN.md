@@ -82,7 +82,20 @@ The coordinator (`internal/coordinator/`) is the central orchestration layer:
 - **Alignment retry**: Max alignment attempts (default 2) prevents infinite re-dispatch loops; alignment attempts counted via `alignment_started` events
 - **PR creation**: Best-effort push + `gh pr create` per repo; PR URLs recorded as `prs_created` events; failures don't block task completion
 
+## TUI Dashboard
+
+The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
+
+- **Read-only**: Polls SQLite at 1-second intervals via `tea.Tick`; never writes to the database
+- **Three-pane layout**: Task list (left, ~30% width), task detail with leads (right, ~70%), event log (bottom, ~30% height)
+- **Keyboard navigation**: j/k for up/down, tab to cycle panes, enter to select, esc to go back, 1/2/3 to jump to pane, q to quit
+- **Responsive**: Adapts to terminal size via `tea.WindowSizeMsg`
+- **TUI-specific store**: `tui.Store` wraps `*sql.DB` with read-only queries optimized for the dashboard (denormalized `TaskSummary`, `LeadDetail`, `EventEntry`)
+- **Status badges**: Color-coded per status using lipgloss (green=complete, yellow=running, red=failed, orange=stuck)
+- **Testing**: Temp-file SQLite (not `:memory:`) for tests due to connection pool isolation issues
+
 ## See Also
 
 - [Architecture](ARCHITECTURE.md) — module boundaries and data flow
+- [TUI](TUI.md) — bubbletea component details
 - [Quality](QUALITY.md) — testing strategy
