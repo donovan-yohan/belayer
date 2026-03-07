@@ -9,7 +9,7 @@ Belayer is a standalone Go CLI tool that orchestrates autonomous coding agents a
 | # | Goal | Status | Attempts | Design Doc | Plan |
 |---|------|--------|----------|------------|------|
 | 1 | Project scaffolding & core architecture | complete | 1 | [design](../design-docs/2026-03-06-project-scaffolding-design.md) | [plan](../exec-plans/completed/2026-03-06-project-scaffolding-plan.md) |
-| 2 | Instance & repository management | pending | 0 | - | - |
+| 2 | Instance & repository management | complete | 1 | [design](../design-docs/2026-03-06-instance-repo-management-design.md) | [plan](../exec-plans/completed/2026-03-06-instance-repo-management-plan.md) |
 | 3 | Bundled lead execution loop | pending | 0 | - | - |
 | 4 | Coordinator engine (state machine + agentic nodes) | pending | 0 | - | - |
 | 5 | Task intake & decomposition | pending | 0 | - | - |
@@ -103,3 +103,11 @@ Jira/Text -> Intake -> Sufficiency Check (agentic) -> Decomposition (agentic)
 - The `cmd/belayer/main.go` -> `internal/cli/root.go` -> individual command files pattern keeps things clean
 - Embedding SQL migrations via `embed.FS` is simple and avoids external tools
 - Config approach (JSON in `~/.belayer/config.json`) is straightforward; instance registry is just name->path map
+
+### Goal 2 (2026-03-06)
+- Separating `internal/repo/` (git operations) from `internal/instance/` (lifecycle) keeps concerns clean
+- macOS `/var` -> `/private/var` symlink causes path comparison issues in tests — use `filepath.EvalSymlinks` for path comparisons
+- URL trailing slash must be stripped before `.git` suffix — order of trimming matters
+- `t.TempDir()` + `t.Setenv("HOME", ...)` provides clean test isolation without touching real filesystem
+- Instance creation clones bare repos + initializes DB + writes instance.json atomically; cleanup on any failure
+- Using instance name as the SQLite `id` simplifies lookups (no UUID generation needed at this layer)
