@@ -434,6 +434,132 @@ func TestFullLifecycle(t *testing.T) {
 	assert.GreaterOrEqual(t, eventCount, 1)
 }
 
+func TestProcessPendingTask_SkipsSufficiencyWhenPreChecked(t *testing.T) {
+	store, _ := setupCoordTestDB(t)
+	setupMockClaude(t)
+
+	leadStore := lead.NewStore(store.db)
+	runner := &mockLeadRunner{
+		runFunc: func(ctx context.Context, cfg lead.RunConfig) (*lead.RunResult, error) {
+			if err := leadStore.SetLeadStarted(cfg.LeadID); err != nil {
+				return nil, err
+			}
+			if err := leadStore.SetLeadFinished(cfg.LeadID, model.LeadStatusComplete, "done"); err != nil {
+				return nil, err
+			}
+			return &lead.RunResult{Status: model.LeadStatusComplete, Output: "done"}, nil
+		},
+	}
+	wt := &mockWorktreeCreator{}
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", testConfig())
+
+	task := &model.Task{
+		ID:                 "task-prechecked-1",
+		InstanceID:         "test-instance",
+		Description:        "Pre-checked task",
+		Source:             "text",
+		Status:             model.TaskStatusPending,
+		SufficiencyChecked: true, // Already checked at intake
+	}
+	require.NoError(t, store.InsertTask(task))
+
+	ctx := context.Background()
+	coord.processTick(ctx)
+
+	time.Sleep(200 * time.Millisecond)
+
+	decisions, err := store.GetAgenticDecisionsForTask("task-prechecked-1")
+	require.NoError(t, err)
+
+	// Should only have decomposition decision (no sufficiency)
+	assert.Equal(t, 1, len(decisions))
+	assert.Equal(t, model.AgenticDecomposition, decisions[0].NodeType)
+}
+
+func TestProcessPendingTask_InstanceAwareDecomposition(t *testing.T) {
+	store, _ := setupCoordTestDB(t)
+	setupMockClaude(t)
+
+	leadStore := lead.NewStore(store.db)
+	runner := &mockLeadRunner{
+		runFunc: func(ctx context.Context, cfg lead.RunConfig) (*lead.RunResult, error) {
+			if err := leadStore.SetLeadStarted(cfg.LeadID); err != nil {
+				return nil, err
+			}
+			if err := leadStore.SetLeadFinished(cfg.LeadID, model.LeadStatusComplete, "done"); err != nil {
+				return nil, err
+			}
+			return &lead.RunResult{Status: model.LeadStatusComplete, Output: "done"}, nil
+		},
+	}
+	wt := &mockWorktreeCreator{}
+
+	cfg := testConfig()
+	cfg.RepoNames = []string{"api", "frontend", "shared-lib"}
+	coord := NewCoordinator(store, runner, wt, "/tmp/test", "test-instance", cfg)
+
+	task := &model.Task{
+		ID:                 "task-repo-aware-1",
+		InstanceID:         "test-instance",
+		Description:        "Instance-aware decomposition test",
+		Source:             "text",
+		Status:             model.TaskStatusPending,
+		SufficiencyChecked: true,
+	}
+	require.NoError(t, store.InsertTask(task))
+
+	ctx := context.Background()
+	coord.processTick(ctx)
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify decomposition decision includes repo names in the prompt
+	decisions, err := store.GetAgenticDecisionsForTask("task-repo-aware-1")
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(decisions), 1)
+
+	// Find the decomposition decision
+	for _, d := range decisions {
+		if d.NodeType == model.AgenticDecomposition {
+			assert.Contains(t, d.Input, "api, frontend, shared-lib")
+			assert.Contains(t, d.Input, "MUST only use repos from the available list")
+		}
+	}
+}
+
+func TestSufficiencyCheckedFieldPersistence(t *testing.T) {
+	store, _ := setupCoordTestDB(t)
+
+	task := &model.Task{
+		ID:                 "task-suff-persist",
+		InstanceID:         "test-instance",
+		Description:        "Test persistence",
+		Source:             "text",
+		Status:             model.TaskStatusPending,
+		SufficiencyChecked: true,
+	}
+	require.NoError(t, store.InsertTask(task))
+
+	loaded, err := store.GetTask("task-suff-persist")
+	require.NoError(t, err)
+	assert.True(t, loaded.SufficiencyChecked)
+
+	// Test false case
+	task2 := &model.Task{
+		ID:                 "task-suff-persist-2",
+		InstanceID:         "test-instance",
+		Description:        "Test persistence false",
+		Source:             "text",
+		Status:             model.TaskStatusPending,
+		SufficiencyChecked: false,
+	}
+	require.NoError(t, store.InsertTask(task2))
+
+	loaded2, err := store.GetTask("task-suff-persist-2")
+	require.NoError(t, err)
+	assert.False(t, loaded2.SufficiencyChecked)
+}
+
 func TestActiveLeadTracking(t *testing.T) {
 	store, _ := setupCoordTestDB(t)
 	setupMockClaude(t)

@@ -22,11 +22,15 @@ func NewStore(db *sql.DB) *Store {
 // InsertTask creates a new task record.
 func (s *Store) InsertTask(task *model.Task) error {
 	now := time.Now().UTC()
-	query := `INSERT INTO tasks (id, instance_id, description, source, source_ref, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	suffChecked := 0
+	if task.SufficiencyChecked {
+		suffChecked = 1
+	}
+	query := `INSERT INTO tasks (id, instance_id, description, source, source_ref, status, sufficiency_checked, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	_, err := s.db.Exec(query,
 		task.ID, task.InstanceID, task.Description, task.Source, task.SourceRef,
-		string(task.Status), now, now,
+		string(task.Status), suffChecked, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting task: %w", err)
@@ -36,16 +40,18 @@ func (s *Store) InsertTask(task *model.Task) error {
 
 // GetTask retrieves a task by ID.
 func (s *Store) GetTask(taskID string) (*model.Task, error) {
-	query := `SELECT id, instance_id, description, source, source_ref, status, created_at, updated_at
+	query := `SELECT id, instance_id, description, source, source_ref, status, sufficiency_checked, created_at, updated_at
 		FROM tasks WHERE id = ?`
 	row := s.db.QueryRow(query, taskID)
 
 	var t model.Task
+	var suffChecked int
 	err := row.Scan(&t.ID, &t.InstanceID, &t.Description, &t.Source, &t.SourceRef,
-		&t.Status, &t.CreatedAt, &t.UpdatedAt)
+		&t.Status, &suffChecked, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("getting task: %w", err)
 	}
+	t.SufficiencyChecked = suffChecked != 0
 	return &t, nil
 }
 
@@ -62,7 +68,7 @@ func (s *Store) UpdateTaskStatus(taskID string, status model.TaskStatus) error {
 
 // GetTasksByStatus returns all tasks matching the given status.
 func (s *Store) GetTasksByStatus(status model.TaskStatus) ([]model.Task, error) {
-	query := `SELECT id, instance_id, description, source, source_ref, status, created_at, updated_at
+	query := `SELECT id, instance_id, description, source, source_ref, status, sufficiency_checked, created_at, updated_at
 		FROM tasks WHERE status = ?`
 	rows, err := s.db.Query(query, string(status))
 	if err != nil {
@@ -73,11 +79,13 @@ func (s *Store) GetTasksByStatus(status model.TaskStatus) ([]model.Task, error) 
 	var tasks []model.Task
 	for rows.Next() {
 		var t model.Task
+		var suffChecked int
 		err := rows.Scan(&t.ID, &t.InstanceID, &t.Description, &t.Source, &t.SourceRef,
-			&t.Status, &t.CreatedAt, &t.UpdatedAt)
+			&t.Status, &suffChecked, &t.CreatedAt, &t.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("scanning task: %w", err)
 		}
+		t.SufficiencyChecked = suffChecked != 0
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()

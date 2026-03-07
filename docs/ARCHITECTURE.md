@@ -35,17 +35,18 @@ Lead (bundled execution loop per repo)
 | CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task, status, tui) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
-| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_lead_execution.sql) |
+| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_lead_execution.sql, 003_task_intake.sql) |
 | Model | `internal/model/` | Domain types and status enums |
 | Instance | `internal/instance/` | Instance lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
 | Lead | `internal/lead/` | Lead execution runner, store, embedded shell script |
+| Intake | `internal/intake/` | Task intake pipeline (text/Jira parsing, sufficiency check, interactive brainstorm) |
 | Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
 
 ## Data Flow
 
 ```
-Task Input --> Sufficiency Check (agentic) --> Decomposition (agentic)
+Task Input (text/Jira) --> Intake Pipeline (sufficiency + brainstorm) --> Decomposition (agentic, instance-aware)
                                                     |
                   +------------------+--------------+
                   v                  v              v

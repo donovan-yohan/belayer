@@ -62,14 +62,15 @@ type Instance struct {
 
 // Task represents a work item submitted by the user.
 type Task struct {
-	ID          string     `json:"id"`
-	InstanceID  string     `json:"instance_id"`
-	Description string     `json:"description"`
-	Source      string     `json:"source"` // "text" or "jira"
-	SourceRef   string     `json:"source_ref"`
-	Status      TaskStatus `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ID                 string     `json:"id"`
+	InstanceID         string     `json:"instance_id"`
+	Description        string     `json:"description"`
+	Source             string     `json:"source"` // "text" or "jira"
+	SourceRef          string     `json:"source_ref"`
+	Status             TaskStatus `json:"status"`
+	SufficiencyChecked bool       `json:"sufficiency_checked"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 // TaskRepo represents a per-repo decomposition of a task.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,6 +30,7 @@ type CoordinatorConfig struct {
 	BaseRetryDelay time.Duration
 	MaxRetryDelay  time.Duration
 	AgenticModel   string
+	RepoNames      []string // Available repo names from the instance
 }
 
 // DefaultConfig returns a CoordinatorConfig with sensible defaults.
@@ -215,7 +217,7 @@ type StuckOutput struct {
 	ShouldRetry bool   `json:"should_retry"`
 }
 
-// startDecomposition runs sufficiency check + decomposition for a pending task.
+// startDecomposition runs sufficiency check (if not pre-checked) + decomposition for a pending task.
 func (c *Coordinator) startDecomposition(ctx context.Context, task model.Task) {
 	// Transition to decomposing
 	if err := c.store.UpdateTaskStatus(task.ID, model.TaskStatusDecomposing); err != nil {
@@ -223,35 +225,50 @@ func (c *Coordinator) startDecomposition(ctx context.Context, task model.Task) {
 		return
 	}
 
-	// Run sufficiency check
-	suffNode := NewAgenticNode(c.store, model.AgenticSufficiency, c.config.AgenticModel)
-	suffPrompt := fmt.Sprintf(
-		"You are a task sufficiency checker. Evaluate whether this task has enough context to be decomposed into per-repo implementation specs.\n\nTask description: %s\n\nRespond with JSON: {\"sufficient\": true/false, \"gaps\": [\"list of missing context\"]}",
-		task.Description,
-	)
+	// Skip sufficiency check if already done at intake (CLI level)
+	if !task.SufficiencyChecked {
+		suffNode := NewAgenticNode(c.store, model.AgenticSufficiency, c.config.AgenticModel)
+		suffPrompt := fmt.Sprintf(
+			"You are a task sufficiency checker. Evaluate whether this task has enough context to be decomposed into per-repo implementation specs.\n\nTask description: %s\n\nRespond with JSON: {\"sufficient\": true/false, \"gaps\": [\"list of missing context\"]}",
+			task.Description,
+		)
 
-	suffResult, err := suffNode.Execute(ctx, task.ID, suffPrompt)
-	if err != nil {
-		log.Printf("coordinator: sufficiency check failed for task %s: %v", task.ID, err)
-		_ = c.store.UpdateTaskStatus(task.ID, model.TaskStatusFailed)
-		return
+		suffResult, err := suffNode.Execute(ctx, task.ID, suffPrompt)
+		if err != nil {
+			log.Printf("coordinator: sufficiency check failed for task %s: %v", task.ID, err)
+			_ = c.store.UpdateTaskStatus(task.ID, model.TaskStatusFailed)
+			return
+		}
+
+		var suffOutput SufficiencyOutput
+		if err := json.Unmarshal([]byte(suffResult.Raw), &suffOutput); err != nil {
+			log.Printf("coordinator: error parsing sufficiency output for task %s: %v", task.ID, err)
+		}
+
+		if !suffOutput.Sufficient && len(suffOutput.Gaps) > 0 {
+			log.Printf("coordinator: task %s has gaps: %v (proceeding with decomposition anyway)", task.ID, suffOutput.Gaps)
+		}
+	} else {
+		log.Printf("coordinator: task %s already passed sufficiency check at intake, skipping", task.ID)
 	}
 
-	var suffOutput SufficiencyOutput
-	if err := json.Unmarshal([]byte(suffResult.Raw), &suffOutput); err != nil {
-		log.Printf("coordinator: error parsing sufficiency output for task %s: %v", task.ID, err)
-		// Continue with decomposition anyway — the prompt may be sufficient enough
+	// Build repo list for instance-aware decomposition
+	repoList := "not specified"
+	if len(c.config.RepoNames) > 0 {
+		repoList = strings.Join(c.config.RepoNames, ", ")
 	}
 
-	if !suffOutput.Sufficient && len(suffOutput.Gaps) > 0 {
-		log.Printf("coordinator: task %s has gaps: %v (proceeding with decomposition anyway)", task.ID, suffOutput.Gaps)
-	}
-
-	// Run decomposition
+	// Run decomposition with instance-aware prompt
 	decompNode := NewAgenticNode(c.store, model.AgenticDecomposition, c.config.AgenticModel)
 	decompPrompt := fmt.Sprintf(
-		"You are a task decomposer. Break this task into per-repo implementation specs.\n\nTask description: %s\n\nRespond with JSON: {\"repos\": [{\"name\": \"repo-name\", \"spec\": \"detailed implementation spec for this repo\"}]}",
-		task.Description,
+		`You are a task decomposer for a multi-repo coding orchestrator. Break this task into per-repo implementation specs. You MUST only use repos from the available list. Not all repos need to be included — only those relevant to the task.
+
+Available repos: %s
+
+Task description: %s
+
+Respond with JSON: {"repos": [{"name": "repo-name", "spec": "detailed implementation spec for this repo"}]}`,
+		repoList, task.Description,
 	)
 
 	decompResult, err := decompNode.Execute(ctx, task.ID, decompPrompt)

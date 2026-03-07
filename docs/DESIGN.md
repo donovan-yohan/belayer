@@ -15,7 +15,7 @@ Agentic nodes receive structured input (from SQLite), produce structured output 
 
 ## SQLite Schema
 
-Defined in `internal/db/migrations/001_initial.sql`. Key tables:
+Defined across `internal/db/migrations/`. Key tables:
 
 | Table | Purpose |
 |-------|---------|
@@ -53,6 +53,20 @@ Each agentic node:
 - Has a timeout and retry limit
 - Results are parsed and stored in SQLite
 
+## Task Intake Pipeline
+
+The intake pipeline (`internal/intake/`) handles pre-coordinator task preparation:
+
+- **Text input**: Direct description via CLI args
+- **Jira input**: Comma-separated ticket IDs via `--jira` flag, grouped into single task
+- **Sufficiency check**: Agentic node at CLI level (before coordinator) evaluates context completeness
+- **Interactive brainstorm**: When insufficient, presents gap questions to user via stdin/stdout Q&A loop
+- **`--no-brainstorm` flag**: Skips brainstorm for CI/non-interactive usage
+- **Instance-aware**: Passes available repo names to sufficiency prompt for better evaluation
+- **`AgenticExecutor` interface**: Decouples from real claude for testability
+
+The intake runs before the coordinator starts. The `sufficiency_checked` flag on the task prevents redundant re-checking within the coordinator.
+
 ## Coordinator Engine
 
 The coordinator (`internal/coordinator/`) is the central orchestration layer:
@@ -61,6 +75,8 @@ The coordinator (`internal/coordinator/`) is the central orchestration layer:
 - **Lead management**: Spawns leads as goroutines via `lead.Runner.Run()`, tracks active leads with `sync.Mutex` protected map
 - **Crash recovery**: Detects lead failures, schedules retry with exponential backoff (`min(base * 2^attempt, max)`)
 - **Agentic nodes**: Runs ephemeral `claude -p --model <model> --output-format json <prompt>` for judgment calls; stores all decisions in `agentic_decisions` table
+- **Instance-aware decomposition**: Decomposition prompt includes available repo names from instance config, constraining the agentic node to valid repos
+- **Sufficiency skip**: Tasks pre-checked at intake skip the coordinator's sufficiency check
 - **Interfaces**: `LeadRunner` and `WorktreeCreator` interfaces enable mock-based testing
 
 ## See Also
