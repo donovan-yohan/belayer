@@ -11,7 +11,7 @@ Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CL
 | 1 | CLI and data layer — pure data publisher with SQLite | complete | 1 | [design](../design-docs/2026-03-07-cli-data-layer-design.md) | [plan](../exec-plans/completed/2026-03-07-cli-data-layer-plan.md) |
 | 2 | Setter daemon — DAG executor with tmux management | complete | 1 | [design](../design-docs/2026-03-07-setter-daemon-design.md) | [plan](../exec-plans/completed/2026-03-07-setter-daemon-plan.md) |
 | 3 | Lead spawning — AgentSpawner interface and per-goal sessions | complete | 1 | [design](../design-docs/2026-03-07-lead-spawning-design.md) | [plan](../exec-plans/completed/2026-03-07-lead-spawning-plan.md) |
-| 4 | Spotter — cross-repo review with redistribution | pending | 0 | - | - |
+| 4 | Spotter — cross-repo review with redistribution | complete | 1 | [design](../design-docs/2026-03-07-spotter-review-design.md) | [plan](../exec-plans/completed/2026-03-07-spotter-review-plan.md) |
 | 5 | Belayer manage — interactive agent session for task creation | pending | 0 | - | - |
 
 ## Acceptance Criteria
@@ -70,3 +70,13 @@ Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CL
 - The `internal/lead/` package provides clean vendor isolation: `spawner.go` (interface), `claude.go` (Claude impl), `prompt.go` (template). Swapping vendors means adding one new file and changing one line in `cli/setter.go`.
 - Prompt template uses `text/template` which is simple and sufficient — no need for external template libraries
 - Adding the `spawner` field to `TaskRunner` required updating all test setup code (8 test functions), but the mock pattern (`mockSpawner`) was trivial and consistent with the existing `mockTmux` pattern
+
+### Goal 4 - Spotter Review
+- The spotter reuses the same `AgentSpawner` interface as leads — just with a different prompt and output file (VERDICT.json vs DONE.json). This validates the vendor abstraction boundary.
+- Adding `GitRunner` interface for testability was essential — spotter needs git diffs, and mocking exec.Command directly is fragile. The `mockGitRunner` pattern is clean and consistent with `mockTmux`/`mockSpawner`.
+- The `CheckCompletions()` return signature needed updating to return `completedCount` for proper `activeLeads` tracking. This was a minor but important fix — without it, the setter would never reclaim lead slots.
+- The DAG's `AddGoals()` method for correction goals was trivial — just insert into the existing maps. The DAG's simplicity (flat map + reverse-lookup) makes extension easy.
+- DONE.json cleanup before spawning correction leads is critical — without it, the old DONE.json would cause the correction goal to be immediately marked complete on the next tick. Catching this during design prevented a subtle runtime bug.
+- Task status transitions (running -> reviewing -> running on reject -> reviewing) work cleanly because the setter checks `runner.task.Status` on each tick rather than relying on a single pass.
+- PR creation is minimal (git push + gh pr create) — intentionally simple since real-world usage will likely need more customization (branch naming, PR templates, reviewers). The current implementation is a solid foundation.
+- The `createPR` method shells out to both git and gh CLI — in tests, the `mockGitRunner` handles git, but gh is not called since it's behind the git error path. This is acceptable for now; real PR creation tests would need integration testing.

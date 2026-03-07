@@ -13,3 +13,4 @@
 | [2026-03-07-cli-data-layer-design](2026-03-07-cli-data-layer-design.md) | Goal 1: CLI and data layer — pure data publisher | 2026-03-07 |
 | [2026-03-07-setter-daemon-design](2026-03-07-setter-daemon-design.md) | Goal 2: Setter daemon — DAG executor with tmux management | 2026-03-07 |
 | [2026-03-07-lead-spawning-design](2026-03-07-lead-spawning-design.md) | Goal 3: Lead spawning — AgentSpawner interface and per-goal sessions | 2026-03-07 |
+| [2026-03-07-spotter-review-design](2026-03-07-spotter-review-design.md) | Goal 4: Spotter — cross-repo review with redistribution | 2026-03-07 |

@@ -93,51 +93,110 @@ func (s *Setter) tick() error {
 
 	// 2. Process each active task
 	for taskID, runner := range s.tasks {
-		// Check for completed goals
-		newlyReady, err := runner.CheckCompletions()
-		if err != nil {
-			log.Printf("setter: error checking completions for %s: %v", taskID, err)
-			continue
-		}
-		s.leadQueue = append(s.leadQueue, newlyReady...)
+		// Handle task based on current status
+		taskStatus := runner.task.Status
 
-		// Check for stale goals
-		retryGoals, err := runner.CheckStaleGoals(s.config.StaleTimeout)
-		if err != nil {
-			log.Printf("setter: error checking stale goals for %s: %v", taskID, err)
-			continue
-		}
-		s.leadQueue = append(s.leadQueue, retryGoals...)
+		if taskStatus == model.TaskStatusRunning {
+			// Check for completed goals
+			newlyReady, completedCount, err := runner.CheckCompletions()
+			if err != nil {
+				log.Printf("setter: error checking completions for %s: %v", taskID, err)
+				continue
+			}
+			s.activeLeads -= completedCount
+			if s.activeLeads < 0 {
+				s.activeLeads = 0
+			}
+			s.leadQueue = append(s.leadQueue, newlyReady...)
 
-		// Check if all goals are complete
-		if runner.AllGoalsComplete() {
-			log.Printf("setter: all goals complete for task %s — transitioning to reviewing", taskID)
-			if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusReviewing); err != nil {
+			// Check for stale goals
+			retryGoals, err := runner.CheckStaleGoals(s.config.StaleTimeout)
+			if err != nil {
+				log.Printf("setter: error checking stale goals for %s: %v", taskID, err)
+				continue
+			}
+			s.leadQueue = append(s.leadQueue, retryGoals...)
+
+			// Check if all goals are complete -> transition to reviewing
+			if runner.AllGoalsComplete() {
+				log.Printf("setter: all goals complete for task %s — transitioning to reviewing", taskID)
+				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusReviewing); err != nil {
+					log.Printf("setter: error updating task status: %v", err)
+				}
+				runner.task.Status = model.TaskStatusReviewing
+				// Spotter will be spawned on next tick when we handle reviewing
+				continue
+			}
+
+			// Check if task is stuck (goals failed at max attempts)
+			if runner.HasStuckGoals() {
+				log.Printf("setter: task %s has stuck goals — marking stuck", taskID)
+				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusStuck); err != nil {
+					log.Printf("setter: error updating task status: %v", err)
+				}
+				runner.Cleanup()
+				delete(s.tasks, taskID)
+				continue
+			}
+		}
+
+		if taskStatus == model.TaskStatusReviewing {
+			// Spawn spotter if not already running
+			if !runner.SpotterRunning() {
+				if err := runner.SpawnSpotter(); err != nil {
+					log.Printf("setter: error spawning spotter for %s: %v", taskID, err)
+					continue
+				}
+				continue
+			}
+
+			// Check for spotter verdict
+			verdict, found, err := runner.CheckSpotterVerdict()
+			if err != nil {
+				log.Printf("setter: error checking spotter verdict for %s: %v", taskID, err)
+				continue
+			}
+			if !found {
+				continue
+			}
+
+			if verdict.Verdict == "approve" {
+				// Create PRs for all repos
+				if err := runner.HandleApproval(); err != nil {
+					log.Printf("setter: error creating PRs for %s: %v", taskID, err)
+				}
+				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusComplete); err != nil {
+					log.Printf("setter: error completing task: %v", err)
+				}
+				runner.Cleanup()
+				delete(s.tasks, taskID)
+				continue
+			}
+
+			// Verdict is reject
+			if runner.SpotterAttempt() >= 2 {
+				log.Printf("setter: task %s stuck after %d spotter reviews", taskID, runner.SpotterAttempt())
+				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusStuck); err != nil {
+					log.Printf("setter: error marking task stuck: %v", err)
+				}
+				runner.Cleanup()
+				delete(s.tasks, taskID)
+				continue
+			}
+
+			// Create correction goals and go back to running
+			correctionGoals, err := runner.HandleRejection(verdict)
+			if err != nil {
+				log.Printf("setter: error handling rejection for %s: %v", taskID, err)
+				continue
+			}
+
+			if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusRunning); err != nil {
 				log.Printf("setter: error updating task status: %v", err)
 			}
-			// Spotter spawning is Goal 4 scope — log placeholder
-			if err := s.store.InsertEvent(taskID, "", model.EventSpotterSpawned, "{}"); err != nil {
-				log.Printf("setter: error inserting spotter_spawned event: %v", err)
-			}
-			log.Printf("setter: task %s ready for spotter review (Goal 4 scope)", taskID)
-			// For now, auto-complete since spotter is not yet implemented
-			if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusComplete); err != nil {
-				log.Printf("setter: error completing task: %v", err)
-			}
-			runner.Cleanup()
-			delete(s.tasks, taskID)
-			continue
-		}
-
-		// Check if task is stuck (goals failed at max attempts)
-		if runner.HasStuckGoals() {
-			log.Printf("setter: task %s has stuck goals — marking stuck", taskID)
-			if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusStuck); err != nil {
-				log.Printf("setter: error updating task status: %v", err)
-			}
-			runner.Cleanup()
-			delete(s.tasks, taskID)
-			continue
+			runner.task.Status = model.TaskStatusRunning
+			s.leadQueue = append(s.leadQueue, correctionGoals...)
+			log.Printf("setter: task %s back to running with %d correction goals", taskID, len(correctionGoals))
 		}
 	}
 
@@ -220,6 +279,7 @@ func (s *Setter) recover() error {
 
 		runner.dag = BuildDAG(goals)
 		runner.tmuxSession = fmt.Sprintf("belayer-task-%s", task.ID)
+		runner.taskDir = fmt.Sprintf("%s/tasks/%s", s.config.InstanceDir, task.ID)
 
 		// Populate worktrees map
 		repos := make(map[string]bool)
@@ -232,7 +292,7 @@ func (s *Setter) recover() error {
 		}
 
 		// Check for DONE.json files that completed while we were down
-		newlyReady, err := runner.CheckCompletions()
+		newlyReady, _, err := runner.CheckCompletions()
 		if err != nil {
 			log.Printf("setter: error checking completions during recovery for %s: %v", task.ID, err)
 		}

@@ -11,6 +11,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/spotter"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -94,6 +95,23 @@ func newMockSpawner() *mockSpawner {
 func (m *mockSpawner) Spawn(_ context.Context, opts lead.SpawnOpts) error {
 	m.spawned = append(m.spawned, opts)
 	return nil
+}
+
+// mockGitRunner returns canned git output for tests.
+type mockGitRunner struct {
+	responses map[string]string // key "<workdir>:<args>" -> output
+}
+
+func newMockGitRunner() *mockGitRunner {
+	return &mockGitRunner{responses: make(map[string]string)}
+}
+
+func (m *mockGitRunner) Run(workdir string, args ...string) (string, error) {
+	key := workdir + ":" + args[0]
+	if resp, ok := m.responses[key]; ok {
+		return resp, nil
+	}
+	return "", nil
 }
 
 func setupTestEnv(t *testing.T) (*store.Store, *mockTmux, *logmgr.LogManager, *mockSpawner, string) {
@@ -275,8 +293,9 @@ func TestTaskRunner_CheckCompletions(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), data, 0o644))
 
 	// Check completions — should find api-1 complete and api-2 ready
-	newlyReady, err := runner.CheckCompletions()
+	newlyReady, completedCount, err := runner.CheckCompletions()
 	require.NoError(t, err)
+	assert.Equal(t, 1, completedCount)
 
 	assert.Equal(t, model.GoalStatusComplete, runner.dag.Get("api-1").Status)
 	require.Len(t, newlyReady, 1)
@@ -544,4 +563,527 @@ func TestSetter_RunTickCycle(t *testing.T) {
 
 	err = setter.Run(ctx)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestDAG_AddGoals(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "t1", RepoName: "api", Description: "first", DependsOn: []string{}, Status: model.GoalStatusComplete},
+	}
+	dag := BuildDAG(goals)
+	assert.True(t, dag.AllComplete())
+
+	// Add correction goals
+	corrGoals := []model.Goal{
+		{ID: "api-corr-1-1", TaskID: "t1", RepoName: "api", Description: "fix response", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "api-corr-1-2", TaskID: "t1", RepoName: "api", Description: "fix tests", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	dag.AddGoals(corrGoals)
+
+	assert.False(t, dag.AllComplete())
+	assert.NotNil(t, dag.Get("api-corr-1-1"))
+	assert.NotNil(t, dag.Get("api-corr-1-2"))
+
+	ready := dag.ReadyGoals()
+	assert.Len(t, ready, 2) // both correction goals should be ready
+}
+
+func newTestRunner(t *testing.T, taskID string, goals []model.Goal) (*TaskRunner, *store.Store, *mockTmux, *mockSpawner, *mockGitRunner, string) {
+	t.Helper()
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, taskID, goals)
+
+	task, err := s.GetTask(taskID)
+	require.NoError(t, err)
+
+	// Set up worktrees and task dir
+	repos := make(map[string]string)
+	for _, g := range goals {
+		if _, ok := repos[g.RepoName]; !ok {
+			wtDir := filepath.Join(tmpDir, "tasks", taskID, g.RepoName)
+			require.NoError(t, os.MkdirAll(wtDir, 0o755))
+			repos[g.RepoName] = wtDir
+		}
+	}
+
+	taskDir := filepath.Join(tmpDir, "tasks", taskID)
+	require.NoError(t, os.MkdirAll(taskDir, 0o755))
+
+	require.NoError(t, s.UpdateTaskStatus(taskID, model.TaskStatusRunning))
+	task.Status = model.TaskStatusRunning
+
+	runner := &TaskRunner{
+		task:        task,
+		worktrees:   repos,
+		instanceDir: tmpDir,
+		store:       s,
+		tmux:        tm,
+		logMgr:      lm,
+		spawner:     sp,
+		git:         mg,
+		tmuxSession: "belayer-task-" + taskID,
+		taskDir:     taskDir,
+		startedAt:   make(map[string]time.Time),
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir(taskID))
+
+	goalsFromDB, err := s.GetGoalsForTask(taskID)
+	require.NoError(t, err)
+	runner.dag = BuildDAG(goalsFromDB)
+
+	return runner, s, tm, sp, mg, tmpDir
+}
+
+func TestTaskRunner_SpawnSpotter(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-s1", RepoName: "api", Description: "add endpoint", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, tm, sp, mg, _ := newTestRunner(t, "task-s1", goals)
+
+	// Mark goal as complete with DONE.json
+	runner.dag.MarkComplete("api-1")
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
+	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
+
+	// Set mock git responses
+	mg.responses[runner.worktrees["api"]+":diff"] = "+func NewEndpoint() {}"
+	mg.responses[runner.worktrees["api"]+":log"] = "abc123 Added endpoint"
+
+	err := runner.SpawnSpotter()
+	require.NoError(t, err)
+
+	// Verify spotter state
+	assert.True(t, runner.SpotterRunning())
+	assert.Equal(t, 1, runner.SpotterAttempt())
+
+	// Verify tmux window was created
+	windows, _ := tm.ListWindows(runner.tmuxSession)
+	assert.Contains(t, windows, "spotter-1")
+
+	// Verify agent was spawned with correct opts
+	require.Len(t, sp.spawned, 1)
+	assert.Equal(t, runner.tmuxSession, sp.spawned[0].TmuxSession)
+	assert.Equal(t, "spotter-1", sp.spawned[0].WindowName)
+	assert.Equal(t, runner.taskDir, sp.spawned[0].WorkDir)
+	assert.Contains(t, sp.spawned[0].Prompt, "VERDICT.json")
+	assert.Contains(t, sp.spawned[0].Prompt, "test spec")
+}
+
+func TestTaskRunner_CheckSpotterVerdict_Approve(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-s2", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, s, _, _, _, _ := newTestRunner(t, "task-s2", goals)
+	runner.spotterAttempt = 1
+	runner.spotterRunning = true
+
+	// Write VERDICT.json
+	verdict := spotter.VerdictJSON{
+		Verdict: "approve",
+		Repos: map[string]spotter.RepoVerdict{
+			"api": {Status: "pass", Goals: []string{}},
+		},
+	}
+	data, _ := json.Marshal(verdict)
+	require.NoError(t, os.WriteFile(filepath.Join(runner.taskDir, "VERDICT.json"), data, 0o644))
+
+	v, found, err := runner.CheckSpotterVerdict()
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "approve", v.Verdict)
+	assert.False(t, runner.SpotterRunning())
+
+	// VERDICT.json should be removed
+	_, statErr := os.Stat(filepath.Join(runner.taskDir, "VERDICT.json"))
+	assert.True(t, os.IsNotExist(statErr))
+
+	// Review should be recorded in SQLite
+	reviews, _ := s.GetSpotterReviewsForTask("task-s2")
+	require.Len(t, reviews, 1)
+	assert.Equal(t, "approve", reviews[0].Verdict)
+	assert.Equal(t, 1, reviews[0].Attempt)
+}
+
+func TestTaskRunner_CheckSpotterVerdict_NotFound(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-s3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, _, _, _, _ := newTestRunner(t, "task-s3", goals)
+	runner.spotterAttempt = 1
+	runner.spotterRunning = true
+
+	// No VERDICT.json exists
+	v, found, err := runner.CheckSpotterVerdict()
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Nil(t, v)
+	assert.True(t, runner.SpotterRunning()) // still running
+}
+
+func TestTaskRunner_HandleRejection(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-s4", RepoName: "api", Description: "add endpoint", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "app-1", TaskID: "task-s4", RepoName: "app", Description: "add UI", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, s, _, _, _, _ := newTestRunner(t, "task-s4", goals)
+	runner.spotterAttempt = 1
+
+	// Mark both goals as complete with DONE.json
+	runner.dag.MarkComplete("api-1")
+	runner.dag.MarkComplete("app-1")
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(runner.worktrees["app"], "DONE.json"), doneData, 0o644)
+
+	verdict := &spotter.VerdictJSON{
+		Verdict: "reject",
+		Repos: map[string]spotter.RepoVerdict{
+			"api": {Status: "fail", Goals: []string{"Fix response schema", "Add error handling"}},
+			"app": {Status: "pass", Goals: []string{}},
+		},
+	}
+
+	correctionGoals, err := runner.HandleRejection(verdict)
+	require.NoError(t, err)
+
+	// Should have 2 correction goals for the failing api repo
+	require.Len(t, correctionGoals, 2)
+	assert.Equal(t, "api-corr-1-1", correctionGoals[0].Goal.ID)
+	assert.Equal(t, "api-corr-1-2", correctionGoals[1].Goal.ID)
+	assert.Equal(t, "Fix response schema", correctionGoals[0].Goal.Description)
+	assert.Equal(t, "Add error handling", correctionGoals[1].Goal.Description)
+
+	// DONE.json should be removed from failing repo only
+	_, apiDoneErr := os.Stat(filepath.Join(runner.worktrees["api"], "DONE.json"))
+	assert.True(t, os.IsNotExist(apiDoneErr))
+	_, appDoneErr := os.Stat(filepath.Join(runner.worktrees["app"], "DONE.json"))
+	assert.False(t, os.IsNotExist(appDoneErr)) // app's DONE.json should remain
+
+	// Correction goals should be in the DAG
+	assert.NotNil(t, runner.dag.Get("api-corr-1-1"))
+	assert.NotNil(t, runner.dag.Get("api-corr-1-2"))
+
+	// Correction goals should be in SQLite
+	dbGoals, _ := s.GetGoalsForTask("task-s4")
+	goalIDs := make(map[string]bool)
+	for _, g := range dbGoals {
+		goalIDs[g.ID] = true
+	}
+	assert.True(t, goalIDs["api-corr-1-1"])
+	assert.True(t, goalIDs["api-corr-1-2"])
+}
+
+func TestSetter_SpotterApproveFlow(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-s5", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-s5", goals)
+
+	task, _ := s.GetTask("task-s5")
+	require.NoError(t, s.UpdateTaskStatus("task-s5", model.TaskStatusRunning))
+	task.Status = model.TaskStatusRunning
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-s5", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-s5")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetGoalsForTask("task-s5")
+
+	runner := &TaskRunner{
+		task:        task,
+		dag:         BuildDAG(goalsFromDB),
+		worktrees:   map[string]string{"api": worktreeDir},
+		instanceDir: tmpDir,
+		store:       s,
+		tmux:        tm,
+		logMgr:      lm,
+		spawner:     sp,
+		git:         mg,
+		tmuxSession: "belayer-task-task-s5",
+		taskDir:     taskDir,
+		startedAt:   make(map[string]time.Time),
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-s5"))
+
+	setter := &Setter{
+		config: Config{
+			InstanceName: "test-instance",
+			InstanceDir:  tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   map[string]*TaskRunner{"task-s5": runner},
+	}
+
+	// Spawn goal and write DONE.json
+	require.NoError(t, runner.SpawnGoal(goals[0]))
+	setter.activeLeads = 1
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
+
+	// First tick: detect completion, transition to reviewing
+	require.NoError(t, setter.tick())
+	updatedTask, _ := s.GetTask("task-s5")
+	assert.Equal(t, model.TaskStatusReviewing, updatedTask.Status)
+	assert.Equal(t, 0, setter.activeLeads)
+
+	// Second tick: spawn spotter
+	require.NoError(t, setter.tick())
+	assert.True(t, runner.SpotterRunning())
+
+	// Write VERDICT.json — approve
+	verdict := spotter.VerdictJSON{
+		Verdict: "approve",
+		Repos: map[string]spotter.RepoVerdict{
+			"api": {Status: "pass"},
+		},
+	}
+	verdictData, _ := json.Marshal(verdict)
+	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), verdictData, 0o644)
+
+	// Third tick: read verdict, create PRs, mark complete
+	require.NoError(t, setter.tick())
+	updatedTask, _ = s.GetTask("task-s5")
+	assert.Equal(t, model.TaskStatusComplete, updatedTask.Status)
+	assert.NotContains(t, setter.tasks, "task-s5") // cleaned up
+}
+
+func TestSetter_SpotterRejectThenApprove(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-s6", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-s6", goals)
+
+	task, _ := s.GetTask("task-s6")
+	require.NoError(t, s.UpdateTaskStatus("task-s6", model.TaskStatusRunning))
+	task.Status = model.TaskStatusRunning
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-s6", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-s6")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetGoalsForTask("task-s6")
+	runner := &TaskRunner{
+		task:        task,
+		dag:         BuildDAG(goalsFromDB),
+		worktrees:   map[string]string{"api": worktreeDir},
+		instanceDir: tmpDir,
+		store:       s,
+		tmux:        tm,
+		logMgr:      lm,
+		spawner:     sp,
+		git:         mg,
+		tmuxSession: "belayer-task-task-s6",
+		taskDir:     taskDir,
+		startedAt:   make(map[string]time.Time),
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-s6"))
+
+	sett := &Setter{
+		config: Config{
+			InstanceName: "test-instance",
+			InstanceDir:  tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   map[string]*TaskRunner{"task-s6": runner},
+	}
+
+	// Spawn goal and complete it
+	require.NoError(t, runner.SpawnGoal(goals[0]))
+	sett.activeLeads = 1
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
+
+	// Tick 1: detect completion -> reviewing
+	require.NoError(t, sett.tick())
+
+	// Tick 2: spawn spotter
+	require.NoError(t, sett.tick())
+
+	// Write reject verdict
+	rejectVerdict := spotter.VerdictJSON{
+		Verdict: "reject",
+		Repos: map[string]spotter.RepoVerdict{
+			"api": {Status: "fail", Goals: []string{"Fix the schema"}},
+		},
+	}
+	rejectData, _ := json.Marshal(rejectVerdict)
+	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), rejectData, 0o644)
+
+	// Tick 3: read reject verdict -> back to running with correction goals
+	// tick() also calls processLeadQueue(), so correction goal is spawned immediately
+	spawnedBefore := len(sp.spawned)
+	require.NoError(t, sett.tick())
+	updatedTask, _ := s.GetTask("task-s6")
+	assert.Equal(t, model.TaskStatusRunning, updatedTask.Status)
+
+	// Correction goal should have been spawned (via processLeadQueue in tick)
+	assert.Greater(t, len(sp.spawned), spawnedBefore)
+	assert.Equal(t, 1, sett.activeLeads)
+
+	// Complete the correction goal
+	doneData2, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "fixed schema"})
+	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData2, 0o644)
+
+	// Tick 4: detect correction goal completion -> reviewing again
+	require.NoError(t, sett.tick())
+	updatedTask, _ = s.GetTask("task-s6")
+	assert.Equal(t, model.TaskStatusReviewing, updatedTask.Status)
+
+	// Tick 5: spawn spotter again
+	require.NoError(t, sett.tick())
+	assert.Equal(t, 2, runner.SpotterAttempt())
+
+	// Write approve verdict
+	approveVerdict := spotter.VerdictJSON{
+		Verdict: "approve",
+		Repos: map[string]spotter.RepoVerdict{
+			"api": {Status: "pass"},
+		},
+	}
+	approveData, _ := json.Marshal(approveVerdict)
+	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), approveData, 0o644)
+
+	// Tick 6: read approve -> complete
+	require.NoError(t, sett.tick())
+	updatedTask, _ = s.GetTask("task-s6")
+	assert.Equal(t, model.TaskStatusComplete, updatedTask.Status)
+
+	// Verify reviews are in SQLite
+	reviews, _ := s.GetSpotterReviewsForTask("task-s6")
+	require.Len(t, reviews, 2)
+	assert.Equal(t, "reject", reviews[0].Verdict)
+	assert.Equal(t, "approve", reviews[1].Verdict)
+}
+
+func TestSetter_SpotterMaxReviewsStuck(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-s7", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-s7", goals)
+
+	task, _ := s.GetTask("task-s7")
+	require.NoError(t, s.UpdateTaskStatus("task-s7", model.TaskStatusReviewing))
+	task.Status = model.TaskStatusReviewing
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-s7", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-s7")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetGoalsForTask("task-s7")
+	runner := &TaskRunner{
+		task:           task,
+		dag:            BuildDAG(goalsFromDB),
+		worktrees:      map[string]string{"api": worktreeDir},
+		instanceDir:    tmpDir,
+		store:          s,
+		tmux:           tm,
+		logMgr:         lm,
+		spawner:        sp,
+		git:            mg,
+		tmuxSession:    "belayer-task-task-s7",
+		taskDir:        taskDir,
+		startedAt:      make(map[string]time.Time),
+		spotterAttempt: 2, // already at max
+		spotterRunning: true,
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-s7"))
+
+	// Mark goal complete
+	runner.dag.MarkComplete("api-1")
+
+	sett := &Setter{
+		config: Config{
+			InstanceName: "test-instance",
+			InstanceDir:  tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   map[string]*TaskRunner{"task-s7": runner},
+	}
+
+	// Write reject verdict (2nd rejection at attempt 2)
+	rejectVerdict := spotter.VerdictJSON{
+		Verdict: "reject",
+		Repos: map[string]spotter.RepoVerdict{
+			"api": {Status: "fail", Goals: []string{"Still broken"}},
+		},
+	}
+	rejectData, _ := json.Marshal(rejectVerdict)
+	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), rejectData, 0o644)
+
+	// Tick: should detect reject at max reviews -> stuck
+	require.NoError(t, sett.tick())
+	updatedTask, _ := s.GetTask("task-s7")
+	assert.Equal(t, model.TaskStatusStuck, updatedTask.Status)
+	assert.NotContains(t, sett.tasks, "task-s7") // cleaned up
+}
+
+func TestTaskRunner_GatherSummaries(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-gs", RepoName: "api", Description: "endpoint", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "app-1", TaskID: "task-gs", RepoName: "app", Description: "ui", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, _, _, _, _ := newTestRunner(t, "task-gs", goals)
+
+	// Mark both complete and write DONE.json
+	runner.dag.MarkComplete("api-1")
+	runner.dag.MarkComplete("app-1")
+
+	apiDone := DoneJSON{Status: "complete", Summary: "Added endpoint", Notes: "Used middleware"}
+	appDone := DoneJSON{Status: "complete", Summary: "Added UI component"}
+
+	apiData, _ := json.Marshal(apiDone)
+	appData, _ := json.Marshal(appDone)
+	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), apiData, 0o644)
+	os.WriteFile(filepath.Join(runner.worktrees["app"], "DONE.json"), appData, 0o644)
+
+	summaries := runner.GatherSummaries()
+	assert.Len(t, summaries, 2)
+
+	summaryMap := make(map[string]spotter.GoalSummary)
+	for _, s := range summaries {
+		summaryMap[s.GoalID] = s
+	}
+
+	assert.Equal(t, "Added endpoint", summaryMap["api-1"].Summary)
+	assert.Equal(t, "Used middleware", summaryMap["api-1"].Notes)
+	assert.Equal(t, "Added UI component", summaryMap["app-1"].Summary)
+}
+
+func TestTaskRunner_GatherDiffs(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-gd", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, _, _, mg, _ := newTestRunner(t, "task-gd", goals)
+
+	mg.responses[runner.worktrees["api"]+":diff"] = "+func NewHandler() {}"
+
+	diffs := runner.GatherDiffs()
+	require.Len(t, diffs, 1)
+	assert.Equal(t, "api", diffs[0].RepoName)
+	assert.Contains(t, diffs[0].Diff, "NewHandler")
 }

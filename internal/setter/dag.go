@@ -104,3 +104,15 @@ func (d *DAG) Goals() []*model.Goal {
 	}
 	return result
 }
+
+// AddGoals inserts new goals into an existing DAG. Used for correction goals
+// from spotter redistribution.
+func (d *DAG) AddGoals(goals []model.Goal) {
+	for i := range goals {
+		g := goals[i]
+		d.goals[g.ID] = &g
+		for _, depID := range g.DependsOn {
+			d.children[depID] = append(d.children[depID], g.ID)
+		}
+	}
+}
