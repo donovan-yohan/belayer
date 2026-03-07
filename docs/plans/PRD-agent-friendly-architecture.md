@@ -12,7 +12,7 @@ Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CL
 | 2 | Setter daemon — DAG executor with tmux management | complete | 1 | [design](../design-docs/2026-03-07-setter-daemon-design.md) | [plan](../exec-plans/completed/2026-03-07-setter-daemon-plan.md) |
 | 3 | Lead spawning — AgentSpawner interface and per-goal sessions | complete | 1 | [design](../design-docs/2026-03-07-lead-spawning-design.md) | [plan](../exec-plans/completed/2026-03-07-lead-spawning-plan.md) |
 | 4 | Spotter — cross-repo review with redistribution | complete | 1 | [design](../design-docs/2026-03-07-spotter-review-design.md) | [plan](../exec-plans/completed/2026-03-07-spotter-review-plan.md) |
-| 5 | Belayer manage — interactive agent session for task creation | pending | 0 | - | - |
+| 5 | Belayer manage — interactive agent session for task creation | complete | 1 | [design](../design-docs/2026-03-07-belayer-manage-design.md) | [plan](../exec-plans/completed/2026-03-07-belayer-manage-plan.md) |
 
 ## Acceptance Criteria
 
@@ -80,3 +80,10 @@ Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CL
 - Task status transitions (running -> reviewing -> running on reject -> reviewing) work cleanly because the setter checks `runner.task.Status` on each tick rather than relying on a single pass.
 - PR creation is minimal (git push + gh pr create) — intentionally simple since real-world usage will likely need more customization (branch naming, PR templates, reviewers). The current implementation is a solid foundation.
 - The `createPR` method shells out to both git and gh CLI — in tests, the `mockGitRunner` handles git, but gh is not called since it's behind the git error path. This is acceptable for now; real PR creation tests would need integration testing.
+
+### Goal 5 - Belayer Manage
+- The simplest approach — `syscall.Exec` to replace the process with `claude` — is the right one. No need to proxy stdin/stdout or handle pty forwarding when the user wants direct terminal interaction.
+- The `internal/manage/` package follows the same pattern as `internal/lead/`: `prompt.go` (template + data types) with tests. Consistency across the codebase makes navigation easy.
+- No Jira SDK was needed — the agent session has full access to MCP tools and can use whatever is available. Keeping the CLI pure (no HTTP clients, no API keys) was the right call.
+- The `execClaude` function is a package-level var for testability — tests can replace it to verify the prompt is generated correctly without actually exec'ing claude. This pattern is simpler than an interface for a single function.
+- Goal 5 was the lightest goal — the design principle of "CLI as pure data publisher" means the manage command is essentially a prompt builder + process exec. All the complexity lives in the agent session, not in Go code.

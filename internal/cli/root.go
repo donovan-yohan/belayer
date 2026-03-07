@@ -22,6 +22,7 @@ func NewRootCmd() *cobra.Command {
 		newStatusCmd(),
 		newSetterCmd(),
 		newLogsCmd(),
+		newManageCmd(),
 	)
 
 	return cmd
