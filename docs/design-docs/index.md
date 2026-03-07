@@ -11,3 +11,4 @@
 | [2026-03-06-tui-dashboard-design](2026-03-06-tui-dashboard-design.md) | Goal 7: TUI dashboard | 2026-03-06 |
 | [2026-03-07-agent-friendly-architecture-design](2026-03-07-agent-friendly-architecture-design.md) | Agent-friendly architecture: Setter, Spotter, and Lead redesign | 2026-03-07 |
 | [2026-03-07-cli-data-layer-design](2026-03-07-cli-data-layer-design.md) | Goal 1: CLI and data layer — pure data publisher | 2026-03-07 |
+| [2026-03-07-setter-daemon-design](2026-03-07-setter-daemon-design.md) | Goal 2: Setter daemon — DAG executor with tmux management | 2026-03-07 |

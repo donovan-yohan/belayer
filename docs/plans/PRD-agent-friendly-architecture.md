@@ -9,7 +9,7 @@ Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CL
 | # | Goal | Status | Attempts | Design Doc | Plan |
 |---|------|--------|----------|------------|------|
 | 1 | CLI and data layer — pure data publisher with SQLite | complete | 1 | [design](../design-docs/2026-03-07-cli-data-layer-design.md) | [plan](../exec-plans/completed/2026-03-07-cli-data-layer-plan.md) |
-| 2 | Setter daemon — DAG executor with tmux management | pending | 0 | - | - |
+| 2 | Setter daemon — DAG executor with tmux management | complete | 1 | [design](../design-docs/2026-03-07-setter-daemon-design.md) | [plan](../exec-plans/completed/2026-03-07-setter-daemon-plan.md) |
 | 3 | Lead spawning — AgentSpawner interface and per-goal sessions | pending | 0 | - | - |
 | 4 | Spotter — cross-repo review with redistribution | pending | 0 | - | - |
 | 5 | Belayer manage — interactive agent session for task creation | pending | 0 | - | - |
@@ -51,3 +51,14 @@ Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CL
 - Kept db/, config/, instance/, and repo/ packages unchanged — they work well and don't depend on the old architecture
 - GoalsFile validation (unique IDs, same-repo deps, matching instance repos) catches errors at ingest time before touching SQLite
 - Spec content is stored directly in SQLite rather than as a file path — simpler, avoids path resolution issues
+
+### Goal 2 - Setter Daemon
+- The tmux package as an interface (`TmuxManager`) was essential for testability — all setter tests use a `mockTmux` that simulates sessions/windows in-memory without needing real tmux
+- DAG implementation was simple and clean — `BuildDAG` + `ReadyGoals` + `MarkComplete` covers the full lifecycle with just a map and a reverse-lookup
+- TaskRunner encapsulates per-task state cleanly — the setter itself just manages a map of task runners and a lead queue
+- DONE.json scanning via filesystem polling is simple but effective; the alternative (inotify/fswatch) would add platform-specific complexity for minimal benefit
+- Crash recovery works by re-reading SQLite + scanning worktrees — the key insight is DONE.json files persist across crashes, so the setter can reconstruct state
+- The `--max-leads` FIFO queue was trivial to implement since the event loop is single-threaded — no concurrency concerns
+- Log rotation (truncate first half) and compression (gzip on completion) keep disk usage bounded without losing recent context
+- Goal spawning uses a placeholder command for now — Goal 3 will implement the real AgentSpawner that sends actual agent commands to tmux windows
+- Spotter integration is also placeholder — auto-completes tasks when all goals finish. Goal 4 will implement real review logic

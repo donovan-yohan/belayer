@@ -282,3 +282,125 @@ func GoalsFromFile(taskID string, gf *model.GoalsFile) []model.Goal {
 	}
 	return goals
 }
+
+// GetPendingTasks returns tasks with status='pending' for the given instance, ordered by created_at ASC.
+func (s *Store) GetPendingTasks(instanceID string) ([]model.Task, error) {
+	rows, err := s.db.Query(
+		`SELECT id, instance_id, spec, goals_json, jira_ref, status, created_at, updated_at
+		 FROM tasks WHERE instance_id = ? AND status = 'pending' ORDER BY created_at ASC`, instanceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying pending tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []model.Task
+	for rows.Next() {
+		var t model.Task
+		if err := rows.Scan(&t.ID, &t.InstanceID, &t.Spec, &t.GoalsJSON, &t.JiraRef, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning task: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
+// GetActiveTasks returns tasks with status IN ('running', 'reviewing') for the given instance, ordered by created_at ASC.
+func (s *Store) GetActiveTasks(instanceID string) ([]model.Task, error) {
+	rows, err := s.db.Query(
+		`SELECT id, instance_id, spec, goals_json, jira_ref, status, created_at, updated_at
+		 FROM tasks WHERE instance_id = ? AND status IN ('running', 'reviewing') ORDER BY created_at ASC`, instanceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying active tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []model.Task
+	for rows.Next() {
+		var t model.Task
+		if err := rows.Scan(&t.ID, &t.InstanceID, &t.Spec, &t.GoalsJSON, &t.JiraRef, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning task: %w", err)
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
+}
+
+// IncrementGoalAttempt increments the attempt column by 1 for the given goal.
+func (s *Store) IncrementGoalAttempt(goalID string) error {
+	_, err := s.db.Exec(
+		`UPDATE goals SET attempt = attempt + 1 WHERE id = ?`, goalID,
+	)
+	return err
+}
+
+// ResetGoalStatus sets the goal status back to pending and clears completed_at.
+func (s *Store) ResetGoalStatus(goalID string) error {
+	_, err := s.db.Exec(
+		`UPDATE goals SET status = 'pending', completed_at = NULL WHERE id = ?`, goalID,
+	)
+	return err
+}
+
+// InsertSpotterReview inserts a spotter review record.
+func (s *Store) InsertSpotterReview(review *model.SpotterReview) error {
+	_, err := s.db.Exec(
+		`INSERT INTO spotter_reviews (task_id, attempt, verdict, output, created_at) VALUES (?, ?, ?, ?, ?)`,
+		review.TaskID, review.Attempt, review.Verdict, review.Output, time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("inserting spotter review: %w", err)
+	}
+	return nil
+}
+
+// GetSpotterReviewsForTask returns spotter reviews for a task, ordered by attempt ASC.
+func (s *Store) GetSpotterReviewsForTask(taskID string) ([]model.SpotterReview, error) {
+	rows, err := s.db.Query(
+		`SELECT id, task_id, attempt, verdict, output, created_at
+		 FROM spotter_reviews WHERE task_id = ? ORDER BY attempt ASC`, taskID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying spotter reviews: %w", err)
+	}
+	defer rows.Close()
+
+	var reviews []model.SpotterReview
+	for rows.Next() {
+		var r model.SpotterReview
+		if err := rows.Scan(&r.ID, &r.TaskID, &r.Attempt, &r.Verdict, &r.Output, &r.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning spotter review: %w", err)
+		}
+		reviews = append(reviews, r)
+	}
+	return reviews, rows.Err()
+}
+
+// InsertGoals inserts multiple goals in a single transaction.
+// This is used for correction goals from spotter redistribution.
+func (s *Store) InsertGoals(goals []model.Goal) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	for _, g := range goals {
+		depsJSON, err := json.Marshal(g.DependsOn)
+		if err != nil {
+			return fmt.Errorf("marshaling depends_on for goal %s: %w", g.ID, err)
+		}
+		_, err = tx.Exec(
+			`INSERT INTO goals (id, task_id, repo_name, description, depends_on, status, attempt, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			g.ID, g.TaskID, g.RepoName, g.Description, string(depsJSON), g.Status, 0, now,
+		)
+		if err != nil {
+			return fmt.Errorf("inserting goal %s: %w", g.ID, err)
+		}
+	}
+
+	return tx.Commit()
+}

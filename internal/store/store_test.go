@@ -319,3 +319,185 @@ func TestGoalsFromFile(t *testing.T) {
 	assert.Equal(t, []string{}, goalMap["app-1"].DependsOn) // nil converted to empty
 	assert.Equal(t, model.GoalStatusPending, goalMap["app-1"].Status)
 }
+
+func TestGetPendingTasks(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	// Insert a pending task
+	err := s.InsertTask(&model.Task{
+		ID: "task-pending", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, nil)
+	require.NoError(t, err)
+
+	// Insert a running task
+	err = s.InsertTask(&model.Task{
+		ID: "task-running", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, nil)
+	require.NoError(t, err)
+	err = s.UpdateTaskStatus("task-running", model.TaskStatusRunning)
+	require.NoError(t, err)
+
+	pending, err := s.GetPendingTasks("test-instance")
+	require.NoError(t, err)
+	assert.Len(t, pending, 1)
+	assert.Equal(t, "task-pending", pending[0].ID)
+	assert.Equal(t, model.TaskStatusPending, pending[0].Status)
+}
+
+func TestGetActiveTasks(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	// Insert tasks with various statuses
+	err := s.InsertTask(&model.Task{
+		ID: "task-p", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, nil)
+	require.NoError(t, err)
+
+	err = s.InsertTask(&model.Task{
+		ID: "task-r", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, nil)
+	require.NoError(t, err)
+	err = s.UpdateTaskStatus("task-r", model.TaskStatusRunning)
+	require.NoError(t, err)
+
+	err = s.InsertTask(&model.Task{
+		ID: "task-rv", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, nil)
+	require.NoError(t, err)
+	err = s.UpdateTaskStatus("task-rv", model.TaskStatusReviewing)
+	require.NoError(t, err)
+
+	err = s.InsertTask(&model.Task{
+		ID: "task-c", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, nil)
+	require.NoError(t, err)
+	err = s.UpdateTaskStatus("task-c", model.TaskStatusComplete)
+	require.NoError(t, err)
+
+	active, err := s.GetActiveTasks("test-instance")
+	require.NoError(t, err)
+	assert.Len(t, active, 2)
+
+	ids := []string{active[0].ID, active[1].ID}
+	assert.Contains(t, ids, "task-r")
+	assert.Contains(t, ids, "task-rv")
+}
+
+func TestIncrementGoalAttempt(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertTask(&model.Task{
+		ID: "task-inc", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, []model.Goal{
+		{ID: "g-inc", TaskID: "task-inc", RepoName: "api", Description: "goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	})
+	require.NoError(t, err)
+
+	err = s.IncrementGoalAttempt("g-inc")
+	require.NoError(t, err)
+
+	goals, err := s.GetGoalsForTask("task-inc")
+	require.NoError(t, err)
+	require.Len(t, goals, 1)
+	assert.Equal(t, 1, goals[0].Attempt)
+}
+
+func TestResetGoalStatus(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertTask(&model.Task{
+		ID: "task-reset", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, []model.Goal{
+		{ID: "g-reset", TaskID: "task-reset", RepoName: "api", Description: "goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	})
+	require.NoError(t, err)
+
+	// Mark as complete first
+	err = s.UpdateGoalStatus("g-reset", model.GoalStatusComplete)
+	require.NoError(t, err)
+
+	goals, err := s.GetGoalsForTask("task-reset")
+	require.NoError(t, err)
+	require.Len(t, goals, 1)
+	assert.Equal(t, model.GoalStatusComplete, goals[0].Status)
+	assert.NotNil(t, goals[0].CompletedAt)
+
+	// Reset back to pending
+	err = s.ResetGoalStatus("g-reset")
+	require.NoError(t, err)
+
+	goals, err = s.GetGoalsForTask("task-reset")
+	require.NoError(t, err)
+	require.Len(t, goals, 1)
+	assert.Equal(t, model.GoalStatusPending, goals[0].Status)
+	assert.Nil(t, goals[0].CompletedAt)
+}
+
+func TestInsertAndGetSpotterReview(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertTask(&model.Task{
+		ID: "task-sr", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, nil)
+	require.NoError(t, err)
+
+	review := &model.SpotterReview{
+		TaskID:  "task-sr",
+		Attempt: 1,
+		Verdict: "pass",
+		Output:  "All goals met.",
+	}
+	err = s.InsertSpotterReview(review)
+	require.NoError(t, err)
+
+	reviews, err := s.GetSpotterReviewsForTask("task-sr")
+	require.NoError(t, err)
+	require.Len(t, reviews, 1)
+	assert.Equal(t, "task-sr", reviews[0].TaskID)
+	assert.Equal(t, 1, reviews[0].Attempt)
+	assert.Equal(t, "pass", reviews[0].Verdict)
+	assert.Equal(t, "All goals met.", reviews[0].Output)
+	assert.NotZero(t, reviews[0].ID)
+	assert.False(t, reviews[0].CreatedAt.IsZero())
+}
+
+func TestInsertGoals(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertTask(&model.Task{
+		ID: "task-ig", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	}, nil)
+	require.NoError(t, err)
+
+	correctionGoals := []model.Goal{
+		{ID: "cg-1", TaskID: "task-ig", RepoName: "api", Description: "correction goal 1", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "cg-2", TaskID: "task-ig", RepoName: "app", Description: "correction goal 2", DependsOn: []string{"cg-1"}, Status: model.GoalStatusPending},
+	}
+
+	err = s.InsertGoals(correctionGoals)
+	require.NoError(t, err)
+
+	goals, err := s.GetGoalsForTask("task-ig")
+	require.NoError(t, err)
+	assert.Len(t, goals, 2)
+
+	goalMap := make(map[string]model.Goal)
+	for _, g := range goals {
+		goalMap[g.ID] = g
+	}
+
+	assert.Equal(t, "api", goalMap["cg-1"].RepoName)
+	assert.Equal(t, "correction goal 1", goalMap["cg-1"].Description)
+	assert.Equal(t, []string{}, goalMap["cg-1"].DependsOn)
+	assert.Equal(t, model.GoalStatusPending, goalMap["cg-1"].Status)
+	assert.Equal(t, 0, goalMap["cg-1"].Attempt)
+
+	assert.Equal(t, "app", goalMap["cg-2"].RepoName)
+	assert.Equal(t, []string{"cg-1"}, goalMap["cg-2"].DependsOn)
+}
