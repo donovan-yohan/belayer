@@ -10,7 +10,7 @@ Belayer is a standalone Go CLI tool that orchestrates autonomous coding agents a
 |---|------|--------|----------|------------|------|
 | 1 | Project scaffolding & core architecture | complete | 1 | [design](../design-docs/2026-03-06-project-scaffolding-design.md) | [plan](../exec-plans/completed/2026-03-06-project-scaffolding-plan.md) |
 | 2 | Instance & repository management | complete | 1 | [design](../design-docs/2026-03-06-instance-repo-management-design.md) | [plan](../exec-plans/completed/2026-03-06-instance-repo-management-plan.md) |
-| 3 | Bundled lead execution loop | pending | 0 | - | - |
+| 3 | Bundled lead execution loop | complete | 1 | [design](../design-docs/2026-03-06-lead-execution-loop-design.md) | [plan](../exec-plans/completed/2026-03-06-lead-execution-loop-plan.md) |
 | 4 | Coordinator engine (state machine + agentic nodes) | pending | 0 | - | - |
 | 5 | Task intake & decomposition | pending | 0 | - | - |
 | 6 | Cross-repo integration & alignment | pending | 0 | - | - |
@@ -111,3 +111,13 @@ Jira/Text -> Intake -> Sufficiency Check (agentic) -> Decomposition (agentic)
 - `t.TempDir()` + `t.Setenv("HOME", ...)` provides clean test isolation without touching real filesystem
 - Instance creation clones bare repos + initializes DB + writes instance.json atomically; cleanup on any failure
 - Using instance name as the SQLite `id` simplifies lookups (no UUID generation needed at this layer)
+
+### Goal 3 (2026-03-06)
+- Shell script + Go runner separation works well: script handles claude interaction, Go handles persistence and monitoring
+- Structured JSON events on stdout (one per line) is cleaner than file polling — real-time, no race conditions
+- Mock `claude` scripts (bash shims on PATH) provide effective integration testing without real AI calls
+- Must check all args (not just `$3`) when detecting prompts in mock scripts — arg position varies with flags
+- `embed.FS` works seamlessly for bundling the shell script — same pattern as SQL migrations
+- Adding a second migration required updating the idempotent migration test (hardcoded count check)
+- `python3` for JSON parsing in shell is pragmatic — available on macOS/Linux, avoids `jq` dependency
+- Lead goals table enables per-goal tracking within a lead; single-goal spec is the common case initially

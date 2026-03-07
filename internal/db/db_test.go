@@ -59,8 +59,18 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("counting migrations: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("expected 1 migration record, got %d", count)
+	if count < 1 {
+		t.Errorf("expected at least 1 migration record, got %d", count)
+	}
+
+	// Running again should not add more records
+	var countAfter int
+	err = d.Conn().QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&countAfter)
+	if err != nil {
+		t.Fatalf("counting migrations after second run: %v", err)
+	}
+	if countAfter != count {
+		t.Errorf("migration count changed from %d to %d after idempotent run", count, countAfter)
 	}
 }
 

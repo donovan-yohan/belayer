@@ -116,3 +116,54 @@ type AgenticDecision struct {
 	DurationMs int64         `json:"duration_ms"`
 	CreatedAt time.Time       `json:"created_at"`
 }
+
+// LeadGoalStatus represents the lifecycle state of a goal within a lead.
+type LeadGoalStatus string
+
+const (
+	LeadGoalPending  LeadGoalStatus = "pending"
+	LeadGoalRunning  LeadGoalStatus = "running"
+	LeadGoalComplete LeadGoalStatus = "complete"
+	LeadGoalStuck    LeadGoalStatus = "stuck"
+	LeadGoalFailed   LeadGoalStatus = "failed"
+)
+
+// LeadGoal represents a sub-goal within a lead execution.
+type LeadGoal struct {
+	ID          string         `json:"id"`
+	LeadID      string         `json:"lead_id"`
+	GoalIndex   int            `json:"goal_index"`
+	Description string         `json:"description"`
+	Status      LeadGoalStatus `json:"status"`
+	Attempt     int            `json:"attempt"`
+	Output      string         `json:"output"`
+	VerdictJSON string         `json:"verdict_json"`
+	StartedAt   *time.Time     `json:"started_at"`
+	FinishedAt  *time.Time     `json:"finished_at"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+}
+
+// Verdict is the structured output from a review step.
+type Verdict struct {
+	Pass    bool     `json:"pass"`
+	Summary string   `json:"summary"`
+	Issues  []string `json:"issues,omitempty"`
+}
+
+// LeadEvent is a structured event emitted by the lead shell script via stdout.
+type LeadEvent struct {
+	Type        string `json:"type"`
+	Goal        int    `json:"goal,omitempty"`
+	Attempt     int    `json:"attempt,omitempty"`
+	Description string `json:"description,omitempty"`
+	Pass        *bool  `json:"pass,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	Error       string `json:"error,omitempty"`
+}
+
+// GoalSpec defines a goal for the lead to execute. Written to .lead/goals.json.
+type GoalSpec struct {
+	Index       int    `json:"index"`
+	Description string `json:"description"`
+}

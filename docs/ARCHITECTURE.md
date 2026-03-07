@@ -35,8 +35,11 @@ Lead (bundled execution loop per repo)
 | CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task, status, tui) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
-| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql) |
+| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_lead_execution.sql) |
 | Model | `internal/model/` | Domain types and status enums |
+| Instance | `internal/instance/` | Instance lifecycle (create, load, delete, worktree management) |
+| Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
+| Lead | `internal/lead/` | Lead execution runner, store, embedded shell script |
 
 ## Data Flow
 
