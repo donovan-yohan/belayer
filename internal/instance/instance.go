@@ -39,7 +39,6 @@ func Create(name string, repoURLs []string) (string, error) {
 		return "", fmt.Errorf("instance name cannot be empty")
 	}
 
-	// Load global config to check for conflicts
 	cfg, err := config.Load()
 	if err != nil {
 		return "", fmt.Errorf("loading config: %w", err)
@@ -49,14 +48,12 @@ func Create(name string, repoURLs []string) (string, error) {
 		return "", fmt.Errorf("instance %q already exists", name)
 	}
 
-	// Determine instance path
 	belayerDir, err := config.Dir()
 	if err != nil {
 		return "", err
 	}
 	instanceDir := filepath.Join(belayerDir, "instances", name)
 
-	// Create directory structure
 	for _, dir := range []string{
 		instanceDir,
 		filepath.Join(instanceDir, reposDir),
@@ -67,7 +64,6 @@ func Create(name string, repoURLs []string) (string, error) {
 		}
 	}
 
-	// Clone repos as bare
 	var repos []RepoEntry
 	for _, repoURL := range repoURLs {
 		repoName, err := repo.RepoNameFromURL(repoURL)
@@ -91,7 +87,6 @@ func Create(name string, repoURLs []string) (string, error) {
 		})
 	}
 
-	// Initialize SQLite database
 	database, err := db.Open(filepath.Join(instanceDir, dbFile))
 	if err != nil {
 		cleanup(instanceDir)
@@ -104,7 +99,6 @@ func Create(name string, repoURLs []string) (string, error) {
 		return "", fmt.Errorf("running migrations: %w", err)
 	}
 
-	// Insert instance record
 	now := time.Now().UTC()
 	_, err = database.Conn().Exec(
 		"INSERT INTO instances (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -115,7 +109,6 @@ func Create(name string, repoURLs []string) (string, error) {
 		return "", fmt.Errorf("inserting instance record: %w", err)
 	}
 
-	// Write instance.json
 	instConfig := InstanceConfig{
 		Name:      name,
 		Repos:     repos,
@@ -126,7 +119,6 @@ func Create(name string, repoURLs []string) (string, error) {
 		return "", fmt.Errorf("saving instance config: %w", err)
 	}
 
-	// Register in global config
 	cfg.Instances[name] = instanceDir
 	if cfg.DefaultInstance == "" {
 		cfg.DefaultInstance = name
@@ -196,6 +188,16 @@ func Delete(name string) error {
 	return nil
 }
 
+// findRepoEntry looks up a repo by name in the instance config.
+func findRepoEntry(instConfig *InstanceConfig, repoName string) (*RepoEntry, error) {
+	for i := range instConfig.Repos {
+		if instConfig.Repos[i].Name == repoName {
+			return &instConfig.Repos[i], nil
+		}
+	}
+	return nil, fmt.Errorf("repo %q not found in instance", repoName)
+}
+
 // CreateWorktree creates a git worktree for a specific repo within a task.
 func CreateWorktree(instanceDir, taskID, repoName string) (string, error) {
 	instConfig, err := loadInstanceConfig(instanceDir)
@@ -203,15 +205,9 @@ func CreateWorktree(instanceDir, taskID, repoName string) (string, error) {
 		return "", err
 	}
 
-	var entry *RepoEntry
-	for i := range instConfig.Repos {
-		if instConfig.Repos[i].Name == repoName {
-			entry = &instConfig.Repos[i]
-			break
-		}
-	}
-	if entry == nil {
-		return "", fmt.Errorf("repo %q not found in instance", repoName)
+	entry, err := findRepoEntry(instConfig, repoName)
+	if err != nil {
+		return "", err
 	}
 
 	bareRepoDir := filepath.Join(instanceDir, entry.BarePath)
@@ -232,15 +228,9 @@ func RemoveWorktree(instanceDir, taskID, repoName string) error {
 		return err
 	}
 
-	var entry *RepoEntry
-	for i := range instConfig.Repos {
-		if instConfig.Repos[i].Name == repoName {
-			entry = &instConfig.Repos[i]
-			break
-		}
-	}
-	if entry == nil {
-		return fmt.Errorf("repo %q not found in instance", repoName)
+	entry, err := findRepoEntry(instConfig, repoName)
+	if err != nil {
+		return err
 	}
 
 	bareRepoDir := filepath.Join(instanceDir, entry.BarePath)
@@ -268,7 +258,6 @@ func CleanupTaskWorktrees(instanceDir, taskID string) error {
 		}
 	}
 
-	// Remove the task directory if empty
 	taskDir := filepath.Join(instanceDir, tasksDir, taskID)
 	os.Remove(taskDir) // Best-effort; may fail if not empty
 

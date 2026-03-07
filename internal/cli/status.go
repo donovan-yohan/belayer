@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/donovan-yohan/belayer/internal/config"
-	"github.com/donovan-yohan/belayer/internal/coordinator"
 	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -17,26 +16,18 @@ func newStatusCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show task and lead status",
+		Short: "Show task and goal status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Resolve instance
-			if instanceName == "" {
-				cfg, err := config.Load()
-				if err != nil {
-					return fmt.Errorf("loading config: %w", err)
-				}
-				instanceName = cfg.DefaultInstance
-				if instanceName == "" {
-					return fmt.Errorf("no default instance set; use --instance flag")
-				}
-			}
-
-			_, instanceDir, err := instance.Load(instanceName)
+			resolvedName, err := resolveInstanceName(instanceName)
 			if err != nil {
-				return fmt.Errorf("loading instance %q: %w", instanceName, err)
+				return err
 			}
 
-			// Open database
+			_, instanceDir, err := instance.Load(resolvedName)
+			if err != nil {
+				return fmt.Errorf("loading instance %q: %w", resolvedName, err)
+			}
+
 			dbPath := filepath.Join(instanceDir, "belayer.db")
 			database, err := db.Open(dbPath)
 			if err != nil {
@@ -44,38 +35,34 @@ func newStatusCmd() *cobra.Command {
 			}
 			defer database.Close()
 
-			store := coordinator.NewStore(database.Conn())
+			s := store.New(database.Conn())
 			out := cmd.OutOrStdout()
 
-			fmt.Fprintf(out, "Instance: %s\n\n", instanceName)
+			fmt.Fprintf(out, "Instance: %s\n\n", resolvedName)
 
-			// Show tasks by status
 			for _, status := range []model.TaskStatus{
 				model.TaskStatusRunning,
 				model.TaskStatusPending,
-				model.TaskStatusDecomposing,
-				model.TaskStatusAligning,
+				model.TaskStatusReviewing,
 				model.TaskStatusComplete,
-				model.TaskStatusFailed,
+				model.TaskStatusStuck,
 			} {
-				tasks, err := store.GetTasksByStatus(status)
+				tasks, err := s.GetTasksByStatus(status)
 				if err != nil {
 					return fmt.Errorf("querying tasks: %w", err)
 				}
 				for _, task := range tasks {
 					fmt.Fprintf(out, "Task: %s [%s]\n", task.ID, task.Status)
-					fmt.Fprintf(out, "  Description: %s\n", task.Description)
 
-					// Show leads for this task
-					leads, err := store.GetLeadsForTask(task.ID)
+					goals, err := s.GetGoalsForTask(task.ID)
 					if err != nil {
-						fmt.Fprintf(out, "  Leads: error querying: %v\n", err)
+						fmt.Fprintf(out, "  Goals: error querying: %v\n", err)
 						continue
 					}
-					if len(leads) > 0 {
-						fmt.Fprintf(out, "  Leads:\n")
-						for _, l := range leads {
-							fmt.Fprintf(out, "    %s [%s] attempt=%d\n", l.ID, l.Status, l.Attempt)
+					if len(goals) > 0 {
+						fmt.Fprintf(out, "  Goals:\n")
+						for _, g := range goals {
+							fmt.Fprintf(out, "    %s [%s] repo=%s attempt=%d\n", g.ID, g.Status, g.RepoName, g.Attempt)
 						}
 					}
 					fmt.Fprintln(out)

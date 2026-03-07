@@ -28,3 +28,9 @@ Go's built-in `go test` with `testing` package. No external test framework.
 - Test helpers in `internal/testutil/`
 - SQLite tests use in-memory databases (`:memory:`)
 - No tests should require network access or running services
+- Mock claude scripts: Prepend temp dir to `PATH` with mock `claude` bash scripts that return canned JSON based on prompt content
+- Lead runner mock scripts must output verdict JSON to stdout (not write files) — `claude -p` is print-only mode
+
+## Known Issues
+
+- `TestProcessPendingTask_Decomposition`: Flaky due to TempDir cleanup race condition. Passes ~2/3 runs. Pre-existing, low severity.

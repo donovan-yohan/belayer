@@ -32,7 +32,7 @@ Lead (bundled execution loop per repo)
 | Module | Path | Purpose |
 |--------|------|---------|
 | CLI entry | `cmd/belayer/main.go` | Binary entry point |
-| CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task, status, tui) |
+| CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task create/retry/list, status, tui) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
 | Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_lead_execution.sql, 003_task_intake.sql) |

@@ -33,7 +33,6 @@ func RepoNameFromURL(rawURL string) (string, error) {
 		path = u.Path
 	}
 
-	// Strip trailing slash, then .git suffix
 	path = strings.TrimSuffix(path, "/")
 	path = strings.TrimSuffix(path, ".git")
 	path = strings.TrimSuffix(path, "/")
@@ -77,7 +76,6 @@ func WorktreeRemove(bareRepoDir, worktreePath string) error {
 		return fmt.Errorf("git worktree remove: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 
-	// Prune stale worktree entries
 	pruneCmd := exec.Command("git", "-C", bareRepoDir, "worktree", "prune")
 	if pruneOutput, pruneErr := pruneCmd.CombinedOutput(); pruneErr != nil {
 		return fmt.Errorf("git worktree prune: %s: %w", strings.TrimSpace(string(pruneOutput)), pruneErr)
@@ -89,7 +87,6 @@ func WorktreeRemove(bareRepoDir, worktreePath string) error {
 // WorktreeDiff returns the git diff for changes on the current branch relative to the default branch.
 // Uses three-dot diff (main...HEAD) to capture only branch-specific changes.
 func WorktreeDiff(worktreePath string) (string, error) {
-	// Determine the default branch name
 	baseBranch := detectBaseBranch(worktreePath)
 
 	cmd := exec.Command("git", "-C", worktreePath, "diff", baseBranch+"...HEAD")
@@ -114,7 +111,6 @@ func WorktreeDiffStat(worktreePath string) (string, error) {
 
 // detectBaseBranch determines the default branch name (main, master, etc.).
 func detectBaseBranch(worktreePath string) string {
-	// Try to get the remote HEAD reference
 	cmd := exec.Command("git", "-C", worktreePath, "symbolic-ref", "refs/remotes/origin/HEAD")
 	output, err := cmd.CombinedOutput()
 	if err == nil {

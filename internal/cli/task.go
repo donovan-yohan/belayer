@@ -1,23 +1,16 @@
 package cli
 
 import (
-	"bytes"
-	"context"
+	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
-	"os/signal"
 	"path/filepath"
-	"syscall"
 	"time"
 
-	"github.com/donovan-yohan/belayer/internal/config"
-	"github.com/donovan-yohan/belayer/internal/coordinator"
 	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/instance"
-	"github.com/donovan-yohan/belayer/internal/intake"
-	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -28,95 +21,68 @@ func newTaskCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(newTaskCreateCmd())
+	cmd.AddCommand(newTaskListCmd())
 	return cmd
 }
 
-// instanceWorktreeAdapter adapts instance.CreateWorktree to the WorktreeCreator interface.
-type instanceWorktreeAdapter struct {
-	instanceDir string
-}
-
-func (a *instanceWorktreeAdapter) CreateWorktree(instanceDir, taskID, repoName string) (string, error) {
-	return instance.CreateWorktree(a.instanceDir, taskID, repoName)
-}
-
-// claudeExecutor implements intake.AgenticExecutor using the real claude CLI.
-type claudeExecutor struct {
-	model string
-}
-
-func (e *claudeExecutor) Execute(ctx context.Context, prompt string) (string, error) {
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", e.model, "--output-format", "json", prompt)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("claude failed: %w (stderr: %s)", err, stderr.String())
-	}
-	return stdout.String(), nil
-}
-
 func newTaskCreateCmd() *cobra.Command {
-	var jira string
+	var specPath string
+	var goalsPath string
+	var jiraRef string
 	var instanceName string
-	var noBrainstorm bool
 
 	cmd := &cobra.Command{
-		Use:   "create [description]",
-		Short: "Create a new task and start the coordinator",
-		Args:  cobra.MaximumNArgs(1),
+		Use:   "create",
+		Short: "Create a new task from a spec and goals file",
+		Long:  "Validates spec.md and goals.json, then writes the task and goals to SQLite.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var description string
-			if len(args) > 0 {
-				description = args[0]
+			if specPath == "" {
+				return fmt.Errorf("--spec is required")
 			}
-			jiraTickets := intake.ParseJiraTickets(jira)
-
-			if description == "" && len(jiraTickets) == 0 {
-				return fmt.Errorf("provide a description or --jira flag")
+			if goalsPath == "" {
+				return fmt.Errorf("--goals is required")
 			}
 
-			// Resolve instance
-			if instanceName == "" {
-				cfg, err := config.Load()
-				if err != nil {
-					return fmt.Errorf("loading config: %w", err)
-				}
-				instanceName = cfg.DefaultInstance
-				if instanceName == "" {
-					return fmt.Errorf("no default instance set; use --instance or run `belayer instance create` first")
-				}
-			}
-
-			instConfig, instanceDir, err := instance.Load(instanceName)
+			specContent, err := os.ReadFile(specPath)
 			if err != nil {
-				return fmt.Errorf("loading instance %q: %w", instanceName, err)
+				return fmt.Errorf("reading spec file %q: %w", specPath, err)
+			}
+			if len(specContent) == 0 {
+				return fmt.Errorf("spec file %q is empty", specPath)
 			}
 
-			// Collect repo names from instance config
+			goalsContent, err := os.ReadFile(goalsPath)
+			if err != nil {
+				return fmt.Errorf("reading goals file %q: %w", goalsPath, err)
+			}
+
+			var goalsFile model.GoalsFile
+			if err := json.Unmarshal(goalsContent, &goalsFile); err != nil {
+				return fmt.Errorf("parsing goals file %q: %w", goalsPath, err)
+			}
+
+			if err := store.ValidateGoalsFile(&goalsFile); err != nil {
+				return fmt.Errorf("validating goals: %w", err)
+			}
+
+			resolvedName, err := resolveInstanceName(instanceName)
+			if err != nil {
+				return err
+			}
+
+			instConfig, instanceDir, err := instance.Load(resolvedName)
+			if err != nil {
+				return fmt.Errorf("loading instance %q: %w", resolvedName, err)
+			}
+
 			var repoNames []string
 			for _, repo := range instConfig.Repos {
 				repoNames = append(repoNames, repo.Name)
 			}
-
-			// Run intake pipeline
-			coordConfig := coordinator.DefaultConfig()
-			executor := &claudeExecutor{model: coordConfig.AgenticModel}
-			pipeline := intake.NewPipeline(executor)
-
-			intakeResult, err := pipeline.Run(cmd.Context(), intake.PipelineConfig{
-				Description:  description,
-				JiraTickets:  jiraTickets,
-				RepoNames:    repoNames,
-				NoBrainstorm: noBrainstorm,
-				Stdin:        cmd.InOrStdin(),
-				Stdout:       cmd.OutOrStdout(),
-			})
-			if err != nil {
-				return fmt.Errorf("intake pipeline: %w", err)
+			if err := store.ValidateGoalsRepos(&goalsFile, repoNames); err != nil {
+				return err
 			}
 
-			// Open database
 			dbPath := filepath.Join(instanceDir, "belayer.db")
 			database, err := db.Open(dbPath)
 			if err != nil {
@@ -124,55 +90,81 @@ func newTaskCreateCmd() *cobra.Command {
 			}
 			defer database.Close()
 
-			// Create stores
-			coordStore := coordinator.NewStore(database.Conn())
-			leadStore := lead.NewStore(database.Conn())
+			s := store.New(database.Conn())
 
-			// Create task from pipeline result
 			taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 			task := &model.Task{
-				ID:                 taskID,
-				InstanceID:         instanceName,
-				Description:        intakeResult.Description,
-				Source:             intakeResult.Source,
-				SourceRef:          intakeResult.SourceRef,
-				SufficiencyChecked: intakeResult.SufficiencyChecked,
-				Status:             model.TaskStatusPending,
+				ID:         taskID,
+				InstanceID: resolvedName,
+				Spec:       string(specContent),
+				GoalsJSON:  string(goalsContent),
+				JiraRef:    jiraRef,
+				Status:     model.TaskStatusPending,
 			}
 
-			if err := coordStore.InsertTask(task); err != nil {
+			goals := store.GoalsFromFile(taskID, &goalsFile)
+
+			if err := s.InsertTask(task, goals); err != nil {
 				return fmt.Errorf("creating task: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Created task %s\n", taskID)
-
-			// Start coordinator with repo names for instance-aware decomposition
-			leadRunner := lead.NewRunner(leadStore)
-			worktrees := &instanceWorktreeAdapter{instanceDir: instanceDir}
-			coordConfig.RepoNames = repoNames
-			coord := coordinator.NewCoordinator(
-				coordStore, leadRunner, worktrees, instanceDir, instanceName, coordConfig,
-			)
-
-			ctx, cancel := context.WithCancel(cmd.Context())
-			defer cancel()
-
-			// Handle interrupt
-			sigCh := make(chan os.Signal, 1)
-			signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-			go func() {
-				<-sigCh
-				fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down coordinator...")
-				cancel()
-			}()
-
-			fmt.Fprintf(cmd.OutOrStdout(), "Starting coordinator for instance %q...\n", instanceName)
-			return coord.Start(ctx)
+			fmt.Fprintf(cmd.OutOrStdout(), "Created task %s (%d goals across %d repos)\n",
+				taskID, len(goals), len(goalsFile.Repos))
+			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&jira, "jira", "", "Comma-separated Jira ticket ID(s)")
+	cmd.Flags().StringVar(&specPath, "spec", "", "Path to spec.md file (required)")
+	cmd.Flags().StringVar(&goalsPath, "goals", "", "Path to goals.json file (required)")
+	cmd.Flags().StringVar(&jiraRef, "jira", "", "Jira ticket reference (optional)")
 	cmd.Flags().StringVar(&instanceName, "instance", "", "Instance name (defaults to default instance)")
-	cmd.Flags().BoolVar(&noBrainstorm, "no-brainstorm", false, "Skip interactive brainstorm even if context is insufficient")
+	return cmd
+}
+
+func newTaskListCmd() *cobra.Command {
+	var instanceName string
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List tasks for an instance",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			resolvedName, err := resolveInstanceName(instanceName)
+			if err != nil {
+				return err
+			}
+
+			_, instanceDir, err := instance.Load(resolvedName)
+			if err != nil {
+				return fmt.Errorf("loading instance %q: %w", resolvedName, err)
+			}
+
+			dbPath := filepath.Join(instanceDir, "belayer.db")
+			database, err := db.Open(dbPath)
+			if err != nil {
+				return fmt.Errorf("opening database: %w", err)
+			}
+			defer database.Close()
+
+			s := store.New(database.Conn())
+			tasks, err := s.ListTasksForInstance(resolvedName)
+			if err != nil {
+				return fmt.Errorf("listing tasks: %w", err)
+			}
+
+			if len(tasks) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No tasks found.")
+				return nil
+			}
+
+			for _, t := range tasks {
+				goals, _ := s.GetGoalsForTask(t.ID)
+				fmt.Fprintf(cmd.OutOrStdout(), "%-10s  %-20s  %d goals  %s\n",
+					t.Status, t.ID, len(goals), t.CreatedAt.Format("2006-01-02 15:04"))
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&instanceName, "instance", "", "Instance name (defaults to default instance)")
 	return cmd
 }

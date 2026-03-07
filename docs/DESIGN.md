@@ -33,8 +33,11 @@ Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and for
 
 Bundled lead loop (enhanced from llm-agents lead plugin):
 - Execute -> Review -> Verdict cycle per goal
+- Review step: Claude outputs verdict JSON to stdout; the script parses it (Claude `-p` mode cannot write files)
+- JSON extraction handles markdown code fences and surrounding text via embedded python3
 - Writes structured progress to SQLite (not just files)
-- Emits events on state changes
+- Emits events on state changes including agent output snippets (`exec_output`, `review_output`)
+- Full agent output saved to `output/` directory; first 500 chars stored in event payload as audit trail
 - .lead/ directory maintained for crash recovery
 
 ## Repo Isolation
@@ -48,10 +51,11 @@ Follows extend-cli pattern:
 
 Each agentic node:
 - Receives a structured prompt (Go template with context from SQLite)
-- Runs as `claude -p --model <model> <prompt>`
-- Produces structured output (JSON written to stdout or file)
-- Has a timeout and retry limit
-- Results are parsed and stored in SQLite
+- Runs as `claude -p --model <model> <prompt>` (no `--output-format json` — raw text avoids double-JSON-escaping and truncation)
+- Produces structured output (JSON to stdout, may be wrapped in markdown code fences)
+- `StripMarkdownJSON()` regex strips code fences before parsing
+- Process group isolation: `Setpgid: true` + custom `Cancel` kills entire process tree on context cancellation (prevents orphaned `claude` processes)
+- Results are parsed and stored in SQLite (`agentic_decisions` table)
 
 ## Task Intake Pipeline
 
@@ -74,7 +78,7 @@ The coordinator (`internal/coordinator/`) is the central orchestration layer:
 - **State machine**: Polls SQLite on a configurable interval (default 2s), drives tasks through `pending -> decomposing -> running -> aligning -> complete/failed`
 - **Lead management**: Spawns leads as goroutines via `lead.Runner.Run()`, tracks active leads with `sync.Mutex` protected map
 - **Crash recovery**: Detects lead failures, schedules retry with exponential backoff (`min(base * 2^attempt, max)`)
-- **Agentic nodes**: Runs ephemeral `claude -p --model <model> --output-format json <prompt>` for judgment calls; stores all decisions in `agentic_decisions` table
+- **Agentic nodes**: Runs ephemeral `claude -p --model <model> <prompt>` for judgment calls; `StripMarkdownJSON()` handles code fences; stores all decisions in `agentic_decisions` table
 - **Instance-aware decomposition**: Decomposition prompt includes available repo names from instance config, constraining the agentic node to valid repos
 - **Sufficiency skip**: Tasks pre-checked at intake skip the coordinator's sufficiency check
 - **Interfaces**: `LeadRunner`, `WorktreeCreator`, `DiffCollector`, and `PRCreator` interfaces enable mock-based testing
@@ -92,7 +96,23 @@ The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
 - **Responsive**: Adapts to terminal size via `tea.WindowSizeMsg`
 - **TUI-specific store**: `tui.Store` wraps `*sql.DB` with read-only queries optimized for the dashboard (denormalized `TaskSummary`, `LeadDetail`, `EventEntry`)
 - **Status badges**: Color-coded per status using lipgloss (green=complete, yellow=running, red=failed, orange=stuck)
+- **Event scrolling**: Events pane shows scroll indicators (`↑ N more above` / `↓ N more below`) and position (`Events (3/10)`) when focused
 - **Testing**: Temp-file SQLite (not `:memory:`) for tests due to connection pool isolation issues
+
+## CLI Commands
+
+| Command | Purpose |
+|---------|---------|
+| `belayer init <name> --repo <url>` | Create a new instance with repos |
+| `belayer task create [desc]` | Create task with intake pipeline + start coordinator |
+| `belayer task retry [task-id]` | Retry a failed task (reuses enriched description) |
+| `belayer task list` | List tasks for the current instance |
+| `belayer tui` | Launch the monitoring dashboard |
+| `belayer status` | Quick status overview |
+
+## Process Lifecycle
+
+All child processes (`claude -p`, lead shell scripts) are spawned with `Setpgid: true` to create independent process groups. On context cancellation (Ctrl+C), the custom `cmd.Cancel` sends `SIGKILL` to the entire process group (negative PID), ensuring no orphaned grandchild processes survive.
 
 ## See Also
 

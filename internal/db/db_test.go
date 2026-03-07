@@ -28,7 +28,7 @@ func TestMigrate(t *testing.T) {
 	}
 
 	// Verify tables exist
-	tables := []string{"instances", "tasks", "task_repos", "leads", "events", "agentic_decisions"}
+	tables := []string{"instances", "tasks", "goals", "events", "spotter_reviews"}
 	for _, table := range tables {
 		var name string
 		err := d.Conn().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)

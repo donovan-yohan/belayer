@@ -1,0 +1,53 @@
+# PRD: Belayer Agent-Friendly Architecture Redesign
+
+## Objective
+
+Redesign belayer from scratch to eliminate Claude-in-Claude nesting, make the CLI a pure data publisher, and use tmux-based process management with per-goal parallelism. The system uses climbing nomenclature: Setter (daemon), Spotter (reviewer), Lead (worker), and Belayer (interactive manager). This enables vendor-agnostic agent execution and cross-repo validation with automatic redistribution. No backwards compatibility with the existing codebase is required — this is a clean-slate rebuild.
+
+## Goals
+
+| # | Goal | Status | Attempts | Design Doc | Plan |
+|---|------|--------|----------|------------|------|
+| 1 | CLI and data layer — pure data publisher with SQLite | complete | 1 | [design](../design-docs/2026-03-07-cli-data-layer-design.md) | [plan](../exec-plans/completed/2026-03-07-cli-data-layer-plan.md) |
+| 2 | Setter daemon — DAG executor with tmux management | pending | 0 | - | - |
+| 3 | Lead spawning — AgentSpawner interface and per-goal sessions | pending | 0 | - | - |
+| 4 | Spotter — cross-repo review with redistribution | pending | 0 | - | - |
+| 5 | Belayer manage — interactive agent session for task creation | pending | 0 | - | - |
+
+## Acceptance Criteria
+
+| Goal | Criteria |
+|------|----------|
+| 1 | `belayer task create --spec spec.md --goals goals.json` writes task to SQLite with parsed goals; `--jira` flag stores ticket ref optionally; no `claude -p` calls anywhere in CLI; CLI validates spec.md exists and goals.json parses correctly; goals.json schema supports per-repo goals with `depends_on` fields; SQLite schema includes tasks, goals, events, and spotter_reviews tables; `belayer init` and `belayer instance create` set up directory structure and bare repo clones; `go test ./...` passes |
+| 2 | `belayer setter --instance <name>` starts a long-running daemon; polls SQLite for pending tasks; parses goals.json and builds per-repo goal DAG; creates tmux session per task (`task-<id>`); spawns tmux windows for goals with no unmet dependencies; watches for DONE.json files in worktrees; updates goal status in SQLite on completion; unblocks dependent goals and spawns them; handles crash recovery (re-reads SQLite + scans worktrees on restart); stale goal detection (configurable timeout); `--max-leads` flag caps concurrent leads (default 8) with FIFO queue; `belayer logs` subcommands work (view, cleanup, stats); tmux pipe-pane captures output to log files with rotation (10MB/goal, 500MB/instance); auto-compress logs on task completion with 7-day retention |
+| 3 | `AgentSpawner` interface implemented with `Spawn`, `Done`, `Kill` methods; Claude Code implementation spawns `claude -p` in tmux window with harness flow prompt; prompt includes spec.md content, goal description, and instructions to write DONE.json; DONE.json contains structured output (status, summary, files_changed, notes); `DoneSignaler` watches worktrees for DONE.json via filesystem polling; per-goal tmux windows named `<repo>-<goal-id>`; multiple goals run in parallel when dependencies allow; vendor abstraction boundary is clean (no Claude-specific code outside the Claude spawner implementation) |
+| 4 | Spotter spawned by setter when all goals for a task complete; runs as agent session in own tmux window; receives spec.md + git diffs from all repo worktrees + goal completion summaries; produces verdict JSON (approve/reject with per-repo status and correction goals); on approve: setter creates PRs for all repos, marks task complete; on reject: setter writes correction goals for failing repos, spawns new lead sessions; max 2 spotter reviews then marks affected repos as stuck; all PRs held until spotter approves; `spotter_reviews` table tracks attempts and verdicts |
+| 5 | `belayer manage --instance <name>` starts an interactive agent session; agent is trained on belayer CLI usage; can run brainstorm skill to generate spec.md + goals.json; can fetch and convert Jira tickets to task format; invokes `belayer task create` to publish tasks; no LLM inference happens in the CLI itself — all inference in the manage session |
+
+## Context & Decisions
+
+- **Design doc**: `docs/design-docs/2026-03-07-agent-friendly-architecture-design.md`
+- **Clean slate**: No backwards compatibility required — existing code can be replaced entirely
+- **Climbing nomenclature**: Setter (daemon), Spotter (reviewer), Lead (worker), Belayer (interactive manager)
+- **tmux for process management**: Battle-tested, gives visibility, no custom daemon complexity
+- **DONE.json files + SQLite events**: Vendor-agnostic; any agent can write a file
+- **One session per goal**: Parallelism, isolation, clean context, retry granularity
+- **Cross-repo deps implicit**: Spotter validates alignment rather than explicit DAG edges
+- **Max 2 spotter reviews**: Prevents infinite loops; stuck repos reported to user
+- **Hold all PRs**: Cross-repo consistency is belayer's core value proposition
+- **AgentSpawner interface**: 3-method boundary (spawn, done, kill) for vendor abstraction
+- **Pre-decomposed tasks**: Setter does no inference, only routing
+- **Hybrid TUI**: SQLite dashboard + tmux attach for live view (follow-up work)
+- **Crash recovery**: DONE files as source of truth; setter reconstructs state on restart
+- **Output capture**: Structured DONE.json + tmux pipe-pane logs with rotation/cleanup
+- **Concurrent tasks**: Single event loop, `--max-leads 8` default with FIFO queue
+- **Log management**: 10MB/goal, 500MB/instance limits; auto-compress on completion; 7-day retention
+
+## Reflections & Lessons
+
+### Goal 1 - CLI and Data Layer
+- Clean-slate rebuild went smoothly — removing old packages (coordinator, intake, lead, tui) before rewriting CLI prevented compile errors from stale imports
+- The store package (replacing coordinator/store + lead/store) is simpler with a flat structure; all CRUD in one file
+- Kept db/, config/, instance/, and repo/ packages unchanged — they work well and don't depend on the old architecture
+- GoalsFile validation (unique IDs, same-repo deps, matching instance repos) catches errors at ingest time before touching SQLite
+- Spec content is stored directly in SQLite rather than as a file path — simpler, avoids path resolution issues
