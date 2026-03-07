@@ -11,7 +11,7 @@ Belayer is a standalone Go CLI tool that orchestrates autonomous coding agents a
 | 1 | Project scaffolding & core architecture | complete | 1 | [design](../design-docs/2026-03-06-project-scaffolding-design.md) | [plan](../exec-plans/completed/2026-03-06-project-scaffolding-plan.md) |
 | 2 | Instance & repository management | complete | 1 | [design](../design-docs/2026-03-06-instance-repo-management-design.md) | [plan](../exec-plans/completed/2026-03-06-instance-repo-management-plan.md) |
 | 3 | Bundled lead execution loop | complete | 1 | [design](../design-docs/2026-03-06-lead-execution-loop-design.md) | [plan](../exec-plans/completed/2026-03-06-lead-execution-loop-plan.md) |
-| 4 | Coordinator engine (state machine + agentic nodes) | pending | 0 | - | - |
+| 4 | Coordinator engine (state machine + agentic nodes) | complete | 1 | [design](../design-docs/2026-03-06-coordinator-engine-design.md) | [plan](../exec-plans/completed/2026-03-06-coordinator-engine-plan.md) |
 | 5 | Task intake & decomposition | pending | 0 | - | - |
 | 6 | Cross-repo integration & alignment | pending | 0 | - | - |
 | 7 | TUI dashboard | pending | 0 | - | - |
@@ -121,3 +121,14 @@ Jira/Text -> Intake -> Sufficiency Check (agentic) -> Decomposition (agentic)
 - Adding a second migration required updating the idempotent migration test (hardcoded count check)
 - `python3` for JSON parsing in shell is pragmatic — available on macOS/Linux, avoids `jq` dependency
 - Lead goals table enables per-goal tracking within a lead; single-goal spec is the common case initially
+
+### Goal 4 (2026-03-06)
+- In-memory SQLite (`:memory:`) gives each connection in the pool its own empty database — breaks goroutine-based tests. Use temp file SQLite for concurrent coordinator tests
+- `LeadRunner` and `WorktreeCreator` interfaces enable clean mock-based testing without real git repos or claude
+- State machine polling is simpler than event channels for crash recovery — restart picks up from current DB state
+- Alignment runs in a goroutine to not block the coordinator tick loop; other agentic nodes (sufficiency, decomposition) run synchronously in the task processing flow
+- Exponential backoff retry scheduler is a standalone component (thread-safe) that the coordinator checks on each tick
+- The `processTick` pattern (process each status in order) keeps the coordinator deterministic and easy to test step-by-step
+- Mock claude scripts must handle flag ordering (`-p`, `--model`, `--output-format`) to extract the prompt correctly
+- `task create` CLI command both inserts the task AND starts the coordinator — coordinator runs until interrupted
+- `instanceWorktreeAdapter` bridges the `instance.CreateWorktree` function to the `WorktreeCreator` interface cleanly

@@ -53,6 +53,16 @@ Each agentic node:
 - Has a timeout and retry limit
 - Results are parsed and stored in SQLite
 
+## Coordinator Engine
+
+The coordinator (`internal/coordinator/`) is the central orchestration layer:
+
+- **State machine**: Polls SQLite on a configurable interval (default 2s), drives tasks through `pending -> decomposing -> running -> aligning -> complete/failed`
+- **Lead management**: Spawns leads as goroutines via `lead.Runner.Run()`, tracks active leads with `sync.Mutex` protected map
+- **Crash recovery**: Detects lead failures, schedules retry with exponential backoff (`min(base * 2^attempt, max)`)
+- **Agentic nodes**: Runs ephemeral `claude -p --model <model> --output-format json <prompt>` for judgment calls; stores all decisions in `agentic_decisions` table
+- **Interfaces**: `LeadRunner` and `WorktreeCreator` interfaces enable mock-based testing
+
 ## See Also
 
 - [Architecture](ARCHITECTURE.md) — module boundaries and data flow

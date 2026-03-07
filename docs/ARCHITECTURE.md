@@ -40,6 +40,7 @@ Lead (bundled execution loop per repo)
 | Instance | `internal/instance/` | Instance lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
 | Lead | `internal/lead/` | Lead execution runner, store, embedded shell script |
+| Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
 
 ## Data Flow
 
