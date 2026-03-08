@@ -8,10 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/anchor"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
-	"github.com/donovan-yohan/belayer/internal/anchor"
+	"github.com/donovan-yohan/belayer/internal/spotter"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -1178,6 +1179,10 @@ func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
 	// Put goal into spotting status
 	runner.dag.MarkSpotting("api-1")
 
+	// Write DONE.json that should be removed on fail
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	require.NoError(t, os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644))
+
 	// Write failing SPOT.json
 	spotData := `{"pass": false, "project_type": "frontend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
 	require.NoError(t, os.WriteFile(filepath.Join(runner.worktrees["api"], "SPOT.json"), []byte(spotData), 0o644))
@@ -1193,9 +1198,16 @@ func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
 	// Goal should be failed
 	assert.Equal(t, model.GoalStatusFailed, runner.dag.Get("api-1").Status)
 
+	// Attempt should be incremented
+	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt)
+
 	// SPOT.json should be removed
 	_, statErr := os.Stat(filepath.Join(runner.worktrees["api"], "SPOT.json"))
 	assert.True(t, os.IsNotExist(statErr))
+
+	// DONE.json should be removed so retry starts fresh
+	_, doneStatErr := os.Stat(filepath.Join(runner.worktrees["api"], "DONE.json"))
+	assert.True(t, os.IsNotExist(doneStatErr))
 
 	// Events should be recorded
 	events, _ := s.GetEventsForTask("task-sp3")
@@ -1229,4 +1241,31 @@ func TestTaskRunner_CheckSpotResult_NotFound(t *testing.T) {
 
 	// Goal should still be spotting
 	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
+}
+
+func TestSpotterFeedbackForGoal(t *testing.T) {
+	t.Run("nil spot returns empty", func(t *testing.T) {
+		result := SpotterFeedbackForGoal(nil)
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("passing spot returns empty", func(t *testing.T) {
+		spot := &spotter.SpotJSON{Pass: true}
+		result := SpotterFeedbackForGoal(spot)
+		assert.Equal(t, "", result)
+	})
+
+	t.Run("failing spot formats issues", func(t *testing.T) {
+		spot := &spotter.SpotJSON{
+			Pass: false,
+			Issues: []spotter.Issue{
+				{Check: "build", Severity: "error", Description: "Build failed"},
+				{Check: "lint", Severity: "warning", Description: "Unused import"},
+			},
+		}
+		result := SpotterFeedbackForGoal(spot)
+		assert.Contains(t, result, "FAILED CHECKS:")
+		assert.Contains(t, result, "- build [error]: Build failed")
+		assert.Contains(t, result, "- lint [warning]: Unused import")
+	})
 }
