@@ -565,6 +565,11 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
 	worktreePath := tr.worktrees[goal.RepoName]
 
+	// Ensure remain-on-exit is set for the spotter window (reused from lead)
+	if err := tr.tmux.SetRemainOnExit(tr.tmuxSession, windowName, true); err != nil {
+		log.Printf("warning: set remain-on-exit for spotter %s failed: %v", windowName, err)
+	}
+
 	// Read DONE.json for context
 	donePath := filepath.Join(worktreePath, "DONE.json")
 	doneData, err := os.ReadFile(donePath)
