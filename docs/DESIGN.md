@@ -46,15 +46,15 @@ Validation flows through three layers after a lead completes a goal:
 | `SPOT.json` | Spotter | `{ "pass": true/false, "project_type": "frontend", "issues": [...], "screenshots": [...] }` |
 | `VERDICT.json` | Anchor | `{ "verdict": "approve"/"reject", "repos": { ... } }` |
 
-## Lead Execution Loop
+## Lead Execution
 
-Bundled lead loop (enhanced from llm-agents lead plugin):
-- Execute -> Review -> Verdict cycle per goal
-- Review step: Claude outputs verdict JSON to stdout; the script parses it (Claude `-p` mode cannot write files)
-- JSON extraction handles markdown code fences and surrounding text via embedded python3
-- Writes structured progress to SQLite (not just files)
-- Emits events on state changes including agent output snippets (`exec_output`, `review_output`)
-- Full agent output saved to `output/` directory; first 500 chars stored in event payload as audit trail
+Leads run as full interactive Claude Code sessions (not `claude -p`):
+- Setter prepares worktree with `.claude/CLAUDE.md` (auto-loaded by Claude Code) + `.lead/GOAL.json` (structured context)
+- Spawned via `claude --dangerously-skip-permissions "initial prompt"` in tmux
+- Agents use the full Claude Code environment: CLAUDE.md, skills, MCP tools, harness workflow
+- Writes `DONE.json` signal file on completion
+- Stuck detection: log file mtime silence monitoring + pane capture for input prompt detection
+- Tmux windows use `remain-on-exit on` for exit status inspection via `#{pane_dead}`
 - .lead/ directory maintained for crash recovery
 
 ## Repo Isolation
@@ -139,19 +139,19 @@ All child processes (`claude -p`, lead shell scripts) are spawned with `Setpgid:
 Resolution chain: instance config > global config > embedded defaults.
 
 - `belayerconfig.Load()` merges TOML configs following the chain
-- `belayerconfig.LoadPrompt()` / `LoadProfile()` resolve from config dirs
+- `belayerconfig.LoadProfile()` resolves validation profiles from config dirs
 - Embedded defaults via Go `embed.FS` in `internal/defaults/`
 - `belayer.toml` schema: `[agents]`, `[execution]`, `[validation]`, `[anchor]` sections
 - **Validation profiles**: Human-readable TOML checklists the LLM interprets
 
-## Prompt Template System
+## Environment Preparation
 
-Prompts are extracted from Go source to editable `.md` files:
+Instead of prompt templates, agents receive context through worktree files:
 
-- Go template variables (e.g., `{{.Spec}}`, `{{.GoalID}}`, `{{.SpotterFeedback}}`)
-- `BuildPrompt` / `BuildAnchorPrompt` / `BuildSpotterPrompt` accept a template string parameter
-- `BuildPromptDefault` / etc. convenience functions use embedded defaults
-- Templates resolved via config system (instance overrides > embedded defaults)
+- **`.claude/CLAUDE.md`**: Role-specific instructions auto-loaded by Claude Code. Embedded templates in `internal/defaults/claudemd/`. Prepended to existing CLAUDE.md if present.
+- **`.lead/GOAL.json`**: Structured context (types in `internal/goalctx/`): `LeadGoal`, `SpotterGoal`, `AnchorGoal` with role-specific fields.
+- **`.lead/profiles/*.toml`**: Validation profiles written for spotter agent discovery.
+- The setter writes these files before spawning each agent.
 
 ## Naming Convention
 

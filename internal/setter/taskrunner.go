@@ -331,17 +331,17 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 			if info, statErr := os.Stat(logPath); statErr == nil {
 				silenceThreshold := 2 * time.Minute
 				if now.Sub(info.ModTime()) > silenceThreshold {
-					// Capture pane to check if waiting for input
-					paneContent, captureErr := tr.tmux.CapturePaneContent(tr.tmuxSession, windowName, 30)
-					if captureErr == nil && looksLikeInputPrompt(paneContent) {
-						windowDead = true
-						reason = "waiting for input"
-					}
-
-					// Also check if process has exited
+					// Check if process has exited first (most definitive signal)
 					if dead, deadErr := tr.tmux.IsPaneDead(tr.tmuxSession, windowName); deadErr == nil && dead {
 						windowDead = true
 						reason = "process exited without signal file"
+					} else {
+						// Capture pane to check if waiting for input
+						paneContent, captureErr := tr.tmux.CapturePaneContent(tr.tmuxSession, windowName, 30)
+						if captureErr == nil && looksLikeInputPrompt(paneContent) {
+							windowDead = true
+							reason = "waiting for input"
+						}
 					}
 				}
 			}
@@ -492,11 +492,19 @@ func (tr *TaskRunner) writeClaudeMD(worktreePath, role string) error {
 	}
 
 	claudeMDPath := filepath.Join(claudeDir, "CLAUDE.md")
+	origPath := filepath.Join(claudeDir, "CLAUDE.md.orig")
 
-	// Preserve existing CLAUDE.md content
-	existing, _ := os.ReadFile(claudeMDPath)
-	if len(existing) > 0 {
-		belayerContent = belayerContent + "\n\n---\n\n" + string(existing)
+	// On first call, save the original repo CLAUDE.md (if any) so we
+	// can always reconstruct without accumulating stale role instructions.
+	if _, err := os.Stat(origPath); os.IsNotExist(err) {
+		if existing, readErr := os.ReadFile(claudeMDPath); readErr == nil && len(existing) > 0 {
+			_ = os.WriteFile(origPath, existing, 0o644)
+		}
+	}
+
+	// Rebuild from template + original repo content (never prior belayer content)
+	if orig, err := os.ReadFile(origPath); err == nil && len(orig) > 0 {
+		belayerContent = belayerContent + "\n\n---\n\n" + string(orig)
 	}
 
 	return os.WriteFile(claudeMDPath, []byte(belayerContent), 0o644)
@@ -777,35 +785,11 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		return fmt.Errorf("writing anchor CLAUDE.md: %w", err)
 	}
 
-	// Convert anchor diffs/summaries to goalctx types for GOAL.json
-	anchorDiffs := tr.GatherDiffs()
-	var repoDiffs []goalctx.RepoDiff
-	for _, d := range anchorDiffs {
-		repoDiffs = append(repoDiffs, goalctx.RepoDiff{
-			RepoName: d.RepoName,
-			DiffStat: d.DiffStat,
-			Diff:     d.Diff,
-		})
-	}
-
-	anchorSummaries := tr.GatherSummaries()
-	var goalSummaries []goalctx.GoalSummary
-	for _, s := range anchorSummaries {
-		goalSummaries = append(goalSummaries, goalctx.GoalSummary{
-			GoalID:      s.GoalID,
-			RepoName:    s.RepoName,
-			Description: s.Description,
-			Status:      s.Status,
-			Summary:     s.Summary,
-			Notes:       s.Notes,
-		})
-	}
-
 	if err := goalctx.WriteGoalJSON(tr.taskDir, goalctx.AnchorGoal{
 		Role:      "anchor",
 		TaskSpec:  tr.task.Spec,
-		RepoDiffs: repoDiffs,
-		Summaries: goalSummaries,
+		RepoDiffs: tr.GatherDiffs(),
+		Summaries: tr.GatherSummaries(),
 	}); err != nil {
 		return fmt.Errorf("writing anchor GOAL.json: %w", err)
 	}

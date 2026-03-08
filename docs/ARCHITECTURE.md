@@ -25,8 +25,8 @@ Setter (DAG executor daemon — manages routes/tasks)
   v
 Lead (bundled execution loop per repo — does the climbing)
   |-- Runs in isolated git worktree
-  |-- Executes goals via claude -p with configurable prompt templates
-  |-- Writes progress to SQLite + .lead/ files
+  |-- Full interactive Claude Code session (not claude -p)
+  |-- Environment: .claude/CLAUDE.md (auto-loaded) + .lead/GOAL.json (structured context)
   |-- Self-check: build + tests
   |
   v
@@ -52,16 +52,17 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task, status, tui, setter) |
 | Belayer Config | `internal/belayerconfig/` | Config loader with resolution chain (instance > global > embedded defaults) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
-| Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, prompt templates, validation profiles) via `embed.FS` |
+| Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles) via `embed.FS` |
+| Goal Context | `internal/goalctx/` | GOAL.json types (LeadGoal, SpotterGoal, AnchorGoal) and writer |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
 | Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_lead_execution.sql, 003_task_intake.sql) |
 | Model | `internal/model/` | Domain types and status enums |
 | Instance | `internal/instance/` | Instance lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
 | Setter | `internal/setter/` | DAG executor daemon (was coordinator). Manages leads, spotters, and anchors |
-| Lead | `internal/lead/` | Lead execution runner, store, embedded shell script, configurable prompt templates |
+| Lead | `internal/lead/` | Lead execution runner, store, ClaudeSpawner (interactive sessions via tmux) |
 | Spotter | `internal/spotter/` | Per-goal runtime validator. Project type detection, validation profiles, SPOT.json types |
-| Anchor | `internal/anchor/` | Cross-repo alignment reviewer. Prompt builder + verdict types |
+| Anchor | `internal/anchor/` | Cross-repo alignment reviewer. Verdict types (VerdictJSON, RepoVerdict) |
 | Intake | `internal/intake/` | Task intake pipeline (text/Jira parsing, sufficiency check, interactive brainstorm) |
 | Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
 | TUI | `internal/tui/` | bubbletea dashboard (model, views, styles, keys, read-only store) |
@@ -101,10 +102,6 @@ Task Input (text/Jira) --> Intake Pipeline (sufficiency + brainstorm) --> Decomp
   config.json                         # Instance registry
   config/                             # Global defaults (written by `belayer init`)
     belayer.toml                      # Agent provider, concurrency, timeouts
-    prompts/
-      lead.md                         # Lead execution prompt template
-      spotter.md                      # Spotter validation prompt template
-      anchor.md                       # Anchor cross-repo review prompt template
     profiles/
       frontend.toml                   # Frontend validation checklist
       backend.toml                    # Backend API validation checklist
