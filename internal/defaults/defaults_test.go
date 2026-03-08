@@ -24,3 +24,11 @@ func TestEmbeddedFilesExist(t *testing.T) {
 		assert.NotEmpty(t, data, "empty embedded file: %s", f)
 	}
 }
+
+func TestClaudeMDTemplatesExist(t *testing.T) {
+	for _, name := range []string{"lead.md", "spotter.md", "anchor.md"} {
+		data, err := FS.ReadFile("claudemd/" + name)
+		require.NoError(t, err, "claudemd/%s should be embedded", name)
+		assert.NotEmpty(t, data)
+	}
+}
