@@ -16,7 +16,7 @@ func TestBuildPrompt_ContainsAllFields(t *testing.T) {
 		Description: "Add /users endpoint with role field",
 	}
 
-	prompt, err := BuildPrompt(data)
+	prompt, err := BuildPromptDefault(data)
 	require.NoError(t, err)
 
 	assert.Contains(t, prompt, data.Spec)
@@ -37,7 +37,7 @@ func TestBuildPrompt_SpecWithSpecialChars(t *testing.T) {
 		Description: "Handle special characters",
 	}
 
-	prompt, err := BuildPrompt(data)
+	prompt, err := BuildPromptDefault(data)
 	require.NoError(t, err)
 
 	assert.Contains(t, prompt, "{{braces}}")
@@ -46,7 +46,7 @@ func TestBuildPrompt_SpecWithSpecialChars(t *testing.T) {
 }
 
 func TestBuildPrompt_WithSpotterFeedback(t *testing.T) {
-	prompt, err := BuildPrompt(PromptData{
+	prompt, err := BuildPromptDefault(PromptData{
 		Spec:            "build a site",
 		GoalID:          "setup",
 		RepoName:        "frontend",
@@ -59,7 +59,7 @@ func TestBuildPrompt_WithSpotterFeedback(t *testing.T) {
 }
 
 func TestBuildPrompt_NoSpotterFeedback(t *testing.T) {
-	prompt, err := BuildPrompt(PromptData{
+	prompt, err := BuildPromptDefault(PromptData{
 		Spec:        "build a site",
 		GoalID:      "setup",
 		RepoName:    "frontend",
@@ -77,7 +77,7 @@ func TestBuildPrompt_MultilineSpec(t *testing.T) {
 		Description: "Test multiline",
 	}
 
-	prompt, err := BuildPrompt(data)
+	prompt, err := BuildPromptDefault(data)
 	require.NoError(t, err)
 
 	assert.Contains(t, prompt, "Line 1\nLine 2\nLine 3")

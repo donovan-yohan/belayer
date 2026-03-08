@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"text/template"
+
+	"github.com/donovan-yohan/belayer/internal/defaults"
 )
 
 // PromptData holds the values injected into the lead prompt template.
@@ -80,8 +82,8 @@ If you cannot complete the goal, still commit any partial work, then write DONE.
 IMPORTANT: You MUST commit, push, and write DONE.json before exiting. This is how the system tracks your work.`
 
 // BuildPrompt renders the lead prompt template with the given data.
-func BuildPrompt(data PromptData) (string, error) {
-	tmpl, err := template.New("lead-prompt").Parse(promptTemplate)
+func BuildPrompt(templateStr string, data PromptData) (string, error) {
+	tmpl, err := template.New("lead-prompt").Parse(templateStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing prompt template: %w", err)
 	}
@@ -92,4 +94,13 @@ func BuildPrompt(data PromptData) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+// BuildPromptDefault renders the lead prompt using the embedded default template.
+func BuildPromptDefault(data PromptData) (string, error) {
+	tmplBytes, err := defaults.FS.ReadFile("prompts/lead.md")
+	if err != nil {
+		return "", fmt.Errorf("reading embedded lead prompt: %w", err)
+	}
+	return BuildPrompt(string(tmplBytes), data)
 }

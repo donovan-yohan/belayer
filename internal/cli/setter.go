@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/belayerconfig"
+	"github.com/donovan-yohan/belayer/internal/config"
 	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
@@ -49,6 +51,19 @@ func newSetterCmd() *cobra.Command {
 				return fmt.Errorf("running migrations: %w", err)
 			}
 
+			// Load belayer config
+			globalDir, err := config.Dir()
+			if err != nil {
+				return fmt.Errorf("getting global config dir: %w", err)
+			}
+			globalCfgDir := filepath.Join(globalDir, "config")
+			instanceCfgDir := filepath.Join(instanceDir, "config")
+
+			bcfg, err := belayerconfig.Load(globalCfgDir, instanceCfgDir)
+			if err != nil {
+				return fmt.Errorf("loading belayer config: %w", err)
+			}
+
 			cfg := setter.Config{
 				InstanceName: name,
 				InstanceDir:  instanceDir,
@@ -59,7 +74,7 @@ func newSetterCmd() *cobra.Command {
 
 			tm := tmux.NewRealTmux()
 			sp := lead.NewClaudeSpawner(tm)
-			s := setter.New(cfg, database.Conn(), tm, sp)
+			s := setter.New(cfg, bcfg, globalCfgDir, instanceCfgDir, database.Conn(), tm, sp)
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()

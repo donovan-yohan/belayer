@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/anchor"
+	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/defaults"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
@@ -67,6 +68,10 @@ type TaskRunner struct {
 	git         GitRunner
 	startedAt   map[string]time.Time // goalID -> when it started running
 
+	// Config directories for prompt/profile resolution.
+	globalConfigDir   string
+	instanceConfigDir string
+
 	// Anchor state
 	anchorAttempt int
 	anchorRunning bool
@@ -77,11 +82,13 @@ type TaskRunner struct {
 }
 
 // NewTaskRunner creates a TaskRunner for the given task.
-func NewTaskRunner(task *model.Task, instanceDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *TaskRunner {
+func NewTaskRunner(task *model.Task, instanceDir, globalCfgDir, instanceCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *TaskRunner {
 	return &TaskRunner{
 		task:              task,
 		worktrees:         make(map[string]string),
 		instanceDir:       instanceDir,
+		globalConfigDir:   globalCfgDir,
+		instanceConfigDir: instanceCfgDir,
 		store:             s,
 		tmux:              tm,
 		logMgr:            lm,
@@ -184,7 +191,16 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 
 	// Build prompt and spawn agent
 	worktreePath := tr.worktrees[goal.RepoName]
-	prompt, err := lead.BuildPrompt(lead.PromptData{
+	tmplStr, tmplErr := belayerconfig.LoadPrompt(tr.globalConfigDir, tr.instanceConfigDir, "lead")
+	if tmplErr != nil {
+		// Fallback to embedded default
+		tmplBytes, readErr := defaults.FS.ReadFile("prompts/lead.md")
+		if readErr != nil {
+			return fmt.Errorf("reading embedded lead prompt: %w", readErr)
+		}
+		tmplStr = string(tmplBytes)
+	}
+	prompt, err := lead.BuildPrompt(tmplStr, lead.PromptData{
 		Spec:            tr.task.Spec,
 		GoalID:          goal.ID,
 		RepoName:        goal.RepoName,
@@ -545,10 +561,15 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		profiles[name] = string(content)
 	}
 
-	// Read spotter prompt template from embedded defaults
-	tmplBytes, err := defaults.FS.ReadFile("prompts/spotter.md")
-	if err != nil {
-		return fmt.Errorf("reading spotter prompt template: %w", err)
+	// Load spotter prompt template from config chain
+	spotterTmplStr, tmplErr := belayerconfig.LoadPrompt(tr.globalConfigDir, tr.instanceConfigDir, "spotter")
+	if tmplErr != nil {
+		// Fallback to embedded default
+		tmplBytes, readErr := defaults.FS.ReadFile("prompts/spotter.md")
+		if readErr != nil {
+			return fmt.Errorf("reading spotter prompt template: %w", readErr)
+		}
+		spotterTmplStr = string(tmplBytes)
 	}
 
 	// Build spotter prompt
@@ -561,7 +582,7 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		DoneJSON:    string(doneData),
 	}
 
-	prompt, err := spotter.BuildSpotterPrompt(string(tmplBytes), promptData)
+	prompt, err := spotter.BuildSpotterPrompt(spotterTmplStr, promptData)
 	if err != nil {
 		return fmt.Errorf("building spotter prompt for %s: %w", goal.ID, err)
 	}
@@ -683,13 +704,23 @@ func (tr *TaskRunner) SpawnAnchor() error {
 	}
 
 	// Build anchor prompt
+	anchorTmplStr, tmplErr := belayerconfig.LoadPrompt(tr.globalConfigDir, tr.instanceConfigDir, "anchor")
+	if tmplErr != nil {
+		// Fallback to embedded default
+		tmplBytes, readErr := defaults.FS.ReadFile("prompts/anchor.md")
+		if readErr != nil {
+			return fmt.Errorf("reading embedded anchor prompt: %w", readErr)
+		}
+		anchorTmplStr = string(tmplBytes)
+	}
+
 	promptData := anchor.AnchorPromptData{
 		Spec:      tr.task.Spec,
 		RepoDiffs: tr.GatherDiffs(),
 		Summaries: tr.GatherSummaries(),
 	}
 
-	prompt, err := anchor.BuildAnchorPrompt(promptData)
+	prompt, err := anchor.BuildAnchorPrompt(anchorTmplStr, promptData)
 	if err != nil {
 		return fmt.Errorf("building anchor prompt: %w", err)
 	}

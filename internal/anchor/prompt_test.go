@@ -41,7 +41,7 @@ func TestBuildAnchorPrompt(t *testing.T) {
 		},
 	}
 
-	prompt, err := BuildAnchorPrompt(data)
+	prompt, err := BuildAnchorPromptDefault(data)
 	require.NoError(t, err)
 
 	// Check spec included

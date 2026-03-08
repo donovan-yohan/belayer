@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
@@ -35,11 +36,16 @@ func DefaultConfig() Config {
 
 // Setter is the daemon that polls SQLite for pending tasks and manages their lifecycle.
 type Setter struct {
-	config  Config
-	store   *store.Store
-	tmux    tmux.TmuxManager
-	logMgr  *logmgr.LogManager
-	spawner lead.AgentSpawner
+	config     Config
+	belayerCfg *belayerconfig.Config
+	store      *store.Store
+	tmux       tmux.TmuxManager
+	logMgr     *logmgr.LogManager
+	spawner    lead.AgentSpawner
+
+	// Config directories for prompt/profile resolution.
+	globalConfigDir   string
+	instanceConfigDir string
 
 	tasks       map[string]*TaskRunner // taskID -> runner
 	leadQueue   []QueuedGoal           // FIFO queue
@@ -47,14 +53,17 @@ type Setter struct {
 }
 
 // New creates a new Setter with the given configuration.
-func New(cfg Config, db *sql.DB, tm tmux.TmuxManager, sp lead.AgentSpawner) *Setter {
+func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, instanceCfgDir string, db *sql.DB, tm tmux.TmuxManager, sp lead.AgentSpawner) *Setter {
 	return &Setter{
-		config:  cfg,
-		store:   store.New(db),
-		tmux:    tm,
-		logMgr:  logmgr.New(cfg.InstanceDir + "/logs"),
-		spawner: sp,
-		tasks:   make(map[string]*TaskRunner),
+		config:            cfg,
+		belayerCfg:        bcfg,
+		globalConfigDir:   globalCfgDir,
+		instanceConfigDir: instanceCfgDir,
+		store:             store.New(db),
+		tmux:              tm,
+		logMgr:            logmgr.New(cfg.InstanceDir + "/logs"),
+		spawner:           sp,
+		tasks:             make(map[string]*TaskRunner),
 	}
 }
 
@@ -234,7 +243,7 @@ func (s *Setter) pollPendingTasks() error {
 
 		log.Printf("setter: initializing task %s", task.ID)
 
-		runner := NewTaskRunner(task, s.config.InstanceDir, s.store, s.tmux, s.logMgr, s.spawner)
+		runner := NewTaskRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
 		readyGoals, err := runner.Init()
 		if err != nil {
 			log.Printf("setter: error initializing task %s: %v", task.ID, err)
@@ -281,7 +290,7 @@ func (s *Setter) recover() error {
 		task := &active[i]
 		log.Printf("setter: recovering task %s (status=%s)", task.ID, task.Status)
 
-		runner := NewTaskRunner(task, s.config.InstanceDir, s.store, s.tmux, s.logMgr, s.spawner)
+		runner := NewTaskRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
 
 		// Load goals and build DAG (skip worktree creation since they should exist)
 		goals, err := s.store.GetGoalsForTask(task.ID)

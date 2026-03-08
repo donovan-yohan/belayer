@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"text/template"
+
+	"github.com/donovan-yohan/belayer/internal/defaults"
 )
 
 // AnchorPromptData holds the values injected into the anchor prompt template.
@@ -112,8 +114,8 @@ IMPORTANT:
 - Each correction goal should be self-contained and implementable by a single agent session`
 
 // BuildAnchorPrompt renders the anchor prompt template with the given data.
-func BuildAnchorPrompt(data AnchorPromptData) (string, error) {
-	tmpl, err := template.New("anchor-prompt").Parse(anchorTemplate)
+func BuildAnchorPrompt(templateStr string, data AnchorPromptData) (string, error) {
+	tmpl, err := template.New("anchor-prompt").Parse(templateStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing anchor prompt template: %w", err)
 	}
@@ -124,4 +126,13 @@ func BuildAnchorPrompt(data AnchorPromptData) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+// BuildAnchorPromptDefault renders the anchor prompt using the embedded default template.
+func BuildAnchorPromptDefault(data AnchorPromptData) (string, error) {
+	tmplBytes, err := defaults.FS.ReadFile("prompts/anchor.md")
+	if err != nil {
+		return "", fmt.Errorf("reading embedded anchor prompt: %w", err)
+	}
+	return BuildAnchorPrompt(string(tmplBytes), data)
 }
