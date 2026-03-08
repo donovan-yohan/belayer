@@ -292,15 +292,13 @@ func (s *Setter) recover() error {
 		}
 
 		// Check for DONE.json files that completed while we were down
-		newlyReady, _, err := runner.CheckCompletions()
-		if err != nil {
+		if _, _, err := runner.CheckCompletions(); err != nil {
 			log.Printf("setter: error checking completions during recovery for %s: %v", task.ID, err)
 		}
 
 		s.tasks[task.ID] = runner
-		s.leadQueue = append(s.leadQueue, newlyReady...)
 
-		// Re-queue any goals that are ready but not running
+		// Queue any goals that are ready (pending with deps met)
 		readyGoals := runner.dag.ReadyGoals()
 		for _, g := range readyGoals {
 			s.leadQueue = append(s.leadQueue, QueuedGoal{Goal: g, TaskID: task.ID})

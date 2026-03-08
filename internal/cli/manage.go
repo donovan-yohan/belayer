@@ -58,5 +58,5 @@ var execClaude = func(prompt string) error {
 		return fmt.Errorf("claude not found in PATH: %w", err)
 	}
 
-	return syscall.Exec(claudePath, []string{"claude", "-p", prompt, "--allowedTools", "*"}, os.Environ())
+	return syscall.Exec(claudePath, []string{"claude", "--system-prompt", prompt}, os.Environ())
 }

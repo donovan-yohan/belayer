@@ -2,6 +2,8 @@ package lead
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -77,22 +79,27 @@ func TestClaudeSpawner_Spawn(t *testing.T) {
 	tm.NewSession("test-session")
 	tm.NewWindow("test-session", "api-goal-1")
 
+	workDir := t.TempDir()
 	spawner := NewClaudeSpawner(tm)
 
 	err := spawner.Spawn(context.Background(), SpawnOpts{
 		TmuxSession: "test-session",
 		WindowName:  "api-goal-1",
-		WorkDir:     "/tmp/worktree/api",
-		Prompt:      "Do the thing",
+		WorkDir:     workDir,
+		Prompt:      "Do the thing\nwith multiple lines",
 	})
 	require.NoError(t, err)
 
-	// Verify the command sent to tmux
+	// Verify the prompt was written to a file
+	promptFile := filepath.Join(workDir, ".belayer-prompt.md")
+	data, err := os.ReadFile(promptFile)
+	require.NoError(t, err)
+	assert.Equal(t, "Do the thing\nwith multiple lines", string(data))
+
+	// Verify the command sent to tmux pipes the file into claude
 	sentKeys := tm.keys["test-session:api-goal-1"]
-	assert.Contains(t, sentKeys, "cd '/tmp/worktree/api'")
-	assert.Contains(t, sentKeys, "claude -p")
-	assert.Contains(t, sentKeys, "Do the thing")
-	assert.Contains(t, sentKeys, "--allowedTools '*'")
+	assert.Contains(t, sentKeys, "cd '"+workDir+"'")
+	assert.Contains(t, sentKeys, "claude -p --dangerously-skip-permissions < .belayer-prompt.md")
 }
 
 func TestClaudeSpawner_ShellQuoting(t *testing.T) {
@@ -100,21 +107,23 @@ func TestClaudeSpawner_ShellQuoting(t *testing.T) {
 	tm.NewSession("s")
 	tm.NewWindow("s", "w")
 
+	workDir := t.TempDir()
 	spawner := NewClaudeSpawner(tm)
 
-	// Prompt with single quotes that need escaping
+	// WorkDir with single quotes that need escaping
 	err := spawner.Spawn(context.Background(), SpawnOpts{
 		TmuxSession: "s",
 		WindowName:  "w",
-		WorkDir:     "/tmp/it's a path",
+		WorkDir:     workDir,
 		Prompt:      "Don't break",
 	})
 	require.NoError(t, err)
 
-	sentKeys := tm.keys["s:w"]
-	// Single quotes in paths and prompts should be properly escaped
-	assert.NotContains(t, sentKeys, "it's")  // raw single quote should be escaped
-	assert.NotContains(t, sentKeys, "Don't") // raw single quote should be escaped
+	// Verify prompt file contains the raw content (no shell escaping needed)
+	promptFile := filepath.Join(workDir, ".belayer-prompt.md")
+	data, err := os.ReadFile(promptFile)
+	require.NoError(t, err)
+	assert.Equal(t, "Don't break", string(data))
 }
 
 func TestShellQuote(t *testing.T) {

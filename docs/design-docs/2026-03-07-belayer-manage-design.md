@@ -27,7 +27,7 @@ User terminal
   |
   belayer manage --instance foo
   |
-  exec claude -p <manage-prompt>
+  exec claude --system-prompt <manage-prompt>
   |
   Claude Code session (interactive)
     |-- can run: belayer task create --instance foo --spec spec.md --goals goals.json
@@ -38,10 +38,10 @@ User terminal
 
 ### Key Decision: `exec` vs `subprocess`
 
-The manage command uses `os/exec` to replace the current process with `claude`. This is the simplest approach:
+The manage command uses `syscall.Exec` to replace the current process with `claude --system-prompt <prompt>`. This starts an interactive Claude Code session with the belayer context injected as the system prompt. The user can then chat naturally with the agent. This is the simplest approach:
 - No need to proxy stdin/stdout
 - Claude gets full terminal control (colors, cursor, etc.)
-- User interacts directly with the agent
+- User interacts directly with the agent in a full interactive REPL
 - When the agent exits, the belayer process exits
 
 Alternative considered: running Claude as a subprocess and capturing output. Rejected because:

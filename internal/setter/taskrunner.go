@@ -146,6 +146,11 @@ func (tr *TaskRunner) Init() ([]QueuedGoal, error) {
 
 // SpawnGoal creates a tmux window for a goal and launches an agent session.
 func (tr *TaskRunner) SpawnGoal(goal model.Goal) error {
+	// Guard: don't spawn if the goal is already running in the DAG
+	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.GoalStatusRunning {
+		return nil
+	}
+
 	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
 
 	// Create tmux window
@@ -243,10 +248,12 @@ func (tr *TaskRunner) CheckCompletions() (newlyReady []QueuedGoal, completedCoun
 		tr.logMgr.CheckRotation(tr.task.ID, g.ID)
 	}
 
-	// Find newly ready goals
-	readyGoals := tr.dag.ReadyGoals()
-	for _, g := range readyGoals {
-		newlyReady = append(newlyReady, QueuedGoal{Goal: g, TaskID: tr.task.ID})
+	// Only check for newly unblocked goals if something actually completed
+	if completedCount > 0 {
+		readyGoals := tr.dag.ReadyGoals()
+		for _, g := range readyGoals {
+			newlyReady = append(newlyReady, QueuedGoal{Goal: g, TaskID: tr.task.ID})
+		}
 	}
 
 	return newlyReady, completedCount, nil
