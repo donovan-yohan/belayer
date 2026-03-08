@@ -540,8 +540,8 @@ func (tr *TaskRunner) TmuxSession() string {
 }
 
 // GatherDiffs collects git diffs from all repo worktrees.
-func (tr *TaskRunner) GatherDiffs() []anchor.RepoDiff {
-	var diffs []anchor.RepoDiff
+func (tr *TaskRunner) GatherDiffs() []goalctx.RepoDiff {
+	var diffs []goalctx.RepoDiff
 	for repoName, worktreePath := range tr.worktrees {
 		diffStat, err := tr.git.Run(worktreePath, "diff", "--stat", "HEAD")
 		if err != nil {
@@ -566,7 +566,7 @@ func (tr *TaskRunner) GatherDiffs() []anchor.RepoDiff {
 			}
 		}
 
-		diffs = append(diffs, anchor.RepoDiff{
+		diffs = append(diffs, goalctx.RepoDiff{
 			RepoName: repoName,
 			DiffStat: diffStat,
 			Diff:     diff,
@@ -576,10 +576,10 @@ func (tr *TaskRunner) GatherDiffs() []anchor.RepoDiff {
 }
 
 // GatherSummaries reads DONE.json from each worktree and returns goal summaries.
-func (tr *TaskRunner) GatherSummaries() []anchor.GoalSummary {
-	var summaries []anchor.GoalSummary
+func (tr *TaskRunner) GatherSummaries() []goalctx.GoalSummary {
+	var summaries []goalctx.GoalSummary
 	for _, g := range tr.dag.Goals() {
-		summary := anchor.GoalSummary{
+		summary := goalctx.GoalSummary{
 			GoalID:      g.ID,
 			RepoName:    g.RepoName,
 			Description: g.Description,

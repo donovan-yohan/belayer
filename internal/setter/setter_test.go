@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/anchor"
+	"github.com/donovan-yohan/belayer/internal/goalctx"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
@@ -1147,7 +1148,7 @@ func TestTaskRunner_GatherSummaries(t *testing.T) {
 	summaries := runner.GatherSummaries()
 	assert.Len(t, summaries, 2)
 
-	summaryMap := make(map[string]anchor.GoalSummary)
+	summaryMap := make(map[string]goalctx.GoalSummary)
 	for _, s := range summaries {
 		summaryMap[s.GoalID] = s
 	}
