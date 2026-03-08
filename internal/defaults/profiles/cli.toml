@@ -1,0 +1,7 @@
+# Validation checklist for CLI tools
+
+[checks]
+build = "Build the binary and verify it succeeds"
+test_suite = "Run the full test suite and verify all tests pass"
+help_check = "Run the binary with --help and verify it exits with code 0"
+happy_path = "Exercise 1-2 basic commands with simple inputs and verify output"

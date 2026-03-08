@@ -1,0 +1,6 @@
+# Validation checklist for libraries and packages (fallback)
+
+[checks]
+build = "Run the project's build command and verify it succeeds"
+test_suite = "Run the full test suite and verify all tests pass"
+typecheck = "Run the type checker if available and verify no errors"

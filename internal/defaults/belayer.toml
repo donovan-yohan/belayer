@@ -1,0 +1,21 @@
+[agents]
+provider = "claude"
+lead_model = "opus"
+review_model = "sonnet"
+permissions = "dangerously-skip"
+
+[execution]
+max_leads = 8
+poll_interval = "5s"
+stale_timeout = "30m"
+max_retries = 3
+
+[validation]
+enabled = true
+auto_detect_project = true
+fallback_profile = "library"
+browser_tool = "chrome-devtools"
+
+[anchor]
+enabled = true
+max_attempts = 2

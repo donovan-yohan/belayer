@@ -1,0 +1,7 @@
+# Validation checklist for backend/API projects
+
+[checks]
+build = "Run the project's build command and verify it succeeds"
+test_suite = "Run the full test suite and verify all tests pass"
+start_server = "Start the server and verify it binds to a port"
+smoke_endpoints = "Hit health and root endpoints, verify expected status codes"

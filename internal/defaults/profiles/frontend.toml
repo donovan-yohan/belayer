@@ -1,0 +1,10 @@
+# Validation checklist for frontend/web projects
+
+[checks]
+build = "Run the project's build command and verify it succeeds with exit code 0"
+dev_server = "Start the dev server and verify it's reachable on localhost"
+browser = "Navigate to the running app with Chrome DevTools and verify the page renders"
+console_errors = "Check the browser console for errors or warnings"
+screenshot = "Take a screenshot of the main page and include in the report"
+click_navigation = "Click primary navigation links and verify they load without errors"
+visual_quality = "Verify text wraps properly, layout isn't broken, styles are applied correctly"
