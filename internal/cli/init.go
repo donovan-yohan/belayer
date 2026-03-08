@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/donovan-yohan/belayer/internal/config"
+	"github.com/donovan-yohan/belayer/internal/defaults"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +27,12 @@ func newInitCmd() *cobra.Command {
 
 			if err := config.Save(cfg); err != nil {
 				return fmt.Errorf("saving config: %w", err)
+			}
+
+			// Write default config files
+			configDir := filepath.Join(dir, "config")
+			if err := defaults.WriteToDir(configDir); err != nil {
+				return fmt.Errorf("writing default config: %w", err)
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Initialized belayer at %s\n", dir)
