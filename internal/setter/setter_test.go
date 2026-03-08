@@ -1087,3 +1087,146 @@ func TestTaskRunner_GatherDiffs(t *testing.T) {
 	assert.Equal(t, "api", diffs[0].RepoName)
 	assert.Contains(t, diffs[0].Diff, "NewHandler")
 }
+
+func TestTaskRunner_SpawnSpotter(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-sp1", RepoName: "api", Description: "add endpoint", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, s, _, sp, _, _ := newTestRunner(t, "task-sp1", goals)
+
+	// Spawn and complete the goal first
+	require.NoError(t, runner.SpawnGoal(goals[0]))
+	assert.Equal(t, model.GoalStatusRunning, runner.dag.Get("api-1").Status)
+
+	// Write DONE.json
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
+	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
+
+	// Now spawn spotter on this goal
+	goal := runner.dag.Get("api-1")
+	err := runner.SpawnSpotter(goal)
+	require.NoError(t, err)
+
+	// Goal should be in spotting status
+	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
+
+	// Verify spotter was spawned (2 total spawns: lead + spotter)
+	require.Len(t, sp.spawned, 2)
+	assert.Equal(t, "api-api-1", sp.spawned[1].WindowName)
+	assert.Contains(t, sp.spawned[1].Prompt, "SPOT.json")
+	assert.Contains(t, sp.spawned[1].Prompt, "Added endpoint") // DONE.json content
+
+	// Verify spotter_spawned event was recorded
+	events, _ := s.GetEventsForTask("task-sp1")
+	foundSpotterSpawned := false
+	for _, e := range events {
+		if e.Type == model.EventSpotterSpawned && e.GoalID == "api-1" {
+			foundSpotterSpawned = true
+		}
+	}
+	assert.True(t, foundSpotterSpawned)
+}
+
+func TestTaskRunner_CheckSpotResult_Pass(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-sp2", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, s, _, _, _, _ := newTestRunner(t, "task-sp2", goals)
+
+	// Put goal into spotting status
+	runner.dag.MarkSpotting("api-1")
+
+	// Write passing SPOT.json
+	spotData := `{"pass": true, "project_type": "backend", "issues": []}`
+	require.NoError(t, os.WriteFile(filepath.Join(runner.worktrees["api"], "SPOT.json"), []byte(spotData), 0o644))
+
+	goal := runner.dag.Get("api-1")
+	spot, found, err := runner.CheckSpotResult(goal)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.True(t, spot.Pass)
+
+	// Goal should be complete
+	assert.Equal(t, model.GoalStatusComplete, runner.dag.Get("api-1").Status)
+
+	// SPOT.json should be removed
+	_, statErr := os.Stat(filepath.Join(runner.worktrees["api"], "SPOT.json"))
+	assert.True(t, os.IsNotExist(statErr))
+
+	// Events should be recorded
+	events, _ := s.GetEventsForTask("task-sp2")
+	foundVerdict := false
+	foundCompleted := false
+	for _, e := range events {
+		if e.Type == model.EventSpotterVerdict && e.GoalID == "api-1" {
+			foundVerdict = true
+		}
+		if e.Type == model.EventGoalCompleted && e.GoalID == "api-1" {
+			foundCompleted = true
+		}
+	}
+	assert.True(t, foundVerdict)
+	assert.True(t, foundCompleted)
+}
+
+func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-sp3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, s, _, _, _, _ := newTestRunner(t, "task-sp3", goals)
+
+	// Put goal into spotting status
+	runner.dag.MarkSpotting("api-1")
+
+	// Write failing SPOT.json
+	spotData := `{"pass": false, "project_type": "frontend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(runner.worktrees["api"], "SPOT.json"), []byte(spotData), 0o644))
+
+	goal := runner.dag.Get("api-1")
+	spot, found, err := runner.CheckSpotResult(goal)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.False(t, spot.Pass)
+	assert.Len(t, spot.Issues, 1)
+	assert.Equal(t, "build", spot.Issues[0].Check)
+
+	// Goal should be failed
+	assert.Equal(t, model.GoalStatusFailed, runner.dag.Get("api-1").Status)
+
+	// SPOT.json should be removed
+	_, statErr := os.Stat(filepath.Join(runner.worktrees["api"], "SPOT.json"))
+	assert.True(t, os.IsNotExist(statErr))
+
+	// Events should be recorded
+	events, _ := s.GetEventsForTask("task-sp3")
+	foundVerdict := false
+	foundFailed := false
+	for _, e := range events {
+		if e.Type == model.EventSpotterVerdict && e.GoalID == "api-1" {
+			foundVerdict = true
+		}
+		if e.Type == model.EventGoalFailed && e.GoalID == "api-1" {
+			foundFailed = true
+		}
+	}
+	assert.True(t, foundVerdict)
+	assert.True(t, foundFailed)
+}
+
+func TestTaskRunner_CheckSpotResult_NotFound(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-sp4", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, _, _, _, _ := newTestRunner(t, "task-sp4", goals)
+
+	runner.dag.MarkSpotting("api-1")
+
+	goal := runner.dag.Get("api-1")
+	spot, found, err := runner.CheckSpotResult(goal)
+	require.NoError(t, err)
+	assert.False(t, found)
+	assert.Nil(t, spot)
+
+	// Goal should still be spotting
+	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -11,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/anchor"
+	"github.com/donovan-yohan/belayer/internal/defaults"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
-	"github.com/donovan-yohan/belayer/internal/anchor"
+	"github.com/donovan-yohan/belayer/internal/spotter"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/tmux"
 )
@@ -434,6 +437,161 @@ func (tr *TaskRunner) GatherSummaries() []anchor.GoalSummary {
 	return summaries
 }
 
+// SpawnSpotter transitions a goal to "spotting" and spawns a spotter agent in
+// the same tmux window the lead used (the lead has already exited).
+func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
+	// Mark goal as spotting in DAG and SQLite
+	tr.dag.MarkSpotting(goal.ID)
+	if err := tr.store.UpdateGoalStatus(goal.ID, model.GoalStatusSpotting); err != nil {
+		return fmt.Errorf("updating goal status to spotting: %w", err)
+	}
+
+	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
+	worktreePath := tr.worktrees[goal.RepoName]
+
+	// Read DONE.json for context
+	donePath := filepath.Join(worktreePath, "DONE.json")
+	doneData, err := os.ReadFile(donePath)
+	if err != nil {
+		doneData = []byte("{}")
+	}
+
+	// Load validation profiles from embedded defaults
+	profiles := make(map[string]string)
+	profileEntries, _ := fs.ReadDir(defaults.FS, "profiles")
+	for _, entry := range profileEntries {
+		if entry.IsDir() {
+			continue
+		}
+		content, readErr := defaults.FS.ReadFile("profiles/" + entry.Name())
+		if readErr != nil {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		profiles[name] = string(content)
+	}
+
+	// Read spotter prompt template from embedded defaults
+	tmplBytes, err := defaults.FS.ReadFile("prompts/spotter.md")
+	if err != nil {
+		return fmt.Errorf("reading spotter prompt template: %w", err)
+	}
+
+	// Build spotter prompt
+	promptData := spotter.SpotterPromptData{
+		GoalID:      goal.ID,
+		RepoName:    goal.RepoName,
+		Description: goal.Description,
+		WorkDir:     worktreePath,
+		Profiles:    profiles,
+		DoneJSON:    string(doneData),
+	}
+
+	prompt, err := spotter.BuildSpotterPrompt(string(tmplBytes), promptData)
+	if err != nil {
+		return fmt.Errorf("building spotter prompt for %s: %w", goal.ID, err)
+	}
+
+	// Spawn agent in the existing window (lead has exited, window is idle)
+	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
+		TmuxSession: tr.tmuxSession,
+		WindowName:  windowName,
+		WorkDir:     worktreePath,
+		Prompt:      prompt,
+	}); err != nil {
+		return fmt.Errorf("spawning spotter for %s: %w", goal.ID, err)
+	}
+
+	if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventSpotterSpawned,
+		fmt.Sprintf(`{"goal_id":"%s"}`, goal.ID)); err != nil {
+		log.Printf("warning: failed to insert spotter_spawned event: %v", err)
+	}
+
+	tr.startedAt[goal.ID] = time.Now()
+
+	log.Printf("spotter: spawned for goal %s (task %s)", goal.ID, tr.task.ID)
+	return nil
+}
+
+// CheckSpotResult checks for a SPOT.json file in the goal's worktree and parses it.
+// Returns the result, whether one was found, and any error.
+func (tr *TaskRunner) CheckSpotResult(goal *model.Goal) (*spotter.SpotJSON, bool, error) {
+	worktreePath := tr.worktrees[goal.RepoName]
+	spotPath := filepath.Join(worktreePath, "SPOT.json")
+
+	data, err := os.ReadFile(spotPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("reading SPOT.json for %s: %w", goal.ID, err)
+	}
+
+	var spot spotter.SpotJSON
+	if err := json.Unmarshal(data, &spot); err != nil {
+		return nil, false, fmt.Errorf("parsing SPOT.json for %s: %w", goal.ID, err)
+	}
+
+	// Record the spotter verdict event
+	payload, _ := json.Marshal(spot)
+	if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventSpotterVerdict, string(payload)); err != nil {
+		log.Printf("warning: failed to insert spotter_verdict event: %v", err)
+	}
+
+	// Kill the tmux window
+	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
+	tr.tmux.KillWindow(tr.tmuxSession, windowName)
+	delete(tr.startedAt, goal.ID)
+
+	// Remove SPOT.json so it's not picked up again
+	os.Remove(spotPath)
+
+	if spot.Pass {
+		// Mark goal complete
+		tr.dag.MarkComplete(goal.ID)
+		if err := tr.store.UpdateGoalStatus(goal.ID, model.GoalStatusComplete); err != nil {
+			return &spot, true, fmt.Errorf("updating goal status to complete: %w", err)
+		}
+
+		if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventGoalCompleted,
+			string(payload)); err != nil {
+			log.Printf("warning: failed to insert goal_completed event: %v", err)
+		}
+
+		// Check log rotation
+		tr.logMgr.CheckRotation(tr.task.ID, goal.ID)
+
+		log.Printf("spotter: goal %s passed validation", goal.ID)
+	} else {
+		// Mark goal failed for retry
+		tr.dag.MarkFailed(goal.ID)
+		if err := tr.store.UpdateGoalStatus(goal.ID, model.GoalStatusFailed); err != nil {
+			return &spot, true, fmt.Errorf("updating goal status to failed: %w", err)
+		}
+
+		// Increment attempt for retry tracking
+		if err := tr.store.IncrementGoalAttempt(goal.ID); err != nil {
+			log.Printf("warning: failed to increment goal attempt: %v", err)
+		}
+		if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil {
+			dagGoal.Attempt++
+		}
+
+		if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventGoalFailed,
+			string(payload)); err != nil {
+			log.Printf("warning: failed to insert goal_failed event: %v", err)
+		}
+
+		// Remove DONE.json so the retry starts fresh
+		worktreePath := tr.worktrees[goal.RepoName]
+		os.Remove(filepath.Join(worktreePath, "DONE.json"))
+
+		log.Printf("spotter: goal %s failed validation with %d issues", goal.ID, len(spot.Issues))
+	}
+
+	return &spot, true, nil
+}
+
 // SpawnAnchor creates a tmux window for the anchor agent and launches it.
 func (tr *TaskRunner) SpawnAnchor() error {
 	tr.anchorAttempt++
@@ -629,4 +787,17 @@ func (tr *TaskRunner) AnchorAttempt() int {
 // AnchorRunning returns whether the anchor is currently active.
 func (tr *TaskRunner) AnchorRunning() bool {
 	return tr.anchorRunning
+}
+
+// SpotterFeedbackForGoal formats spotter issues into a string for the lead prompt retry.
+func SpotterFeedbackForGoal(spot *spotter.SpotJSON) string {
+	if spot == nil || spot.Pass {
+		return ""
+	}
+	var buf strings.Builder
+	buf.WriteString("FAILED CHECKS:\n")
+	for _, issue := range spot.Issues {
+		buf.WriteString(fmt.Sprintf("- %s [%s]: %s\n", issue.Check, issue.Severity, issue.Description))
+	}
+	return buf.String()
 }

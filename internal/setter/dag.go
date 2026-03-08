@@ -81,6 +81,13 @@ func (d *DAG) MarkRunning(goalID string) {
 	}
 }
 
+// MarkSpotting sets the goal's status to spotting in the DAG.
+func (d *DAG) MarkSpotting(goalID string) {
+	if g, ok := d.goals[goalID]; ok {
+		g.Status = model.GoalStatusSpotting
+	}
+}
+
 // AllComplete returns true if every goal in the DAG has status complete.
 func (d *DAG) AllComplete() bool {
 	for _, g := range d.goals {
