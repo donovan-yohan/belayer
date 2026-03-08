@@ -10,9 +10,6 @@ import (
 func TestEmbeddedFilesExist(t *testing.T) {
 	files := []string{
 		"belayer.toml",
-		"prompts/lead.md",
-		"prompts/spotter.md",
-		"prompts/anchor.md",
 		"profiles/frontend.toml",
 		"profiles/backend.toml",
 		"profiles/cli.toml",

@@ -92,11 +92,6 @@ func overlayFile(path string, cfg *Config) error {
 	return nil
 }
 
-// LoadPrompt reads a prompt template with resolution: instance > global > embedded.
-func LoadPrompt(globalDir, instanceDir, name string) (string, error) {
-	return resolveFile(globalDir, instanceDir, "prompts", name+".md")
-}
-
 // LoadProfile reads a validation profile with resolution: instance > global > embedded.
 func LoadProfile(globalDir, instanceDir, name string) (string, error) {
 	return resolveFile(globalDir, instanceDir, "profiles", name+".toml")

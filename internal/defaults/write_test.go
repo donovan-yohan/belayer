@@ -19,11 +19,6 @@ func TestWriteToDir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "[agents]")
 
-	// Verify prompts written
-	data, err = os.ReadFile(filepath.Join(dir, "prompts", "lead.md"))
-	require.NoError(t, err)
-	assert.NotEmpty(t, data)
-
 	// Verify profiles written
 	data, err = os.ReadFile(filepath.Join(dir, "profiles", "frontend.toml"))
 	require.NoError(t, err)
