@@ -19,6 +19,7 @@ type GoalStatus string
 const (
 	GoalStatusPending  GoalStatus = "pending"
 	GoalStatusRunning  GoalStatus = "running"
+	GoalStatusSpotting GoalStatus = "spotting"
 	GoalStatusComplete GoalStatus = "complete"
 	GoalStatusFailed   GoalStatus = "failed"
 )
@@ -31,9 +32,11 @@ const (
 	EventGoalStarted   EventType = "goal_started"
 	EventGoalCompleted EventType = "goal_completed"
 	EventGoalFailed    EventType = "goal_failed"
-	EventAnchorSpawned EventType = "anchor_spawned"
-	EventAnchorVerdict EventType = "anchor_verdict"
-	EventPRCreated     EventType = "pr_created"
+	EventAnchorSpawned  EventType = "anchor_spawned"
+	EventAnchorVerdict  EventType = "anchor_verdict"
+	EventSpotterSpawned EventType = "spotter_spawned"
+	EventSpotterVerdict EventType = "spotter_verdict"
+	EventPRCreated      EventType = "pr_created"
 )
 
 // Task represents a work item submitted by the user.
