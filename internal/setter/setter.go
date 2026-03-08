@@ -97,7 +97,7 @@ func (s *Setter) tick() error {
 		taskStatus := runner.task.Status
 
 		if taskStatus == model.TaskStatusRunning {
-			// Check for completed goals
+			// Check for completed goals (may transition to spotting if validation enabled)
 			newlyReady, completedCount, err := runner.CheckCompletions()
 			if err != nil {
 				log.Printf("setter: error checking completions for %s: %v", taskID, err)
@@ -108,6 +108,19 @@ func (s *Setter) tick() error {
 				s.activeLeads = 0
 			}
 			s.leadQueue = append(s.leadQueue, newlyReady...)
+
+			// Check spotting goals for SPOT.json results
+			spotResolved, spotReady, spotRetry, spotErr := runner.CheckSpottingGoals()
+			if spotErr != nil {
+				log.Printf("setter: error checking spotting goals for %s: %v", taskID, spotErr)
+			} else {
+				s.activeLeads -= spotResolved
+				if s.activeLeads < 0 {
+					s.activeLeads = 0
+				}
+				s.leadQueue = append(s.leadQueue, spotReady...)
+				s.leadQueue = append(s.leadQueue, spotRetry...)
+			}
 
 			// Check for stale goals
 			retryGoals, err := runner.CheckStaleGoals(s.config.StaleTimeout)
@@ -247,7 +260,7 @@ func (s *Setter) processLeadQueue() {
 			continue // task was cleaned up
 		}
 
-		if err := runner.SpawnGoal(queued.Goal); err != nil {
+		if err := runner.SpawnGoal(queued); err != nil {
 			log.Printf("setter: error spawning goal %s: %v", queued.Goal.ID, err)
 			continue
 		}

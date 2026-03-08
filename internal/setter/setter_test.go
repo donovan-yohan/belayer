@@ -221,7 +221,7 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 	require.NoError(t, tm.NewSession("belayer-task-task-1"))
 	require.NoError(t, lm.EnsureDir("task-1"))
 
-	err := runner.SpawnGoal(goals[0])
+	err := runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-1"})
 	require.NoError(t, err)
 
 	// Check window was created
@@ -251,7 +251,7 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 	assert.Contains(t, sp.spawned[0].Prompt, "DONE.json")
 }
 
-func TestTaskRunner_CheckCompletions(t *testing.T) {
+func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Goal{
@@ -265,15 +265,16 @@ func TestTaskRunner_CheckCompletions(t *testing.T) {
 
 	task, _ := s.GetTask("task-2")
 	runner := &TaskRunner{
-		task:        task,
-		worktrees:   map[string]string{"api": worktreeDir},
-		instanceDir: tmpDir,
-		store:       s,
-		tmux:        tm,
-		logMgr:      lm,
-		spawner:     sp,
-		tmuxSession: "belayer-task-task-2",
-		startedAt:   make(map[string]time.Time),
+		task:              task,
+		worktrees:         map[string]string{"api": worktreeDir},
+		instanceDir:       tmpDir,
+		store:             s,
+		tmux:              tm,
+		logMgr:            lm,
+		spawner:           sp,
+		tmuxSession:       "belayer-task-task-2",
+		startedAt:         make(map[string]time.Time),
+		validationEnabled: false, // direct completion
 	}
 	require.NoError(t, tm.NewSession("belayer-task-task-2"))
 	require.NoError(t, lm.EnsureDir("task-2"))
@@ -282,7 +283,7 @@ func TestTaskRunner_CheckCompletions(t *testing.T) {
 	runner.dag = BuildDAG(goalsFromDB)
 
 	// Spawn api-1
-	require.NoError(t, runner.SpawnGoal(goals[0]))
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-2"}))
 
 	// Write DONE.json for api-1
 	doneJSON := DoneJSON{
@@ -301,6 +302,62 @@ func TestTaskRunner_CheckCompletions(t *testing.T) {
 	assert.Equal(t, model.GoalStatusComplete, runner.dag.Get("api-1").Status)
 	require.Len(t, newlyReady, 1)
 	assert.Equal(t, "api-2", newlyReady[0].Goal.ID)
+}
+
+func TestTaskRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-2v", RepoName: "api", Description: "first", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "api-2", TaskID: "task-2v", RepoName: "api", Description: "second", DependsOn: []string{"api-1"}, Status: model.GoalStatusPending},
+	}
+	insertTestTask(t, s, "task-2v", goals)
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-2v", "api")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	task, _ := s.GetTask("task-2v")
+	runner := &TaskRunner{
+		task:              task,
+		worktrees:         map[string]string{"api": worktreeDir},
+		instanceDir:       tmpDir,
+		store:             s,
+		tmux:              tm,
+		logMgr:            lm,
+		spawner:           sp,
+		tmuxSession:       "belayer-task-task-2v",
+		startedAt:         make(map[string]time.Time),
+		validationEnabled: true,
+	}
+	require.NoError(t, tm.NewSession("belayer-task-task-2v"))
+	require.NoError(t, lm.EnsureDir("task-2v"))
+
+	goalsFromDB, _ := s.GetGoalsForTask("task-2v")
+	runner.dag = BuildDAG(goalsFromDB)
+
+	// Spawn api-1
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-2v"}))
+
+	// Write DONE.json for api-1
+	doneJSON := DoneJSON{
+		Status:       "complete",
+		Summary:      "Did the thing",
+		FilesChanged: []string{"api/main.go"},
+	}
+	data, _ := json.Marshal(doneJSON)
+	require.NoError(t, os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), data, 0o644))
+
+	// Check completions — with validation enabled, goal should be spotting, not complete
+	newlyReady, completedCount, err := runner.CheckCompletions()
+	require.NoError(t, err)
+	assert.Equal(t, 0, completedCount) // not counted as complete
+	assert.Len(t, newlyReady, 0)       // no newly unblocked goals
+
+	// Goal should be in spotting status
+	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
+
+	// api-2 should NOT be ready (api-1 is spotting, not complete)
+	assert.False(t, runner.AllGoalsComplete())
 }
 
 func TestTaskRunner_CheckStaleGoals(t *testing.T) {
@@ -331,7 +388,7 @@ func TestTaskRunner_CheckStaleGoals(t *testing.T) {
 
 	goalsFromDB, _ := s.GetGoalsForTask("task-3")
 	runner.dag = BuildDAG(goalsFromDB)
-	require.NoError(t, runner.SpawnGoal(goals[0]))
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-3"}))
 
 	// Kill the window to simulate crash
 	tm.KillWindow("belayer-task-task-3", "api-api-1")
@@ -376,7 +433,7 @@ func TestTaskRunner_StaleTimeout(t *testing.T) {
 
 	goalsFromDB, _ := s.GetGoalsForTask("task-4")
 	runner.dag = BuildDAG(goalsFromDB)
-	require.NoError(t, runner.SpawnGoal(goals[0]))
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-4"}))
 
 	// Backdate the start time to simulate timeout
 	runner.startedAt["api-1"] = time.Now().Add(-1 * time.Hour)
@@ -521,19 +578,19 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	// Task should have been recovered
 	require.Contains(t, setter.tasks, "task-7")
 
-	// api-1 should be marked complete (from DONE.json)
+	// With validation enabled (default), api-1 should be in spotting status
+	// (DONE.json found during recovery triggers spotter, not direct completion)
 	runner := setter.tasks["task-7"]
-	assert.Equal(t, model.GoalStatusComplete, runner.dag.Get("api-1").Status)
+	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
 
-	// api-2 should be queued as ready
-	assert.True(t, len(setter.leadQueue) > 0)
+	// api-2 should NOT be ready yet (api-1 is spotting, not complete)
 	foundApi2 := false
 	for _, q := range setter.leadQueue {
 		if q.Goal.ID == "api-2" {
 			foundApi2 = true
 		}
 	}
-	assert.True(t, foundApi2)
+	assert.False(t, foundApi2)
 }
 
 func TestSetter_RunTickCycle(t *testing.T) {
@@ -824,8 +881,11 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 		tasks:   map[string]*TaskRunner{"task-s5": runner},
 	}
 
+	// Disable validation for this test (tests anchor flow, not spotter)
+	runner.validationEnabled = false
+
 	// Spawn goal and write DONE.json
-	require.NoError(t, runner.SpawnGoal(goals[0]))
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s5"}))
 	setter.activeLeads = 1
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
 	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
@@ -905,8 +965,11 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 		tasks:   map[string]*TaskRunner{"task-s6": runner},
 	}
 
+	// Disable validation for this test (tests anchor reject/approve flow)
+	runner.validationEnabled = false
+
 	// Spawn goal and complete it
-	require.NoError(t, runner.SpawnGoal(goals[0]))
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s6"}))
 	sett.activeLeads = 1
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
 	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
@@ -1096,7 +1159,7 @@ func TestTaskRunner_SpawnSpotter(t *testing.T) {
 	runner, s, _, sp, _, _ := newTestRunner(t, "task-sp1", goals)
 
 	// Spawn and complete the goal first
-	require.NoError(t, runner.SpawnGoal(goals[0]))
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-sp1"}))
 	assert.Equal(t, model.GoalStatusRunning, runner.dag.Get("api-1").Status)
 
 	// Write DONE.json
@@ -1241,6 +1304,197 @@ func TestTaskRunner_CheckSpotResult_NotFound(t *testing.T) {
 
 	// Goal should still be spotting
 	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
+}
+
+func TestSetter_SpottingFlow_Pass(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-sf1", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "api-2", TaskID: "task-sf1", RepoName: "api", Description: "depends on api-1", DependsOn: []string{"api-1"}, Status: model.GoalStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-sf1", goals)
+
+	task, _ := s.GetTask("task-sf1")
+	require.NoError(t, s.UpdateTaskStatus("task-sf1", model.TaskStatusRunning))
+	task.Status = model.TaskStatusRunning
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-sf1", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-sf1")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetGoalsForTask("task-sf1")
+
+	runner := &TaskRunner{
+		task:              task,
+		dag:               BuildDAG(goalsFromDB),
+		worktrees:         map[string]string{"api": worktreeDir},
+		instanceDir:       tmpDir,
+		store:             s,
+		tmux:              tm,
+		logMgr:            lm,
+		spawner:           sp,
+		git:               mg,
+		tmuxSession:       "belayer-task-task-sf1",
+		taskDir:           taskDir,
+		startedAt:         make(map[string]time.Time),
+		validationEnabled: true,
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-sf1"))
+
+	sett := &Setter{
+		config: Config{
+			InstanceName: "test-instance",
+			InstanceDir:  tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   map[string]*TaskRunner{"task-sf1": runner},
+	}
+
+	// Spawn goal
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-sf1"}))
+	sett.activeLeads = 1
+
+	// Write DONE.json
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
+
+	// Tick 1: detect DONE.json -> goal transitions to spotting (spotter spawned)
+	require.NoError(t, sett.tick())
+	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
+	assert.Equal(t, 1, sett.activeLeads) // still 1 active lead (spotter running)
+
+	// Write passing SPOT.json
+	spotData := `{"pass": true, "project_type": "backend", "issues": []}`
+	os.WriteFile(filepath.Join(worktreeDir, "SPOT.json"), []byte(spotData), 0o644)
+
+	// Tick 2: detect SPOT.json pass -> goal complete, api-2 unblocked and spawned
+	require.NoError(t, sett.tick())
+	assert.Equal(t, model.GoalStatusComplete, runner.dag.Get("api-1").Status)
+	assert.Equal(t, 1, sett.activeLeads) // spotter resolved (-1) + api-2 spawned (+1)
+
+	// api-2 should have been queued and spawned
+	assert.Equal(t, model.GoalStatusRunning, runner.dag.Get("api-2").Status)
+}
+
+func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-sf2", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-sf2", goals)
+
+	task, _ := s.GetTask("task-sf2")
+	require.NoError(t, s.UpdateTaskStatus("task-sf2", model.TaskStatusRunning))
+	task.Status = model.TaskStatusRunning
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-sf2", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-sf2")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetGoalsForTask("task-sf2")
+
+	runner := &TaskRunner{
+		task:              task,
+		dag:               BuildDAG(goalsFromDB),
+		worktrees:         map[string]string{"api": worktreeDir},
+		instanceDir:       tmpDir,
+		store:             s,
+		tmux:              tm,
+		logMgr:            lm,
+		spawner:           sp,
+		git:               mg,
+		tmuxSession:       "belayer-task-task-sf2",
+		taskDir:           taskDir,
+		startedAt:         make(map[string]time.Time),
+		validationEnabled: true,
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-sf2"))
+
+	sett := &Setter{
+		config: Config{
+			InstanceName: "test-instance",
+			InstanceDir:  tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   map[string]*TaskRunner{"task-sf2": runner},
+	}
+
+	// Spawn goal
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-sf2"}))
+	sett.activeLeads = 1
+	spawnCountAfterLead := len(sp.spawned)
+
+	// Write DONE.json
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
+
+	// Tick 1: detect DONE.json -> goal transitions to spotting
+	require.NoError(t, sett.tick())
+	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
+	spawnCountAfterSpotter := len(sp.spawned)
+	assert.Greater(t, spawnCountAfterSpotter, spawnCountAfterLead)
+
+	// Write failing SPOT.json
+	spotData := `{"pass": false, "project_type": "backend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
+	os.WriteFile(filepath.Join(worktreeDir, "SPOT.json"), []byte(spotData), 0o644)
+
+	// Tick 2: detect SPOT.json fail -> goal re-queued with feedback, lead respawned
+	require.NoError(t, sett.tick())
+	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt) // attempt incremented by CheckSpotResult
+	assert.Equal(t, 1, sett.activeLeads) // lead re-spawned from queue
+
+	// The re-spawned lead should have spotter feedback in its prompt
+	lastSpawned := sp.spawned[len(sp.spawned)-1]
+	assert.Contains(t, lastSpawned.Prompt, "FAILED CHECKS")
+	assert.Contains(t, lastSpawned.Prompt, "Build failed")
+}
+
+func TestDAG_AllComplete_FalseForSpotting(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "a", TaskID: "t1", Status: model.GoalStatusComplete},
+		{ID: "b", TaskID: "t1", Status: model.GoalStatusPending},
+	}
+	dag := BuildDAG(goals)
+
+	dag.MarkSpotting("b")
+	assert.False(t, dag.AllComplete(), "AllComplete should return false when a goal is spotting")
+
+	dag.MarkComplete("b")
+	assert.True(t, dag.AllComplete())
+}
+
+func TestTaskRunner_SpawnGoalWithSpotterFeedback(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-sfb", RepoName: "api", Description: "test goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, _, sp, _, _ := newTestRunner(t, "task-sfb", goals)
+
+	feedback := "FAILED CHECKS:\n- build [error]: Build failed\n"
+	err := runner.SpawnGoal(QueuedGoal{
+		Goal:            goals[0],
+		TaskID:          "task-sfb",
+		SpotterFeedback: feedback,
+	})
+	require.NoError(t, err)
+
+	// Check that spotter feedback was included in the prompt
+	require.Len(t, sp.spawned, 1)
+	assert.Contains(t, sp.spawned[0].Prompt, "FAILED CHECKS")
+	assert.Contains(t, sp.spawned[0].Prompt, "Build failed")
 }
 
 func TestSpotterFeedbackForGoal(t *testing.T) {

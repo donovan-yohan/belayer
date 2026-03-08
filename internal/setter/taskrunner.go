@@ -79,15 +79,16 @@ type TaskRunner struct {
 // NewTaskRunner creates a TaskRunner for the given task.
 func NewTaskRunner(task *model.Task, instanceDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *TaskRunner {
 	return &TaskRunner{
-		task:        task,
-		worktrees:   make(map[string]string),
-		instanceDir: instanceDir,
-		store:       s,
-		tmux:        tm,
-		logMgr:      lm,
-		spawner:     sp,
-		git:         &RealGitRunner{},
-		startedAt:   make(map[string]time.Time),
+		task:              task,
+		worktrees:         make(map[string]string),
+		instanceDir:       instanceDir,
+		store:             s,
+		tmux:              tm,
+		logMgr:            lm,
+		spawner:           sp,
+		git:               &RealGitRunner{},
+		startedAt:         make(map[string]time.Time),
+		validationEnabled: true,
 	}
 }
 
@@ -152,10 +153,20 @@ func (tr *TaskRunner) Init() ([]QueuedGoal, error) {
 }
 
 // SpawnGoal creates a tmux window for a goal and launches an agent session.
-func (tr *TaskRunner) SpawnGoal(goal model.Goal) error {
+func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
+	goal := queued.Goal
+
 	// Guard: don't spawn if the goal is already running in the DAG
 	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.GoalStatusRunning {
 		return nil
+	}
+
+	// If this is a retry after spotter failure, reset goal status to pending first
+	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.GoalStatusFailed {
+		if err := tr.store.ResetGoalStatus(goal.ID); err != nil {
+			return fmt.Errorf("resetting goal status: %w", err)
+		}
+		dagGoal.Status = model.GoalStatusPending
 	}
 
 	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
@@ -174,10 +185,11 @@ func (tr *TaskRunner) SpawnGoal(goal model.Goal) error {
 	// Build prompt and spawn agent
 	worktreePath := tr.worktrees[goal.RepoName]
 	prompt, err := lead.BuildPrompt(lead.PromptData{
-		Spec:        tr.task.Spec,
-		GoalID:      goal.ID,
-		RepoName:    goal.RepoName,
-		Description: goal.Description,
+		Spec:            tr.task.Spec,
+		GoalID:          goal.ID,
+		RepoName:        goal.RepoName,
+		Description:     goal.Description,
+		SpotterFeedback: queued.SpotterFeedback,
 	})
 	if err != nil {
 		return fmt.Errorf("building prompt for %s: %w", goal.ID, err)
@@ -208,7 +220,8 @@ func (tr *TaskRunner) SpawnGoal(goal model.Goal) error {
 }
 
 // CheckCompletions scans worktrees for DONE.json files and returns newly unblocked goals
-// and the number of goals that completed this tick.
+// and the number of goals that completed this tick. When validation is enabled,
+// goals transition to spotting instead of completing directly.
 func (tr *TaskRunner) CheckCompletions() (newlyReady []QueuedGoal, completedCount int, err error) {
 	for _, g := range tr.dag.Goals() {
 		if g.Status != model.GoalStatusRunning {
@@ -233,26 +246,37 @@ func (tr *TaskRunner) CheckCompletions() (newlyReady []QueuedGoal, completedCoun
 			continue
 		}
 
-		// Mark complete in DAG and SQLite
-		tr.dag.MarkComplete(g.ID)
-		if storeErr := tr.store.UpdateGoalStatus(g.ID, model.GoalStatusComplete); storeErr != nil {
-			return nil, 0, fmt.Errorf("updating goal status: %w", storeErr)
+		if tr.validationEnabled {
+			// Transition to spotting — spotter will validate before marking complete
+			if spotErr := tr.SpawnSpotter(g); spotErr != nil {
+				log.Printf("warning: failed to spawn spotter for %s: %v", g.ID, spotErr)
+				continue
+			}
+			// Do NOT kill the tmux window (spotter reuses it)
+			// Do NOT count as completed (goal is still in-flight)
+			log.Printf("setter: goal %s transitioned to spotting", g.ID)
+		} else {
+			// Validation disabled — mark complete directly
+			tr.dag.MarkComplete(g.ID)
+			if storeErr := tr.store.UpdateGoalStatus(g.ID, model.GoalStatusComplete); storeErr != nil {
+				return nil, 0, fmt.Errorf("updating goal status: %w", storeErr)
+			}
+
+			payload, _ := json.Marshal(done)
+			if eventErr := tr.store.InsertEvent(tr.task.ID, g.ID, model.EventGoalCompleted, string(payload)); eventErr != nil {
+				return nil, 0, fmt.Errorf("inserting goal_completed event: %w", eventErr)
+			}
+
+			delete(tr.startedAt, g.ID)
+			completedCount++
+
+			// Kill the tmux window
+			windowName := fmt.Sprintf("%s-%s", g.RepoName, g.ID)
+			tr.tmux.KillWindow(tr.tmuxSession, windowName)
+
+			// Check log rotation
+			tr.logMgr.CheckRotation(tr.task.ID, g.ID)
 		}
-
-		payload, _ := json.Marshal(done)
-		if eventErr := tr.store.InsertEvent(tr.task.ID, g.ID, model.EventGoalCompleted, string(payload)); eventErr != nil {
-			return nil, 0, fmt.Errorf("inserting goal_completed event: %w", eventErr)
-		}
-
-		delete(tr.startedAt, g.ID)
-		completedCount++
-
-		// Kill the tmux window
-		windowName := fmt.Sprintf("%s-%s", g.RepoName, g.ID)
-		tr.tmux.KillWindow(tr.tmuxSession, windowName)
-
-		// Check log rotation
-		tr.logMgr.CheckRotation(tr.task.ID, g.ID)
 	}
 
 	// Only check for newly unblocked goals if something actually completed
@@ -328,6 +352,52 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 	}
 
 	return retryGoals, nil
+}
+
+// CheckSpottingGoals checks goals in "spotting" status for SPOT.json results.
+// Returns the count of goals that resolved (passed or failed), newly unblocked goals,
+// and goals to re-queue for retry with spotter feedback.
+// Note: CheckSpotResult already handles marking goals complete/failed, incrementing
+// attempts, and removing DONE.json on failure — this method only collects results
+// for the setter to manage queue/lead accounting.
+func (tr *TaskRunner) CheckSpottingGoals() (resolvedCount int, newlyReady []QueuedGoal, retryGoals []QueuedGoal, err error) {
+	for _, g := range tr.dag.Goals() {
+		if g.Status != model.GoalStatusSpotting {
+			continue
+		}
+
+		spot, found, checkErr := tr.CheckSpotResult(g)
+		if checkErr != nil {
+			log.Printf("setter: error checking spot result for %s: %v", g.ID, checkErr)
+			continue
+		}
+		if !found {
+			continue
+		}
+
+		resolvedCount++
+
+		if spot.Pass {
+			// Goal validated successfully, check for newly unblocked goals
+			readyGoals := tr.dag.ReadyGoals()
+			for _, rg := range readyGoals {
+				newlyReady = append(newlyReady, QueuedGoal{Goal: rg, TaskID: tr.task.ID})
+			}
+		} else {
+			// Spot failed — re-queue for retry if under max attempts
+			// (CheckSpotResult already incremented attempt and marked failed)
+			if g.Attempt < 3 {
+				retryGoals = append(retryGoals, QueuedGoal{
+					Goal:            *g,
+					TaskID:          tr.task.ID,
+					SpotterFeedback: SpotterFeedbackForGoal(spot),
+				})
+				log.Printf("setter: goal %s re-queued for retry after spot failure (attempt %d)", g.ID, g.Attempt)
+			}
+		}
+	}
+
+	return resolvedCount, newlyReady, retryGoals, nil
 }
 
 // AllGoalsComplete returns true if all goals in the DAG are complete.
