@@ -1,6 +1,6 @@
 # Context-Aware Validation Pipeline Implementation Plan
 
-> **Status**: Active | **Created**: 2026-03-07 | **Last Updated**: 2026-03-07
+> **Status**: Complete | **Created**: 2026-03-07 | **Last Updated**: 2026-03-07
 > **Design Doc**: `docs/plans/2026-03-07-context-aware-validation-design.md`
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -26,24 +26,29 @@
 
 ## Progress
 
-- [ ] Task 1: Embed default config files
-- [ ] Task 2: Config loader with resolution chain
-- [ ] Task 3: Rename spotter → anchor (model, store, events)
-- [ ] Task 4: New goal status "spotting" and SPOT.json types
-- [ ] Task 5: Spotter prompt template
-- [ ] Task 6: Spotter validation in TaskRunner
-- [ ] Task 7: Setter loop: spotting state handling
-- [ ] Task 8: Lead prompt: inject spotter feedback on retry
-- [ ] Task 9: `belayer init` writes config to disk
-- [ ] Task 10: Wire config into setter/spawner
+- [x] Task 1: Embed default config files _(completed 2026-03-07)_
+- [x] Task 2: Config loader with resolution chain _(completed 2026-03-07)_
+- [x] Task 3: Rename spotter → anchor (model, store, events) _(completed 2026-03-07)_
+- [x] Task 4: New goal status "spotting" and SPOT.json types _(completed 2026-03-07)_
+- [x] Task 5: Spotter prompt template _(completed 2026-03-07)_
+- [x] Task 6: Spotter validation in TaskRunner _(completed 2026-03-07)_
+- [x] Task 7: Setter loop: spotting state handling _(completed 2026-03-07)_
+- [x] Task 8: Lead prompt: inject spotter feedback on retry _(completed 2026-03-07)_
+- [x] Task 9: `belayer init` writes config to disk _(completed 2026-03-07)_
+- [x] Task 10: Wire config into setter/spawner _(completed 2026-03-07)_
 
 ## Surprises & Discoveries
 
-_None yet — updated during execution by /harness:orchestrate._
+| Date | What | Impact | Resolution |
+|------|------|--------|------------|
+| 2026-03-07 | Workers created some duplicate commits for tasks 4-5 and 6 | Minor — no functional impact | Kept both commits; functionally identical |
+| 2026-03-07 | Worker-10 lost during context compaction | Task changes left uncommitted | Worker had already committed; verified clean working tree |
 
 ## Plan Drift
 
-_None yet — updated when tasks deviate from plan during execution._
+| Task | Plan Said | Actually Happened | Why |
+|------|-----------|-------------------|-----|
+| Task 3 | Rename internal/spotter → internal/anchor | Created internal/anchor as new package alongside existing internal/spotter | Spotter package needed for NEW per-goal validator; anchor is the renamed cross-repo reviewer |
 
 ---
 
