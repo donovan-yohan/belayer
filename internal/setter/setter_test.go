@@ -84,6 +84,18 @@ func (m *mockTmux) PipePane(session, windowName, logPath string) error {
 	return nil
 }
 
+func (m *mockTmux) SetRemainOnExit(session, windowName string, enabled bool) error {
+	return nil
+}
+
+func (m *mockTmux) IsPaneDead(session, windowName string) (bool, error) {
+	return false, nil
+}
+
+func (m *mockTmux) CapturePaneContent(session, windowName string, lines int) (string, error) {
+	return "", nil
+}
+
 // mockSpawner implements lead.AgentSpawner for tests.
 type mockSpawner struct {
 	spawned []lead.SpawnOpts

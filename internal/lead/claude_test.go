@@ -2,8 +2,6 @@ package lead
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -74,6 +72,18 @@ func (m *mockTmux) PipePane(session, windowName, logPath string) error {
 	return nil
 }
 
+func (m *mockTmux) SetRemainOnExit(session, windowName string, enabled bool) error {
+	return nil
+}
+
+func (m *mockTmux) IsPaneDead(session, windowName string) (bool, error) {
+	return false, nil
+}
+
+func (m *mockTmux) CapturePaneContent(session, windowName string, lines int) (string, error) {
+	return "", nil
+}
+
 func TestClaudeSpawner_Spawn(t *testing.T) {
 	tm := newMockTmux()
 	tm.NewSession("test-session")
@@ -86,7 +96,7 @@ func TestClaudeSpawner_Spawn(t *testing.T) {
 		TmuxSession: "test-session",
 		WindowName:  "api-goal-1",
 		WorkDir:     workDir,
-		Prompt:      "Do the thing\nwith multiple lines",
+		InitialPrompt:      "Do the thing\nwith multiple lines",
 	})
 	require.NoError(t, err)
 
@@ -115,7 +125,7 @@ func TestClaudeSpawner_ShellQuoting(t *testing.T) {
 		TmuxSession: "s",
 		WindowName:  "w",
 		WorkDir:     workDir,
-		Prompt:      "Don't break",
+		InitialPrompt:      "Don't break",
 	})
 	require.NoError(t, err)
 

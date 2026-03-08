@@ -25,6 +25,12 @@ type TmuxManager interface {
 	ListWindows(session string) ([]string, error)
 	// PipePane enables pipe-pane logging for a window to a log file.
 	PipePane(session, windowName, logPath string) error
+	// SetRemainOnExit configures a window to keep the pane open after the process exits.
+	SetRemainOnExit(session, windowName string, enabled bool) error
+	// IsPaneDead checks if the process in a window has exited.
+	IsPaneDead(session, windowName string) (bool, error)
+	// CapturePaneContent captures the last N lines of visible pane content.
+	CapturePaneContent(session, windowName string, lines int) (string, error)
 }
 
 // RealTmux implements TmuxManager by shelling out to the tmux CLI.
@@ -118,4 +124,42 @@ func (r *RealTmux) PipePane(session, windowName, logPath string) error {
 		return fmt.Errorf("tmux pipe-pane -t %s: %s: %w", target, strings.TrimSpace(string(output)), err)
 	}
 	return nil
+}
+
+// SetRemainOnExit configures a window to keep the pane open after the process exits.
+func (r *RealTmux) SetRemainOnExit(session, windowName string, enabled bool) error {
+	target := session + ":" + windowName
+	val := "off"
+	if enabled {
+		val = "on"
+	}
+	cmd := exec.Command("tmux", "set-option", "-t", target, "remain-on-exit", val)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux set-option remain-on-exit -t %s: %s: %w", target, strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// IsPaneDead checks if the process in a window has exited.
+func (r *RealTmux) IsPaneDead(session, windowName string) (bool, error) {
+	target := session + ":" + windowName
+	cmd := exec.Command("tmux", "display-message", "-t", target, "-p", "#{pane_dead}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("tmux display-message -t %s: %s: %w", target, strings.TrimSpace(string(output)), err)
+	}
+	return strings.TrimSpace(string(output)) == "1", nil
+}
+
+// CapturePaneContent captures the last N lines of visible pane content.
+func (r *RealTmux) CapturePaneContent(session, windowName string, lines int) (string, error) {
+	target := session + ":" + windowName
+	startLine := fmt.Sprintf("-%d", lines)
+	cmd := exec.Command("tmux", "capture-pane", "-t", target, "-p", "-S", startLine)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("tmux capture-pane -t %s: %s: %w", target, strings.TrimSpace(string(output)), err)
+	}
+	return string(output), nil
 }
