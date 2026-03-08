@@ -11,7 +11,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
-	"github.com/donovan-yohan/belayer/internal/spotter"
+	"github.com/donovan-yohan/belayer/internal/anchor"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -635,7 +635,7 @@ func newTestRunner(t *testing.T, taskID string, goals []model.Goal) (*TaskRunner
 	return runner, s, tm, sp, mg, tmpDir
 }
 
-func TestTaskRunner_SpawnSpotter(t *testing.T) {
+func TestTaskRunner_SpawnAnchor(t *testing.T) {
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-s1", RepoName: "api", Description: "add endpoint", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
@@ -650,75 +650,75 @@ func TestTaskRunner_SpawnSpotter(t *testing.T) {
 	mg.responses[runner.worktrees["api"]+":diff"] = "+func NewEndpoint() {}"
 	mg.responses[runner.worktrees["api"]+":log"] = "abc123 Added endpoint"
 
-	err := runner.SpawnSpotter()
+	err := runner.SpawnAnchor()
 	require.NoError(t, err)
 
-	// Verify spotter state
-	assert.True(t, runner.SpotterRunning())
-	assert.Equal(t, 1, runner.SpotterAttempt())
+	// Verify anchor state
+	assert.True(t, runner.AnchorRunning())
+	assert.Equal(t, 1, runner.AnchorAttempt())
 
 	// Verify tmux window was created
 	windows, _ := tm.ListWindows(runner.tmuxSession)
-	assert.Contains(t, windows, "spotter-1")
+	assert.Contains(t, windows, "anchor-1")
 
 	// Verify agent was spawned with correct opts
 	require.Len(t, sp.spawned, 1)
 	assert.Equal(t, runner.tmuxSession, sp.spawned[0].TmuxSession)
-	assert.Equal(t, "spotter-1", sp.spawned[0].WindowName)
+	assert.Equal(t, "anchor-1", sp.spawned[0].WindowName)
 	assert.Equal(t, runner.taskDir, sp.spawned[0].WorkDir)
 	assert.Contains(t, sp.spawned[0].Prompt, "VERDICT.json")
 	assert.Contains(t, sp.spawned[0].Prompt, "test spec")
 }
 
-func TestTaskRunner_CheckSpotterVerdict_Approve(t *testing.T) {
+func TestTaskRunner_CheckAnchorVerdict_Approve(t *testing.T) {
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-s2", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
 	runner, s, _, _, _, _ := newTestRunner(t, "task-s2", goals)
-	runner.spotterAttempt = 1
-	runner.spotterRunning = true
+	runner.anchorAttempt = 1
+	runner.anchorRunning = true
 
 	// Write VERDICT.json
-	verdict := spotter.VerdictJSON{
+	verdict := anchor.VerdictJSON{
 		Verdict: "approve",
-		Repos: map[string]spotter.RepoVerdict{
+		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "pass", Goals: []string{}},
 		},
 	}
 	data, _ := json.Marshal(verdict)
 	require.NoError(t, os.WriteFile(filepath.Join(runner.taskDir, "VERDICT.json"), data, 0o644))
 
-	v, found, err := runner.CheckSpotterVerdict()
+	v, found, err := runner.CheckAnchorVerdict()
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, "approve", v.Verdict)
-	assert.False(t, runner.SpotterRunning())
+	assert.False(t, runner.AnchorRunning())
 
 	// VERDICT.json should be removed
 	_, statErr := os.Stat(filepath.Join(runner.taskDir, "VERDICT.json"))
 	assert.True(t, os.IsNotExist(statErr))
 
 	// Review should be recorded in SQLite
-	reviews, _ := s.GetSpotterReviewsForTask("task-s2")
+	reviews, _ := s.GetAnchorReviewsForTask("task-s2")
 	require.Len(t, reviews, 1)
 	assert.Equal(t, "approve", reviews[0].Verdict)
 	assert.Equal(t, 1, reviews[0].Attempt)
 }
 
-func TestTaskRunner_CheckSpotterVerdict_NotFound(t *testing.T) {
+func TestTaskRunner_CheckAnchorVerdict_NotFound(t *testing.T) {
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-s3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
 	runner, _, _, _, _, _ := newTestRunner(t, "task-s3", goals)
-	runner.spotterAttempt = 1
-	runner.spotterRunning = true
+	runner.anchorAttempt = 1
+	runner.anchorRunning = true
 
 	// No VERDICT.json exists
-	v, found, err := runner.CheckSpotterVerdict()
+	v, found, err := runner.CheckAnchorVerdict()
 	require.NoError(t, err)
 	assert.False(t, found)
 	assert.Nil(t, v)
-	assert.True(t, runner.SpotterRunning()) // still running
+	assert.True(t, runner.AnchorRunning()) // still running
 }
 
 func TestTaskRunner_HandleRejection(t *testing.T) {
@@ -727,7 +727,7 @@ func TestTaskRunner_HandleRejection(t *testing.T) {
 		{ID: "app-1", TaskID: "task-s4", RepoName: "app", Description: "add UI", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
 	runner, s, _, _, _, _ := newTestRunner(t, "task-s4", goals)
-	runner.spotterAttempt = 1
+	runner.anchorAttempt = 1
 
 	// Mark both goals as complete with DONE.json
 	runner.dag.MarkComplete("api-1")
@@ -736,9 +736,9 @@ func TestTaskRunner_HandleRejection(t *testing.T) {
 	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
 	os.WriteFile(filepath.Join(runner.worktrees["app"], "DONE.json"), doneData, 0o644)
 
-	verdict := &spotter.VerdictJSON{
+	verdict := &anchor.VerdictJSON{
 		Verdict: "reject",
-		Repos: map[string]spotter.RepoVerdict{
+		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "fail", Goals: []string{"Fix response schema", "Add error handling"}},
 			"app": {Status: "pass", Goals: []string{}},
 		},
@@ -774,7 +774,7 @@ func TestTaskRunner_HandleRejection(t *testing.T) {
 	assert.True(t, goalIDs["api-corr-1-2"])
 }
 
-func TestSetter_SpotterApproveFlow(t *testing.T) {
+func TestSetter_AnchorApproveFlow(t *testing.T) {
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-s5", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
@@ -835,14 +835,14 @@ func TestSetter_SpotterApproveFlow(t *testing.T) {
 	assert.Equal(t, model.TaskStatusReviewing, updatedTask.Status)
 	assert.Equal(t, 0, setter.activeLeads)
 
-	// Second tick: spawn spotter
+	// Second tick: spawn anchor
 	require.NoError(t, setter.tick())
-	assert.True(t, runner.SpotterRunning())
+	assert.True(t, runner.AnchorRunning())
 
 	// Write VERDICT.json — approve
-	verdict := spotter.VerdictJSON{
+	verdict := anchor.VerdictJSON{
 		Verdict: "approve",
-		Repos: map[string]spotter.RepoVerdict{
+		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "pass"},
 		},
 	}
@@ -856,7 +856,7 @@ func TestSetter_SpotterApproveFlow(t *testing.T) {
 	assert.NotContains(t, setter.tasks, "task-s5") // cleaned up
 }
 
-func TestSetter_SpotterRejectThenApprove(t *testing.T) {
+func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-s6", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
@@ -913,13 +913,13 @@ func TestSetter_SpotterRejectThenApprove(t *testing.T) {
 	// Tick 1: detect completion -> reviewing
 	require.NoError(t, sett.tick())
 
-	// Tick 2: spawn spotter
+	// Tick 2: spawn anchor
 	require.NoError(t, sett.tick())
 
 	// Write reject verdict
-	rejectVerdict := spotter.VerdictJSON{
+	rejectVerdict := anchor.VerdictJSON{
 		Verdict: "reject",
-		Repos: map[string]spotter.RepoVerdict{
+		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "fail", Goals: []string{"Fix the schema"}},
 		},
 	}
@@ -946,14 +946,14 @@ func TestSetter_SpotterRejectThenApprove(t *testing.T) {
 	updatedTask, _ = s.GetTask("task-s6")
 	assert.Equal(t, model.TaskStatusReviewing, updatedTask.Status)
 
-	// Tick 5: spawn spotter again
+	// Tick 5: spawn anchor again
 	require.NoError(t, sett.tick())
-	assert.Equal(t, 2, runner.SpotterAttempt())
+	assert.Equal(t, 2, runner.AnchorAttempt())
 
 	// Write approve verdict
-	approveVerdict := spotter.VerdictJSON{
+	approveVerdict := anchor.VerdictJSON{
 		Verdict: "approve",
-		Repos: map[string]spotter.RepoVerdict{
+		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "pass"},
 		},
 	}
@@ -966,13 +966,13 @@ func TestSetter_SpotterRejectThenApprove(t *testing.T) {
 	assert.Equal(t, model.TaskStatusComplete, updatedTask.Status)
 
 	// Verify reviews are in SQLite
-	reviews, _ := s.GetSpotterReviewsForTask("task-s6")
+	reviews, _ := s.GetAnchorReviewsForTask("task-s6")
 	require.Len(t, reviews, 2)
 	assert.Equal(t, "reject", reviews[0].Verdict)
 	assert.Equal(t, "approve", reviews[1].Verdict)
 }
 
-func TestSetter_SpotterMaxReviewsStuck(t *testing.T) {
+func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-s7", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
@@ -1002,8 +1002,8 @@ func TestSetter_SpotterMaxReviewsStuck(t *testing.T) {
 		tmuxSession:    "belayer-task-task-s7",
 		taskDir:        taskDir,
 		startedAt:      make(map[string]time.Time),
-		spotterAttempt: 2, // already at max
-		spotterRunning: true,
+		anchorAttempt: 2, // already at max
+		anchorRunning: true,
 	}
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir("task-s7"))
@@ -1026,9 +1026,9 @@ func TestSetter_SpotterMaxReviewsStuck(t *testing.T) {
 	}
 
 	// Write reject verdict (2nd rejection at attempt 2)
-	rejectVerdict := spotter.VerdictJSON{
+	rejectVerdict := anchor.VerdictJSON{
 		Verdict: "reject",
-		Repos: map[string]spotter.RepoVerdict{
+		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "fail", Goals: []string{"Still broken"}},
 		},
 	}
@@ -1064,7 +1064,7 @@ func TestTaskRunner_GatherSummaries(t *testing.T) {
 	summaries := runner.GatherSummaries()
 	assert.Len(t, summaries, 2)
 
-	summaryMap := make(map[string]spotter.GoalSummary)
+	summaryMap := make(map[string]anchor.GoalSummary)
 	for _, s := range summaries {
 		summaryMap[s.GoalID] = s
 	}

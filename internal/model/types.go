@@ -31,8 +31,8 @@ const (
 	EventGoalStarted   EventType = "goal_started"
 	EventGoalCompleted EventType = "goal_completed"
 	EventGoalFailed    EventType = "goal_failed"
-	EventSpotterSpawned EventType = "spotter_spawned"
-	EventReviewVerdict  EventType = "review_verdict"
+	EventAnchorSpawned EventType = "anchor_spawned"
+	EventAnchorVerdict EventType = "anchor_verdict"
 	EventPRCreated     EventType = "pr_created"
 )
 

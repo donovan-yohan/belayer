@@ -1,4 +1,4 @@
-package spotter
+package anchor
 
 import (
 	"testing"
@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildSpotterPrompt(t *testing.T) {
-	data := SpotterPromptData{
+func TestBuildAnchorPrompt(t *testing.T) {
+	data := AnchorPromptData{
 		Spec: "Add user roles to the API and display them in the app.",
 		RepoDiffs: []RepoDiff{
 			{
@@ -41,7 +41,7 @@ func TestBuildSpotterPrompt(t *testing.T) {
 		},
 	}
 
-	prompt, err := BuildSpotterPrompt(data)
+	prompt, err := BuildAnchorPrompt(data)
 	require.NoError(t, err)
 
 	// Check spec included

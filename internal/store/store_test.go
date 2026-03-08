@@ -437,7 +437,7 @@ func TestResetGoalStatus(t *testing.T) {
 	assert.Nil(t, goals[0].CompletedAt)
 }
 
-func TestInsertAndGetSpotterReview(t *testing.T) {
+func TestInsertAndGetAnchorReview(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
@@ -452,10 +452,10 @@ func TestInsertAndGetSpotterReview(t *testing.T) {
 		Verdict: "pass",
 		Output:  "All goals met.",
 	}
-	err = s.InsertSpotterReview(review)
+	err = s.InsertAnchorReview(review)
 	require.NoError(t, err)
 
-	reviews, err := s.GetSpotterReviewsForTask("task-sr")
+	reviews, err := s.GetAnchorReviewsForTask("task-sr")
 	require.NoError(t, err)
 	require.Len(t, reviews, 1)
 	assert.Equal(t, "task-sr", reviews[0].TaskID)

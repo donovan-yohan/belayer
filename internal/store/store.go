@@ -343,26 +343,26 @@ func (s *Store) ResetGoalStatus(goalID string) error {
 	return err
 }
 
-// InsertSpotterReview inserts a spotter review record.
-func (s *Store) InsertSpotterReview(review *model.SpotterReview) error {
+// InsertAnchorReview inserts an anchor review record.
+func (s *Store) InsertAnchorReview(review *model.SpotterReview) error {
 	_, err := s.db.Exec(
 		`INSERT INTO spotter_reviews (task_id, attempt, verdict, output, created_at) VALUES (?, ?, ?, ?, ?)`,
 		review.TaskID, review.Attempt, review.Verdict, review.Output, time.Now().UTC(),
 	)
 	if err != nil {
-		return fmt.Errorf("inserting spotter review: %w", err)
+		return fmt.Errorf("inserting anchor review: %w", err)
 	}
 	return nil
 }
 
-// GetSpotterReviewsForTask returns spotter reviews for a task, ordered by attempt ASC.
-func (s *Store) GetSpotterReviewsForTask(taskID string) ([]model.SpotterReview, error) {
+// GetAnchorReviewsForTask returns anchor reviews for a task, ordered by attempt ASC.
+func (s *Store) GetAnchorReviewsForTask(taskID string) ([]model.SpotterReview, error) {
 	rows, err := s.db.Query(
 		`SELECT id, task_id, attempt, verdict, output, created_at
 		 FROM spotter_reviews WHERE task_id = ? ORDER BY attempt ASC`, taskID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying spotter reviews: %w", err)
+		return nil, fmt.Errorf("querying anchor reviews: %w", err)
 	}
 	defer rows.Close()
 
@@ -370,7 +370,7 @@ func (s *Store) GetSpotterReviewsForTask(taskID string) ([]model.SpotterReview, 
 	for rows.Next() {
 		var r model.SpotterReview
 		if err := rows.Scan(&r.ID, &r.TaskID, &r.Attempt, &r.Verdict, &r.Output, &r.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scanning spotter review: %w", err)
+			return nil, fmt.Errorf("scanning anchor review: %w", err)
 		}
 		reviews = append(reviews, r)
 	}

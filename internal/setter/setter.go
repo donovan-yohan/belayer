@@ -124,7 +124,7 @@ func (s *Setter) tick() error {
 					log.Printf("setter: error updating task status: %v", err)
 				}
 				runner.task.Status = model.TaskStatusReviewing
-				// Spotter will be spawned on next tick when we handle reviewing
+				// Anchor will be spawned on next tick when we handle reviewing
 				continue
 			}
 
@@ -141,19 +141,19 @@ func (s *Setter) tick() error {
 		}
 
 		if taskStatus == model.TaskStatusReviewing {
-			// Spawn spotter if not already running
-			if !runner.SpotterRunning() {
-				if err := runner.SpawnSpotter(); err != nil {
-					log.Printf("setter: error spawning spotter for %s: %v", taskID, err)
+			// Spawn anchor if not already running
+			if !runner.AnchorRunning() {
+				if err := runner.SpawnAnchor(); err != nil {
+					log.Printf("setter: error spawning anchor for %s: %v", taskID, err)
 					continue
 				}
 				continue
 			}
 
-			// Check for spotter verdict
-			verdict, found, err := runner.CheckSpotterVerdict()
+			// Check for anchor verdict
+			verdict, found, err := runner.CheckAnchorVerdict()
 			if err != nil {
-				log.Printf("setter: error checking spotter verdict for %s: %v", taskID, err)
+				log.Printf("setter: error checking anchor verdict for %s: %v", taskID, err)
 				continue
 			}
 			if !found {
@@ -174,8 +174,8 @@ func (s *Setter) tick() error {
 			}
 
 			// Verdict is reject
-			if runner.SpotterAttempt() >= 2 {
-				log.Printf("setter: task %s stuck after %d spotter reviews", taskID, runner.SpotterAttempt())
+			if runner.AnchorAttempt() >= 2 {
+				log.Printf("setter: task %s stuck after %d anchor reviews", taskID, runner.AnchorAttempt())
 				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusStuck); err != nil {
 					log.Printf("setter: error marking task stuck: %v", err)
 				}

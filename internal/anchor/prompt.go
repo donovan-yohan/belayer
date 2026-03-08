@@ -1,4 +1,4 @@
-package spotter
+package anchor
 
 import (
 	"bytes"
@@ -6,8 +6,8 @@ import (
 	"text/template"
 )
 
-// SpotterPromptData holds the values injected into the spotter prompt template.
-type SpotterPromptData struct {
+// AnchorPromptData holds the values injected into the anchor prompt template.
+type AnchorPromptData struct {
 	Spec      string
 	RepoDiffs []RepoDiff
 	Summaries []GoalSummary
@@ -30,7 +30,7 @@ type GoalSummary struct {
 	Notes       string
 }
 
-const spotterTemplate = `You are a spotter agent reviewing cross-repo changes for alignment and correctness.
+const anchorTemplate = `You are an anchor agent reviewing cross-repo changes for alignment and correctness.
 
 ## Task Specification
 
@@ -111,16 +111,16 @@ IMPORTANT:
 - For failing repos, provide specific, actionable correction goals
 - Each correction goal should be self-contained and implementable by a single agent session`
 
-// BuildSpotterPrompt renders the spotter prompt template with the given data.
-func BuildSpotterPrompt(data SpotterPromptData) (string, error) {
-	tmpl, err := template.New("spotter-prompt").Parse(spotterTemplate)
+// BuildAnchorPrompt renders the anchor prompt template with the given data.
+func BuildAnchorPrompt(data AnchorPromptData) (string, error) {
+	tmpl, err := template.New("anchor-prompt").Parse(anchorTemplate)
 	if err != nil {
-		return "", fmt.Errorf("parsing spotter prompt template: %w", err)
+		return "", fmt.Errorf("parsing anchor prompt template: %w", err)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("executing spotter prompt template: %w", err)
+		return "", fmt.Errorf("executing anchor prompt template: %w", err)
 	}
 
 	return buf.String(), nil

@@ -15,7 +15,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
-	"github.com/donovan-yohan/belayer/internal/spotter"
+	"github.com/donovan-yohan/belayer/internal/anchor"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/tmux"
 )
@@ -63,9 +63,9 @@ type TaskRunner struct {
 	git         GitRunner
 	startedAt   map[string]time.Time // goalID -> when it started running
 
-	// Spotter state
-	spotterAttempt int
-	spotterRunning bool
+	// Anchor state
+	anchorAttempt int
+	anchorRunning bool
 	taskDir        string // directory for VERDICT.json
 }
 
@@ -371,8 +371,8 @@ func (tr *TaskRunner) TmuxSession() string {
 }
 
 // GatherDiffs collects git diffs from all repo worktrees.
-func (tr *TaskRunner) GatherDiffs() []spotter.RepoDiff {
-	var diffs []spotter.RepoDiff
+func (tr *TaskRunner) GatherDiffs() []anchor.RepoDiff {
+	var diffs []anchor.RepoDiff
 	for repoName, worktreePath := range tr.worktrees {
 		diffStat, err := tr.git.Run(worktreePath, "diff", "--stat", "HEAD")
 		if err != nil {
@@ -397,7 +397,7 @@ func (tr *TaskRunner) GatherDiffs() []spotter.RepoDiff {
 			}
 		}
 
-		diffs = append(diffs, spotter.RepoDiff{
+		diffs = append(diffs, anchor.RepoDiff{
 			RepoName: repoName,
 			DiffStat: diffStat,
 			Diff:     diff,
@@ -407,10 +407,10 @@ func (tr *TaskRunner) GatherDiffs() []spotter.RepoDiff {
 }
 
 // GatherSummaries reads DONE.json from each worktree and returns goal summaries.
-func (tr *TaskRunner) GatherSummaries() []spotter.GoalSummary {
-	var summaries []spotter.GoalSummary
+func (tr *TaskRunner) GatherSummaries() []anchor.GoalSummary {
+	var summaries []anchor.GoalSummary
 	for _, g := range tr.dag.Goals() {
-		summary := spotter.GoalSummary{
+		summary := anchor.GoalSummary{
 			GoalID:      g.ID,
 			RepoName:    g.RepoName,
 			Description: g.Description,
@@ -434,32 +434,32 @@ func (tr *TaskRunner) GatherSummaries() []spotter.GoalSummary {
 	return summaries
 }
 
-// SpawnSpotter creates a tmux window for the spotter agent and launches it.
-func (tr *TaskRunner) SpawnSpotter() error {
-	tr.spotterAttempt++
-	windowName := fmt.Sprintf("spotter-%d", tr.spotterAttempt)
+// SpawnAnchor creates a tmux window for the anchor agent and launches it.
+func (tr *TaskRunner) SpawnAnchor() error {
+	tr.anchorAttempt++
+	windowName := fmt.Sprintf("anchor-%d", tr.anchorAttempt)
 
 	// Create tmux window
 	if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
-		return fmt.Errorf("creating spotter window: %w", err)
+		return fmt.Errorf("creating anchor window: %w", err)
 	}
 
 	// Enable pipe-pane logging
-	logPath := tr.logMgr.LogPath(tr.task.ID, fmt.Sprintf("spotter-%d", tr.spotterAttempt))
+	logPath := tr.logMgr.LogPath(tr.task.ID, fmt.Sprintf("anchor-%d", tr.anchorAttempt))
 	if err := tr.tmux.PipePane(tr.tmuxSession, windowName, logPath); err != nil {
-		log.Printf("warning: pipe-pane for spotter failed: %v", err)
+		log.Printf("warning: pipe-pane for anchor failed: %v", err)
 	}
 
-	// Build spotter prompt
-	promptData := spotter.SpotterPromptData{
+	// Build anchor prompt
+	promptData := anchor.AnchorPromptData{
 		Spec:      tr.task.Spec,
 		RepoDiffs: tr.GatherDiffs(),
 		Summaries: tr.GatherSummaries(),
 	}
 
-	prompt, err := spotter.BuildSpotterPrompt(promptData)
+	prompt, err := anchor.BuildAnchorPrompt(promptData)
 	if err != nil {
-		return fmt.Errorf("building spotter prompt: %w", err)
+		return fmt.Errorf("building anchor prompt: %w", err)
 	}
 
 	// Spawn agent
@@ -469,23 +469,23 @@ func (tr *TaskRunner) SpawnSpotter() error {
 		WorkDir:     tr.taskDir,
 		Prompt:      prompt,
 	}); err != nil {
-		return fmt.Errorf("spawning spotter agent: %w", err)
+		return fmt.Errorf("spawning anchor agent: %w", err)
 	}
 
-	tr.spotterRunning = true
+	tr.anchorRunning = true
 
-	if err := tr.store.InsertEvent(tr.task.ID, "", model.EventSpotterSpawned,
-		fmt.Sprintf(`{"attempt":%d}`, tr.spotterAttempt)); err != nil {
-		log.Printf("warning: failed to insert spotter_spawned event: %v", err)
+	if err := tr.store.InsertEvent(tr.task.ID, "", model.EventAnchorSpawned,
+		fmt.Sprintf(`{"attempt":%d}`, tr.anchorAttempt)); err != nil {
+		log.Printf("warning: failed to insert anchor_spawned event: %v", err)
 	}
 
-	log.Printf("spotter: spawned for task %s (attempt %d)", tr.task.ID, tr.spotterAttempt)
+	log.Printf("anchor: spawned for task %s (attempt %d)", tr.task.ID, tr.anchorAttempt)
 	return nil
 }
 
-// CheckSpotterVerdict checks for a VERDICT.json file and parses it.
+// CheckAnchorVerdict checks for a VERDICT.json file and parses it.
 // Returns the verdict, whether one was found, and any error.
-func (tr *TaskRunner) CheckSpotterVerdict() (*spotter.VerdictJSON, bool, error) {
+func (tr *TaskRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error) {
 	verdictPath := filepath.Join(tr.taskDir, "VERDICT.json")
 	data, err := os.ReadFile(verdictPath)
 	if err != nil {
@@ -495,7 +495,7 @@ func (tr *TaskRunner) CheckSpotterVerdict() (*spotter.VerdictJSON, bool, error) 
 		return nil, false, fmt.Errorf("reading VERDICT.json: %w", err)
 	}
 
-	var verdict spotter.VerdictJSON
+	var verdict anchor.VerdictJSON
 	if err := json.Unmarshal(data, &verdict); err != nil {
 		return nil, false, fmt.Errorf("parsing VERDICT.json: %w", err)
 	}
@@ -503,28 +503,28 @@ func (tr *TaskRunner) CheckSpotterVerdict() (*spotter.VerdictJSON, bool, error) 
 	// Record the review in SQLite
 	review := &model.SpotterReview{
 		TaskID:  tr.task.ID,
-		Attempt: tr.spotterAttempt,
+		Attempt: tr.anchorAttempt,
 		Verdict: verdict.Verdict,
 		Output:  string(data),
 	}
-	if err := tr.store.InsertSpotterReview(review); err != nil {
-		log.Printf("warning: failed to insert spotter review: %v", err)
+	if err := tr.store.InsertAnchorReview(review); err != nil {
+		log.Printf("warning: failed to insert anchor review: %v", err)
 	}
 
 	payload, _ := json.Marshal(verdict)
-	if err := tr.store.InsertEvent(tr.task.ID, "", model.EventReviewVerdict, string(payload)); err != nil {
-		log.Printf("warning: failed to insert review_verdict event: %v", err)
+	if err := tr.store.InsertEvent(tr.task.ID, "", model.EventAnchorVerdict, string(payload)); err != nil {
+		log.Printf("warning: failed to insert anchor_verdict event: %v", err)
 	}
 
-	// Kill the spotter window
-	windowName := fmt.Sprintf("spotter-%d", tr.spotterAttempt)
+	// Kill the anchor window
+	windowName := fmt.Sprintf("anchor-%d", tr.anchorAttempt)
 	tr.tmux.KillWindow(tr.tmuxSession, windowName)
-	tr.spotterRunning = false
+	tr.anchorRunning = false
 
 	// Remove VERDICT.json so it's not picked up again
 	os.Remove(verdictPath)
 
-	log.Printf("spotter: verdict for task %s: %s", tr.task.ID, verdict.Verdict)
+	log.Printf("anchor: verdict for task %s: %s", tr.task.ID, verdict.Verdict)
 	return &verdict, true, nil
 }
 
@@ -542,7 +542,7 @@ func (tr *TaskRunner) HandleApproval() error {
 			log.Printf("warning: failed to insert pr_created event: %v", err)
 		}
 
-		log.Printf("spotter: created PR for %s: %s", repoName, prURL)
+		log.Printf("anchor: created PR for %s: %s", repoName, prURL)
 	}
 	return nil
 }
@@ -574,7 +574,7 @@ func (tr *TaskRunner) createPR(repoName, worktreePath string) (string, error) {
 }
 
 // HandleRejection creates correction goals for failing repos and prepares for new leads.
-func (tr *TaskRunner) HandleRejection(verdict *spotter.VerdictJSON) ([]QueuedGoal, error) {
+func (tr *TaskRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedGoal, error) {
 	var correctionGoals []model.Goal
 	var queued []QueuedGoal
 
@@ -591,7 +591,7 @@ func (tr *TaskRunner) HandleRejection(verdict *spotter.VerdictJSON) ([]QueuedGoa
 
 		// Create correction goals
 		for i, goalDesc := range rv.Goals {
-			goalID := fmt.Sprintf("%s-corr-%d-%d", repoName, tr.spotterAttempt, i+1)
+			goalID := fmt.Sprintf("%s-corr-%d-%d", repoName, tr.anchorAttempt, i+1)
 			g := model.Goal{
 				ID:          goalID,
 				TaskID:      tr.task.ID,
@@ -617,16 +617,16 @@ func (tr *TaskRunner) HandleRejection(verdict *spotter.VerdictJSON) ([]QueuedGoa
 	// Add to DAG
 	tr.dag.AddGoals(correctionGoals)
 
-	log.Printf("spotter: created %d correction goals for task %s", len(correctionGoals), tr.task.ID)
+	log.Printf("anchor: created %d correction goals for task %s", len(correctionGoals), tr.task.ID)
 	return queued, nil
 }
 
-// SpotterAttempt returns the current spotter review attempt count.
-func (tr *TaskRunner) SpotterAttempt() int {
-	return tr.spotterAttempt
+// AnchorAttempt returns the current anchor review attempt count.
+func (tr *TaskRunner) AnchorAttempt() int {
+	return tr.anchorAttempt
 }
 
-// SpotterRunning returns whether the spotter is currently active.
-func (tr *TaskRunner) SpotterRunning() bool {
-	return tr.spotterRunning
+// AnchorRunning returns whether the anchor is currently active.
+func (tr *TaskRunner) AnchorRunning() bool {
+	return tr.anchorRunning
 }
