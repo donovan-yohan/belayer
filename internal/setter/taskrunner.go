@@ -182,6 +182,11 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		return fmt.Errorf("creating window %s: %w", windowName, err)
 	}
 
+	// Keep pane open after process exits for death detection
+	if err := tr.tmux.SetRemainOnExit(tr.tmuxSession, windowName, true); err != nil {
+		log.Printf("warning: set remain-on-exit for %s failed: %v", windowName, err)
+	}
+
 	// Enable pipe-pane logging
 	logPath := tr.logMgr.LogPath(tr.task.ID, goal.ID)
 	if err := tr.tmux.PipePane(tr.tmuxSession, windowName, logPath); err != nil {
@@ -317,9 +322,32 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 
 		windowName := fmt.Sprintf("%s-%s", g.RepoName, g.ID)
 		windowDead := !tr.windowExists(windowName)
+		reason := "window died"
 
 		startedAt, tracked := tr.startedAt[g.ID]
 		timedOut := tracked && now.Sub(startedAt) > staleTimeout
+
+		// Check for silence — no log output for silenceThreshold
+		if !windowDead && !timedOut {
+			logPath := tr.logMgr.LogPath(tr.task.ID, g.ID)
+			if info, statErr := os.Stat(logPath); statErr == nil {
+				silenceThreshold := 2 * time.Minute
+				if now.Sub(info.ModTime()) > silenceThreshold {
+					// Capture pane to check if waiting for input
+					paneContent, captureErr := tr.tmux.CapturePaneContent(tr.tmuxSession, windowName, 30)
+					if captureErr == nil && looksLikeInputPrompt(paneContent) {
+						windowDead = true
+						reason = "waiting for input"
+					}
+
+					// Also check if process has exited
+					if dead, deadErr := tr.tmux.IsPaneDead(tr.tmuxSession, windowName); deadErr == nil && dead {
+						windowDead = true
+						reason = "process exited without signal file"
+					}
+				}
+			}
+		}
 
 		if !windowDead && !timedOut {
 			continue
@@ -332,7 +360,6 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 			continue // will be picked up by CheckCompletions
 		}
 
-		reason := "window died"
 		if timedOut {
 			reason = "timed out"
 		}
@@ -697,6 +724,11 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		return fmt.Errorf("creating anchor window: %w", err)
 	}
 
+	// Keep pane open after process exits for death detection
+	if err := tr.tmux.SetRemainOnExit(tr.tmuxSession, windowName, true); err != nil {
+		log.Printf("warning: set remain-on-exit for anchor failed: %v", err)
+	}
+
 	// Enable pipe-pane logging
 	logPath := tr.logMgr.LogPath(tr.task.ID, fmt.Sprintf("anchor-%d", tr.anchorAttempt))
 	if err := tr.tmux.PipePane(tr.tmuxSession, windowName, logPath); err != nil {
@@ -905,4 +937,16 @@ func SpotterFeedbackForGoal(spot *spotter.SpotJSON) string {
 		buf.WriteString(fmt.Sprintf("- %s [%s]: %s\n", issue.Check, issue.Severity, issue.Description))
 	}
 	return buf.String()
+}
+
+// looksLikeInputPrompt checks if captured pane content suggests the session
+// is waiting for user input rather than actively working.
+func looksLikeInputPrompt(content string) bool {
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	lastLine := strings.TrimSpace(lines[len(lines)-1])
+	// Claude Code shows ">" when waiting for input
+	return lastLine == ">" || strings.HasSuffix(lastLine, "> ")
 }
