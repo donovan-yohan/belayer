@@ -33,8 +33,9 @@ type DoneJSON struct {
 
 // QueuedGoal is a goal waiting to be spawned.
 type QueuedGoal struct {
-	Goal   model.Goal
-	TaskID string
+	Goal            model.Goal
+	TaskID          string
+	SpotterFeedback string // empty on first attempt, populated on retry after spotter rejection
 }
 
 // GitRunner abstracts git command execution for testability.
@@ -70,6 +71,9 @@ type TaskRunner struct {
 	anchorAttempt int
 	anchorRunning bool
 	taskDir        string // directory for VERDICT.json
+
+	// Validation
+	validationEnabled bool // when true, DONE.json triggers spotting instead of direct completion
 }
 
 // NewTaskRunner creates a TaskRunner for the given task.
