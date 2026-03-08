@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 	"os/exec"
@@ -546,19 +545,20 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		doneData = []byte("{}")
 	}
 
-	// Load validation profiles from embedded defaults
+	// Load validation profiles via config chain (instance > global > embedded)
 	profiles := make(map[string]string)
-	profileEntries, _ := fs.ReadDir(defaults.FS, "profiles")
-	for _, entry := range profileEntries {
-		if entry.IsDir() {
-			continue
+	profileNames := []string{"frontend", "backend", "cli", "library"}
+	for _, name := range profileNames {
+		content, loadErr := belayerconfig.LoadProfile(tr.globalConfigDir, tr.instanceConfigDir, name)
+		if loadErr != nil {
+			// Fallback to embedded default
+			if embedded, readErr := defaults.FS.ReadFile("profiles/" + name + ".toml"); readErr == nil {
+				content = string(embedded)
+			} else {
+				continue
+			}
 		}
-		content, readErr := defaults.FS.ReadFile("profiles/" + entry.Name())
-		if readErr != nil {
-			continue
-		}
-		name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
-		profiles[name] = string(content)
+		profiles[name] = content
 	}
 
 	// Load spotter prompt template from config chain

@@ -13,7 +13,7 @@ func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init",
 		Short: "Initialize belayer configuration",
-		Long:  "Creates the ~/.belayer/ directory and default config.json if they don't exist.",
+		Long:  "Creates the ~/.belayer/ directory with config.json, default prompts, validation profiles, and belayer.toml.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir, err := config.EnsureDir()
 			if err != nil {
