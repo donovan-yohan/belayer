@@ -93,23 +93,19 @@ func TestClaudeSpawner_Spawn(t *testing.T) {
 	spawner := NewClaudeSpawner(tm)
 
 	err := spawner.Spawn(context.Background(), SpawnOpts{
-		TmuxSession: "test-session",
-		WindowName:  "api-goal-1",
-		WorkDir:     workDir,
-		InitialPrompt:      "Do the thing\nwith multiple lines",
+		TmuxSession:   "test-session",
+		WindowName:    "api-goal-1",
+		WorkDir:       workDir,
+		InitialPrompt: "Do the thing\nwith multiple lines",
 	})
 	require.NoError(t, err)
 
-	// Verify the prompt was written to a file
-	promptFile := filepath.Join(workDir, ".belayer-prompt.md")
-	data, err := os.ReadFile(promptFile)
-	require.NoError(t, err)
-	assert.Equal(t, "Do the thing\nwith multiple lines", string(data))
-
-	// Verify the command sent to tmux pipes the file into claude
+	// Verify the command sent to tmux uses interactive claude with positional arg
 	sentKeys := tm.keys["test-session:api-goal-1"]
 	assert.Contains(t, sentKeys, "cd '"+workDir+"'")
-	assert.Contains(t, sentKeys, "claude -p --dangerously-skip-permissions < .belayer-prompt.md")
+	assert.Contains(t, sentKeys, "claude --dangerously-skip-permissions")
+	assert.Contains(t, sentKeys, "Do the thing")
+	assert.NotContains(t, sentKeys, "claude -p")
 }
 
 func TestClaudeSpawner_ShellQuoting(t *testing.T) {
@@ -120,20 +116,19 @@ func TestClaudeSpawner_ShellQuoting(t *testing.T) {
 	workDir := t.TempDir()
 	spawner := NewClaudeSpawner(tm)
 
-	// WorkDir with single quotes that need escaping
+	// Prompt with single quotes that need escaping
 	err := spawner.Spawn(context.Background(), SpawnOpts{
-		TmuxSession: "s",
-		WindowName:  "w",
-		WorkDir:     workDir,
-		InitialPrompt:      "Don't break",
+		TmuxSession:   "s",
+		WindowName:    "w",
+		WorkDir:       workDir,
+		InitialPrompt: "Don't break",
 	})
 	require.NoError(t, err)
 
-	// Verify prompt file contains the raw content (no shell escaping needed)
-	promptFile := filepath.Join(workDir, ".belayer-prompt.md")
-	data, err := os.ReadFile(promptFile)
-	require.NoError(t, err)
-	assert.Equal(t, "Don't break", string(data))
+	// Verify the prompt is shell-quoted in the command
+	sentKeys := tm.keys["s:w"]
+	assert.Contains(t, sentKeys, "claude --dangerously-skip-permissions")
+	assert.Contains(t, sentKeys, "Don")
 }
 
 func TestShellQuote(t *testing.T) {

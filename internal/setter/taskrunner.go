@@ -214,7 +214,7 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		TmuxSession: tr.tmuxSession,
 		WindowName:  windowName,
 		WorkDir:     worktreePath,
-		Prompt:      prompt,
+		InitialPrompt: prompt,
 	}); err != nil {
 		return fmt.Errorf("spawning agent for %s: %w", goal.ID, err)
 	}
@@ -592,7 +592,7 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		TmuxSession: tr.tmuxSession,
 		WindowName:  windowName,
 		WorkDir:     worktreePath,
-		Prompt:      prompt,
+		InitialPrompt: prompt,
 	}); err != nil {
 		return fmt.Errorf("spawning spotter for %s: %w", goal.ID, err)
 	}
@@ -730,7 +730,7 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		TmuxSession: tr.tmuxSession,
 		WindowName:  windowName,
 		WorkDir:     tr.taskDir,
-		Prompt:      prompt,
+		InitialPrompt: prompt,
 	}); err != nil {
 		return fmt.Errorf("spawning anchor agent: %w", err)
 	}

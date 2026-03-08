@@ -258,9 +258,9 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 	assert.Equal(t, "belayer-task-task-1", sp.spawned[0].TmuxSession)
 	assert.Equal(t, "api-api-1", sp.spawned[0].WindowName)
 	assert.Equal(t, filepath.Join(tmpDir, "api"), sp.spawned[0].WorkDir)
-	assert.Contains(t, sp.spawned[0].Prompt, "test goal")
-	assert.Contains(t, sp.spawned[0].Prompt, "test spec")
-	assert.Contains(t, sp.spawned[0].Prompt, "DONE.json")
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "test goal")
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "test spec")
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "DONE.json")
 }
 
 func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
@@ -736,8 +736,8 @@ func TestTaskRunner_SpawnAnchor(t *testing.T) {
 	assert.Equal(t, runner.tmuxSession, sp.spawned[0].TmuxSession)
 	assert.Equal(t, "anchor-1", sp.spawned[0].WindowName)
 	assert.Equal(t, runner.taskDir, sp.spawned[0].WorkDir)
-	assert.Contains(t, sp.spawned[0].Prompt, "VERDICT.json")
-	assert.Contains(t, sp.spawned[0].Prompt, "test spec")
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "VERDICT.json")
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "test spec")
 }
 
 func TestTaskRunner_CheckAnchorVerdict_Approve(t *testing.T) {
@@ -1189,8 +1189,8 @@ func TestTaskRunner_SpawnSpotter(t *testing.T) {
 	// Verify spotter was spawned (2 total spawns: lead + spotter)
 	require.Len(t, sp.spawned, 2)
 	assert.Equal(t, "api-api-1", sp.spawned[1].WindowName)
-	assert.Contains(t, sp.spawned[1].Prompt, "SPOT.json")
-	assert.Contains(t, sp.spawned[1].Prompt, "Added endpoint") // DONE.json content
+	assert.Contains(t, sp.spawned[1].InitialPrompt, "SPOT.json")
+	assert.Contains(t, sp.spawned[1].InitialPrompt, "Added endpoint") // DONE.json content
 
 	// Verify spotter_spawned event was recorded
 	events, _ := s.GetEventsForTask("task-sp1")
@@ -1471,8 +1471,8 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 
 	// The re-spawned lead should have spotter feedback in its prompt
 	lastSpawned := sp.spawned[len(sp.spawned)-1]
-	assert.Contains(t, lastSpawned.Prompt, "FAILED CHECKS")
-	assert.Contains(t, lastSpawned.Prompt, "Build failed")
+	assert.Contains(t, lastSpawned.InitialPrompt, "FAILED CHECKS")
+	assert.Contains(t, lastSpawned.InitialPrompt, "Build failed")
 }
 
 func TestDAG_AllComplete_FalseForSpotting(t *testing.T) {
@@ -1505,8 +1505,8 @@ func TestTaskRunner_SpawnGoalWithSpotterFeedback(t *testing.T) {
 
 	// Check that spotter feedback was included in the prompt
 	require.Len(t, sp.spawned, 1)
-	assert.Contains(t, sp.spawned[0].Prompt, "FAILED CHECKS")
-	assert.Contains(t, sp.spawned[0].Prompt, "Build failed")
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "FAILED CHECKS")
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "Build failed")
 }
 
 func TestSpotterFeedbackForGoal(t *testing.T) {

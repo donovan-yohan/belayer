@@ -3,15 +3,13 @@ package lead
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/donovan-yohan/belayer/internal/tmux"
 )
 
-// ClaudeSpawner implements AgentSpawner by launching Claude Code sessions
-// in tmux windows via `claude -p`.
+// ClaudeSpawner implements AgentSpawner by launching interactive Claude Code
+// sessions in tmux windows.
 type ClaudeSpawner struct {
 	tmux tmux.TmuxManager
 }
@@ -21,18 +19,13 @@ func NewClaudeSpawner(tm tmux.TmuxManager) *ClaudeSpawner {
 	return &ClaudeSpawner{tmux: tm}
 }
 
-// Spawn launches a Claude Code session in the specified tmux window.
-// The prompt is written to a temp file and piped into claude via stdin
-// to avoid shell quoting issues with multi-line prompts.
+// Spawn launches an interactive Claude Code session in the specified tmux window.
+// The initial prompt is passed as a positional argument.
 func (c *ClaudeSpawner) Spawn(_ context.Context, opts SpawnOpts) error {
-	// Write prompt to a temp file in the workdir
-	promptFile := filepath.Join(opts.WorkDir, ".belayer-prompt.md")
-	if err := os.WriteFile(promptFile, []byte(opts.Prompt), 0o644); err != nil {
-		return fmt.Errorf("writing prompt file: %w", err)
-	}
-
-	cmd := fmt.Sprintf("cd %s && claude -p --dangerously-skip-permissions < .belayer-prompt.md 2>&1; echo 'Claude session exited'",
-		shellQuote(opts.WorkDir))
+	// Build command: full interactive session with positional prompt
+	cmd := fmt.Sprintf("cd %s && claude --dangerously-skip-permissions %s 2>&1; echo 'Claude session exited'",
+		shellQuote(opts.WorkDir),
+		shellQuote(opts.InitialPrompt))
 
 	return c.tmux.SendKeys(opts.TmuxSession, opts.WindowName, cmd)
 }
