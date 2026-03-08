@@ -258,9 +258,12 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 	assert.Equal(t, "belayer-task-task-1", sp.spawned[0].TmuxSession)
 	assert.Equal(t, "api-api-1", sp.spawned[0].WindowName)
 	assert.Equal(t, filepath.Join(tmpDir, "api"), sp.spawned[0].WorkDir)
-	assert.Contains(t, sp.spawned[0].InitialPrompt, "test goal")
-	assert.Contains(t, sp.spawned[0].InitialPrompt, "test spec")
-	assert.Contains(t, sp.spawned[0].InitialPrompt, "DONE.json")
+
+	// Verify GOAL.json was written with correct content
+	goalJSON, err := os.ReadFile(filepath.Join(tmpDir, "api", ".lead", "GOAL.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(goalJSON), "test goal")
+	assert.Contains(t, string(goalJSON), "test spec")
 }
 
 func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
@@ -736,8 +739,12 @@ func TestTaskRunner_SpawnAnchor(t *testing.T) {
 	assert.Equal(t, runner.tmuxSession, sp.spawned[0].TmuxSession)
 	assert.Equal(t, "anchor-1", sp.spawned[0].WindowName)
 	assert.Equal(t, runner.taskDir, sp.spawned[0].WorkDir)
-	assert.Contains(t, sp.spawned[0].InitialPrompt, "VERDICT.json")
-	assert.Contains(t, sp.spawned[0].InitialPrompt, "test spec")
+
+	// Verify GOAL.json was written with correct content
+	goalJSON, err := os.ReadFile(filepath.Join(runner.taskDir, ".lead", "GOAL.json"))
+	require.NoError(t, err)
+	assert.Contains(t, string(goalJSON), "test spec")
+	assert.Contains(t, string(goalJSON), "anchor")
 }
 
 func TestTaskRunner_CheckAnchorVerdict_Approve(t *testing.T) {
@@ -1189,8 +1196,11 @@ func TestTaskRunner_SpawnSpotter(t *testing.T) {
 	// Verify spotter was spawned (2 total spawns: lead + spotter)
 	require.Len(t, sp.spawned, 2)
 	assert.Equal(t, "api-api-1", sp.spawned[1].WindowName)
-	assert.Contains(t, sp.spawned[1].InitialPrompt, "SPOT.json")
-	assert.Contains(t, sp.spawned[1].InitialPrompt, "Added endpoint") // DONE.json content
+	// Verify GOAL.json was written with spotter context
+	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "GOAL.json"))
+	require.NoError(t, goalErr)
+	assert.Contains(t, string(goalJSON), "spotter")
+	assert.Contains(t, string(goalJSON), "Added endpoint") // DONE.json content
 
 	// Verify spotter_spawned event was recorded
 	events, _ := s.GetEventsForTask("task-sp1")
@@ -1469,10 +1479,11 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt) // attempt incremented by CheckSpotResult
 	assert.Equal(t, 1, sett.activeLeads) // lead re-spawned from queue
 
-	// The re-spawned lead should have spotter feedback in its prompt
-	lastSpawned := sp.spawned[len(sp.spawned)-1]
-	assert.Contains(t, lastSpawned.InitialPrompt, "FAILED CHECKS")
-	assert.Contains(t, lastSpawned.InitialPrompt, "Build failed")
+	// The re-spawned lead should have spotter feedback in GOAL.json
+	goalJSON, goalErr := os.ReadFile(filepath.Join(worktreeDir, ".lead", "GOAL.json"))
+	require.NoError(t, goalErr)
+	assert.Contains(t, string(goalJSON), "FAILED CHECKS")
+	assert.Contains(t, string(goalJSON), "Build failed")
 }
 
 func TestDAG_AllComplete_FalseForSpotting(t *testing.T) {
@@ -1503,10 +1514,12 @@ func TestTaskRunner_SpawnGoalWithSpotterFeedback(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Check that spotter feedback was included in the prompt
+	// Check that spotter feedback was written to GOAL.json
 	require.Len(t, sp.spawned, 1)
-	assert.Contains(t, sp.spawned[0].InitialPrompt, "FAILED CHECKS")
-	assert.Contains(t, sp.spawned[0].InitialPrompt, "Build failed")
+	goalJSON, goalErr := os.ReadFile(filepath.Join(sp.spawned[0].WorkDir, ".lead", "GOAL.json"))
+	require.NoError(t, goalErr)
+	assert.Contains(t, string(goalJSON), "FAILED CHECKS")
+	assert.Contains(t, string(goalJSON), "Build failed")
 }
 
 func TestSpotterFeedbackForGoal(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/anchor"
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/defaults"
+	"github.com/donovan-yohan/belayer/internal/goalctx"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
@@ -193,33 +194,30 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		log.Printf("warning: pipe-pane for %s failed: %v", windowName, err)
 	}
 
-	// Build prompt and spawn agent
+	// Prepare worktree environment with CLAUDE.md and GOAL.json
 	worktreePath := tr.worktrees[goal.RepoName]
-	tmplStr, tmplErr := belayerconfig.LoadPrompt(tr.globalConfigDir, tr.instanceConfigDir, "lead")
-	if tmplErr != nil {
-		// Fallback to embedded default
-		tmplBytes, readErr := defaults.FS.ReadFile("prompts/lead.md")
-		if readErr != nil {
-			return fmt.Errorf("reading embedded lead prompt: %w", readErr)
-		}
-		tmplStr = string(tmplBytes)
+
+	if err := tr.writeClaudeMD(worktreePath, "lead"); err != nil {
+		return fmt.Errorf("writing CLAUDE.md for %s: %w", goal.ID, err)
 	}
-	prompt, err := lead.BuildPrompt(tmplStr, lead.PromptData{
-		Spec:            tr.task.Spec,
+
+	if err := goalctx.WriteGoalJSON(worktreePath, goalctx.LeadGoal{
+		Role:            "lead",
+		TaskSpec:        tr.task.Spec,
 		GoalID:          goal.ID,
 		RepoName:        goal.RepoName,
 		Description:     goal.Description,
+		Attempt:         goal.Attempt,
 		SpotterFeedback: queued.SpotterFeedback,
-	})
-	if err != nil {
-		return fmt.Errorf("building prompt for %s: %w", goal.ID, err)
+	}); err != nil {
+		return fmt.Errorf("writing GOAL.json for %s: %w", goal.ID, err)
 	}
 
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
-		TmuxSession: tr.tmuxSession,
-		WindowName:  windowName,
-		WorkDir:     worktreePath,
-		InitialPrompt: prompt,
+		TmuxSession:   tr.tmuxSession,
+		WindowName:    windowName,
+		WorkDir:       worktreePath,
+		InitialPrompt: "Read .lead/GOAL.json and begin working on your assignment.",
 	}); err != nil {
 		return fmt.Errorf("spawning agent for %s: %w", goal.ID, err)
 	}
@@ -479,6 +477,58 @@ func (tr *TaskRunner) windowExists(windowName string) bool {
 	return false
 }
 
+// writeClaudeMD writes the role-specific CLAUDE.md template to <worktreePath>/.claude/CLAUDE.md.
+// If a CLAUDE.md already exists (e.g. from the repo itself), belayer content is prepended.
+func (tr *TaskRunner) writeClaudeMD(worktreePath, role string) error {
+	tmplBytes, err := defaults.FS.ReadFile("claudemd/" + role + ".md")
+	if err != nil {
+		return fmt.Errorf("reading %s CLAUDE.md template: %w", role, err)
+	}
+	belayerContent := string(tmplBytes)
+
+	claudeDir := filepath.Join(worktreePath, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		return fmt.Errorf("creating .claude directory: %w", err)
+	}
+
+	claudeMDPath := filepath.Join(claudeDir, "CLAUDE.md")
+
+	// Preserve existing CLAUDE.md content
+	existing, _ := os.ReadFile(claudeMDPath)
+	if len(existing) > 0 {
+		belayerContent = belayerContent + "\n\n---\n\n" + string(existing)
+	}
+
+	return os.WriteFile(claudeMDPath, []byte(belayerContent), 0o644)
+}
+
+// writeProfiles writes validation profiles to <worktreePath>/.lead/profiles/ for agent discovery.
+func (tr *TaskRunner) writeProfiles(worktreePath string) (map[string]string, error) {
+	profileDir := filepath.Join(worktreePath, ".lead", "profiles")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating profiles directory: %w", err)
+	}
+
+	profiles := make(map[string]string)
+	profileNames := []string{"frontend", "backend", "cli", "library"}
+	for _, name := range profileNames {
+		content, loadErr := belayerconfig.LoadProfile(tr.globalConfigDir, tr.instanceConfigDir, name)
+		if loadErr != nil {
+			if embedded, readErr := defaults.FS.ReadFile("profiles/" + name + ".toml"); readErr == nil {
+				content = string(embedded)
+			} else {
+				continue
+			}
+		}
+		profiles[name] = content
+		profilePath := filepath.Join(profileDir, name+".toml")
+		if err := os.WriteFile(profilePath, []byte(content), 0o644); err != nil {
+			log.Printf("warning: failed to write profile %s: %v", name, err)
+		}
+	}
+	return profiles, nil
+}
+
 // TaskID returns the task's ID.
 func (tr *TaskRunner) TaskID() string {
 	return tr.task.ID
@@ -570,61 +620,43 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		log.Printf("warning: set remain-on-exit for spotter %s failed: %v", windowName, err)
 	}
 
+	// Write CLAUDE.md for spotter role
+	if err := tr.writeClaudeMD(worktreePath, "spotter"); err != nil {
+		return fmt.Errorf("writing spotter CLAUDE.md for %s: %w", goal.ID, err)
+	}
+
+	// Write profiles to .lead/profiles/ for agent discovery
+	profiles, err := tr.writeProfiles(worktreePath)
+	if err != nil {
+		return fmt.Errorf("writing profiles for %s: %w", goal.ID, err)
+	}
+
 	// Read DONE.json for context
 	donePath := filepath.Join(worktreePath, "DONE.json")
-	doneData, err := os.ReadFile(donePath)
-	if err != nil {
+	doneData, readErr := os.ReadFile(donePath)
+	if readErr != nil {
 		doneData = []byte("{}")
 	}
 
-	// Load validation profiles via config chain (instance > global > embedded)
-	profiles := make(map[string]string)
-	profileNames := []string{"frontend", "backend", "cli", "library"}
-	for _, name := range profileNames {
-		content, loadErr := belayerconfig.LoadProfile(tr.globalConfigDir, tr.instanceConfigDir, name)
-		if loadErr != nil {
-			// Fallback to embedded default
-			if embedded, readErr := defaults.FS.ReadFile("profiles/" + name + ".toml"); readErr == nil {
-				content = string(embedded)
-			} else {
-				continue
-			}
-		}
-		profiles[name] = content
-	}
-
-	// Load spotter prompt template from config chain
-	spotterTmplStr, tmplErr := belayerconfig.LoadPrompt(tr.globalConfigDir, tr.instanceConfigDir, "spotter")
-	if tmplErr != nil {
-		// Fallback to embedded default
-		tmplBytes, readErr := defaults.FS.ReadFile("prompts/spotter.md")
-		if readErr != nil {
-			return fmt.Errorf("reading spotter prompt template: %w", readErr)
-		}
-		spotterTmplStr = string(tmplBytes)
-	}
-
-	// Build spotter prompt
-	promptData := spotter.SpotterPromptData{
+	// Write GOAL.json for spotter
+	if err := goalctx.WriteGoalJSON(worktreePath, goalctx.SpotterGoal{
+		Role:        "spotter",
 		GoalID:      goal.ID,
 		RepoName:    goal.RepoName,
 		Description: goal.Description,
 		WorkDir:     worktreePath,
 		Profiles:    profiles,
 		DoneJSON:    string(doneData),
-	}
-
-	prompt, err := spotter.BuildSpotterPrompt(spotterTmplStr, promptData)
-	if err != nil {
-		return fmt.Errorf("building spotter prompt for %s: %w", goal.ID, err)
+	}); err != nil {
+		return fmt.Errorf("writing spotter GOAL.json for %s: %w", goal.ID, err)
 	}
 
 	// Spawn agent in the existing window (lead has exited, window is idle)
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
-		TmuxSession: tr.tmuxSession,
-		WindowName:  windowName,
-		WorkDir:     worktreePath,
-		InitialPrompt: prompt,
+		TmuxSession:   tr.tmuxSession,
+		WindowName:    windowName,
+		WorkDir:       worktreePath,
+		InitialPrompt: "Read .lead/GOAL.json and begin validating the lead's work.",
 	}); err != nil {
 		return fmt.Errorf("spawning spotter for %s: %w", goal.ID, err)
 	}
@@ -740,34 +772,50 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		log.Printf("warning: pipe-pane for anchor failed: %v", err)
 	}
 
-	// Build anchor prompt
-	anchorTmplStr, tmplErr := belayerconfig.LoadPrompt(tr.globalConfigDir, tr.instanceConfigDir, "anchor")
-	if tmplErr != nil {
-		// Fallback to embedded default
-		tmplBytes, readErr := defaults.FS.ReadFile("prompts/anchor.md")
-		if readErr != nil {
-			return fmt.Errorf("reading embedded anchor prompt: %w", readErr)
-		}
-		anchorTmplStr = string(tmplBytes)
+	// Write CLAUDE.md for anchor role
+	if err := tr.writeClaudeMD(tr.taskDir, "anchor"); err != nil {
+		return fmt.Errorf("writing anchor CLAUDE.md: %w", err)
 	}
 
-	promptData := anchor.AnchorPromptData{
-		Spec:      tr.task.Spec,
-		RepoDiffs: tr.GatherDiffs(),
-		Summaries: tr.GatherSummaries(),
+	// Convert anchor diffs/summaries to goalctx types for GOAL.json
+	anchorDiffs := tr.GatherDiffs()
+	var repoDiffs []goalctx.RepoDiff
+	for _, d := range anchorDiffs {
+		repoDiffs = append(repoDiffs, goalctx.RepoDiff{
+			RepoName: d.RepoName,
+			DiffStat: d.DiffStat,
+			Diff:     d.Diff,
+		})
 	}
 
-	prompt, err := anchor.BuildAnchorPrompt(anchorTmplStr, promptData)
-	if err != nil {
-		return fmt.Errorf("building anchor prompt: %w", err)
+	anchorSummaries := tr.GatherSummaries()
+	var goalSummaries []goalctx.GoalSummary
+	for _, s := range anchorSummaries {
+		goalSummaries = append(goalSummaries, goalctx.GoalSummary{
+			GoalID:      s.GoalID,
+			RepoName:    s.RepoName,
+			Description: s.Description,
+			Status:      s.Status,
+			Summary:     s.Summary,
+			Notes:       s.Notes,
+		})
+	}
+
+	if err := goalctx.WriteGoalJSON(tr.taskDir, goalctx.AnchorGoal{
+		Role:      "anchor",
+		TaskSpec:  tr.task.Spec,
+		RepoDiffs: repoDiffs,
+		Summaries: goalSummaries,
+	}); err != nil {
+		return fmt.Errorf("writing anchor GOAL.json: %w", err)
 	}
 
 	// Spawn agent
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
-		TmuxSession: tr.tmuxSession,
-		WindowName:  windowName,
-		WorkDir:     tr.taskDir,
-		InitialPrompt: prompt,
+		TmuxSession:   tr.tmuxSession,
+		WindowName:    windowName,
+		WorkDir:       tr.taskDir,
+		InitialPrompt: "Read .lead/GOAL.json and begin cross-repo review.",
 	}); err != nil {
 		return fmt.Errorf("spawning anchor agent: %w", err)
 	}
