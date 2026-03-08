@@ -8,8 +8,9 @@ The coordinator is deterministic Go code (state machine + event loop). It spawns
 
 1. **Sufficiency check**: Does this task have enough context?
 2. **Task decomposition**: Break task into per-repo specs
-3. **Alignment review**: Are cross-repo implementations consistent?
-4. **Stuck analysis**: Why is a lead stuck? Suggest recovery
+3. **Spotter**: Per-goal runtime validation (browser checks, dev server, console errors)
+4. **Anchor** (formerly "alignment review"): Cross-repo alignment review
+5. **Stuck analysis**: Why is a lead stuck? Suggest recovery
 
 Agentic nodes receive structured input (from SQLite), produce structured output (written to SQLite), and exit.
 
@@ -28,6 +29,22 @@ Defined across `internal/db/migrations/`. Key tables:
 | `agentic_decisions` | Outputs from ephemeral Claude sessions |
 
 Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and foreign keys enabled.
+
+## Three-Layer Validation Pipeline
+
+Validation flows through three layers after a lead completes a goal:
+
+1. **Lead** (self-check): Runs build + tests, writes `DONE.json` on completion
+2. **Spotter** (per-goal validation): Reuses the lead's tmux window with fresh agent context. Performs runtime validation (browser checks, dev server, console errors). Writes `SPOT.json`. On failure, spotter feedback is injected into the lead prompt on retry.
+3. **Anchor** (cross-repo alignment): Reviews all repos for consistency after all leads/spotters pass. Writes `VERDICT.json`.
+
+### Signal Files
+
+| File | Writer | Schema |
+|------|--------|--------|
+| `DONE.json` | Lead | `{ "status": "complete"/"failed", "summary": "...", "files_changed": [...] }` |
+| `SPOT.json` | Spotter | `{ "pass": true/false, "project_type": "frontend", "issues": [...], "screenshots": [...] }` |
+| `VERDICT.json` | Anchor | `{ "verdict": "approve"/"reject", "repos": { ... } }` |
 
 ## Lead Execution Loop
 
@@ -57,6 +74,8 @@ Each agentic node:
 - Process group isolation: `Setpgid: true` + custom `Cancel` kills entire process tree on context cancellation (prevents orphaned `claude` processes)
 - Results are parsed and stored in SQLite (`agentic_decisions` table)
 
+Node types: sufficiency check, task decomposition, **spotter** (per-goal runtime validation), **anchor** (cross-repo alignment), stuck analysis.
+
 ## Task Intake Pipeline
 
 The intake pipeline (`internal/intake/`) handles pre-coordinator task preparation:
@@ -82,8 +101,8 @@ The coordinator (`internal/coordinator/`) is the central orchestration layer:
 - **Instance-aware decomposition**: Decomposition prompt includes available repo names from instance config, constraining the agentic node to valid repos
 - **Sufficiency skip**: Tasks pre-checked at intake skip the coordinator's sufficiency check
 - **Interfaces**: `LeadRunner`, `WorktreeCreator`, `DiffCollector`, and `PRCreator` interfaces enable mock-based testing
-- **Cross-repo alignment**: When all leads complete, collects git diffs from worktrees, evaluates per-criterion alignment (API contracts, shared types, feature parity, integration points), re-dispatches misaligned repos with feedback on failure, creates PRs on success
-- **Alignment retry**: Max alignment attempts (default 2) prevents infinite re-dispatch loops; alignment attempts counted via `alignment_started` events
+- **Cross-repo alignment (anchor)**: When all leads complete, collects git diffs from worktrees, evaluates per-criterion alignment (API contracts, shared types, feature parity, integration points), re-dispatches misaligned repos with feedback on failure, creates PRs on success
+- **Anchor retry**: Max alignment attempts (default 2) prevents infinite re-dispatch loops; alignment attempts counted via `alignment_started` events
 - **PR creation**: Best-effort push + `gh pr create` per repo; PR URLs recorded as `prs_created` events; failures don't block task completion
 
 ## TUI Dashboard
@@ -103,7 +122,8 @@ The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
 
 | Command | Purpose |
 |---------|---------|
-| `belayer init <name> --repo <url>` | Create a new instance with repos |
+| `belayer init <name> --repo <url>` | Create a new instance with repos; writes config directory to disk |
+| `belayer setter` | Start the setter daemon (DAG executor) |
 | `belayer task create [desc]` | Create task with intake pipeline + start coordinator |
 | `belayer task retry [task-id]` | Retry a failed task (reuses enriched description) |
 | `belayer task list` | List tasks for the current instance |
@@ -113,6 +133,36 @@ The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
 ## Process Lifecycle
 
 All child processes (`claude -p`, lead shell scripts) are spawned with `Setpgid: true` to create independent process groups. On context cancellation (Ctrl+C), the custom `cmd.Cancel` sends `SIGKILL` to the entire process group (negative PID), ensuring no orphaned grandchild processes survive.
+
+## Config System
+
+Resolution chain: instance config > global config > embedded defaults.
+
+- `belayerconfig.Load()` merges TOML configs following the chain
+- `belayerconfig.LoadPrompt()` / `LoadProfile()` resolve from config dirs
+- Embedded defaults via Go `embed.FS` in `internal/defaults/`
+- `belayer.toml` schema: `[agents]`, `[execution]`, `[validation]`, `[anchor]` sections
+- **Validation profiles**: Human-readable TOML checklists the LLM interprets
+
+## Prompt Template System
+
+Prompts are extracted from Go source to editable `.md` files:
+
+- Go template variables (e.g., `{{.Spec}}`, `{{.GoalID}}`, `{{.SpotterFeedback}}`)
+- `BuildPrompt` / `BuildAnchorPrompt` / `BuildSpotterPrompt` accept a template string parameter
+- `BuildPromptDefault` / etc. convenience functions use embedded defaults
+- Templates resolved via config system (instance overrides > embedded defaults)
+
+## Naming Convention
+
+Climbing metaphors throughout:
+
+| Name | Role |
+|------|------|
+| **Setter** | Daemon / DAG executor |
+| **Lead** | Implementation agent (per-repo) |
+| **Spotter** | Per-goal runtime validator |
+| **Anchor** | Cross-repo alignment reviewer |
 
 ## See Also
 

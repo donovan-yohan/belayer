@@ -6,7 +6,7 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-| [Context-Aware Validation](exec-plans/active/2026-03-07-context-aware-validation.md) | 2026-03-07 | Per-goal spotter validation, anchor rename, config system |
+| _(none)_ | | |
 
 ## Tech Debt
 
@@ -17,6 +17,8 @@ Execution plans for active and completed work.
 ## Completed Plans
 
 | Plan | Completed | Topic |
+|------|-----------|-------|
+| [Context-Aware Validation](exec-plans/completed/2026-03-07-context-aware-validation.md) | 2026-03-07 | Per-goal spotter validation, anchor rename, config system |
 | Post-build bugfixes | 2026-03-07 | Real-world testing fixes (see below) |
 
 ### Post-Build Bugfix Summary (2026-03-07)

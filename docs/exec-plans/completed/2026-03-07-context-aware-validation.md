@@ -1,6 +1,6 @@
 # Context-Aware Validation Pipeline Implementation Plan
 
-> **Status**: Complete | **Created**: 2026-03-07 | **Last Updated**: 2026-03-07
+> **Status**: Completed | **Created**: 2026-03-07 | **Completed**: 2026-03-07
 > **Design Doc**: `docs/plans/2026-03-07-context-aware-validation-design.md`
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -815,10 +815,15 @@ git commit -m "feat: wire config loader into setter, spawner, and prompt builder
 _Filled by /harness:complete when work is done._
 
 **What worked:**
--
+- Parallel worker dispatch for independent tasks significantly sped up implementation
+- Embedded defaults via Go embed.FS provide a clean zero-config experience with opt-in customization
+- Human-readable TOML validation profiles let the LLM interpret checklists naturally instead of rigid automation
 
 **What didn't:**
--
+- Some workers produced duplicate commits for the same task (tasks 4-5 and 6 had overlapping commits)
+- Worker-10 was lost during context compaction — its changes were committed but the orchestrator couldn't track completion
 
 **Learnings to codify:**
--
+- Config resolution chains (instance > global > embedded) are a clean pattern for user-customizable defaults
+- Signal files (DONE.json, SPOT.json, VERDICT.json) provide reliable inter-agent communication through the filesystem
+- Separating prompt templates from Go code makes the system more customizable without recompilation

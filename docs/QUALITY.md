@@ -17,10 +17,15 @@ Go's built-in `go test` with `testing` package. No external test framework.
 | `internal/lead/runner_test.go` | Lead execution, event handling, goal tracking |
 | `internal/lead/store_test.go` | Lead store CRUD operations |
 | `internal/intake/intake_test.go` | Intake pipeline, sufficiency, brainstorm, Jira parsing |
-| `internal/coordinator/store_test.go` | Task/lead/decision CRUD, alignment attempt counting |
-| `internal/coordinator/agentic_test.go` | Agentic node execution, mock claude, failure handling |
-| `internal/coordinator/coordinator_test.go` | Full lifecycle, alignment, re-dispatch, PR creation, retry |
-| `internal/coordinator/retry_test.go` | Exponential backoff scheduling |
+| `internal/lead/prompt_test.go` | Lead prompt builder, spotter feedback injection |
+| `internal/anchor/prompt_test.go` | Anchor prompt builder (template rendering, data injection) |
+| `internal/spotter/prompt_test.go` | Spotter prompt builder (template rendering, multiple profiles) |
+| `internal/spotter/types_test.go` | SPOT.json type parsing |
+| `internal/belayerconfig/config_test.go` | Config loader, resolution chain, TOML parsing |
+| `internal/defaults/defaults_test.go` | Embedded file system (belayer.toml, prompts, profiles exist) |
+| `internal/defaults/write_test.go` | WriteToDir (file creation, no-overwrite behavior) |
+| `internal/setter/setter_test.go` | Setter lifecycle, spotting flow, anchor flow, crash recovery |
+| `internal/setter/dag_test.go` | DAG construction and traversal |
 
 ## Conventions
 
