@@ -22,14 +22,16 @@ import (
 
 // mockTmux implements tmux.TmuxManager for tests.
 type mockTmux struct {
-	sessions map[string]map[string]bool // session -> set of window names
-	keys     map[string]string          // target -> last keys sent
+	sessions       map[string]map[string]bool // session -> set of window names
+	keys           map[string]string          // target -> last keys sent
+	remainOnExit   map[string]bool            // target -> enabled
 }
 
 func newMockTmux() *mockTmux {
 	return &mockTmux{
-		sessions: make(map[string]map[string]bool),
-		keys:     make(map[string]string),
+		sessions:     make(map[string]map[string]bool),
+		keys:         make(map[string]string),
+		remainOnExit: make(map[string]bool),
 	}
 }
 
@@ -86,6 +88,7 @@ func (m *mockTmux) PipePane(session, windowName, logPath string) error {
 }
 
 func (m *mockTmux) SetRemainOnExit(session, windowName string, enabled bool) error {
+	m.remainOnExit[session+":"+windowName] = enabled
 	return nil
 }
 
@@ -1548,4 +1551,124 @@ func TestSpotterFeedbackForGoal(t *testing.T) {
 		assert.Contains(t, result, "- build [error]: Build failed")
 		assert.Contains(t, result, "- lint [warning]: Unused import")
 	})
+}
+
+func TestSpawnGoal_WritesClaudeMDAndSetRemainOnExit(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-cmd1", RepoName: "api", Description: "test goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, tm, sp, _, _ := newTestRunner(t, "task-cmd1", goals)
+
+	err := runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-cmd1"})
+	require.NoError(t, err)
+
+	// Verify .claude/CLAUDE.md was written with lead template content
+	claudeMD, readErr := os.ReadFile(filepath.Join(sp.spawned[0].WorkDir, ".claude", "CLAUDE.md"))
+	require.NoError(t, readErr)
+	assert.Contains(t, string(claudeMD), "Belayer Lead")
+
+	// Verify SetRemainOnExit was called on the window
+	assert.True(t, tm.remainOnExit["belayer-task-task-cmd1:api-api-1"])
+
+	// Verify InitialPrompt is used (not Prompt)
+	assert.NotEmpty(t, sp.spawned[0].InitialPrompt)
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "GOAL.json")
+}
+
+func TestSpawnSpotter_WritesClaudeMDAndProfiles(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-cmd2", RepoName: "api", Description: "test spotter", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, tm, sp, _, _ := newTestRunner(t, "task-cmd2", goals)
+
+	// Spawn lead first
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-cmd2"}))
+
+	// Write DONE.json
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
+	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
+
+	// Spawn spotter
+	goal := runner.dag.Get("api-1")
+	err := runner.SpawnSpotter(goal)
+	require.NoError(t, err)
+
+	// Verify .claude/CLAUDE.md was overwritten with spotter template
+	claudeMD, readErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".claude", "CLAUDE.md"))
+	require.NoError(t, readErr)
+	assert.Contains(t, string(claudeMD), "Belayer Spotter")
+
+	// Verify profiles were written to .lead/profiles/
+	profileDir := filepath.Join(runner.worktrees["api"], ".lead", "profiles")
+	_, statErr := os.Stat(profileDir)
+	assert.False(t, os.IsNotExist(statErr), "profiles directory should exist")
+
+	// Verify SetRemainOnExit was called for spotter
+	assert.True(t, tm.remainOnExit["belayer-task-task-cmd2:api-api-1"])
+
+	// Verify GOAL.json contains DONE.json content and profiles
+	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "GOAL.json"))
+	require.NoError(t, goalErr)
+	assert.Contains(t, string(goalJSON), "spotter")
+	assert.Contains(t, string(goalJSON), "Added endpoint")
+
+	// Verify InitialPrompt is used
+	require.Len(t, sp.spawned, 2)
+	assert.Contains(t, sp.spawned[1].InitialPrompt, "GOAL.json")
+}
+
+func TestLooksLikeInputPrompt(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{"bare prompt", ">", true},
+		{"output then prompt", "some output\n>", true},
+		{"thinking", "thinking...", false},
+		{"empty", "", false},
+		{"prompt with trailing space", "working on task\n> ", true},
+		{"prompt mid-line not last", ">\nmore output", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, looksLikeInputPrompt(tt.input))
+		})
+	}
+}
+
+func TestWriteClaudeMD_PrependsToExisting(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-cmd3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	runner, _, _, _, _, _ := newTestRunner(t, "task-cmd3", goals)
+
+	worktreePath := runner.worktrees["api"]
+
+	// Write an existing CLAUDE.md (simulating repo's own instructions)
+	claudeDir := filepath.Join(worktreePath, ".claude")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
+	existingContent := "# Project Instructions\n\nUse Go 1.22."
+	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "CLAUDE.md"), []byte(existingContent), 0o644))
+
+	// Write the lead CLAUDE.md — should prepend belayer content
+	err := runner.writeClaudeMD(worktreePath, "lead")
+	require.NoError(t, err)
+
+	result, readErr := os.ReadFile(filepath.Join(claudeDir, "CLAUDE.md"))
+	require.NoError(t, readErr)
+
+	content := string(result)
+	// Belayer content should come first
+	assert.Contains(t, content, "Belayer Lead")
+	// Separator should be present
+	assert.Contains(t, content, "---")
+	// Original content should be preserved after separator
+	assert.Contains(t, content, existingContent)
+
+	// Belayer content should appear before the existing content
+	belayerIdx := len("Belayer Lead") // just needs to be > 0
+	existingIdx := len(content) - len(existingContent)
+	assert.Less(t, belayerIdx, existingIdx, "belayer content should appear before existing content")
 }
