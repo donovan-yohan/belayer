@@ -45,6 +45,30 @@ func TestBuildPrompt_SpecWithSpecialChars(t *testing.T) {
 	assert.Contains(t, prompt, "`backticks`")
 }
 
+func TestBuildPrompt_WithSpotterFeedback(t *testing.T) {
+	prompt, err := BuildPrompt(PromptData{
+		Spec:            "build a site",
+		GoalID:          "setup",
+		RepoName:        "frontend",
+		Description:     "scaffold project",
+		SpotterFeedback: "FAILED CHECKS:\n- visual_quality: Text not wrapping properly\n- console_errors: 2 errors in console",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, prompt, "Previous Attempt Feedback")
+	assert.Contains(t, prompt, "Text not wrapping")
+}
+
+func TestBuildPrompt_NoSpotterFeedback(t *testing.T) {
+	prompt, err := BuildPrompt(PromptData{
+		Spec:        "build a site",
+		GoalID:      "setup",
+		RepoName:    "frontend",
+		Description: "scaffold project",
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, prompt, "Previous Attempt Feedback")
+}
+
 func TestBuildPrompt_MultilineSpec(t *testing.T) {
 	data := PromptData{
 		Spec:        "Line 1\nLine 2\nLine 3",

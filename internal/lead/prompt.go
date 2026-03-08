@@ -8,10 +8,11 @@ import (
 
 // PromptData holds the values injected into the lead prompt template.
 type PromptData struct {
-	Spec        string
-	GoalID      string
-	RepoName    string
-	Description string
+	Spec            string
+	GoalID          string
+	RepoName        string
+	Description     string
+	SpotterFeedback string // empty on first attempt, populated on retry
 }
 
 const promptTemplate = `You are a lead agent working on a specific goal within a larger task.
@@ -26,6 +27,15 @@ const promptTemplate = `You are a lead agent working on a specific goal within a
 **Repository**: {{.RepoName}}
 **Description**: {{.Description}}
 
+{{if .SpotterFeedback}}
+## Previous Attempt Feedback
+
+A validator found issues with your previous attempt. You MUST address these:
+
+{{.SpotterFeedback}}
+
+Fix these issues before marking the goal complete.
+{{end}}
 ## Instructions
 
 1. Read the task specification above carefully
