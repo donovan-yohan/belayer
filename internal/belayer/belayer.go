@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
@@ -321,7 +322,7 @@ func (s *Belayer) recover() error {
 
 		runner.dag = BuildDAG(climbs)
 		runner.tmuxSession = fmt.Sprintf("belayer-problem-%s", task.ID)
-		runner.problemDir = fmt.Sprintf("%s/tasks/%s", s.config.InstanceDir, task.ID)
+		runner.problemDir = filepath.Join(s.config.InstanceDir, "tasks", task.ID)
 
 		// Populate worktrees map
 		repos := make(map[string]bool)
@@ -329,8 +330,7 @@ func (s *Belayer) recover() error {
 			repos[climb.RepoName] = true
 		}
 		for repoName := range repos {
-			worktreePath := fmt.Sprintf("%s/tasks/%s/%s", s.config.InstanceDir, task.ID, repoName)
-			runner.worktrees[repoName] = worktreePath
+			runner.worktrees[repoName] = filepath.Join(s.config.InstanceDir, "tasks", task.ID, repoName)
 		}
 
 		// Check for TOP.json files that completed while we were down

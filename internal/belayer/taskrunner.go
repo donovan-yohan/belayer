@@ -299,65 +299,37 @@ func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completed
 			return nil, 0, fmt.Errorf("reading TOP.json for %s: %w", climb.ID, readErr)
 		}
 
-		// Parse TOP.json
 		var top TopJSON
 		if jsonErr := json.Unmarshal(data, &top); jsonErr != nil {
 			log.Printf("warning: invalid TOP.json for climb %s: %v", climb.ID, jsonErr)
 			continue
 		}
 
-		if tr.validationEnabled {
-			// Mark climb as topped (complete at lead level)
-			tr.dag.MarkComplete(climb.ID)
-			if storeErr := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); storeErr != nil {
-				return nil, 0, fmt.Errorf("updating climb status: %w", storeErr)
+		tr.dag.MarkComplete(climb.ID)
+		if storeErr := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); storeErr != nil {
+			return nil, 0, fmt.Errorf("updating climb status: %w", storeErr)
+		}
+
+		payload, _ := json.Marshal(top)
+		if eventErr := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbCompleted, string(payload)); eventErr != nil {
+			return nil, 0, fmt.Errorf("inserting climb_completed event: %w", eventErr)
+		}
+
+		delete(tr.startedAt, climb.ID)
+		completedCount++
+
+		windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
+		tr.killPaneProcessTree(windowName)
+		tr.tmux.KillWindow(tr.tmuxSession, windowName)
+		tr.logMgr.CheckRotation(tr.task.ID, climb.ID)
+
+		if tr.validationEnabled && !tr.repoSpotterActivated[climb.RepoName] && tr.dag.AllClimbsForRepoTopped(climb.RepoName) {
+			if spotErr := tr.ActivateSpotter(climb.RepoName); spotErr != nil {
+				log.Printf("warning: failed to activate spotter for %s: %v", climb.RepoName, spotErr)
+			} else {
+				tr.repoSpotterActivated[climb.RepoName] = true
+				log.Printf("belayer: all climbs topped for %s — spotter activated", climb.RepoName)
 			}
-
-			payload, _ := json.Marshal(top)
-			if eventErr := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbCompleted, string(payload)); eventErr != nil {
-				return nil, 0, fmt.Errorf("inserting climb_completed event: %w", eventErr)
-			}
-
-			delete(tr.startedAt, climb.ID)
-			completedCount++
-
-			// Kill the lead tmux window
-			windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
-			tr.killPaneProcessTree(windowName)
-			tr.tmux.KillWindow(tr.tmuxSession, windowName)
-			tr.logMgr.CheckRotation(tr.task.ID, climb.ID)
-
-			// Check if all climbs for this repo have topped → activate spotter
-			if !tr.repoSpotterActivated[climb.RepoName] && tr.dag.AllClimbsForRepoTopped(climb.RepoName) {
-				if spotErr := tr.ActivateSpotter(climb.RepoName); spotErr != nil {
-					log.Printf("warning: failed to activate spotter for %s: %v", climb.RepoName, spotErr)
-				} else {
-					tr.repoSpotterActivated[climb.RepoName] = true
-					log.Printf("belayer: all climbs topped for %s — spotter activated", climb.RepoName)
-				}
-			}
-		} else {
-			// Validation disabled — mark complete directly
-			tr.dag.MarkComplete(climb.ID)
-			if storeErr := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); storeErr != nil {
-				return nil, 0, fmt.Errorf("updating climb status: %w", storeErr)
-			}
-
-			payload, _ := json.Marshal(top)
-			if eventErr := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbCompleted, string(payload)); eventErr != nil {
-				return nil, 0, fmt.Errorf("inserting climb_completed event: %w", eventErr)
-			}
-
-			delete(tr.startedAt, climb.ID)
-			completedCount++
-
-			// Kill the tmux window and its process tree
-			windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
-			tr.killPaneProcessTree(windowName)
-			tr.tmux.KillWindow(tr.tmuxSession, windowName)
-
-			// Check log rotation
-			tr.logMgr.CheckRotation(tr.task.ID, climb.ID)
 		}
 	}
 
@@ -378,13 +350,10 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 	now := time.Now()
 
 	for _, climb := range tr.dag.Climbs() {
-		var windowName string
-		switch climb.Status {
-		case model.ClimbStatusRunning:
-			windowName = fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
-		default:
+		if climb.Status != model.ClimbStatusRunning {
 			continue
 		}
+		windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
 		windowDead := !tr.windowExists(windowName)
 		reason := "window died"
 
@@ -517,22 +486,14 @@ func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady [
 		} else {
 			log.Printf("belayer: repo %s failed spotter validation with %d issues", repoName, len(spot.Issues))
 
-			// Reset all climbs for this repo to failed for retry
+			feedback := SpotterFeedbackForGoal(&spot)
 			for _, c := range tr.dag.ClimbsForRepo(repoName) {
 				tr.dag.MarkFailed(c.ID)
 				tr.store.UpdateClimbStatus(c.ID, model.ClimbStatusFailed)
 				tr.store.IncrementClimbAttempt(c.ID)
 				c.Attempt++
-
-				// Remove TOP.json so retry starts fresh
 				os.Remove(filepath.Join(worktreePath, ".lead", c.ID, "TOP.json"))
-			}
 
-			tr.repoSpotterActivated[repoName] = false // allow re-activation
-
-			// Re-queue climbs for retry with spotter feedback
-			feedback := SpotterFeedbackForGoal(&spot)
-			for _, c := range tr.dag.ClimbsForRepo(repoName) {
 				if c.Attempt <= 3 {
 					tr.store.ResetClimbStatus(c.ID)
 					c.Status = model.ClimbStatusPending
@@ -543,6 +504,8 @@ func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady [
 					})
 				}
 			}
+
+			tr.repoSpotterActivated[repoName] = false
 		}
 	}
 	return resolvedCount, newlyReady, retryClimbs, nil
