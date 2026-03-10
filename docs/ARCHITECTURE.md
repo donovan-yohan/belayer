@@ -66,7 +66,7 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Anchor | `internal/anchor/` | Cross-repo alignment reviewer. Verdict types (VerdictJSON, RepoVerdict) |
 | Intake | `internal/intake/` | Task intake pipeline (text/Jira parsing, sufficiency check, interactive brainstorm) |
 | Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
-| Mail | `internal/mail/` | Beads-backed inter-agent mail system (message types, address resolution, beads store, templates, tmux delivery, send/read) |
+| Mail | `internal/mail/` | Filesystem-backed inter-agent mail system (message types, address resolution, FileStore, templates, tmux delivery, send/read) |
 | TUI | `internal/tui/` | bubbletea dashboard (model, views, styles, keys, read-only store) |
 
 ## Data Flow
@@ -114,7 +114,7 @@ Task Input (text/Jira) --> Intake Pipeline (sufficiency + brainstorm) --> Decomp
   instance.json                       # Instance config (repos, settings)
   belayer.db                          # SQLite database
   config/                             # Per-instance overrides (optional)
-  mail/                               # Beads-backed mail database (.beads/ + .git/)
+  mail/                               # Filesystem mail store (per-address unread/read dirs)
   repos/                              # Bare repo clones
     <repo-name>.git
   tasks/                              # Per-task worktrees
