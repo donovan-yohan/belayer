@@ -20,3 +20,4 @@
 | [2026-03-09-mail-system-design](2026-03-09-mail-system-design.md) | Beads-backed inter-agent mail system with tmux send-keys delivery | 2026-03-09 |
 | [2026-03-09-manage-session-context-design](2026-03-09-manage-session-context-design.md) | Manage session runtime .claude/ context with commands and CLAUDE.md | 2026-03-09 |
 | [2026-03-10-filesystem-mail-store-design](2026-03-10-filesystem-mail-store-design.md) | Replace beads/dolt mail backend with pure filesystem store | 2026-03-10 |
+| [2026-03-10-crag-architecture-design](2026-03-10-crag-architecture-design.md) | Climbing terminology overhaul + per-role window layout with deferred activation | 2026-03-10 |
