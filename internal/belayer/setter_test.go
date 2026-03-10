@@ -398,18 +398,22 @@ func TestProblemRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 
 	task, _ := s.GetProblem("task-2v")
 	runner := &ProblemRunner{
-		task:              task,
-		worktrees:         map[string]string{"api": worktreeDir},
-		instanceDir:       tmpDir,
-		store:             s,
-		tmux:              tm,
-		logMgr:            lm,
-		spawner:           sp,
-		tmuxSession:       "belayer-problem-task-2v",
-		startedAt:         make(map[string]time.Time),
-		validationEnabled: true,
+		task:                 task,
+		worktrees:            map[string]string{"api": worktreeDir},
+		instanceDir:          tmpDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawner:              sp,
+		tmuxSession:          "belayer-problem-task-2v",
+		startedAt:            make(map[string]time.Time),
+		validationEnabled:    true,
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  make(map[string]int),
 	}
 	require.NoError(t, tm.NewSession("belayer-problem-task-2v"))
+	// Pre-create the spotter window (Init does this in real usage)
+	require.NoError(t, tm.NewWindow("belayer-problem-task-2v", "spot-api"))
 	require.NoError(t, lm.EnsureDir("task-2v"))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-2v")
@@ -429,17 +433,22 @@ func TestProblemRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 	require.NoError(t, os.MkdirAll(goalDoneDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), data, 0o644))
 
-	// Check completions — with validation enabled, goal should be spotting, not complete
+	// Check completions — with validation enabled and only api-1 topped (api-2 still pending),
+	// api-1 should be marked complete but spotter NOT yet activated (api-2 is still pending).
+	// api-2 depends on api-1, so it becomes unblocked but spotter won't fire yet.
 	newlyReady, completedCount, err := runner.CheckCompletions()
 	require.NoError(t, err)
-	assert.Equal(t, 0, completedCount) // not counted as complete
-	assert.Len(t, newlyReady, 0)       // no newly unblocked goals
+	assert.Equal(t, 1, completedCount) // api-1 counted as complete
 
-	// Goal should be in spotting status
-	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
+	// api-1 should be complete in DAG
+	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status)
 
-	// api-2 should NOT be ready (api-1 is spotting, not complete)
-	assert.False(t, runner.AllClimbsComplete())
+	// api-2 should be newly ready (api-1 is now complete)
+	require.Len(t, newlyReady, 1)
+	assert.Equal(t, "api-2", newlyReady[0].Goal.ID)
+
+	// Spotter should NOT be activated yet (api-2 is still pending)
+	assert.False(t, runner.repoSpotterActivated["api"])
 }
 
 func TestProblemRunner_CheckStaleClimbs(t *testing.T) {
@@ -662,19 +671,19 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	// Task should have been recovered
 	require.Contains(t, setter.problems, "task-7")
 
-	// With validation enabled (default), api-1 should be in spotting status
-	// (TOP.json found during recovery triggers spotter, not direct completion)
+	// With validation enabled (default) and only api-1 topped (api-2 still pending),
+	// api-1 should be complete. The spotter is NOT activated yet because api-2 is still pending.
 	runner := setter.problems["task-7"]
-	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
+	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status)
 
-	// api-2 should NOT be ready yet (api-1 is spotting, not complete)
+	// api-2 should be ready (api-1 is complete, dependencies met)
 	foundApi2 := false
 	for _, q := range setter.leadQueue {
 		if q.Goal.ID == "api-2" {
 			foundApi2 = true
 		}
 	}
-	assert.False(t, foundApi2)
+	assert.True(t, foundApi2)
 }
 
 func TestSetter_RunTickCycle(t *testing.T) {
@@ -755,17 +764,19 @@ func newTestRunner(t *testing.T, taskID string, goals []model.Climb) (*ProblemRu
 	task.Status = model.ProblemStatusRunning
 
 	runner := &ProblemRunner{
-		task:        task,
-		worktrees:   repos,
-		instanceDir: tmpDir,
-		store:       s,
-		tmux:        tm,
-		logMgr:      lm,
-		spawner:     sp,
-		git:         mg,
-		tmuxSession: "belayer-problem-" + taskID,
-		problemDir:  taskDir,
-		startedAt:   make(map[string]time.Time),
+		task:                 task,
+		worktrees:            repos,
+		instanceDir:          tmpDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawner:              sp,
+		git:                  mg,
+		tmuxSession:          "belayer-problem-" + taskID,
+		problemDir:           taskDir,
+		startedAt:            make(map[string]time.Time),
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  make(map[string]int),
 	}
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir(taskID))
@@ -1361,172 +1372,187 @@ func TestProblemRunner_GatherDiffs(t *testing.T) {
 	assert.Contains(t, diffs[0].Diff, "NewHandler")
 }
 
-func TestProblemRunner_SpawnSpotter(t *testing.T) {
+func TestProblemRunner_ActivateSpotter_PerRepo(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sp1", RepoName: "api", Description: "add endpoint", DependsOn: []string{}, Status: model.ClimbStatusPending},
+		{ID: "api-2", ProblemID: "task-sp1", RepoName: "api", Description: "add tests", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
-	runner, s, _, sp, _, _ := newTestRunner(t, "task-sp1", goals)
+	runner, s, tm, sp, _, _ := newTestRunner(t, "task-sp1", goals)
+	runner.repoSpotterActivated = make(map[string]bool)
+	runner.repoSpotterAttempts = make(map[string]int)
 
-	// Spawn and complete the goal first
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-sp1"}))
-	assert.Equal(t, model.ClimbStatusRunning, runner.dag.Get("api-1").Status)
+	// Pre-create spotter window (Init does this in real usage)
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
 
-	// Write TOP.json to goal-scoped path
-	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
-	os.MkdirAll(goalDir, 0o755)
-	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "Added endpoint"})
-	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
+	// Mark both climbs complete and write TOP.json
+	runner.dag.MarkComplete("api-1")
+	runner.dag.MarkComplete("api-2")
+	for _, id := range []string{"api-1", "api-2"} {
+		goalDir := filepath.Join(runner.worktrees["api"], ".lead", id)
+		os.MkdirAll(goalDir, 0o755)
+		doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done " + id})
+		os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
+	}
 
-	// Now spawn spotter on this goal
-	goal := runner.dag.Get("api-1")
-	err := runner.SpawnSpotter(goal)
+	err := runner.ActivateSpotter("api")
 	require.NoError(t, err)
 
-	// Goal should be in spotting status
-	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
+	// Spotter attempt should be recorded
+	assert.Equal(t, 1, runner.repoSpotterAttempts["api"])
 
-	// Verify spotter was spawned (2 total spawns: lead + spotter)
-	require.Len(t, sp.spawned, 2)
-	assert.Equal(t, "spot-api-1", sp.spawned[1].WindowName)
-	assert.NotEmpty(t, sp.spawned[1].AppendSystemPrompt)
-	// Verify GOAL.json was written with spotter context (goal-scoped path)
-	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "GOAL.json"))
+	// Verify spotter was spawned with correct window name
+	require.Len(t, sp.spawned, 1)
+	assert.Equal(t, "spot-api", sp.spawned[0].WindowName)
+	assert.NotEmpty(t, sp.spawned[0].AppendSystemPrompt)
+
+	// Verify GOAL.json was written to spotter-scoped path
+	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "spotter-api", "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "spotter")
-	assert.Contains(t, string(goalJSON), "Added endpoint") // TOP.json content
+	assert.Contains(t, string(goalJSON), "api-1")
+	assert.Contains(t, string(goalJSON), "api-2")
 
 	// Verify spotter_spawned event was recorded
 	events, _ := s.GetEventsForProblem("task-sp1")
 	foundSpotterSpawned := false
 	for _, e := range events {
-		if e.Type == model.EventSpotterSpawned && e.ClimbID == "api-1" {
+		if e.Type == model.EventSpotterSpawned {
 			foundSpotterSpawned = true
 		}
 	}
 	assert.True(t, foundSpotterSpawned)
+
+	// Verify mail address
+	assert.Equal(t, "problem/task-sp1/spotter/api", sp.spawned[0].Env["BELAYER_MAIL_ADDRESS"])
 }
 
-func TestProblemRunner_CheckSpotResult_Pass(t *testing.T) {
+func TestProblemRunner_CheckRepoSpotResults_Pass(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sp2", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
-	runner, s, _, _, _, _ := newTestRunner(t, "task-sp2", goals)
+	runner, s, tm, _, _, _ := newTestRunner(t, "task-sp2", goals)
+	runner.repoSpotterActivated = map[string]bool{"api": true}
+	runner.repoSpotterAttempts = map[string]int{"api": 1}
 
-	// Put goal into spotting status
-	runner.dag.MarkSpotting("api-1")
+	// Pre-create spotter window
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
 
-	// Write passing SPOT.json to goal-scoped path
-	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
-	require.NoError(t, os.MkdirAll(goalDir, 0o755))
+	// Mark climb complete
+	runner.dag.MarkComplete("api-1")
+
+	// Write passing SPOT.json to spotter-scoped path
+	spotterDir := filepath.Join(runner.worktrees["api"], ".lead", "spotter-api")
+	require.NoError(t, os.MkdirAll(spotterDir, 0o755))
 	spotData := `{"pass": true, "project_type": "backend", "issues": []}`
-	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "SPOT.json"), []byte(spotData), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(spotterDir, "SPOT.json"), []byte(spotData), 0o644))
 
-	goal := runner.dag.Get("api-1")
-	spot, found, err := runner.CheckSpotResult(goal)
+	resolved, newlyReady, retryClimbs, err := runner.CheckRepoSpotResults()
 	require.NoError(t, err)
-	assert.True(t, found)
-	assert.True(t, spot.Pass)
-
-	// Goal should be complete
-	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status)
+	assert.Equal(t, 1, resolved)
+	assert.Empty(t, retryClimbs)
+	_ = newlyReady // no pending climbs to unblock
 
 	// SPOT.json should be removed
-	_, statErr := os.Stat(filepath.Join(goalDir, "SPOT.json"))
+	_, statErr := os.Stat(filepath.Join(spotterDir, "SPOT.json"))
 	assert.True(t, os.IsNotExist(statErr))
 
-	// Events should be recorded
+	// Spotter should be deactivated after pass
+	assert.False(t, runner.repoSpotterActivated["api"])
+
+	// Verdict event should be recorded
 	events, _ := s.GetEventsForProblem("task-sp2")
 	foundVerdict := false
-	foundCompleted := false
 	for _, e := range events {
-		if e.Type == model.EventSpotterVerdict && e.ClimbID == "api-1" {
+		if e.Type == model.EventSpotterVerdict {
 			foundVerdict = true
-		}
-		if e.Type == model.EventClimbCompleted && e.ClimbID == "api-1" {
-			foundCompleted = true
 		}
 	}
 	assert.True(t, foundVerdict)
-	assert.True(t, foundCompleted)
 }
 
-func TestProblemRunner_CheckSpotResult_Fail(t *testing.T) {
+func TestProblemRunner_CheckRepoSpotResults_Fail(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sp3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
-	runner, s, _, _, _, _ := newTestRunner(t, "task-sp3", goals)
+	runner, s, tm, _, _, _ := newTestRunner(t, "task-sp3", goals)
+	runner.repoSpotterActivated = map[string]bool{"api": true}
+	runner.repoSpotterAttempts = map[string]int{"api": 1}
 
-	// Put goal into spotting status
-	runner.dag.MarkSpotting("api-1")
+	// Pre-create spotter window
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
 
-	// Write TOP.json and SPOT.json to goal-scoped paths
+	// Mark climb complete and write TOP.json
+	runner.dag.MarkComplete("api-1")
 	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
 	require.NoError(t, os.MkdirAll(goalDir, 0o755))
-
 	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644))
 
-	// Write failing SPOT.json
-	spotData := `{"pass": false, "project_type": "frontend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
-	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "SPOT.json"), []byte(spotData), 0o644))
+	// Write failing SPOT.json to spotter-scoped path
+	spotterDir := filepath.Join(runner.worktrees["api"], ".lead", "spotter-api")
+	require.NoError(t, os.MkdirAll(spotterDir, 0o755))
+	spotData := `{"pass": false, "project_type": "backend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
+	require.NoError(t, os.WriteFile(filepath.Join(spotterDir, "SPOT.json"), []byte(spotData), 0o644))
 
-	goal := runner.dag.Get("api-1")
-	spot, found, err := runner.CheckSpotResult(goal)
+	resolved, newlyReady, retryClimbs, err := runner.CheckRepoSpotResults()
 	require.NoError(t, err)
-	assert.True(t, found)
-	assert.False(t, spot.Pass)
-	assert.Len(t, spot.Issues, 1)
-	assert.Equal(t, "build", spot.Issues[0].Check)
+	assert.Equal(t, 1, resolved)
+	assert.Empty(t, newlyReady)
+	require.Len(t, retryClimbs, 1)
+	assert.Equal(t, "api-1", retryClimbs[0].Goal.ID)
+	assert.Contains(t, retryClimbs[0].SpotterFeedback, "Build failed")
 
-	// Goal should be failed
-	assert.Equal(t, model.ClimbStatusFailed, runner.dag.Get("api-1").Status)
-
-	// Attempt should be incremented
+	// api-1 should be reset to pending for retry (attempt incremented)
+	assert.Equal(t, model.ClimbStatusPending, runner.dag.Get("api-1").Status)
 	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt)
 
 	// SPOT.json should be removed
-	_, statErr := os.Stat(filepath.Join(goalDir, "SPOT.json"))
+	_, statErr := os.Stat(filepath.Join(spotterDir, "SPOT.json"))
 	assert.True(t, os.IsNotExist(statErr))
 
 	// TOP.json should be removed so retry starts fresh
 	_, doneStatErr := os.Stat(filepath.Join(goalDir, "TOP.json"))
 	assert.True(t, os.IsNotExist(doneStatErr))
 
-	// Events should be recorded
+	// Spotter should be deactivated (allow re-activation)
+	assert.False(t, runner.repoSpotterActivated["api"])
+
+	// Verdict event should be recorded
 	events, _ := s.GetEventsForProblem("task-sp3")
 	foundVerdict := false
-	foundFailed := false
 	for _, e := range events {
-		if e.Type == model.EventSpotterVerdict && e.ClimbID == "api-1" {
+		if e.Type == model.EventSpotterVerdict {
 			foundVerdict = true
-		}
-		if e.Type == model.EventClimbFailed && e.ClimbID == "api-1" {
-			foundFailed = true
 		}
 	}
 	assert.True(t, foundVerdict)
-	assert.True(t, foundFailed)
 }
 
-func TestProblemRunner_CheckSpotResult_NotFound(t *testing.T) {
+func TestProblemRunner_CheckRepoSpotResults_NotFound(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sp4", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
-	runner, _, _, _, _, _ := newTestRunner(t, "task-sp4", goals)
+	runner, _, tm, _, _, _ := newTestRunner(t, "task-sp4", goals)
+	runner.repoSpotterActivated = map[string]bool{"api": true}
+	runner.repoSpotterAttempts = map[string]int{"api": 1}
 
-	runner.dag.MarkSpotting("api-1")
+	// Pre-create spotter window
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
 
-	goal := runner.dag.Get("api-1")
-	spot, found, err := runner.CheckSpotResult(goal)
+	// No SPOT.json written — nothing to pick up
+	resolved, newlyReady, retryClimbs, err := runner.CheckRepoSpotResults()
 	require.NoError(t, err)
-	assert.False(t, found)
-	assert.Nil(t, spot)
+	assert.Equal(t, 0, resolved)
+	assert.Empty(t, newlyReady)
+	assert.Empty(t, retryClimbs)
 
-	// Goal should still be spotting
-	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
+	// Spotter still active
+	assert.True(t, runner.repoSpotterActivated["api"])
 }
 
 func TestSetter_SpottingFlow_Pass(t *testing.T) {
+	// Two climbs in the same repo, with api-2 depending on api-1.
+	// Both top, spotter activates, passes → api-2 unblocked and spawned.
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sf1", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 		{ID: "api-2", ProblemID: "task-sf1", RepoName: "api", Description: "depends on api-1", DependsOn: []string{"api-1"}, Status: model.ClimbStatusPending},
@@ -1546,21 +1572,25 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 	goalsFromDB, _ := s.GetClimbsForProblem("task-sf1")
 
 	runner := &ProblemRunner{
-		task:              task,
-		dag:               BuildDAG(goalsFromDB),
-		worktrees:         map[string]string{"api": worktreeDir},
-		instanceDir:       tmpDir,
-		store:             s,
-		tmux:              tm,
-		logMgr:            lm,
-		spawner:           sp,
-		git:               mg,
-		tmuxSession:       "belayer-problem-task-sf1",
-		problemDir:        taskDir,
-		startedAt:         make(map[string]time.Time),
-		validationEnabled: true,
+		task:                 task,
+		dag:                  BuildDAG(goalsFromDB),
+		worktrees:            map[string]string{"api": worktreeDir},
+		instanceDir:          tmpDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawner:              sp,
+		git:                  mg,
+		tmuxSession:          "belayer-problem-task-sf1",
+		problemDir:           taskDir,
+		startedAt:            make(map[string]time.Time),
+		validationEnabled:    true,
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  make(map[string]int),
 	}
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	// Pre-create spotter window (Init does this)
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
 	require.NoError(t, lm.EnsureDir("task-sf1"))
 
 	sett := &Belayer{
@@ -1570,39 +1600,53 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
 		},
-		store:   s,
-		tmux:    tm,
-		logMgr:  lm,
-		spawner: sp,
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawner:  sp,
 		problems: map[string]*ProblemRunner{"task-sf1": runner},
 	}
 
-	// Spawn goal
+	// Spawn api-1 (api-2 is blocked on api-1)
 	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-sf1"}))
 	sett.activeLeads = 1
 
-	// Write TOP.json to goal-scoped path
+	// Write TOP.json for api-1
 	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
 	os.MkdirAll(goalDir, 0o755)
 	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
 
-	// Tick 1: detect TOP.json -> goal transitions to spotting (spotter spawned)
-	require.NoError(t, sett.tick())
-	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
-	assert.Equal(t, 1, sett.activeLeads) // still 1 active lead (spotter running)
-
-	// Write passing SPOT.json to goal-scoped path
-	spotData := `{"pass": true, "project_type": "backend", "issues": []}`
-	os.WriteFile(filepath.Join(goalDir, "SPOT.json"), []byte(spotData), 0o644)
-
-	// Tick 2: detect SPOT.json pass -> goal complete, api-2 unblocked and spawned
+	// Tick 1: detect TOP.json for api-1 → api-1 complete, api-2 unblocked
+	// Spotter NOT activated yet (api-2 still pending)
 	require.NoError(t, sett.tick())
 	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status)
-	assert.Equal(t, 1, sett.activeLeads) // spotter resolved (-1) + api-2 spawned (+1)
-
-	// api-2 should have been queued and spawned
+	assert.False(t, runner.repoSpotterActivated["api"], "spotter should not activate while api-2 is still pending")
+	// api-2 should have been spawned from queue
 	assert.Equal(t, model.ClimbStatusRunning, runner.dag.Get("api-2").Status)
+
+	// Write TOP.json for api-2
+	goal2Dir := filepath.Join(worktreeDir, ".lead", "api-2")
+	os.MkdirAll(goal2Dir, 0o755)
+	os.WriteFile(filepath.Join(goal2Dir, "TOP.json"), doneData, 0o644)
+
+	// Tick 2: api-2 tops → all climbs topped → spotter activated
+	require.NoError(t, sett.tick())
+	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-2").Status)
+	assert.True(t, runner.repoSpotterActivated["api"], "spotter should be activated after all climbs top")
+
+	// Write passing SPOT.json to spotter-scoped path
+	spotterDir := filepath.Join(worktreeDir, ".lead", "spotter-api")
+	os.MkdirAll(spotterDir, 0o755)
+	spotData := `{"pass": true, "project_type": "backend", "issues": []}`
+	os.WriteFile(filepath.Join(spotterDir, "SPOT.json"), []byte(spotData), 0o644)
+
+	// Tick 3: detect SPOT.json pass → repo validated, no retries
+	require.NoError(t, sett.tick())
+	assert.False(t, runner.repoSpotterActivated["api"], "spotter should be deactivated after pass")
+
+	// All climbs complete → problem should transition to reviewing
+	assert.True(t, runner.AllClimbsComplete())
 }
 
 func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
@@ -1624,21 +1668,25 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	goalsFromDB, _ := s.GetClimbsForProblem("task-sf2")
 
 	runner := &ProblemRunner{
-		task:              task,
-		dag:               BuildDAG(goalsFromDB),
-		worktrees:         map[string]string{"api": worktreeDir},
-		instanceDir:       tmpDir,
-		store:             s,
-		tmux:              tm,
-		logMgr:            lm,
-		spawner:           sp,
-		git:               mg,
-		tmuxSession:       "belayer-problem-task-sf2",
-		problemDir:        taskDir,
-		startedAt:         make(map[string]time.Time),
-		validationEnabled: true,
+		task:                 task,
+		dag:                  BuildDAG(goalsFromDB),
+		worktrees:            map[string]string{"api": worktreeDir},
+		instanceDir:          tmpDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawner:              sp,
+		git:                  mg,
+		tmuxSession:          "belayer-problem-task-sf2",
+		problemDir:           taskDir,
+		startedAt:            make(map[string]time.Time),
+		validationEnabled:    true,
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  make(map[string]int),
 	}
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	// Pre-create spotter window (Init does this)
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
 	require.NoError(t, lm.EnsureDir("task-sf2"))
 
 	sett := &Belayer{
@@ -1648,10 +1696,10 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
 		},
-		store:   s,
-		tmux:    tm,
-		logMgr:  lm,
-		spawner: sp,
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawner:  sp,
 		problems: map[string]*ProblemRunner{"task-sf2": runner},
 	}
 
@@ -1660,46 +1708,84 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	sett.activeLeads = 1
 	spawnCountAfterLead := len(sp.spawned)
 
-	// Write TOP.json to goal-scoped path
+	// Write TOP.json for api-1
 	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
 	os.MkdirAll(goalDir, 0o755)
 	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
 
-	// Tick 1: detect TOP.json -> goal transitions to spotting
+	// Tick 1: detect TOP.json → api-1 complete, all climbs topped → spotter activated
 	require.NoError(t, sett.tick())
-	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
+	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status)
+	assert.True(t, runner.repoSpotterActivated["api"])
 	spawnCountAfterSpotter := len(sp.spawned)
 	assert.Greater(t, spawnCountAfterSpotter, spawnCountAfterLead)
 
-	// Write failing SPOT.json to goal-scoped path
+	// Write failing SPOT.json to spotter-scoped path
+	spotterDir := filepath.Join(worktreeDir, ".lead", "spotter-api")
+	os.MkdirAll(spotterDir, 0o755)
 	spotData := `{"pass": false, "project_type": "backend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
-	os.WriteFile(filepath.Join(goalDir, "SPOT.json"), []byte(spotData), 0o644)
+	os.WriteFile(filepath.Join(spotterDir, "SPOT.json"), []byte(spotData), 0o644)
 
-	// Tick 2: detect SPOT.json fail -> goal re-queued with feedback, lead respawned
+	// Tick 2: detect SPOT.json fail → climbs reset and re-queued with feedback
 	require.NoError(t, sett.tick())
-	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt) // attempt incremented by CheckSpotResult
-	assert.Equal(t, 1, sett.activeLeads) // lead re-spawned from queue
+	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt) // attempt incremented
+	assert.Equal(t, 1, sett.activeLeads)                 // lead re-spawned from queue
 
-	// The re-spawned lead should have spotter feedback in GOAL.json (goal-scoped path)
+	// The re-spawned lead should have spotter feedback in GOAL.json
 	goalJSON, goalErr := os.ReadFile(filepath.Join(goalDir, "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "FAILED CHECKS")
 	assert.Contains(t, string(goalJSON), "Build failed")
 }
 
-func TestDAG_AllComplete_FalseForSpotting(t *testing.T) {
+func TestDAG_AllComplete_FalseForRunning(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusComplete},
 		{ID: "b", ProblemID: "p1", Status: model.ClimbStatusPending},
 	}
 	dag := BuildDAG(goals)
 
-	dag.MarkSpotting("b")
-	assert.False(t, dag.AllComplete(), "AllComplete should return false when a goal is spotting")
+	dag.MarkRunning("b")
+	assert.False(t, dag.AllComplete(), "AllComplete should return false when a goal is running")
 
 	dag.MarkComplete("b")
 	assert.True(t, dag.AllComplete())
+}
+
+func TestDAG_AllClimbsForRepoTopped(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "p1", RepoName: "api", Status: model.ClimbStatusComplete},
+		{ID: "api-2", ProblemID: "p1", RepoName: "api", Status: model.ClimbStatusRunning},
+		{ID: "web-1", ProblemID: "p1", RepoName: "web", Status: model.ClimbStatusComplete},
+	}
+	dag := BuildDAG(goals)
+
+	// api repo has api-2 still running
+	assert.False(t, dag.AllClimbsForRepoTopped("api"))
+
+	// web repo has only complete climbs
+	assert.True(t, dag.AllClimbsForRepoTopped("web"))
+
+	// After api-2 completes, api is also topped
+	dag.MarkComplete("api-2")
+	assert.True(t, dag.AllClimbsForRepoTopped("api"))
+}
+
+func TestDAG_ClimbsForRepo(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "p1", RepoName: "api", Status: model.ClimbStatusComplete},
+		{ID: "api-2", ProblemID: "p1", RepoName: "api", Status: model.ClimbStatusPending},
+		{ID: "web-1", ProblemID: "p1", RepoName: "web", Status: model.ClimbStatusPending},
+	}
+	dag := BuildDAG(goals)
+
+	apiClimbs := dag.ClimbsForRepo("api")
+	assert.Len(t, apiClimbs, 2)
+
+	webClimbs := dag.ClimbsForRepo("web")
+	assert.Len(t, webClimbs, 1)
+	assert.Equal(t, "web-1", webClimbs[0].ID)
 }
 
 func TestProblemRunner_SpawnClimbWithSpotterFeedback(t *testing.T) {
@@ -1772,49 +1858,50 @@ func TestSpawnClimb_SetsAppendSystemPromptAndRemainOnExit(t *testing.T) {
 	assert.Contains(t, sp.spawned[0].InitialPrompt, "GOAL.json")
 }
 
-func TestSpawnSpotter_SetsAppendSystemPromptAndProfiles(t *testing.T) {
+func TestActivateSpotter_SetsAppendSystemPromptAndProfiles(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-cmd2", RepoName: "api", Description: "test spotter", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
 	runner, _, tm, sp, _, _ := newTestRunner(t, "task-cmd2", goals)
+	runner.repoSpotterActivated = make(map[string]bool)
+	runner.repoSpotterAttempts = make(map[string]int)
 
-	// Spawn lead first
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-cmd2"}))
+	// Pre-create spotter window
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
 
-	// Write TOP.json to goal-scoped path
+	// Mark climb complete and write TOP.json
+	runner.dag.MarkComplete("api-1")
 	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
 	os.MkdirAll(goalDir, 0o755)
 	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "Added endpoint"})
 	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
 
-	// Spawn spotter
-	goal := runner.dag.Get("api-1")
-	err := runner.SpawnSpotter(goal)
+	err := runner.ActivateSpotter("api")
 	require.NoError(t, err)
 
 	// Verify AppendSystemPrompt contains spotter template content
-	require.Len(t, sp.spawned, 2)
-	assert.Contains(t, sp.spawned[1].AppendSystemPrompt, "Belayer Spotter")
+	require.Len(t, sp.spawned, 1)
+	assert.Contains(t, sp.spawned[0].AppendSystemPrompt, "Belayer Spotter")
 
-	// Verify spotter gets its own window name
-	assert.Equal(t, "spot-api-1", sp.spawned[1].WindowName)
+	// Verify spotter uses the per-repo window name
+	assert.Equal(t, "spot-api", sp.spawned[0].WindowName)
 
-	// Verify profiles were written to .lead/<goalID>/profiles/
-	profileDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1", "profiles")
+	// Verify profiles were written to .lead/spotter-api/profiles/
+	profileDir := filepath.Join(runner.worktrees["api"], ".lead", "spotter-api", "profiles")
 	_, statErr := os.Stat(profileDir)
 	assert.False(t, os.IsNotExist(statErr), "profiles directory should exist")
 
 	// Verify SetRemainOnExit was called for spotter
-	assert.True(t, tm.remainOnExit["belayer-problem-task-cmd2:spot-api-1"])
+	assert.True(t, tm.remainOnExit["belayer-problem-task-cmd2:spot-api"])
 
-	// Verify GOAL.json contains TOP.json content and profiles (goal-scoped path)
-	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "GOAL.json"))
+	// Verify GOAL.json contains climb tops and profiles (spotter-scoped path)
+	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "spotter-api", "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "spotter")
 	assert.Contains(t, string(goalJSON), "Added endpoint")
 
 	// Verify InitialPrompt is used
-	assert.Contains(t, sp.spawned[1].InitialPrompt, "GOAL.json")
+	assert.Contains(t, sp.spawned[0].InitialPrompt, "GOAL.json")
 }
 
 func TestLooksLikeInputPrompt(t *testing.T) {

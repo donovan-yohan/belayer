@@ -38,22 +38,26 @@ func TestWriteSpotterClimb(t *testing.T) {
 	dir := t.TempDir()
 	climb := SpotterClimb{
 		Role:        "spotter",
-		ClimbID:     "fe-1",
 		RepoName:    "app",
-		Description: "Scaffold frontend",
-		WorkDir:     "/tmp/worktree",
-		Profiles:    map[string]string{"frontend": "[checks]\nbuild = \"npm run build\""},
-		TopJSON:     `{"status":"complete","summary":"done"}`,
+		ProblemSpec: "Build a frontend app",
+		ClimbTops: []ClimbTopSummary{
+			{ClimbID: "fe-1", Description: "Scaffold frontend", Status: "complete", Summary: "done"},
+		},
+		WorkDir:  "/tmp/worktree",
+		Profiles: map[string]string{"frontend": "[checks]\nbuild = \"npm run build\""},
 	}
-	err := WriteClimbJSON(dir, "fe-1", climb)
+	err := WriteClimbJSON(dir, "spotter-app", climb)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, ".lead", "fe-1", "GOAL.json"))
+	data, err := os.ReadFile(filepath.Join(dir, ".lead", "spotter-app", "GOAL.json"))
 	require.NoError(t, err)
 
 	var parsed SpotterClimb
 	require.NoError(t, json.Unmarshal(data, &parsed))
 	assert.Equal(t, "spotter", parsed.Role)
+	assert.Equal(t, "app", parsed.RepoName)
+	assert.Len(t, parsed.ClimbTops, 1)
+	assert.Equal(t, "fe-1", parsed.ClimbTops[0].ClimbID)
 	assert.Contains(t, parsed.Profiles, "frontend")
 }
 

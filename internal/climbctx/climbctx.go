@@ -18,15 +18,23 @@ type LeadClimb struct {
 	SpotterFeedback string `json:"spotter_feedback,omitempty"`
 }
 
+// ClimbTopSummary contains the TOP.json data for a completed climb.
+type ClimbTopSummary struct {
+	ClimbID     string `json:"climb_id"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Summary     string `json:"summary"`
+	Notes       string `json:"notes,omitempty"`
+}
+
 // SpotterClimb is the GOAL.json context for a spotter agent.
 type SpotterClimb struct {
 	Role        string            `json:"role"`
-	ClimbID     string            `json:"goal_id"`
 	RepoName    string            `json:"repo_name"`
-	Description string            `json:"description"`
+	ProblemSpec string            `json:"problem_spec"`
+	ClimbTops   []ClimbTopSummary `json:"climb_tops"`
 	WorkDir     string            `json:"work_dir"`
 	Profiles    map[string]string `json:"profiles"`
-	TopJSON     string            `json:"done_json"`
 }
 
 // AnchorClimb is the GOAL.json context for an anchor agent.

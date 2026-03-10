@@ -123,15 +123,13 @@ func (s *Belayer) tick() error {
 			}
 			s.leadQueue = append(s.leadQueue, newlyReady...)
 
-			// Check spotting climbs for SPOT.json results
-			spotResolved, spotReady, spotRetry, spotErr := runner.CheckSpottingClimbs()
+			// Check repo-level spotter results for SPOT.json.
+			// Spotters do not occupy active lead slots, so resolvedCount is not
+			// subtracted from activeLeads.
+			_, spotReady, spotRetry, spotErr := runner.CheckRepoSpotResults()
 			if spotErr != nil {
 				log.Printf("setter: error checking spotting climbs for %s: %v", taskID, spotErr)
 			} else {
-				s.activeLeads -= spotResolved
-				if s.activeLeads < 0 {
-					s.activeLeads = 0
-				}
 				s.leadQueue = append(s.leadQueue, spotReady...)
 				s.leadQueue = append(s.leadQueue, spotRetry...)
 			}

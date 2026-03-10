@@ -81,23 +81,29 @@ type ProblemRunner struct {
 
 	// Validation
 	validationEnabled bool // when true, TOP.json triggers spotting instead of direct completion
+
+	// Repo-level spotter tracking
+	repoSpotterActivated map[string]bool // repo -> whether spotter has been activated
+	repoSpotterAttempts  map[string]int  // repo -> spotter attempt count
 }
 
 // NewProblemRunner creates a ProblemRunner for the given problem.
 func NewProblemRunner(task *model.Problem, instanceDir, globalCfgDir, instanceCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *ProblemRunner {
 	return &ProblemRunner{
-		task:              task,
-		worktrees:         make(map[string]string),
-		instanceDir:       instanceDir,
-		globalConfigDir:   globalCfgDir,
-		instanceConfigDir: instanceCfgDir,
-		store:             s,
-		tmux:              tm,
-		logMgr:            lm,
-		spawner:           sp,
-		git:               &RealGitRunner{},
-		startedAt:         make(map[string]time.Time),
-		validationEnabled: true,
+		task:                 task,
+		worktrees:            make(map[string]string),
+		instanceDir:          instanceDir,
+		globalConfigDir:      globalCfgDir,
+		instanceConfigDir:    instanceCfgDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawner:              sp,
+		git:                  &RealGitRunner{},
+		startedAt:            make(map[string]time.Time),
+		validationEnabled:    true,
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  make(map[string]int),
 	}
 }
 
@@ -301,14 +307,35 @@ func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completed
 		}
 
 		if tr.validationEnabled {
-			// Transition to spotting — spotter will validate before marking complete
-			if spotErr := tr.SpawnSpotter(climb); spotErr != nil {
-				log.Printf("warning: failed to spawn spotter for %s: %v", climb.ID, spotErr)
-				continue
+			// Mark climb as topped (complete at lead level)
+			tr.dag.MarkComplete(climb.ID)
+			if storeErr := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); storeErr != nil {
+				return nil, 0, fmt.Errorf("updating climb status: %w", storeErr)
 			}
-			// Do NOT kill the tmux window (spotter reuses it)
-			// Do NOT count as completed (climb is still in-flight)
-			log.Printf("setter: climb %s transitioned to spotting", climb.ID)
+
+			payload, _ := json.Marshal(top)
+			if eventErr := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbCompleted, string(payload)); eventErr != nil {
+				return nil, 0, fmt.Errorf("inserting climb_completed event: %w", eventErr)
+			}
+
+			delete(tr.startedAt, climb.ID)
+			completedCount++
+
+			// Kill the lead tmux window
+			windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
+			tr.killPaneProcessTree(windowName)
+			tr.tmux.KillWindow(tr.tmuxSession, windowName)
+			tr.logMgr.CheckRotation(tr.task.ID, climb.ID)
+
+			// Check if all climbs for this repo have topped → activate spotter
+			if !tr.repoSpotterActivated[climb.RepoName] && tr.dag.AllClimbsForRepoTopped(climb.RepoName) {
+				if spotErr := tr.ActivateSpotter(climb.RepoName); spotErr != nil {
+					log.Printf("warning: failed to activate spotter for %s: %v", climb.RepoName, spotErr)
+				} else {
+					tr.repoSpotterActivated[climb.RepoName] = true
+					log.Printf("belayer: all climbs topped for %s — spotter activated", climb.RepoName)
+				}
+			}
 		} else {
 			// Validation disabled — mark complete directly
 			tr.dag.MarkComplete(climb.ID)
@@ -355,8 +382,6 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 		switch climb.Status {
 		case model.ClimbStatusRunning:
 			windowName = fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
-		case model.ClimbStatusSpotting:
-			windowName = fmt.Sprintf("spot-%s", climb.ID)
 		default:
 			continue
 		}
@@ -394,16 +419,9 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 
 		// Check one more time for signal file before marking failed
 		worktreePath := tr.worktrees[climb.RepoName]
-		if climb.Status == model.ClimbStatusSpotting {
-			spotPath := filepath.Join(worktreePath, ".lead", climb.ID, "SPOT.json")
-			if _, err := os.Stat(spotPath); err == nil {
-				continue // will be picked up by CheckSpottingClimbs
-			}
-		} else {
-			topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
-			if _, err := os.Stat(topPath); err == nil {
-				continue // will be picked up by CheckCompletions
-			}
+		topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
+		if _, err := os.Stat(topPath); err == nil {
+			continue // will be picked up by CheckCompletions
 		}
 
 		if timedOut {
@@ -442,55 +460,104 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 	return retryClimbs, nil
 }
 
-// CheckSpottingClimbs checks climbs in "spotting" status for SPOT.json results.
-// Returns the count of climbs that resolved (passed or failed), newly unblocked climbs,
-// and climbs to re-queue for retry with spotter feedback.
-// Note: CheckSpotResult already handles marking climbs complete/failed, incrementing
-// attempts, and removing TOP.json on failure — this method only collects results
-// for the setter to manage queue/lead accounting.
-func (tr *ProblemRunner) CheckSpottingClimbs() (resolvedCount int, newlyReady []QueuedClimb, retryClimbs []QueuedClimb, err error) {
-	for _, climb := range tr.dag.Climbs() {
-		if climb.Status != model.ClimbStatusSpotting {
+// CheckRepoSpotResults checks repos that have active spotters for SPOT.json.
+// Returns count of repos that resolved, newly unblocked climbs, and climbs to retry.
+func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady []QueuedClimb, retryClimbs []QueuedClimb, err error) {
+	for repoName, activated := range tr.repoSpotterActivated {
+		if !activated {
 			continue
 		}
 
-		spot, found, checkErr := tr.CheckSpotResult(climb)
-		if checkErr != nil {
-			log.Printf("setter: error checking spot result for %s: %v", climb.ID, checkErr)
+		worktreePath := tr.worktrees[repoName]
+		spotPath := filepath.Join(worktreePath, ".lead", "spotter-"+repoName, "SPOT.json")
+
+		data, readErr := os.ReadFile(spotPath)
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				continue
+			}
+			log.Printf("warning: error reading SPOT.json for repo %s: %v", repoName, readErr)
 			continue
 		}
-		if !found {
+
+		var spot spotter.SpotJSON
+		if jsonErr := json.Unmarshal(data, &spot); jsonErr != nil {
+			log.Printf("warning: invalid SPOT.json for repo %s: %v", repoName, jsonErr)
 			continue
 		}
 
 		resolvedCount++
 
+		// Record the spotter verdict event
+		payload, _ := json.Marshal(spot)
+		tr.store.InsertEvent(tr.task.ID, "", model.EventSpotterVerdict, string(payload))
+
+		// Kill the spotter window
+		windowName := fmt.Sprintf("spot-%s", repoName)
+		tr.killPaneProcessTree(windowName)
+		time.Sleep(300 * time.Millisecond)
+		tr.tmux.KillWindow(tr.tmuxSession, windowName)
+
+		// Remove SPOT.json so it's not picked up again
+		os.Remove(spotPath)
+
 		if spot.Pass {
-			// Climb validated successfully, check for newly unblocked climbs
+			log.Printf("belayer: repo %s passed spotter validation", repoName)
+			// Mark this repo as fully validated
+			tr.repoSpotterActivated[repoName] = false // deactivate tracking
+
+			// Check for newly unblocked climbs
 			readyClimbs := tr.dag.ReadyClimbs()
 			for _, rc := range readyClimbs {
 				newlyReady = append(newlyReady, QueuedClimb{Goal: rc, TaskID: tr.task.ID})
 			}
 		} else {
-			// Spot failed — re-queue for retry if under max attempts
-			// (CheckSpotResult already incremented attempt, so use <= 3)
-			if climb.Attempt <= 3 {
-				retryClimbs = append(retryClimbs, QueuedClimb{
-					Goal:            *climb,
-					TaskID:          tr.task.ID,
-					SpotterFeedback: SpotterFeedbackForGoal(spot),
-				})
-				log.Printf("setter: climb %s re-queued for retry after spot failure (attempt %d)", climb.ID, climb.Attempt)
+			log.Printf("belayer: repo %s failed spotter validation with %d issues", repoName, len(spot.Issues))
+
+			// Reset all climbs for this repo to failed for retry
+			for _, c := range tr.dag.ClimbsForRepo(repoName) {
+				tr.dag.MarkFailed(c.ID)
+				tr.store.UpdateClimbStatus(c.ID, model.ClimbStatusFailed)
+				tr.store.IncrementClimbAttempt(c.ID)
+				c.Attempt++
+
+				// Remove TOP.json so retry starts fresh
+				os.Remove(filepath.Join(worktreePath, ".lead", c.ID, "TOP.json"))
+			}
+
+			tr.repoSpotterActivated[repoName] = false // allow re-activation
+
+			// Re-queue climbs for retry with spotter feedback
+			feedback := SpotterFeedbackForGoal(&spot)
+			for _, c := range tr.dag.ClimbsForRepo(repoName) {
+				if c.Attempt <= 3 {
+					tr.store.ResetClimbStatus(c.ID)
+					c.Status = model.ClimbStatusPending
+					retryClimbs = append(retryClimbs, QueuedClimb{
+						Goal:            *c,
+						TaskID:          tr.task.ID,
+						SpotterFeedback: feedback,
+					})
+				}
 			}
 		}
 	}
-
 	return resolvedCount, newlyReady, retryClimbs, nil
 }
 
-// AllClimbsComplete returns true if all climbs in the DAG are complete.
+// AllClimbsComplete returns true if all climbs in the DAG are complete and
+// no repo-level spotters are still active (waiting for SPOT.json).
 func (tr *ProblemRunner) AllClimbsComplete() bool {
-	return tr.dag.AllComplete()
+	if !tr.dag.AllComplete() {
+		return false
+	}
+	// Check that all activated spotters have resolved
+	for _, activated := range tr.repoSpotterActivated {
+		if activated {
+			return false
+		}
+	}
+	return true
 }
 
 // HasStuckClimbs returns true if any climb has failed with max attempts reached.
@@ -701,27 +768,20 @@ func (tr *ProblemRunner) GatherSummaries() []climbctx.ClimbSummary {
 	return summaries
 }
 
-// SpawnSpotter transitions a climb to "spotting" and spawns a spotter agent in
-// the same tmux window the lead used (the lead has already exited).
-func (tr *ProblemRunner) SpawnSpotter(climb *model.Climb) error {
-	// Mark climb as spotting in DAG and SQLite
-	tr.dag.MarkSpotting(climb.ID)
-	if err := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusSpotting); err != nil {
-		return fmt.Errorf("updating climb status to spotting: %w", err)
-	}
+// ActivateSpotter activates the pre-created spotter window for a repo.
+// Called when all climbs for the repo have topped.
+func (tr *ProblemRunner) ActivateSpotter(repoName string) error {
+	tr.repoSpotterAttempts[repoName]++
+	windowName := fmt.Sprintf("spot-%s", repoName)
+	worktreePath := tr.worktrees[repoName]
 
-	worktreePath := tr.worktrees[climb.RepoName]
-
-	// Kill the lead's window and its process tree (dev servers, etc.)
-	leadWindowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
-	tr.killPaneProcessTree(leadWindowName)
-	time.Sleep(300 * time.Millisecond) // grace period for SIGTERM handlers
-	tr.tmux.KillWindow(tr.tmuxSession, leadWindowName)
-
-	// Create a new window for the spotter
-	windowName := fmt.Sprintf("spot-%s", climb.ID)
-	if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
-		return fmt.Errorf("creating spotter window %s: %w", windowName, err)
+	// On retry, kill and recreate the window
+	if tr.repoSpotterAttempts[repoName] > 1 {
+		tr.killPaneProcessTree(windowName)
+		_ = tr.tmux.KillWindow(tr.tmuxSession, windowName)
+		if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
+			return fmt.Errorf("recreating spotter window %s: %w", windowName, err)
+		}
 	}
 
 	// Keep pane open after process exits for death detection
@@ -729,142 +789,71 @@ func (tr *ProblemRunner) SpawnSpotter(climb *model.Climb) error {
 		log.Printf("warning: set remain-on-exit for spotter %s failed: %v", windowName, err)
 	}
 
+	// Gather all TOP.json summaries for this repo
+	var tops []climbctx.ClimbTopSummary
+	for _, c := range tr.dag.ClimbsForRepo(repoName) {
+		topPath := filepath.Join(worktreePath, ".lead", c.ID, "TOP.json")
+		data, err := os.ReadFile(topPath)
+		if err != nil {
+			log.Printf("warning: could not read TOP.json for %s: %v", c.ID, err)
+			continue
+		}
+		var top TopJSON
+		json.Unmarshal(data, &top)
+		tops = append(tops, climbctx.ClimbTopSummary{
+			ClimbID:     c.ID,
+			Description: c.Description,
+			Status:      top.Status,
+			Summary:     top.Summary,
+			Notes:       top.Notes,
+		})
+	}
+
+	// Write profiles
+	profiles, err := tr.writeProfiles(worktreePath, "spotter-"+repoName)
+	if err != nil {
+		return fmt.Errorf("writing profiles for spotter %s: %w", repoName, err)
+	}
+
 	appendPrompt, err := defaults.FS.ReadFile("claudemd/spotter.md")
 	if err != nil {
 		return fmt.Errorf("reading spotter system prompt: %w", err)
 	}
 
-	// Write profiles to .lead/<climbID>/profiles/ for agent discovery
-	profiles, err := tr.writeProfiles(worktreePath, climb.ID)
-	if err != nil {
-		return fmt.Errorf("writing profiles for %s: %w", climb.ID, err)
-	}
-
-	// Read TOP.json for context
-	topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
-	topData, readErr := os.ReadFile(topPath)
-	if readErr != nil {
-		topData = []byte("{}")
-	}
-
-	// Write GOAL.json for spotter
-	if err := climbctx.WriteClimbJSON(worktreePath, climb.ID, climbctx.SpotterClimb{
+	// Write GOAL.json for spotter with per-repo context
+	if err := climbctx.WriteClimbJSON(worktreePath, "spotter-"+repoName, climbctx.SpotterClimb{
 		Role:        "spotter",
-		ClimbID:     climb.ID,
-		RepoName:    climb.RepoName,
-		Description: climb.Description,
+		RepoName:    repoName,
+		ProblemSpec: tr.task.Spec,
+		ClimbTops:   tops,
 		WorkDir:     worktreePath,
 		Profiles:    profiles,
-		TopJSON:     string(topData),
 	}); err != nil {
-		return fmt.Errorf("writing spotter GOAL.json for %s: %w", climb.ID, err)
+		return fmt.Errorf("writing spotter GOAL.json for %s: %w", repoName, err)
 	}
 
-	spotterMailAddr := fmt.Sprintf("problem/%s/spotter/%s/%s", tr.task.ID, climb.RepoName, climb.ID)
+	spotterMailAddr := fmt.Sprintf("problem/%s/spotter/%s", tr.task.ID, repoName)
+	goalJSONPath := fmt.Sprintf(".lead/spotter-%s/GOAL.json", repoName)
 
-	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", climb.ID)
-
-	// Spawn agent in a new window
+	// Activate via Spawn (window already exists from Init)
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:        tr.tmuxSession,
 		WindowName:         windowName,
 		WorkDir:            worktreePath,
 		AppendSystemPrompt: string(appendPrompt),
-		InitialPrompt:      fmt.Sprintf("Read %s and begin validating the lead's work.", goalJSONPath),
+		InitialPrompt:      fmt.Sprintf("Read %s and validate the repo's work against the PRD.", goalJSONPath),
 		Env:                map[string]string{"BELAYER_MAIL_ADDRESS": spotterMailAddr},
 	}); err != nil {
-		return fmt.Errorf("spawning spotter for %s: %w", climb.ID, err)
+		return fmt.Errorf("activating spotter for %s: %w", repoName, err)
 	}
 
-	if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventSpotterSpawned,
-		fmt.Sprintf(`{"climb_id":"%s"}`, climb.ID)); err != nil {
+	if err := tr.store.InsertEvent(tr.task.ID, "", model.EventSpotterSpawned,
+		fmt.Sprintf(`{"repo":"%s","attempt":%d}`, repoName, tr.repoSpotterAttempts[repoName])); err != nil {
 		log.Printf("warning: failed to insert spotter_spawned event: %v", err)
 	}
 
-	tr.startedAt[climb.ID] = time.Now()
-
-	log.Printf("spotter: spawned for climb %s (problem %s)", climb.ID, tr.task.ID)
+	log.Printf("belayer: spotter activated for repo %s (problem %s, attempt %d)", repoName, tr.task.ID, tr.repoSpotterAttempts[repoName])
 	return nil
-}
-
-// CheckSpotResult checks for a SPOT.json file in the climb's worktree and parses it.
-// Returns the result, whether one was found, and any error.
-func (tr *ProblemRunner) CheckSpotResult(climb *model.Climb) (*spotter.SpotJSON, bool, error) {
-	worktreePath := tr.worktrees[climb.RepoName]
-	spotPath := filepath.Join(worktreePath, ".lead", climb.ID, "SPOT.json")
-
-	data, err := os.ReadFile(spotPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("reading SPOT.json for %s: %w", climb.ID, err)
-	}
-
-	var spot spotter.SpotJSON
-	if err := json.Unmarshal(data, &spot); err != nil {
-		return nil, false, fmt.Errorf("parsing SPOT.json for %s: %w", climb.ID, err)
-	}
-
-	// Record the spotter verdict event
-	payload, _ := json.Marshal(spot)
-	if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventSpotterVerdict, string(payload)); err != nil {
-		log.Printf("warning: failed to insert spotter_verdict event: %v", err)
-	}
-
-	// Kill the spotter tmux window and its process tree (dev servers, etc.)
-	windowName := fmt.Sprintf("spot-%s", climb.ID)
-	tr.killPaneProcessTree(windowName)
-	time.Sleep(300 * time.Millisecond) // grace period for SIGTERM handlers
-	tr.tmux.KillWindow(tr.tmuxSession, windowName)
-	delete(tr.startedAt, climb.ID)
-
-	// Remove SPOT.json so it's not picked up again
-	os.Remove(spotPath)
-
-	if spot.Pass {
-		// Mark climb complete
-		tr.dag.MarkComplete(climb.ID)
-		if err := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); err != nil {
-			return &spot, true, fmt.Errorf("updating climb status to complete: %w", err)
-		}
-
-		if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbCompleted,
-			string(payload)); err != nil {
-			log.Printf("warning: failed to insert climb_completed event: %v", err)
-		}
-
-		// Check log rotation
-		tr.logMgr.CheckRotation(tr.task.ID, climb.ID)
-
-		log.Printf("spotter: climb %s passed validation", climb.ID)
-	} else {
-		// Mark climb failed for retry
-		tr.dag.MarkFailed(climb.ID)
-		if err := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusFailed); err != nil {
-			return &spot, true, fmt.Errorf("updating climb status to failed: %w", err)
-		}
-
-		// Increment attempt for retry tracking
-		if err := tr.store.IncrementClimbAttempt(climb.ID); err != nil {
-			log.Printf("warning: failed to increment climb attempt: %v", err)
-		}
-		if dagClimb := tr.dag.Get(climb.ID); dagClimb != nil {
-			dagClimb.Attempt++
-		}
-
-		if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbFailed,
-			string(payload)); err != nil {
-			log.Printf("warning: failed to insert climb_failed event: %v", err)
-		}
-
-		// Remove TOP.json so the retry starts fresh
-		os.Remove(filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json"))
-
-		log.Printf("spotter: climb %s failed validation with %d issues", climb.ID, len(spot.Issues))
-	}
-
-	return &spot, true, nil
 }
 
 // SpawnAnchor creates a tmux window for the anchor agent and launches it.

@@ -123,3 +123,43 @@ func (d *DAG) AddClimbs(goals []model.Climb) {
 		}
 	}
 }
+
+// AllClimbsForRepoTopped returns true if every climb for the repo has finished
+// (not pending, not running, not failed). Used to detect when all climbs for a
+// repo have topped so the per-repo spotter can be activated.
+func (d *DAG) AllClimbsForRepoTopped(repoName string) bool {
+	found := false
+	for _, c := range d.goals {
+		if c.RepoName == repoName {
+			found = true
+			if c.Status == model.ClimbStatusPending || c.Status == model.ClimbStatusRunning || c.Status == model.ClimbStatusFailed {
+				return false
+			}
+		}
+	}
+	return found
+}
+
+// ClimbsForRepo returns all climbs assigned to the given repo.
+func (d *DAG) ClimbsForRepo(repoName string) []*model.Climb {
+	var result []*model.Climb
+	for _, c := range d.goals {
+		if c.RepoName == repoName {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+// UniqueRepos returns all unique repo names in the DAG.
+func (d *DAG) UniqueRepos() []string {
+	repos := make(map[string]bool)
+	for _, c := range d.goals {
+		repos[c.RepoName] = true
+	}
+	var result []string
+	for r := range repos {
+		result = append(result, r)
+	}
+	return result
+}
