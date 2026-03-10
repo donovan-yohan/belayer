@@ -6,18 +6,20 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-| [Crag Architecture](exec-plans/active/2026-03-10-crag-architecture.md) | 2026-03-10 | Climbing terminology overhaul + per-role window layout with deferred activation |
+_None_
 
 ## Tech Debt
 
 | Issue | Severity | Notes |
 |-------|----------|-------|
-| Flaky `TestProcessPendingTask_Decomposition` | Low | TempDir cleanup race condition; passes ~2/3 runs |
+| Flaky `TestProcessPendingProblem_Decomposition` | Low | TempDir cleanup race condition; passes ~2/3 runs |
 
 ## Completed Plans
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Crag Architecture](exec-plans/completed/2026-03-10-crag-architecture.md) | 2026-03-10 | Climbing terminology overhaul + per-role window layout with deferred activation |
+| [Crag Review Fixes](exec-plans/completed/2026-03-10-crag-review-fixes.md) | 2026-03-10 | Post-review fixes: rename completion, error handling, robustness |
 | [Filesystem Mail Store](exec-plans/completed/2026-03-10-filesystem-mail-store.md) | 2026-03-10 | Replace beads/dolt mail backend with pure filesystem store |
 | [Goal-Scoped Isolation](exec-plans/completed/2026-03-09-goal-scoped-isolation.md) | 2026-03-10 | --append-system-prompt for roles, .lead/<goalID>/ paths, separate spotter windows |
 | [Manage Session Context](exec-plans/completed/2026-03-09-manage-session-context.md) | 2026-03-10 | .claude/ workspace with slash commands for belayer manage |

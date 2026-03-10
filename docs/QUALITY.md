@@ -24,6 +24,7 @@ Go's built-in `go test` with `testing` package. No external test framework.
 | `internal/defaults/write_test.go` | WriteToDir (file creation, no-overwrite behavior) |
 | `internal/belayer/belayer_test.go` | Belayer daemon lifecycle, spotting flow, anchor flow, crash recovery |
 | `internal/belayer/dag_test.go` | DAG construction and traversal |
+| `internal/lead/claude_test.go` | ClaudeSpawner env injection (empty, single, multiple env vars) |
 
 ## Conventions
 
