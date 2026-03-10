@@ -18,3 +18,4 @@
 | [2026-03-07-context-aware-validation-design](../plans/2026-03-07-context-aware-validation-design.md) | Context-aware validation pipeline: spotter, anchor, config system | 2026-03-07 |
 | [2026-03-08-interactive-lead-sessions-design](../plans/2026-03-08-interactive-lead-sessions-design.md) | Replace claude -p with full interactive sessions for leads, spotters, anchors | 2026-03-08 |
 | [2026-03-09-mail-system-design](2026-03-09-mail-system-design.md) | Beads-backed inter-agent mail system with tmux send-keys delivery | 2026-03-09 |
+| [2026-03-09-manage-session-context-design](2026-03-09-manage-session-context-design.md) | Manage session runtime .claude/ context with commands and CLAUDE.md | 2026-03-09 |
