@@ -30,6 +30,7 @@ Standalone Go CLI tool that orchestrates autonomous coding agents across multipl
 - **SQLite**: Single source of truth for all state (tasks, leads, verdicts, events)
 - **Agentic nodes**: Ephemeral Claude sessions for: sufficiency checks, task decomposition, alignment reviews, stuck analysis
 - **Long-lived instances with task isolation**: Instance (repos, config) persists; each task gets isolated worktrees
+- **Manage session context**: `internal/defaults/claudemd/manage.md` and `internal/defaults/commands/*.md` are deployed into `belayer manage` sessions. When CLI commands change, update these files. Verify during code review.
 
 ## Workflow
 
