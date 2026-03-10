@@ -335,11 +335,15 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 	now := time.Now()
 
 	for _, g := range tr.dag.Goals() {
-		if g.Status != model.GoalStatusRunning {
+		var windowName string
+		switch g.Status {
+		case model.GoalStatusRunning:
+			windowName = fmt.Sprintf("%s-%s", g.RepoName, g.ID)
+		case model.GoalStatusSpotting:
+			windowName = fmt.Sprintf("spot-%s", g.ID)
+		default:
 			continue
 		}
-
-		windowName := fmt.Sprintf("%s-%s", g.RepoName, g.ID)
 		windowDead := !tr.windowExists(windowName)
 		reason := "window died"
 
@@ -372,11 +376,18 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 			continue
 		}
 
-		// Check one more time for DONE.json before marking failed
+		// Check one more time for signal file before marking failed
 		worktreePath := tr.worktrees[g.RepoName]
-		donePath := filepath.Join(worktreePath, ".lead", g.ID, "DONE.json")
-		if _, err := os.Stat(donePath); err == nil {
-			continue // will be picked up by CheckCompletions
+		if g.Status == model.GoalStatusSpotting {
+			spotPath := filepath.Join(worktreePath, ".lead", g.ID, "SPOT.json")
+			if _, err := os.Stat(spotPath); err == nil {
+				continue // will be picked up by CheckSpottingGoals
+			}
+		} else {
+			donePath := filepath.Join(worktreePath, ".lead", g.ID, "DONE.json")
+			if _, err := os.Stat(donePath); err == nil {
+				continue // will be picked up by CheckCompletions
+			}
 		}
 
 		if timedOut {
