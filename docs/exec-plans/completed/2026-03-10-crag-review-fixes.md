@@ -92,13 +92,12 @@ Fix crash recovery gap and add test coverage.
 
 ## Outcomes & Retrospective
 
-_Filled by /harness:complete when work is done._
-
 **What worked:**
--
+- All 3 tasks ran fully in parallel — no blocking dependencies
+- Workers self-healed cross-task conflicts (workers 2 and 3 independently fixed Goal→Climb references Task 1 missed)
 
 **What didn't:**
--
+- Task 1's rename scope was incomplete — missed belayer.go and setter_test.go references
 
 **Learnings to codify:**
--
+- Struct field renames need a full codebase grep, not just the defining file
