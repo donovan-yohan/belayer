@@ -22,13 +22,20 @@ func NewClaudeSpawner(tm tmux.TmuxManager) *ClaudeSpawner {
 // Spawn launches an interactive Claude Code session in the specified tmux window.
 // The initial prompt is passed as a positional argument.
 func (c *ClaudeSpawner) Spawn(_ context.Context, opts SpawnOpts) error {
+	// Build env exports for per-window isolation
+	var envExports string
+	for k, v := range opts.Env {
+		envExports += fmt.Sprintf("export %s=%s && ", k, shellQuote(v))
+	}
+
 	// Build command: full interactive session with positional prompt
 	var appendPromptFlag string
 	if opts.AppendSystemPrompt != "" {
 		appendPromptFlag = " --append-system-prompt " + shellQuote(opts.AppendSystemPrompt)
 	}
 
-	cmd := fmt.Sprintf("cd %s && claude --dangerously-skip-permissions%s %s 2>&1; echo 'Claude session exited'",
+	cmd := fmt.Sprintf("%scd %s && claude --dangerously-skip-permissions%s %s 2>&1; echo 'Claude session exited'",
+		envExports,
 		shellQuote(opts.WorkDir),
 		appendPromptFlag,
 		shellQuote(opts.InitialPrompt))

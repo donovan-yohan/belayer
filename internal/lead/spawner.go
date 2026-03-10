@@ -16,5 +16,6 @@ type SpawnOpts struct {
 	WindowName         string
 	WorkDir            string
 	InitialPrompt      string
-	AppendSystemPrompt string // Role-specific instructions appended to default system prompt via --append-system-prompt
+	AppendSystemPrompt string            // Role-specific instructions appended to default system prompt via --append-system-prompt
+	Env                map[string]string // Per-window environment variables (injected via export, not tmux session env)
 }
