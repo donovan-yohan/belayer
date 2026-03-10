@@ -54,11 +54,11 @@ type GoalSummary struct {
 	Notes       string `json:"notes,omitempty"`
 }
 
-// WriteGoalJSON writes the goal context to <dir>/.lead/GOAL.json.
-func WriteGoalJSON(dir string, goal any) error {
-	leadDir := filepath.Join(dir, ".lead")
-	if err := os.MkdirAll(leadDir, 0o755); err != nil {
-		return fmt.Errorf("creating .lead directory: %w", err)
+// WriteGoalJSON writes the goal context to <dir>/.lead/<goalID>/GOAL.json.
+func WriteGoalJSON(dir string, goalID string, goal any) error {
+	goalDir := filepath.Join(dir, ".lead", goalID)
+	if err := os.MkdirAll(goalDir, 0o755); err != nil {
+		return fmt.Errorf("creating .lead/%s directory: %w", goalID, err)
 	}
 
 	data, err := json.MarshalIndent(goal, "", "  ")
@@ -66,7 +66,7 @@ func WriteGoalJSON(dir string, goal any) error {
 		return fmt.Errorf("marshaling GOAL.json: %w", err)
 	}
 
-	goalPath := filepath.Join(leadDir, "GOAL.json")
+	goalPath := filepath.Join(goalDir, "GOAL.json")
 	if err := os.WriteFile(goalPath, data, 0o644); err != nil {
 		return fmt.Errorf("writing GOAL.json: %w", err)
 	}

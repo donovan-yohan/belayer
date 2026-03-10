@@ -21,10 +21,10 @@ func TestWriteLeadGoal(t *testing.T) {
 		Attempt:         1,
 		SpotterFeedback: "",
 	}
-	err := WriteGoalJSON(dir, goal)
+	err := WriteGoalJSON(dir, "api-1", goal)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, ".lead", "GOAL.json"))
+	data, err := os.ReadFile(filepath.Join(dir, ".lead", "api-1", "GOAL.json"))
 	require.NoError(t, err)
 
 	var parsed LeadGoal
@@ -45,10 +45,10 @@ func TestWriteSpotterGoal(t *testing.T) {
 		Profiles:    map[string]string{"frontend": "[checks]\nbuild = \"npm run build\""},
 		DoneJSON:    `{"status":"complete","summary":"done"}`,
 	}
-	err := WriteGoalJSON(dir, goal)
+	err := WriteGoalJSON(dir, "fe-1", goal)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, ".lead", "GOAL.json"))
+	data, err := os.ReadFile(filepath.Join(dir, ".lead", "fe-1", "GOAL.json"))
 	require.NoError(t, err)
 
 	var parsed SpotterGoal
@@ -69,10 +69,10 @@ func TestWriteAnchorGoal(t *testing.T) {
 			{GoalID: "api-1", RepoName: "api", Summary: "Added endpoint"},
 		},
 	}
-	err := WriteGoalJSON(dir, goal)
+	err := WriteGoalJSON(dir, "anchor", goal)
 	require.NoError(t, err)
 
-	data, err := os.ReadFile(filepath.Join(dir, ".lead", "GOAL.json"))
+	data, err := os.ReadFile(filepath.Join(dir, ".lead", "anchor", "GOAL.json"))
 	require.NoError(t, err)
 
 	var parsed AnchorGoal
