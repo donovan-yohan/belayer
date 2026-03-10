@@ -49,7 +49,7 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Module | Path | Purpose |
 |--------|------|---------|
 | CLI entry | `cmd/belayer/main.go` | Binary entry point |
-| CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task, status, tui, setter) |
+| CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task, status, tui, setter, message, mail) |
 | Belayer Config | `internal/belayerconfig/` | Config loader with resolution chain (instance > global > embedded defaults) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
 | Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles) via `embed.FS` |
@@ -65,6 +65,7 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Anchor | `internal/anchor/` | Cross-repo alignment reviewer. Verdict types (VerdictJSON, RepoVerdict) |
 | Intake | `internal/intake/` | Task intake pipeline (text/Jira parsing, sufficiency check, interactive brainstorm) |
 | Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
+| Mail | `internal/mail/` | Beads-backed inter-agent mail system (message types, address resolution, beads store, templates, tmux delivery, send/read) |
 | TUI | `internal/tui/` | bubbletea dashboard (model, views, styles, keys, read-only store) |
 
 ## Data Flow
@@ -112,6 +113,7 @@ Task Input (text/Jira) --> Intake Pipeline (sufficiency + brainstorm) --> Decomp
   instance.json                       # Instance config (repos, settings)
   belayer.db                          # SQLite database
   config/                             # Per-instance overrides (optional)
+  mail/                               # Beads-backed mail database (.beads/ + .git/)
   repos/                              # Bare repo clones
     <repo-name>.git
   tasks/                              # Per-task worktrees

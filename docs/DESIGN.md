@@ -38,13 +38,41 @@ Validation flows through three layers after a lead completes a goal:
 2. **Spotter** (per-goal validation): Reuses the lead's tmux window with fresh agent context. Performs runtime validation (browser checks, dev server, console errors). Writes `SPOT.json`. On failure, spotter feedback is injected into the lead prompt on retry.
 3. **Anchor** (cross-repo alignment): Reviews all repos for consistency after all leads/spotters pass. Writes `VERDICT.json`.
 
-### Signal Files
+### Signal Files (Legacy)
+
+> Being replaced by the mail system (see below). Signal files remain for backward compatibility during transition.
 
 | File | Writer | Schema |
 |------|--------|--------|
 | `DONE.json` | Lead | `{ "status": "complete"/"failed", "summary": "...", "files_changed": [...] }` |
 | `SPOT.json` | Spotter | `{ "pass": true/false, "project_type": "frontend", "issues": [...], "screenshots": [...] }` |
 | `VERDICT.json` | Anchor | `{ "verdict": "approve"/"reject", "repos": { ... } }` |
+
+## Mail System
+
+Beads-backed inter-agent messaging. Replaces signal files with typed messages for unified orchestration.
+
+### Architecture
+
+- **Storage**: Beads (`bd` CLI) database per instance at `~/.belayer/instances/<name>/mail/`. Messages stored as beads issues with routing labels.
+- **Delivery**: Sender-driven via tmux send-keys. `belayer message` writes to beads AND delivers a nudge in one operation.
+- **Identity**: `BELAYER_MAIL_ADDRESS` env var set in tmux at spawn time. Agents derive identity automatically.
+- **Templates**: Embedded via `embed.FS` at `internal/mail/templates/`. Prepend actionable instructions at send time.
+
+### Message Types
+
+| Type | Direction | Purpose |
+|------|-----------|---------|
+| `goal_assignment` | setter → lead | New or updated work |
+| `done` | lead → setter | Goal completion signal |
+| `spot_result` | spotter → setter | Validation result |
+| `verdict` | anchor → setter | Alignment result |
+| `feedback` | setter → lead | Spotter/anchor feedback for retry |
+| `instruction` | user/setter → any | Ad-hoc command or info |
+
+### Addresses
+
+Path-like strings that deterministically map to tmux targets: `setter`, `task/<id>/lead/<repo>/<goal>`, `task/<id>/spotter/<repo>/<goal>`, `task/<id>/anchor`.
 
 ## Lead Execution
 
@@ -128,6 +156,10 @@ The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
 | `belayer task retry [task-id]` | Retry a failed task (reuses enriched description) |
 | `belayer task list` | List tasks for the current instance |
 | `belayer tui` | Launch the monitoring dashboard |
+| `belayer message <addr> --type <type> --body "..."` | Send a typed mail message to an agent |
+| `belayer mail read` | Read all unread messages (marks as read) |
+| `belayer mail inbox` | List unread messages without marking read |
+| `belayer mail ack <id>` | Mark a specific message as read |
 | `belayer status` | Quick status overview |
 
 ## Process Lifecycle

@@ -38,6 +38,8 @@ Lead  Lead   Lead   Lead     (parallel, isolated worktrees)
 - **tmux** — process management for agent sessions (`brew install tmux`)
 - **Claude Code CLI** — the `claude` binary must be on your PATH ([install guide](https://docs.anthropic.com/en/docs/claude-code))
 - **SQLite** — bundled via `modernc.org/sqlite` (no C dependency)
+- **Dolt** — versioned database engine used by beads (`brew install dolt`)
+- **Beads** — git-backed issue tracker for inter-agent mail (`brew install beads`)
 
 ## Install
 
@@ -131,7 +133,7 @@ This will:
 - Build a DAG from the goals
 - Create isolated git worktrees per goal
 - Spawn Claude Code sessions in tmux windows
-- Monitor for completion (via `DONE.json` files)
+- Monitor for completion (via mail messages)
 - Run a cross-repo spotter review when all goals finish
 - Create PRs on approval, or re-dispatch corrections on rejection
 
@@ -162,6 +164,10 @@ belayer logs -i my-project
 | `belayer setter` | Start the daemon that executes tasks |
 | `belayer status` | Show task and goal status |
 | `belayer tui` | Interactive bubbletea dashboard |
+| `belayer message <addr>` | Send a typed mail message to an agent |
+| `belayer mail read` | Read unread messages and mark as read |
+| `belayer mail inbox` | List unread messages without marking read |
+| `belayer mail ack <id>` | Mark a specific message as read |
 | `belayer logs` | View and manage lead session logs |
 
 ## Architecture
@@ -174,6 +180,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full code map and data 
 - **SQLite as single source of truth** — all state (tasks, goals, verdicts, events) lives in one database per instance
 - **DAG execution** — goals declare dependencies; the setter only spawns a goal when all its dependencies are complete
 - **Crash recovery** — the setter resumes in-progress tasks on restart by scanning SQLite and checking for `DONE.json` files
+- **Inter-agent mail** — beads-backed messaging system (`belayer message` / `belayer mail read`) replaces signal files with typed messages and tmux send-keys delivery
 
 ## Development
 
