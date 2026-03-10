@@ -24,6 +24,7 @@ func NewRootCmd() *cobra.Command {
 		newLogsCmd(),
 		newManageCmd(),
 		newMailCmd(),
+		newMessageCmd(),
 	)
 
 	return cmd
