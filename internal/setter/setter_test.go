@@ -278,11 +278,14 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 	assert.Equal(t, "api-api-1", sp.spawned[0].WindowName)
 	assert.Equal(t, filepath.Join(tmpDir, "api"), sp.spawned[0].WorkDir)
 
-	// Verify GOAL.json was written with correct content
-	goalJSON, err := os.ReadFile(filepath.Join(tmpDir, "api", ".lead", "GOAL.json"))
+	// Verify GOAL.json was written to goal-scoped path
+	goalJSON, err := os.ReadFile(filepath.Join(tmpDir, "api", ".lead", "api-1", "GOAL.json"))
 	require.NoError(t, err)
 	assert.Contains(t, string(goalJSON), "test goal")
 	assert.Contains(t, string(goalJSON), "test spec")
+
+	// Verify AppendSystemPrompt is set
+	assert.NotEmpty(t, sp.spawned[0].AppendSystemPrompt)
 }
 
 func TestTaskRunner_SpawnGoal_SetsMailAddress(t *testing.T) {
@@ -362,7 +365,9 @@ func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 		FilesChanged: []string{"api/main.go"},
 	}
 	data, _ := json.Marshal(doneJSON)
-	require.NoError(t, os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), data, 0o644))
+	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	require.NoError(t, os.MkdirAll(goalDoneDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), data, 0o644))
 
 	// Check completions — should find api-1 complete and api-2 ready
 	newlyReady, completedCount, err := runner.CheckCompletions()
@@ -408,14 +413,16 @@ func TestTaskRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 	// Spawn api-1
 	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-2v"}))
 
-	// Write DONE.json for api-1
+	// Write DONE.json for api-1 to goal-scoped path
 	doneJSON := DoneJSON{
 		Status:       "complete",
 		Summary:      "Did the thing",
 		FilesChanged: []string{"api/main.go"},
 	}
 	data, _ := json.Marshal(doneJSON)
-	require.NoError(t, os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), data, 0o644))
+	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	require.NoError(t, os.MkdirAll(goalDoneDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), data, 0o644))
 
 	// Check completions — with validation enabled, goal should be spotting, not complete
 	newlyReady, completedCount, err := runner.CheckCompletions()
@@ -623,10 +630,12 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	worktreeDir := filepath.Join(tmpDir, "tasks", "task-7", "api")
 	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
 
-	// Write DONE.json that was written while setter was down
+	// Write DONE.json that was written while setter was down (goal-scoped path)
 	doneJSON := DoneJSON{Status: "complete", Summary: "done while crashed"}
 	data, _ := json.Marshal(doneJSON)
-	require.NoError(t, os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), data, 0o644))
+	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	require.NoError(t, os.MkdirAll(goalDoneDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), data, 0o644))
 
 	setter := &Setter{
 		config: Config{
@@ -769,10 +778,12 @@ func TestTaskRunner_SpawnAnchor(t *testing.T) {
 	}
 	runner, _, tm, sp, mg, _ := newTestRunner(t, "task-s1", goals)
 
-	// Mark goal as complete with DONE.json
+	// Mark goal as complete with DONE.json (goal-scoped path)
 	runner.dag.MarkComplete("api-1")
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
-	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
+	goalDoneDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
+	os.MkdirAll(goalDoneDir, 0o755)
+	os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), doneData, 0o644)
 
 	// Set mock git responses
 	mg.responses[runner.worktrees["api"]+":diff"] = "+func NewEndpoint() {}"
@@ -795,11 +806,14 @@ func TestTaskRunner_SpawnAnchor(t *testing.T) {
 	assert.Equal(t, "anchor", sp.spawned[0].WindowName)
 	assert.Equal(t, runner.taskDir, sp.spawned[0].WorkDir)
 
-	// Verify GOAL.json was written with correct content
-	goalJSON, err := os.ReadFile(filepath.Join(runner.taskDir, ".lead", "GOAL.json"))
+	// Verify GOAL.json was written to goal-scoped path (.lead/anchor/)
+	goalJSON, err := os.ReadFile(filepath.Join(runner.taskDir, ".lead", "anchor", "GOAL.json"))
 	require.NoError(t, err)
 	assert.Contains(t, string(goalJSON), "test spec")
 	assert.Contains(t, string(goalJSON), "anchor")
+
+	// Verify AppendSystemPrompt is set
+	assert.NotEmpty(t, sp.spawned[0].AppendSystemPrompt)
 }
 
 func TestTaskRunner_CheckAnchorVerdict_Approve(t *testing.T) {
@@ -861,12 +875,16 @@ func TestTaskRunner_HandleRejection(t *testing.T) {
 	runner, s, _, _, _, _ := newTestRunner(t, "task-s4", goals)
 	runner.anchorAttempt = 1
 
-	// Mark both goals as complete with DONE.json
+	// Mark both goals as complete with DONE.json (goal-scoped paths)
 	runner.dag.MarkComplete("api-1")
 	runner.dag.MarkComplete("app-1")
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
-	os.WriteFile(filepath.Join(runner.worktrees["app"], "DONE.json"), doneData, 0o644)
+	apiGoalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
+	os.MkdirAll(apiGoalDir, 0o755)
+	os.WriteFile(filepath.Join(apiGoalDir, "DONE.json"), doneData, 0o644)
+	appGoalDir := filepath.Join(runner.worktrees["app"], ".lead", "app-1")
+	os.MkdirAll(appGoalDir, 0o755)
+	os.WriteFile(filepath.Join(appGoalDir, "DONE.json"), doneData, 0o644)
 
 	verdict := &anchor.VerdictJSON{
 		Verdict: "reject",
@@ -886,10 +904,10 @@ func TestTaskRunner_HandleRejection(t *testing.T) {
 	assert.Equal(t, "Fix response schema", correctionGoals[0].Goal.Description)
 	assert.Equal(t, "Add error handling", correctionGoals[1].Goal.Description)
 
-	// DONE.json should be removed from failing repo only
-	_, apiDoneErr := os.Stat(filepath.Join(runner.worktrees["api"], "DONE.json"))
+	// DONE.json should be removed from failing repo only (goal-scoped paths)
+	_, apiDoneErr := os.Stat(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "DONE.json"))
 	assert.True(t, os.IsNotExist(apiDoneErr))
-	_, appDoneErr := os.Stat(filepath.Join(runner.worktrees["app"], "DONE.json"))
+	_, appDoneErr := os.Stat(filepath.Join(runner.worktrees["app"], ".lead", "app-1", "DONE.json"))
 	assert.False(t, os.IsNotExist(appDoneErr)) // app's DONE.json should remain
 
 	// Correction goals should be in the DAG
@@ -958,11 +976,13 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	// Disable validation for this test (tests anchor flow, not spotter)
 	runner.validationEnabled = false
 
-	// Spawn goal and write DONE.json
+	// Spawn goal and write DONE.json (goal-scoped path)
 	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s5"}))
 	setter.activeLeads = 1
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
+	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	os.MkdirAll(goalDoneDir, 0o755)
+	os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), doneData, 0o644)
 
 	// First tick: detect completion, transition to reviewing
 	require.NoError(t, setter.tick())
@@ -1042,11 +1062,13 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	// Disable validation for this test (tests anchor reject/approve flow)
 	runner.validationEnabled = false
 
-	// Spawn goal and complete it
+	// Spawn goal and complete it (goal-scoped path)
 	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s6"}))
 	sett.activeLeads = 1
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
+	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	os.MkdirAll(goalDoneDir, 0o755)
+	os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), doneData, 0o644)
 
 	// Tick 1: detect completion -> reviewing
 	require.NoError(t, sett.tick())
@@ -1075,9 +1097,13 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	assert.Greater(t, len(sp.spawned), spawnedBefore)
 	assert.Equal(t, 1, sett.activeLeads)
 
-	// Complete the correction goal
+	// Complete the correction goal (goal-scoped path)
+	// Find the correction goal ID from spawned opts
+	corrGoalID := "api-corr-1-1"
+	corrDoneDir := filepath.Join(worktreeDir, ".lead", corrGoalID)
+	os.MkdirAll(corrDoneDir, 0o755)
 	doneData2, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "fixed schema"})
-	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData2, 0o644)
+	os.WriteFile(filepath.Join(corrDoneDir, "DONE.json"), doneData2, 0o644)
 
 	// Tick 4: detect correction goal completion -> reviewing again
 	require.NoError(t, sett.tick())
@@ -1196,8 +1222,12 @@ func TestTaskRunner_GatherSummaries(t *testing.T) {
 
 	apiData, _ := json.Marshal(apiDone)
 	appData, _ := json.Marshal(appDone)
-	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), apiData, 0o644)
-	os.WriteFile(filepath.Join(runner.worktrees["app"], "DONE.json"), appData, 0o644)
+	apiGoalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
+	os.MkdirAll(apiGoalDir, 0o755)
+	os.WriteFile(filepath.Join(apiGoalDir, "DONE.json"), apiData, 0o644)
+	appGoalDir := filepath.Join(runner.worktrees["app"], ".lead", "app-1")
+	os.MkdirAll(appGoalDir, 0o755)
+	os.WriteFile(filepath.Join(appGoalDir, "DONE.json"), appData, 0o644)
 
 	summaries := runner.GatherSummaries()
 	assert.Len(t, summaries, 2)
@@ -1236,9 +1266,11 @@ func TestTaskRunner_SpawnSpotter(t *testing.T) {
 	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-sp1"}))
 	assert.Equal(t, model.GoalStatusRunning, runner.dag.Get("api-1").Status)
 
-	// Write DONE.json
+	// Write DONE.json to goal-scoped path
+	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
+	os.MkdirAll(goalDir, 0o755)
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
-	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644)
 
 	// Now spawn spotter on this goal
 	goal := runner.dag.Get("api-1")
@@ -1250,9 +1282,10 @@ func TestTaskRunner_SpawnSpotter(t *testing.T) {
 
 	// Verify spotter was spawned (2 total spawns: lead + spotter)
 	require.Len(t, sp.spawned, 2)
-	assert.Equal(t, "api-api-1", sp.spawned[1].WindowName)
-	// Verify GOAL.json was written with spotter context
-	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "GOAL.json"))
+	assert.Equal(t, "spot-api-1", sp.spawned[1].WindowName)
+	assert.NotEmpty(t, sp.spawned[1].AppendSystemPrompt)
+	// Verify GOAL.json was written with spotter context (goal-scoped path)
+	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "spotter")
 	assert.Contains(t, string(goalJSON), "Added endpoint") // DONE.json content
@@ -1277,9 +1310,11 @@ func TestTaskRunner_CheckSpotResult_Pass(t *testing.T) {
 	// Put goal into spotting status
 	runner.dag.MarkSpotting("api-1")
 
-	// Write passing SPOT.json
+	// Write passing SPOT.json to goal-scoped path
+	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
+	require.NoError(t, os.MkdirAll(goalDir, 0o755))
 	spotData := `{"pass": true, "project_type": "backend", "issues": []}`
-	require.NoError(t, os.WriteFile(filepath.Join(runner.worktrees["api"], "SPOT.json"), []byte(spotData), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "SPOT.json"), []byte(spotData), 0o644))
 
 	goal := runner.dag.Get("api-1")
 	spot, found, err := runner.CheckSpotResult(goal)
@@ -1291,7 +1326,7 @@ func TestTaskRunner_CheckSpotResult_Pass(t *testing.T) {
 	assert.Equal(t, model.GoalStatusComplete, runner.dag.Get("api-1").Status)
 
 	// SPOT.json should be removed
-	_, statErr := os.Stat(filepath.Join(runner.worktrees["api"], "SPOT.json"))
+	_, statErr := os.Stat(filepath.Join(goalDir, "SPOT.json"))
 	assert.True(t, os.IsNotExist(statErr))
 
 	// Events should be recorded
@@ -1319,13 +1354,16 @@ func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
 	// Put goal into spotting status
 	runner.dag.MarkSpotting("api-1")
 
-	// Write DONE.json that should be removed on fail
+	// Write DONE.json and SPOT.json to goal-scoped paths
+	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
+	require.NoError(t, os.MkdirAll(goalDir, 0o755))
+
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	require.NoError(t, os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644))
 
 	// Write failing SPOT.json
 	spotData := `{"pass": false, "project_type": "frontend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
-	require.NoError(t, os.WriteFile(filepath.Join(runner.worktrees["api"], "SPOT.json"), []byte(spotData), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "SPOT.json"), []byte(spotData), 0o644))
 
 	goal := runner.dag.Get("api-1")
 	spot, found, err := runner.CheckSpotResult(goal)
@@ -1342,11 +1380,11 @@ func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
 	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt)
 
 	// SPOT.json should be removed
-	_, statErr := os.Stat(filepath.Join(runner.worktrees["api"], "SPOT.json"))
+	_, statErr := os.Stat(filepath.Join(goalDir, "SPOT.json"))
 	assert.True(t, os.IsNotExist(statErr))
 
 	// DONE.json should be removed so retry starts fresh
-	_, doneStatErr := os.Stat(filepath.Join(runner.worktrees["api"], "DONE.json"))
+	_, doneStatErr := os.Stat(filepath.Join(goalDir, "DONE.json"))
 	assert.True(t, os.IsNotExist(doneStatErr))
 
 	// Events should be recorded
@@ -1438,18 +1476,20 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-sf1"}))
 	sett.activeLeads = 1
 
-	// Write DONE.json
+	// Write DONE.json to goal-scoped path
+	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	os.MkdirAll(goalDir, 0o755)
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644)
 
 	// Tick 1: detect DONE.json -> goal transitions to spotting (spotter spawned)
 	require.NoError(t, sett.tick())
 	assert.Equal(t, model.GoalStatusSpotting, runner.dag.Get("api-1").Status)
 	assert.Equal(t, 1, sett.activeLeads) // still 1 active lead (spotter running)
 
-	// Write passing SPOT.json
+	// Write passing SPOT.json to goal-scoped path
 	spotData := `{"pass": true, "project_type": "backend", "issues": []}`
-	os.WriteFile(filepath.Join(worktreeDir, "SPOT.json"), []byte(spotData), 0o644)
+	os.WriteFile(filepath.Join(goalDir, "SPOT.json"), []byte(spotData), 0o644)
 
 	// Tick 2: detect SPOT.json pass -> goal complete, api-2 unblocked and spawned
 	require.NoError(t, sett.tick())
@@ -1515,9 +1555,11 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	sett.activeLeads = 1
 	spawnCountAfterLead := len(sp.spawned)
 
-	// Write DONE.json
+	// Write DONE.json to goal-scoped path
+	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	os.MkdirAll(goalDir, 0o755)
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	os.WriteFile(filepath.Join(worktreeDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644)
 
 	// Tick 1: detect DONE.json -> goal transitions to spotting
 	require.NoError(t, sett.tick())
@@ -1525,17 +1567,17 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	spawnCountAfterSpotter := len(sp.spawned)
 	assert.Greater(t, spawnCountAfterSpotter, spawnCountAfterLead)
 
-	// Write failing SPOT.json
+	// Write failing SPOT.json to goal-scoped path
 	spotData := `{"pass": false, "project_type": "backend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
-	os.WriteFile(filepath.Join(worktreeDir, "SPOT.json"), []byte(spotData), 0o644)
+	os.WriteFile(filepath.Join(goalDir, "SPOT.json"), []byte(spotData), 0o644)
 
 	// Tick 2: detect SPOT.json fail -> goal re-queued with feedback, lead respawned
 	require.NoError(t, sett.tick())
 	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt) // attempt incremented by CheckSpotResult
 	assert.Equal(t, 1, sett.activeLeads) // lead re-spawned from queue
 
-	// The re-spawned lead should have spotter feedback in GOAL.json
-	goalJSON, goalErr := os.ReadFile(filepath.Join(worktreeDir, ".lead", "GOAL.json"))
+	// The re-spawned lead should have spotter feedback in GOAL.json (goal-scoped path)
+	goalJSON, goalErr := os.ReadFile(filepath.Join(goalDir, "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "FAILED CHECKS")
 	assert.Contains(t, string(goalJSON), "Build failed")
@@ -1569,9 +1611,9 @@ func TestTaskRunner_SpawnGoalWithSpotterFeedback(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Check that spotter feedback was written to GOAL.json
+	// Check that spotter feedback was written to GOAL.json (goal-scoped path)
 	require.Len(t, sp.spawned, 1)
-	goalJSON, goalErr := os.ReadFile(filepath.Join(sp.spawned[0].WorkDir, ".lead", "GOAL.json"))
+	goalJSON, goalErr := os.ReadFile(filepath.Join(sp.spawned[0].WorkDir, ".lead", "api-1", "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "FAILED CHECKS")
 	assert.Contains(t, string(goalJSON), "Build failed")
@@ -1604,7 +1646,7 @@ func TestSpotterFeedbackForGoal(t *testing.T) {
 	})
 }
 
-func TestSpawnGoal_WritesClaudeMDAndSetRemainOnExit(t *testing.T) {
+func TestSpawnGoal_SetsAppendSystemPromptAndRemainOnExit(t *testing.T) {
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-cmd1", RepoName: "api", Description: "test goal", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
@@ -1613,10 +1655,9 @@ func TestSpawnGoal_WritesClaudeMDAndSetRemainOnExit(t *testing.T) {
 	err := runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-cmd1"})
 	require.NoError(t, err)
 
-	// Verify .claude/CLAUDE.md was written with lead template content
-	claudeMD, readErr := os.ReadFile(filepath.Join(sp.spawned[0].WorkDir, ".claude", "CLAUDE.md"))
-	require.NoError(t, readErr)
-	assert.Contains(t, string(claudeMD), "Belayer Lead")
+	// Verify AppendSystemPrompt contains lead template content
+	require.Len(t, sp.spawned, 1)
+	assert.Contains(t, sp.spawned[0].AppendSystemPrompt, "Belayer Lead")
 
 	// Verify SetRemainOnExit was called on the window
 	assert.True(t, tm.remainOnExit["belayer-task-task-cmd1:api-api-1"])
@@ -1626,7 +1667,7 @@ func TestSpawnGoal_WritesClaudeMDAndSetRemainOnExit(t *testing.T) {
 	assert.Contains(t, sp.spawned[0].InitialPrompt, "GOAL.json")
 }
 
-func TestSpawnSpotter_WritesClaudeMDAndProfiles(t *testing.T) {
+func TestSpawnSpotter_SetsAppendSystemPromptAndProfiles(t *testing.T) {
 	goals := []model.Goal{
 		{ID: "api-1", TaskID: "task-cmd2", RepoName: "api", Description: "test spotter", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
@@ -1635,36 +1676,39 @@ func TestSpawnSpotter_WritesClaudeMDAndProfiles(t *testing.T) {
 	// Spawn lead first
 	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-cmd2"}))
 
-	// Write DONE.json
+	// Write DONE.json to goal-scoped path
+	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
+	os.MkdirAll(goalDir, 0o755)
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
-	os.WriteFile(filepath.Join(runner.worktrees["api"], "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644)
 
 	// Spawn spotter
 	goal := runner.dag.Get("api-1")
 	err := runner.SpawnSpotter(goal)
 	require.NoError(t, err)
 
-	// Verify .claude/CLAUDE.md was overwritten with spotter template
-	claudeMD, readErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".claude", "CLAUDE.md"))
-	require.NoError(t, readErr)
-	assert.Contains(t, string(claudeMD), "Belayer Spotter")
+	// Verify AppendSystemPrompt contains spotter template content
+	require.Len(t, sp.spawned, 2)
+	assert.Contains(t, sp.spawned[1].AppendSystemPrompt, "Belayer Spotter")
 
-	// Verify profiles were written to .lead/profiles/
-	profileDir := filepath.Join(runner.worktrees["api"], ".lead", "profiles")
+	// Verify spotter gets its own window name
+	assert.Equal(t, "spot-api-1", sp.spawned[1].WindowName)
+
+	// Verify profiles were written to .lead/<goalID>/profiles/
+	profileDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1", "profiles")
 	_, statErr := os.Stat(profileDir)
 	assert.False(t, os.IsNotExist(statErr), "profiles directory should exist")
 
 	// Verify SetRemainOnExit was called for spotter
-	assert.True(t, tm.remainOnExit["belayer-task-task-cmd2:api-api-1"])
+	assert.True(t, tm.remainOnExit["belayer-task-task-cmd2:spot-api-1"])
 
-	// Verify GOAL.json contains DONE.json content and profiles
-	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "GOAL.json"))
+	// Verify GOAL.json contains DONE.json content and profiles (goal-scoped path)
+	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "spotter")
 	assert.Contains(t, string(goalJSON), "Added endpoint")
 
 	// Verify InitialPrompt is used
-	require.Len(t, sp.spawned, 2)
 	assert.Contains(t, sp.spawned[1].InitialPrompt, "GOAL.json")
 }
 
@@ -1689,37 +1733,3 @@ func TestLooksLikeInputPrompt(t *testing.T) {
 	}
 }
 
-func TestWriteClaudeMD_PrependsToExisting(t *testing.T) {
-	goals := []model.Goal{
-		{ID: "api-1", TaskID: "task-cmd3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
-	}
-	runner, _, _, _, _, _ := newTestRunner(t, "task-cmd3", goals)
-
-	worktreePath := runner.worktrees["api"]
-
-	// Write an existing CLAUDE.md (simulating repo's own instructions)
-	claudeDir := filepath.Join(worktreePath, ".claude")
-	require.NoError(t, os.MkdirAll(claudeDir, 0o755))
-	existingContent := "# Project Instructions\n\nUse Go 1.22."
-	require.NoError(t, os.WriteFile(filepath.Join(claudeDir, "CLAUDE.md"), []byte(existingContent), 0o644))
-
-	// Write the lead CLAUDE.md — should prepend belayer content
-	err := runner.writeClaudeMD(worktreePath, "lead")
-	require.NoError(t, err)
-
-	result, readErr := os.ReadFile(filepath.Join(claudeDir, "CLAUDE.md"))
-	require.NoError(t, readErr)
-
-	content := string(result)
-	// Belayer content should come first
-	assert.Contains(t, content, "Belayer Lead")
-	// Separator should be present
-	assert.Contains(t, content, "---")
-	// Original content should be preserved after separator
-	assert.Contains(t, content, existingContent)
-
-	// Belayer content should appear before the existing content
-	belayerIdx := len("Belayer Lead") // just needs to be > 0
-	existingIdx := len(content) - len(existingContent)
-	assert.Less(t, belayerIdx, existingIdx, "belayer content should appear before existing content")
-}
