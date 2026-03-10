@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	"github.com/donovan-yohan/belayer/internal/instance"
@@ -45,6 +46,7 @@ func newManageCmd() *cobra.Command {
 				InstanceName: name,
 				RepoNames:    repoNames,
 			}); err != nil {
+				os.RemoveAll(tmpDir)
 				return fmt.Errorf("preparing manage workspace: %w", err)
 			}
 
@@ -64,7 +66,14 @@ var execClaudeInDir = func(dir string, instanceName string) error {
 		return fmt.Errorf("claude not found in PATH: %w", err)
 	}
 
-	env := append(os.Environ(), "BELAYER_INSTANCE="+instanceName)
+	// Deduplicate BELAYER_INSTANCE to avoid POSIX ambiguity with duplicate keys
+	base := make([]string, 0, len(os.Environ()))
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "BELAYER_INSTANCE=") {
+			base = append(base, e)
+		}
+	}
+	env := append(base, "BELAYER_INSTANCE="+instanceName)
 
 	// Change to the temp dir so claude picks up .claude/ files
 	if err := os.Chdir(dir); err != nil {
