@@ -3,6 +3,7 @@ package mail
 
 import (
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -41,7 +42,7 @@ func ReadAndClose(store *BeadsStore, address string) (string, error) {
 	// Close all read messages
 	for _, issue := range issues {
 		if closeErr := store.Close(issue.ID); closeErr != nil {
-			fmt.Printf("warning: failed to close message %s: %v\n", issue.ID, closeErr)
+			log.Printf("warning: failed to close message %s: %v", issue.ID, closeErr)
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/donovan-yohan/belayer/internal/tmux"
 )
@@ -63,18 +64,28 @@ func SanitizeMessage(msg string) string {
 	return b.String()
 }
 
-// ChunkMessage splits a message into chunks of at most chunkSize bytes.
+// ChunkMessage splits a message into chunks of at most chunkSize bytes,
+// respecting UTF-8 rune boundaries to avoid corrupting multi-byte characters.
 func ChunkMessage(msg string, chunkSize int) []string {
 	if len(msg) <= chunkSize {
 		return []string{msg}
 	}
 	var chunks []string
-	for i := 0; i < len(msg); i += chunkSize {
-		end := i + chunkSize
+	for len(msg) > 0 {
+		end := chunkSize
 		if end > len(msg) {
 			end = len(msg)
+		} else {
+			// Walk back to a rune boundary
+			for end > 0 && !utf8.RuneStart(msg[end]) {
+				end--
+			}
+			if end == 0 {
+				end = chunkSize // single rune larger than chunk (shouldn't happen)
+			}
 		}
-		chunks = append(chunks, msg[i:end])
+		chunks = append(chunks, msg[:end])
+		msg = msg[end:]
 	}
 	return chunks
 }

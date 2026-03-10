@@ -787,12 +787,12 @@ func TestTaskRunner_SpawnAnchor(t *testing.T) {
 
 	// Verify tmux window was created
 	windows, _ := tm.ListWindows(runner.tmuxSession)
-	assert.Contains(t, windows, "anchor-1")
+	assert.Contains(t, windows, "anchor")
 
 	// Verify agent was spawned with correct opts
 	require.Len(t, sp.spawned, 1)
 	assert.Equal(t, runner.tmuxSession, sp.spawned[0].TmuxSession)
-	assert.Equal(t, "anchor-1", sp.spawned[0].WindowName)
+	assert.Equal(t, "anchor", sp.spawned[0].WindowName)
 	assert.Equal(t, runner.taskDir, sp.spawned[0].WorkDir)
 
 	// Verify GOAL.json was written with correct content

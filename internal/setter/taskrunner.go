@@ -213,7 +213,10 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		return fmt.Errorf("writing GOAL.json for %s: %w", goal.ID, err)
 	}
 
-	// Set mail address for the lead agent
+	// Set mail address for the lead agent.
+	// Note: session-level env var is safe because goals are spawned sequentially
+	// within a TaskRunner (dequeued one at a time). The env is set and Spawn
+	// called atomically before the next goal's SetEnvironment.
 	mailAddr := fmt.Sprintf("task/%s/lead/%s/%s", tr.task.ID, goal.RepoName, goal.ID)
 	if err := tr.tmux.SetEnvironment(tr.tmuxSession, "BELAYER_MAIL_ADDRESS", mailAddr); err != nil {
 		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS: %v", err)
@@ -774,7 +777,12 @@ func (tr *TaskRunner) CheckSpotResult(goal *model.Goal) (*spotter.SpotJSON, bool
 // SpawnAnchor creates a tmux window for the anchor agent and launches it.
 func (tr *TaskRunner) SpawnAnchor() error {
 	tr.anchorAttempt++
-	windowName := fmt.Sprintf("anchor-%d", tr.anchorAttempt)
+	windowName := "anchor"
+
+	// Kill previous anchor window on retry (it has remain-on-exit)
+	if tr.anchorAttempt > 1 {
+		_ = tr.tmux.KillWindow(tr.tmuxSession, windowName)
+	}
 
 	// Create tmux window
 	if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {

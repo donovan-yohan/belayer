@@ -4,7 +4,9 @@ package mail
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,15 +29,13 @@ type BeadsStore struct {
 func NewBeadsStore(dir string, prefix string) (*BeadsStore, error) {
 	store := &BeadsStore{dir: dir}
 
-	// Check if already initialized
-	cmd := exec.Command("bd", "list", "--json")
-	cmd.Dir = dir
-	if err := cmd.Run(); err == nil {
+	// Check if already initialized by looking for .beads directory
+	if _, err := os.Stat(filepath.Join(dir, ".beads")); err == nil {
 		return store, nil // already initialized
 	}
 
 	// Initialize
-	cmd = exec.Command("bd", "init", "--prefix", prefix, "--stealth", "--skip-hooks", "--quiet")
+	cmd := exec.Command("bd", "init", "--prefix", prefix, "--stealth", "--skip-hooks", "--quiet")
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("bd init: %s: %w", strings.TrimSpace(string(out)), err)
