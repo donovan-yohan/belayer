@@ -59,7 +59,7 @@ You have a unique mail address set via `BELAYER_MAIL_ADDRESS`. You can:
 ### Address Format
 
 - Lead: `problem/<problemID>/lead/<repo>/<climbID>` (your address)
-- Spotter: `problem/<problemID>/spotter/<repo>/<climbID>`
+- Spotter: `problem/<problemID>/spotter/<repo>`
 - Anchor: `problem/<problemID>/anchor`
 - Setter: `setter`
 

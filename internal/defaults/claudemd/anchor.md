@@ -62,7 +62,7 @@ You have a unique mail address set via `BELAYER_MAIL_ADDRESS`. You can:
 
 Addresses follow a path-like format:
 - Lead: `problem/<problemID>/lead/<repo>/<climbID>`
-- Spotter: `problem/<problemID>/spotter/<repo>/<climbID>`
+- Spotter: `problem/<problemID>/spotter/<repo>`
 - Anchor: `problem/<problemID>/anchor` (your address)
 - Setter: `setter`
 

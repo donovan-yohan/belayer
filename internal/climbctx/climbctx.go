@@ -10,8 +10,8 @@ import (
 // LeadClimb is the GOAL.json context for a lead agent.
 type LeadClimb struct {
 	Role            string `json:"role"`
-	ProblemSpec     string `json:"task_spec"`
-	ClimbID         string `json:"goal_id"`
+	ProblemSpec     string `json:"problem_spec"`
+	ClimbID         string `json:"climb_id"`
 	RepoName        string `json:"repo_name"`
 	Description     string `json:"description"`
 	Attempt         int    `json:"attempt"`
@@ -40,7 +40,7 @@ type SpotterClimb struct {
 // AnchorClimb is the GOAL.json context for an anchor agent.
 type AnchorClimb struct {
 	Role        string         `json:"role"`
-	ProblemSpec string         `json:"task_spec"`
+	ProblemSpec string         `json:"problem_spec"`
 	RepoDiffs   []RepoDiff     `json:"repo_diffs"`
 	Summaries   []ClimbSummary `json:"summaries"`
 }
@@ -54,7 +54,7 @@ type RepoDiff struct {
 
 // ClimbSummary contains the completion summary for a single climb.
 type ClimbSummary struct {
-	ClimbID     string `json:"goal_id"`
+	ClimbID     string `json:"climb_id"`
 	RepoName    string `json:"repo_name"`
 	Description string `json:"description,omitempty"`
 	Status      string `json:"status,omitempty"`

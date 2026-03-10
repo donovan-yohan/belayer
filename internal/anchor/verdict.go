@@ -8,6 +8,6 @@ type VerdictJSON struct {
 
 // RepoVerdict contains the anchor's assessment of a single repo.
 type RepoVerdict struct {
-	Status string   `json:"status"` // "pass" or "fail"
-	Goals  []string `json:"goals"`  // correction goal descriptions (when status is "fail")
+	Status string   `json:"status"`  // "pass" or "fail"
+	Climbs []string `json:"climbs"`  // correction climb descriptions (when status is "fail")
 }

@@ -28,10 +28,10 @@ const (
 type EventType string
 
 const (
-	EventProblemCreated  EventType = "task_created"
-	EventClimbStarted   EventType = "goal_started"
-	EventClimbCompleted EventType = "goal_completed"
-	EventClimbFailed    EventType = "goal_failed"
+	EventProblemCreated EventType = "problem_created"
+	EventClimbStarted   EventType = "climb_started"
+	EventClimbCompleted EventType = "climb_completed"
+	EventClimbFailed    EventType = "climb_failed"
 	EventAnchorSpawned  EventType = "anchor_spawned"
 	EventAnchorVerdict  EventType = "anchor_verdict"
 	EventSpotterSpawned EventType = "spotter_spawned"
