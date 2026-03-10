@@ -146,6 +146,21 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 		}
 	}
 
+	// Pre-create spotter windows (one per unique repo, deferred activation)
+	for repo := range repos {
+		spotWindow := fmt.Sprintf("spot-%s", repo)
+		if err := tr.tmux.NewWindow(tr.tmuxSession, spotWindow); err != nil {
+			log.Printf("warning: failed to pre-create spotter window %s: %v", spotWindow, err)
+		}
+	}
+
+	// Pre-create anchor window (multi-repo only, deferred activation)
+	if len(repos) > 1 {
+		if err := tr.tmux.NewWindow(tr.tmuxSession, "anchor"); err != nil {
+			log.Printf("warning: failed to pre-create anchor window: %v", err)
+		}
+	}
+
 	// Ensure log directory exists
 	if err := tr.logMgr.EnsureDir(tr.task.ID); err != nil {
 		return nil, fmt.Errorf("ensuring log dir: %w", err)
@@ -857,16 +872,15 @@ func (tr *ProblemRunner) SpawnAnchor() error {
 	tr.anchorAttempt++
 	windowName := "anchor"
 
-	// Kill previous anchor window on retry (it has remain-on-exit)
 	if tr.anchorAttempt > 1 {
+		// Kill previous anchor window on retry and create a fresh one
 		tr.killPaneProcessTree(windowName)
 		_ = tr.tmux.KillWindow(tr.tmuxSession, windowName)
+		if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
+			return fmt.Errorf("creating anchor window: %w", err)
+		}
 	}
-
-	// Create tmux window
-	if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
-		return fmt.Errorf("creating anchor window: %w", err)
-	}
+	// For first attempt, window was pre-created in Init()
 
 	// Keep pane open after process exits for death detection
 	if err := tr.tmux.SetRemainOnExit(tr.tmuxSession, windowName, true); err != nil {

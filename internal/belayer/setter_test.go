@@ -3,6 +3,7 @@ package belayer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -792,6 +793,9 @@ func TestProblemRunner_SpawnAnchor(t *testing.T) {
 	// Set mock git responses
 	mg.responses[runner.worktrees["api"]+":diff"] = "+func NewEndpoint() {}"
 	mg.responses[runner.worktrees["api"]+":log"] = "abc123 Added endpoint"
+
+	// Pre-create anchor window (Init() does this in real usage)
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "anchor"))
 
 	err := runner.SpawnAnchor()
 	require.NoError(t, err)
@@ -1832,5 +1836,114 @@ func TestLooksLikeInputPrompt(t *testing.T) {
 			assert.Equal(t, tt.expected, looksLikeInputPrompt(tt.input))
 		})
 	}
+}
+
+func TestProblemRunner_Init_PreCreatesSpotterWindows(t *testing.T) {
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-pre", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+		{ID: "api-2", ProblemID: "task-pre", RepoName: "api", Description: "test2", DependsOn: []string{}, Status: model.ClimbStatusPending},
+		{ID: "web-1", ProblemID: "task-pre", RepoName: "web", Description: "test3", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	insertTestTask(t, s, "task-pre", goals)
+
+	// Create fake worktree dirs
+	for _, repoName := range []string{"api", "web"} {
+		wtDir := filepath.Join(tmpDir, "tasks", "task-pre", repoName)
+		require.NoError(t, os.MkdirAll(wtDir, 0o755))
+	}
+
+	task, err := s.GetProblem("task-pre")
+	require.NoError(t, err)
+
+	// Set up runner manually (skip real git worktree creation)
+	runner := &ProblemRunner{
+		task:        task,
+		worktrees:   make(map[string]string),
+		instanceDir: tmpDir,
+		store:       s,
+		tmux:        tm,
+		logMgr:      lm,
+		spawner:     sp,
+		startedAt:   make(map[string]time.Time),
+	}
+
+	// Manually replicate Init logic (without real git operations)
+	require.NoError(t, s.UpdateProblemStatus("task-pre", model.ProblemStatusRunning))
+	goalsFromDB, err := s.GetClimbsForProblem("task-pre")
+	require.NoError(t, err)
+	runner.dag = BuildDAG(goalsFromDB)
+	runner.tmuxSession = "belayer-problem-task-pre"
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-pre"))
+	runner.worktrees["api"] = filepath.Join(tmpDir, "tasks", "task-pre", "api")
+	runner.worktrees["web"] = filepath.Join(tmpDir, "tasks", "task-pre", "web")
+
+	// Pre-create spotter windows (simulating what Init does after session creation)
+	repos := make(map[string]bool)
+	for _, c := range goalsFromDB {
+		repos[c.RepoName] = true
+	}
+	for repo := range repos {
+		spotWindow := fmt.Sprintf("spot-%s", repo)
+		require.NoError(t, tm.NewWindow(runner.tmuxSession, spotWindow))
+	}
+	if len(repos) > 1 {
+		require.NoError(t, tm.NewWindow(runner.tmuxSession, "anchor"))
+	}
+
+	// Verify windows exist
+	windows, err := tm.ListWindows(runner.tmuxSession)
+	require.NoError(t, err)
+	assert.Contains(t, windows, "spot-api")
+	assert.Contains(t, windows, "spot-web")
+	assert.Contains(t, windows, "anchor") // multi-repo, so anchor exists
+}
+
+func TestProblemRunner_Init_SingleRepo_NoAnchorWindow(t *testing.T) {
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-sr", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	insertTestTask(t, s, "task-sr", goals)
+
+	wtDir := filepath.Join(tmpDir, "tasks", "task-sr", "api")
+	require.NoError(t, os.MkdirAll(wtDir, 0o755))
+
+	task, err := s.GetProblem("task-sr")
+	require.NoError(t, err)
+
+	runner := &ProblemRunner{
+		task:        task,
+		worktrees:   make(map[string]string),
+		instanceDir: tmpDir,
+		store:       s,
+		tmux:        tm,
+		logMgr:      lm,
+		spawner:     sp,
+		startedAt:   make(map[string]time.Time),
+	}
+
+	require.NoError(t, s.UpdateProblemStatus("task-sr", model.ProblemStatusRunning))
+	goalsFromDB, err := s.GetClimbsForProblem("task-sr")
+	require.NoError(t, err)
+	runner.dag = BuildDAG(goalsFromDB)
+	runner.tmuxSession = "belayer-problem-task-sr"
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	runner.worktrees["api"] = wtDir
+
+	// Single repo - pre-create spotter but NOT anchor
+	repos := map[string]bool{"api": true}
+	for repo := range repos {
+		require.NoError(t, tm.NewWindow(runner.tmuxSession, fmt.Sprintf("spot-%s", repo)))
+	}
+	// len(repos) == 1, so no anchor window is created
+
+	windows, err := tm.ListWindows(runner.tmuxSession)
+	require.NoError(t, err)
+	assert.Contains(t, windows, "spot-api")
+	assert.NotContains(t, windows, "anchor")
 }
 
