@@ -34,7 +34,7 @@ func DefaultConfig() Config {
 	}
 }
 
-// Setter is the daemon that polls SQLite for pending tasks and manages their lifecycle.
+// Setter is the daemon that polls SQLite for pending problems and manages their lifecycle.
 type Setter struct {
 	config     Config
 	belayerCfg *belayerconfig.Config
@@ -47,7 +47,7 @@ type Setter struct {
 	globalConfigDir   string
 	instanceConfigDir string
 
-	tasks       map[string]*TaskRunner // taskID -> runner
+	tasks       map[string]*TaskRunner // problemID -> runner
 	leadQueue   []QueuedGoal           // FIFO queue
 	activeLeads int
 }
@@ -110,7 +110,7 @@ func (s *Setter) tick() error {
 		// Handle task based on current status
 		taskStatus := runner.task.Status
 
-		if taskStatus == model.TaskStatusRunning {
+		if taskStatus == model.ProblemStatusRunning {
 			// Check for completed goals (may transition to spotting if validation enabled)
 			newlyReady, completedCount, err := runner.CheckCompletions()
 			if err != nil {
@@ -147,10 +147,10 @@ func (s *Setter) tick() error {
 			// Check if all goals are complete -> transition to reviewing
 			if runner.AllGoalsComplete() {
 				log.Printf("setter: all goals complete for task %s — transitioning to reviewing", taskID)
-				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusReviewing); err != nil {
-					log.Printf("setter: error updating task status: %v", err)
+				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusReviewing); err != nil {
+					log.Printf("setter: error updating problem status: %v", err)
 				}
-				runner.task.Status = model.TaskStatusReviewing
+				runner.task.Status = model.ProblemStatusReviewing
 				// Anchor will be spawned on next tick when we handle reviewing
 				continue
 			}
@@ -158,8 +158,8 @@ func (s *Setter) tick() error {
 			// Check if task is stuck (goals failed at max attempts)
 			if runner.HasStuckGoals() {
 				log.Printf("setter: task %s has stuck goals — marking stuck", taskID)
-				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusStuck); err != nil {
-					log.Printf("setter: error updating task status: %v", err)
+				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusStuck); err != nil {
+					log.Printf("setter: error updating problem status: %v", err)
 				}
 				runner.Cleanup()
 				delete(s.tasks, taskID)
@@ -167,15 +167,15 @@ func (s *Setter) tick() error {
 			}
 		}
 
-		if taskStatus == model.TaskStatusReviewing {
+		if taskStatus == model.ProblemStatusReviewing {
 			// Skip anchor review for single-repo tasks — no cross-repo alignment to check
 			if runner.IsSingleRepo() {
 				log.Printf("setter: single-repo task %s — skipping anchor, creating PR", taskID)
 				if err := runner.HandleApproval(); err != nil {
 					log.Printf("setter: error creating PRs for %s: %v", taskID, err)
 				}
-				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusComplete); err != nil {
-					log.Printf("setter: error completing task: %v", err)
+				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusComplete); err != nil {
+					log.Printf("setter: error completing problem: %v", err)
 				}
 				runner.Cleanup()
 				delete(s.tasks, taskID)
@@ -206,8 +206,8 @@ func (s *Setter) tick() error {
 				if err := runner.HandleApproval(); err != nil {
 					log.Printf("setter: error creating PRs for %s: %v", taskID, err)
 				}
-				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusComplete); err != nil {
-					log.Printf("setter: error completing task: %v", err)
+				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusComplete); err != nil {
+					log.Printf("setter: error completing problem: %v", err)
 				}
 				runner.Cleanup()
 				delete(s.tasks, taskID)
@@ -217,8 +217,8 @@ func (s *Setter) tick() error {
 			// Verdict is reject
 			if runner.AnchorAttempt() >= 2 {
 				log.Printf("setter: task %s stuck after %d anchor reviews", taskID, runner.AnchorAttempt())
-				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusStuck); err != nil {
-					log.Printf("setter: error marking task stuck: %v", err)
+				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusStuck); err != nil {
+					log.Printf("setter: error marking problem stuck: %v", err)
 				}
 				runner.Cleanup()
 				delete(s.tasks, taskID)
@@ -232,10 +232,10 @@ func (s *Setter) tick() error {
 				continue
 			}
 
-			if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusRunning); err != nil {
-				log.Printf("setter: error updating task status: %v", err)
+			if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusRunning); err != nil {
+				log.Printf("setter: error updating problem status: %v", err)
 			}
-			runner.task.Status = model.TaskStatusRunning
+			runner.task.Status = model.ProblemStatusRunning
 			s.leadQueue = append(s.leadQueue, correctionGoals...)
 			log.Printf("setter: task %s back to running with %d correction goals", taskID, len(correctionGoals))
 		}
@@ -249,7 +249,7 @@ func (s *Setter) tick() error {
 
 // pollPendingTasks picks up new pending tasks and initializes them.
 func (s *Setter) pollPendingTasks() error {
-	pending, err := s.store.GetPendingTasks(s.config.InstanceName)
+	pending, err := s.store.GetPendingProblems(s.config.InstanceName)
 	if err != nil {
 		return err
 	}
@@ -266,7 +266,7 @@ func (s *Setter) pollPendingTasks() error {
 		readyGoals, err := runner.Init()
 		if err != nil {
 			log.Printf("setter: error initializing task %s: %v", task.ID, err)
-			s.store.UpdateTaskStatus(task.ID, model.TaskStatusStuck)
+			s.store.UpdateProblemStatus(task.ID, model.ProblemStatusStuck)
 			continue
 		}
 
@@ -300,7 +300,7 @@ func (s *Setter) processLeadQueue() {
 
 // recover attempts to resume tasks that were running when the setter last crashed.
 func (s *Setter) recover() error {
-	active, err := s.store.GetActiveTasks(s.config.InstanceName)
+	active, err := s.store.GetActiveProblems(s.config.InstanceName)
 	if err != nil {
 		return fmt.Errorf("getting active tasks: %w", err)
 	}
@@ -312,7 +312,7 @@ func (s *Setter) recover() error {
 		runner := NewTaskRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
 
 		// Load goals and build DAG (skip worktree creation since they should exist)
-		goals, err := s.store.GetGoalsForTask(task.ID)
+		goals, err := s.store.GetClimbsForProblem(task.ID)
 		if err != nil {
 			log.Printf("setter: error loading goals for %s: %v", task.ID, err)
 			continue
@@ -358,11 +358,11 @@ func (s *Setter) GoalCount(goalID string) int {
 	return s.activeLeads
 }
 
-// parseGoalsJSON parses the goals_json field of a task into a GoalsFile.
-func parseGoalsJSON(goalsJSON string) (*model.GoalsFile, error) {
-	var gf model.GoalsFile
-	if err := json.Unmarshal([]byte(goalsJSON), &gf); err != nil {
-		return nil, fmt.Errorf("parsing goals JSON: %w", err)
+// parseClimbsJSON parses the climbs_json field of a problem into a ClimbsFile.
+func parseClimbsJSON(climbsJSON string) (*model.ClimbsFile, error) {
+	var cf model.ClimbsFile
+	if err := json.Unmarshal([]byte(climbsJSON), &cf); err != nil {
+		return nil, fmt.Errorf("parsing climbs JSON: %w", err)
 	}
-	return &gf, nil
+	return &cf, nil
 }

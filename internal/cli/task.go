@@ -17,7 +17,7 @@ import (
 func newTaskCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "task",
-		Short: "Manage tasks",
+		Short: "Manage problems",
 	}
 
 	cmd.AddCommand(newTaskCreateCmd())
@@ -27,20 +27,20 @@ func newTaskCmd() *cobra.Command {
 
 func newTaskCreateCmd() *cobra.Command {
 	var specPath string
-	var goalsPath string
+	var climbsPath string
 	var jiraRef string
 	var instanceName string
 
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a new task from a spec and goals file",
-		Long:  "Validates spec.md and goals.json, then writes the task and goals to SQLite.",
+		Short: "Create a new problem from a spec and climbs file",
+		Long:  "Validates spec.md and climbs.json, then writes the problem and climbs to SQLite.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if specPath == "" {
 				return fmt.Errorf("--spec is required")
 			}
-			if goalsPath == "" {
-				return fmt.Errorf("--goals is required")
+			if climbsPath == "" {
+				return fmt.Errorf("--climbs is required")
 			}
 
 			specContent, err := os.ReadFile(specPath)
@@ -51,18 +51,18 @@ func newTaskCreateCmd() *cobra.Command {
 				return fmt.Errorf("spec file %q is empty", specPath)
 			}
 
-			goalsContent, err := os.ReadFile(goalsPath)
+			climbsContent, err := os.ReadFile(climbsPath)
 			if err != nil {
-				return fmt.Errorf("reading goals file %q: %w", goalsPath, err)
+				return fmt.Errorf("reading climbs file %q: %w", climbsPath, err)
 			}
 
-			var goalsFile model.GoalsFile
-			if err := json.Unmarshal(goalsContent, &goalsFile); err != nil {
-				return fmt.Errorf("parsing goals file %q: %w", goalsPath, err)
+			var climbsFile model.ClimbsFile
+			if err := json.Unmarshal(climbsContent, &climbsFile); err != nil {
+				return fmt.Errorf("parsing climbs file %q: %w", climbsPath, err)
 			}
 
-			if err := store.ValidateGoalsFile(&goalsFile); err != nil {
-				return fmt.Errorf("validating goals: %w", err)
+			if err := store.ValidateClimbsFile(&climbsFile); err != nil {
+				return fmt.Errorf("validating climbs: %w", err)
 			}
 
 			resolvedName, err := resolveInstanceName(instanceName)
@@ -79,7 +79,7 @@ func newTaskCreateCmd() *cobra.Command {
 			for _, repo := range instConfig.Repos {
 				repoNames = append(repoNames, repo.Name)
 			}
-			if err := store.ValidateGoalsRepos(&goalsFile, repoNames); err != nil {
+			if err := store.ValidateClimbsRepos(&climbsFile, repoNames); err != nil {
 				return err
 			}
 
@@ -92,30 +92,30 @@ func newTaskCreateCmd() *cobra.Command {
 
 			s := store.New(database.Conn())
 
-			taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
-			task := &model.Task{
-				ID:         taskID,
+			problemID := fmt.Sprintf("problem-%d", time.Now().UnixNano())
+			problem := &model.Problem{
+				ID:         problemID,
 				InstanceID: resolvedName,
 				Spec:       string(specContent),
-				GoalsJSON:  string(goalsContent),
+				ClimbsJSON: string(climbsContent),
 				JiraRef:    jiraRef,
-				Status:     model.TaskStatusPending,
+				Status:     model.ProblemStatusPending,
 			}
 
-			goals := store.GoalsFromFile(taskID, &goalsFile)
+			climbs := store.ClimbsFromFile(problemID, &climbsFile)
 
-			if err := s.InsertTask(task, goals); err != nil {
-				return fmt.Errorf("creating task: %w", err)
+			if err := s.InsertProblem(problem, climbs); err != nil {
+				return fmt.Errorf("creating problem: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Created task %s (%d goals across %d repos)\n",
-				taskID, len(goals), len(goalsFile.Repos))
+			fmt.Fprintf(cmd.OutOrStdout(), "Created problem %s (%d climbs across %d repos)\n",
+				problemID, len(climbs), len(climbsFile.Repos))
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&specPath, "spec", "", "Path to spec.md file (required)")
-	cmd.Flags().StringVar(&goalsPath, "goals", "", "Path to goals.json file (required)")
+	cmd.Flags().StringVar(&climbsPath, "climbs", "", "Path to climbs.json file (required)")
 	cmd.Flags().StringVar(&jiraRef, "jira", "", "Jira ticket reference (optional)")
 	cmd.Flags().StringVar(&instanceName, "instance", "", "Instance name (defaults to default instance)")
 	return cmd
@@ -126,7 +126,7 @@ func newTaskListCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List tasks for an instance",
+		Short: "List problems for an instance",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolvedName, err := resolveInstanceName(instanceName)
 			if err != nil {
@@ -146,20 +146,20 @@ func newTaskListCmd() *cobra.Command {
 			defer database.Close()
 
 			s := store.New(database.Conn())
-			tasks, err := s.ListTasksForInstance(resolvedName)
+			problems, err := s.ListProblemsForInstance(resolvedName)
 			if err != nil {
-				return fmt.Errorf("listing tasks: %w", err)
+				return fmt.Errorf("listing problems: %w", err)
 			}
 
-			if len(tasks) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No tasks found.")
+			if len(problems) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No problems found.")
 				return nil
 			}
 
-			for _, t := range tasks {
-				goals, _ := s.GetGoalsForTask(t.ID)
-				fmt.Fprintf(cmd.OutOrStdout(), "%-10s  %-20s  %d goals  %s\n",
-					t.Status, t.ID, len(goals), t.CreatedAt.Format("2006-01-02 15:04"))
+			for _, p := range problems {
+				climbs, _ := s.GetClimbsForProblem(p.ID)
+				fmt.Fprintf(cmd.OutOrStdout(), "%-10s  %-20s  %d climbs  %s\n",
+					p.Status, p.ID, len(climbs), p.CreatedAt.Format("2006-01-02 15:04"))
 			}
 			return nil
 		},

@@ -16,7 +16,7 @@ func newStatusCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show task and goal status",
+		Short: "Show problem and climb status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolvedName, err := resolveInstanceName(instanceName)
 			if err != nil {
@@ -40,29 +40,29 @@ func newStatusCmd() *cobra.Command {
 
 			fmt.Fprintf(out, "Instance: %s\n\n", resolvedName)
 
-			for _, status := range []model.TaskStatus{
-				model.TaskStatusRunning,
-				model.TaskStatusPending,
-				model.TaskStatusReviewing,
-				model.TaskStatusComplete,
-				model.TaskStatusStuck,
+			for _, status := range []model.ProblemStatus{
+				model.ProblemStatusRunning,
+				model.ProblemStatusPending,
+				model.ProblemStatusReviewing,
+				model.ProblemStatusComplete,
+				model.ProblemStatusStuck,
 			} {
-				tasks, err := s.GetTasksByStatus(status)
+				problems, err := s.GetProblemsByStatus(status)
 				if err != nil {
-					return fmt.Errorf("querying tasks: %w", err)
+					return fmt.Errorf("querying problems: %w", err)
 				}
-				for _, task := range tasks {
-					fmt.Fprintf(out, "Task: %s [%s]\n", task.ID, task.Status)
+				for _, problem := range problems {
+					fmt.Fprintf(out, "Problem: %s [%s]\n", problem.ID, problem.Status)
 
-					goals, err := s.GetGoalsForTask(task.ID)
+					climbs, err := s.GetClimbsForProblem(problem.ID)
 					if err != nil {
-						fmt.Fprintf(out, "  Goals: error querying: %v\n", err)
+						fmt.Fprintf(out, "  Climbs: error querying: %v\n", err)
 						continue
 					}
-					if len(goals) > 0 {
-						fmt.Fprintf(out, "  Goals:\n")
-						for _, g := range goals {
-							fmt.Fprintf(out, "    %s [%s] repo=%s attempt=%d\n", g.ID, g.Status, g.RepoName, g.Attempt)
+					if len(climbs) > 0 {
+						fmt.Fprintf(out, "  Climbs:\n")
+						for _, c := range climbs {
+							fmt.Fprintf(out, "    %s [%s] repo=%s attempt=%d\n", c.ID, c.Status, c.RepoName, c.Attempt)
 						}
 					}
 					fmt.Fprintln(out)

@@ -2,29 +2,29 @@ package setter
 
 import "github.com/donovan-yohan/belayer/internal/model"
 
-// DAG tracks goal dependencies within a task and determines which goals
+// DAG tracks climb dependencies within a problem and determines which climbs
 // are ready to be spawned based on the completion status of their dependencies.
 type DAG struct {
-	goals    map[string]*model.Goal // goalID -> goal (DAG owns copies)
-	children map[string][]string    // goalID -> list of goalIDs that depend on it
+	goals    map[string]*model.Climb // climbID -> climb (DAG owns copies)
+	children map[string][]string     // climbID -> list of climbIDs that depend on it
 }
 
-// BuildDAG constructs a DAG from a slice of goals. Goals are stored as copies
-// so the DAG owns its data. The children map is a reverse-lookup from a goal
-// to the goals that depend on it.
-func BuildDAG(goals []model.Goal) *DAG {
+// BuildDAG constructs a DAG from a slice of climbs. Climbs are stored as copies
+// so the DAG owns its data. The children map is a reverse-lookup from a climb
+// to the climbs that depend on it.
+func BuildDAG(goals []model.Climb) *DAG {
 	d := &DAG{
-		goals:    make(map[string]*model.Goal, len(goals)),
+		goals:    make(map[string]*model.Climb, len(goals)),
 		children: make(map[string][]string),
 	}
 
-	// Store copies of each goal.
+	// Store copies of each climb.
 	for i := range goals {
 		g := goals[i] // copy
 		d.goals[g.ID] = &g
 	}
 
-	// Build the reverse-lookup: for each dependency, record the dependent goal.
+	// Build the reverse-lookup: for each dependency, record the dependent climb.
 	for _, g := range d.goals {
 		for _, depID := range g.DependsOn {
 			d.children[depID] = append(d.children[depID], g.ID)
@@ -34,12 +34,12 @@ func BuildDAG(goals []model.Goal) *DAG {
 	return d
 }
 
-// ReadyGoals returns goals whose status is pending and whose all DependsOn
-// goals have status complete. These are the goals that can be spawned.
-func (d *DAG) ReadyGoals() []model.Goal {
-	var ready []model.Goal
+// ReadyGoals returns climbs whose status is pending and whose all DependsOn
+// climbs have status complete. These are the climbs that can be spawned.
+func (d *DAG) ReadyGoals() []model.Climb {
+	var ready []model.Climb
 	for _, g := range d.goals {
-		if g.Status != model.GoalStatusPending {
+		if g.Status != model.ClimbStatusPending {
 			continue
 		}
 		if d.allDepsComplete(g) {
@@ -49,72 +49,72 @@ func (d *DAG) ReadyGoals() []model.Goal {
 	return ready
 }
 
-// allDepsComplete returns true if every goal in DependsOn has status complete.
-func (d *DAG) allDepsComplete(g *model.Goal) bool {
+// allDepsComplete returns true if every climb in DependsOn has status complete.
+func (d *DAG) allDepsComplete(g *model.Climb) bool {
 	for _, depID := range g.DependsOn {
 		dep, ok := d.goals[depID]
-		if !ok || dep.Status != model.GoalStatusComplete {
+		if !ok || dep.Status != model.ClimbStatusComplete {
 			return false
 		}
 	}
 	return true
 }
 
-// MarkComplete sets the goal's status to complete in the DAG.
+// MarkComplete sets the climb's status to complete in the DAG.
 func (d *DAG) MarkComplete(goalID string) {
 	if g, ok := d.goals[goalID]; ok {
-		g.Status = model.GoalStatusComplete
+		g.Status = model.ClimbStatusComplete
 	}
 }
 
-// MarkFailed sets the goal's status to failed in the DAG.
+// MarkFailed sets the climb's status to failed in the DAG.
 func (d *DAG) MarkFailed(goalID string) {
 	if g, ok := d.goals[goalID]; ok {
-		g.Status = model.GoalStatusFailed
+		g.Status = model.ClimbStatusFailed
 	}
 }
 
-// MarkRunning sets the goal's status to running in the DAG.
+// MarkRunning sets the climb's status to running in the DAG.
 func (d *DAG) MarkRunning(goalID string) {
 	if g, ok := d.goals[goalID]; ok {
-		g.Status = model.GoalStatusRunning
+		g.Status = model.ClimbStatusRunning
 	}
 }
 
-// MarkSpotting sets the goal's status to spotting in the DAG.
+// MarkSpotting sets the climb's status to spotting in the DAG.
 func (d *DAG) MarkSpotting(goalID string) {
 	if g, ok := d.goals[goalID]; ok {
-		g.Status = model.GoalStatusSpotting
+		g.Status = model.ClimbStatusSpotting
 	}
 }
 
-// AllComplete returns true if every goal in the DAG has status complete.
+// AllComplete returns true if every climb in the DAG has status complete.
 func (d *DAG) AllComplete() bool {
 	for _, g := range d.goals {
-		if g.Status != model.GoalStatusComplete {
+		if g.Status != model.ClimbStatusComplete {
 			return false
 		}
 	}
 	return true
 }
 
-// Get returns the goal by ID, or nil if not found.
-func (d *DAG) Get(goalID string) *model.Goal {
+// Get returns the climb by ID, or nil if not found.
+func (d *DAG) Get(goalID string) *model.Climb {
 	return d.goals[goalID]
 }
 
-// Goals returns all goals in the DAG.
-func (d *DAG) Goals() []*model.Goal {
-	result := make([]*model.Goal, 0, len(d.goals))
+// Goals returns all climbs in the DAG.
+func (d *DAG) Goals() []*model.Climb {
+	result := make([]*model.Climb, 0, len(d.goals))
 	for _, g := range d.goals {
 		result = append(result, g)
 	}
 	return result
 }
 
-// AddGoals inserts new goals into an existing DAG. Used for correction goals
+// AddGoals inserts new climbs into an existing DAG. Used for correction climbs
 // from anchor redistribution.
-func (d *DAG) AddGoals(goals []model.Goal) {
+func (d *DAG) AddGoals(goals []model.Climb) {
 	for i := range goals {
 		g := goals[i]
 		d.goals[g.ID] = &g

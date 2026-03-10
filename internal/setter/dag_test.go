@@ -9,12 +9,12 @@ import (
 )
 
 func TestBuildDAG_Simple(t *testing.T) {
-	goals := []model.Goal{
-		{ID: "a", TaskID: "t1", Status: model.GoalStatusPending},
-		{ID: "b", TaskID: "t1", Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
+		{ID: "b", ProblemID: "p1", Status: model.ClimbStatusPending},
 	}
 
-	dag := BuildDAG(goals)
+	dag := BuildDAG(climbs)
 	ready := dag.ReadyGoals()
 
 	assert.Len(t, ready, 2)
@@ -25,13 +25,13 @@ func TestBuildDAG_Simple(t *testing.T) {
 
 func TestBuildDAG_Linear(t *testing.T) {
 	// A -> B -> C (C depends on B, B depends on A)
-	goals := []model.Goal{
-		{ID: "a", TaskID: "t1", Status: model.GoalStatusPending},
-		{ID: "b", TaskID: "t1", DependsOn: []string{"a"}, Status: model.GoalStatusPending},
-		{ID: "c", TaskID: "t1", DependsOn: []string{"b"}, Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
+		{ID: "b", ProblemID: "p1", DependsOn: []string{"a"}, Status: model.ClimbStatusPending},
+		{ID: "c", ProblemID: "p1", DependsOn: []string{"b"}, Status: model.ClimbStatusPending},
 	}
 
-	dag := BuildDAG(goals)
+	dag := BuildDAG(climbs)
 	ready := dag.ReadyGoals()
 
 	require.Len(t, ready, 1)
@@ -40,14 +40,14 @@ func TestBuildDAG_Linear(t *testing.T) {
 
 func TestBuildDAG_Diamond(t *testing.T) {
 	// A -> B, A -> C, B+C -> D
-	goals := []model.Goal{
-		{ID: "a", TaskID: "t1", Status: model.GoalStatusPending},
-		{ID: "b", TaskID: "t1", DependsOn: []string{"a"}, Status: model.GoalStatusPending},
-		{ID: "c", TaskID: "t1", DependsOn: []string{"a"}, Status: model.GoalStatusPending},
-		{ID: "d", TaskID: "t1", DependsOn: []string{"b", "c"}, Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
+		{ID: "b", ProblemID: "p1", DependsOn: []string{"a"}, Status: model.ClimbStatusPending},
+		{ID: "c", ProblemID: "p1", DependsOn: []string{"a"}, Status: model.ClimbStatusPending},
+		{ID: "d", ProblemID: "p1", DependsOn: []string{"b", "c"}, Status: model.ClimbStatusPending},
 	}
 
-	dag := BuildDAG(goals)
+	dag := BuildDAG(climbs)
 
 	// Only A should be ready initially.
 	ready := dag.ReadyGoals()
@@ -71,12 +71,12 @@ func TestBuildDAG_Diamond(t *testing.T) {
 }
 
 func TestMarkComplete_UnblocksDependents(t *testing.T) {
-	goals := []model.Goal{
-		{ID: "a", TaskID: "t1", Status: model.GoalStatusPending},
-		{ID: "b", TaskID: "t1", DependsOn: []string{"a"}, Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
+		{ID: "b", ProblemID: "p1", DependsOn: []string{"a"}, Status: model.ClimbStatusPending},
 	}
 
-	dag := BuildDAG(goals)
+	dag := BuildDAG(climbs)
 
 	// B should not be ready yet.
 	ready := dag.ReadyGoals()
@@ -91,12 +91,12 @@ func TestMarkComplete_UnblocksDependents(t *testing.T) {
 }
 
 func TestAllComplete(t *testing.T) {
-	goals := []model.Goal{
-		{ID: "a", TaskID: "t1", Status: model.GoalStatusPending},
-		{ID: "b", TaskID: "t1", Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
+		{ID: "b", ProblemID: "p1", Status: model.ClimbStatusPending},
 	}
 
-	dag := BuildDAG(goals)
+	dag := BuildDAG(climbs)
 	assert.False(t, dag.AllComplete())
 
 	dag.MarkComplete("a")
@@ -107,12 +107,12 @@ func TestAllComplete(t *testing.T) {
 }
 
 func TestReadyGoals_SkipsRunning(t *testing.T) {
-	goals := []model.Goal{
-		{ID: "a", TaskID: "t1", Status: model.GoalStatusPending},
-		{ID: "b", TaskID: "t1", Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
+		{ID: "b", ProblemID: "p1", Status: model.ClimbStatusPending},
 	}
 
-	dag := BuildDAG(goals)
+	dag := BuildDAG(climbs)
 	dag.MarkRunning("a")
 
 	ready := dag.ReadyGoals()
@@ -121,12 +121,12 @@ func TestReadyGoals_SkipsRunning(t *testing.T) {
 }
 
 func TestReadyGoals_SkipsFailed(t *testing.T) {
-	goals := []model.Goal{
-		{ID: "a", TaskID: "t1", Status: model.GoalStatusPending},
-		{ID: "b", TaskID: "t1", Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
+		{ID: "b", ProblemID: "p1", Status: model.ClimbStatusPending},
 	}
 
-	dag := BuildDAG(goals)
+	dag := BuildDAG(climbs)
 	dag.MarkFailed("a")
 
 	ready := dag.ReadyGoals()
@@ -142,11 +142,11 @@ func TestEmptyDAG(t *testing.T) {
 	assert.True(t, dag.AllComplete())
 }
 
-// readyIDs extracts goal IDs from a slice of goals for easier assertions.
-func readyIDs(goals []model.Goal) []string {
-	ids := make([]string, len(goals))
-	for i, g := range goals {
-		ids[i] = g.ID
+// readyIDs extracts climb IDs from a slice of climbs for easier assertions.
+func readyIDs(climbs []model.Climb) []string {
+	ids := make([]string, len(climbs))
+	for i, c := range climbs {
+		ids[i] = c.ID
 	}
 	return ids
 }

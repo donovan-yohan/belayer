@@ -9,192 +9,192 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInsertAndGetTask(t *testing.T) {
+func TestInsertAndGetProblem(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	task := &model.Task{
-		ID:         "task-1",
+	problem := &model.Problem{
+		ID:         "problem-1",
 		InstanceID: "test-instance",
 		Spec:       "# My Spec\nDo the thing.",
-		GoalsJSON:  `{"repos":{"api":{"goals":[{"id":"api-1","description":"Add endpoint","depends_on":[]}]}}}`,
+		ClimbsJSON: `{"repos":{"api":{"climbs":[{"id":"api-1","description":"Add endpoint","depends_on":[]}]}}}`,
 		JiraRef:    "PROJ-123",
-		Status:     model.TaskStatusPending,
+		Status:     model.ProblemStatusPending,
 	}
-	goals := []model.Goal{
-		{ID: "api-1", TaskID: "task-1", RepoName: "api", Description: "Add endpoint", DependsOn: []string{}, Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "api-1", ProblemID: "problem-1", RepoName: "api", Description: "Add endpoint", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
 
-	err := s.InsertTask(task, goals)
+	err := s.InsertProblem(problem, climbs)
 	require.NoError(t, err)
 
-	got, err := s.GetTask("task-1")
+	got, err := s.GetProblem("problem-1")
 	require.NoError(t, err)
-	assert.Equal(t, "task-1", got.ID)
+	assert.Equal(t, "problem-1", got.ID)
 	assert.Equal(t, "test-instance", got.InstanceID)
 	assert.Equal(t, "# My Spec\nDo the thing.", got.Spec)
 	assert.Equal(t, "PROJ-123", got.JiraRef)
-	assert.Equal(t, model.TaskStatusPending, got.Status)
+	assert.Equal(t, model.ProblemStatusPending, got.Status)
 }
 
-func TestInsertTaskWithGoals(t *testing.T) {
+func TestInsertProblemWithClimbs(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	task := &model.Task{
-		ID:         "task-2",
+	problem := &model.Problem{
+		ID:         "problem-2",
 		InstanceID: "test-instance",
 		Spec:       "spec content",
-		GoalsJSON:  "{}",
-		Status:     model.TaskStatusPending,
+		ClimbsJSON: "{}",
+		Status:     model.ProblemStatusPending,
 	}
-	goals := []model.Goal{
-		{ID: "api-1", TaskID: "task-2", RepoName: "api", Description: "First goal", DependsOn: []string{}, Status: model.GoalStatusPending},
-		{ID: "api-2", TaskID: "task-2", RepoName: "api", Description: "Second goal", DependsOn: []string{"api-1"}, Status: model.GoalStatusPending},
-		{ID: "app-1", TaskID: "task-2", RepoName: "app", Description: "App goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	climbs := []model.Climb{
+		{ID: "api-1", ProblemID: "problem-2", RepoName: "api", Description: "First climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
+		{ID: "api-2", ProblemID: "problem-2", RepoName: "api", Description: "Second climb", DependsOn: []string{"api-1"}, Status: model.ClimbStatusPending},
+		{ID: "app-1", ProblemID: "problem-2", RepoName: "app", Description: "App climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
 
-	err := s.InsertTask(task, goals)
+	err := s.InsertProblem(problem, climbs)
 	require.NoError(t, err)
 
-	gotGoals, err := s.GetGoalsForTask("task-2")
+	gotClimbs, err := s.GetClimbsForProblem("problem-2")
 	require.NoError(t, err)
-	assert.Len(t, gotGoals, 3)
+	assert.Len(t, gotClimbs, 3)
 
-	goalMap := make(map[string]model.Goal)
-	for _, g := range gotGoals {
-		goalMap[g.ID] = g
+	climbMap := make(map[string]model.Climb)
+	for _, c := range gotClimbs {
+		climbMap[c.ID] = c
 	}
 
-	assert.Equal(t, "api", goalMap["api-1"].RepoName)
-	assert.Equal(t, []string{}, goalMap["api-1"].DependsOn)
-	assert.Equal(t, []string{"api-1"}, goalMap["api-2"].DependsOn)
-	assert.Equal(t, "app", goalMap["app-1"].RepoName)
+	assert.Equal(t, "api", climbMap["api-1"].RepoName)
+	assert.Equal(t, []string{}, climbMap["api-1"].DependsOn)
+	assert.Equal(t, []string{"api-1"}, climbMap["api-2"].DependsOn)
+	assert.Equal(t, "app", climbMap["app-1"].RepoName)
 }
 
-func TestInsertTaskCreatesEvent(t *testing.T) {
+func TestInsertProblemCreatesEvent(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	task := &model.Task{
-		ID:         "task-3",
+	problem := &model.Problem{
+		ID:         "problem-3",
 		InstanceID: "test-instance",
 		Spec:       "spec",
-		GoalsJSON:  "{}",
-		Status:     model.TaskStatusPending,
+		ClimbsJSON: "{}",
+		Status:     model.ProblemStatusPending,
 	}
 
-	err := s.InsertTask(task, nil)
+	err := s.InsertProblem(problem, nil)
 	require.NoError(t, err)
 
-	events, err := s.GetEventsForTask("task-3")
+	events, err := s.GetEventsForProblem("problem-3")
 	require.NoError(t, err)
 	require.Len(t, events, 1)
-	assert.Equal(t, model.EventTaskCreated, events[0].Type)
-	assert.Equal(t, "task-3", events[0].TaskID)
+	assert.Equal(t, model.EventProblemCreated, events[0].Type)
+	assert.Equal(t, "problem-3", events[0].ProblemID)
 }
 
-func TestListTasksForInstance(t *testing.T) {
+func TestListProblemsForInstance(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	for _, id := range []string{"task-a", "task-b"} {
-		err := s.InsertTask(&model.Task{
-			ID: id, InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	for _, id := range []string{"problem-a", "problem-b"} {
+		err := s.InsertProblem(&model.Problem{
+			ID: id, InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 		}, nil)
 		require.NoError(t, err)
 	}
 
-	tasks, err := s.ListTasksForInstance("test-instance")
+	problems, err := s.ListProblemsForInstance("test-instance")
 	require.NoError(t, err)
-	assert.Len(t, tasks, 2)
+	assert.Len(t, problems, 2)
 }
 
-func TestUpdateTaskStatus(t *testing.T) {
+func TestUpdateProblemStatus(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	err := s.InsertTask(&model.Task{
-		ID: "task-4", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-4", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
-	err = s.UpdateTaskStatus("task-4", model.TaskStatusRunning)
+	err = s.UpdateProblemStatus("problem-4", model.ProblemStatusRunning)
 	require.NoError(t, err)
 
-	got, err := s.GetTask("task-4")
+	got, err := s.GetProblem("problem-4")
 	require.NoError(t, err)
-	assert.Equal(t, model.TaskStatusRunning, got.Status)
+	assert.Equal(t, model.ProblemStatusRunning, got.Status)
 }
 
-func TestUpdateGoalStatus(t *testing.T) {
+func TestUpdateClimbStatus(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	err := s.InsertTask(&model.Task{
-		ID: "task-5", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
-	}, []model.Goal{
-		{ID: "g-1", TaskID: "task-5", RepoName: "api", Description: "goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-5", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, []model.Climb{
+		{ID: "c-1", ProblemID: "problem-5", RepoName: "api", Description: "climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	})
 	require.NoError(t, err)
 
-	err = s.UpdateGoalStatus("g-1", model.GoalStatusComplete)
+	err = s.UpdateClimbStatus("c-1", model.ClimbStatusComplete)
 	require.NoError(t, err)
 
-	goals, err := s.GetGoalsForTask("task-5")
+	climbs, err := s.GetClimbsForProblem("problem-5")
 	require.NoError(t, err)
-	require.Len(t, goals, 1)
-	assert.Equal(t, model.GoalStatusComplete, goals[0].Status)
-	assert.NotNil(t, goals[0].CompletedAt)
+	require.Len(t, climbs, 1)
+	assert.Equal(t, model.ClimbStatusComplete, climbs[0].Status)
+	assert.NotNil(t, climbs[0].CompletedAt)
 }
 
-func TestGetTaskNotFound(t *testing.T) {
+func TestGetProblemNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	_, err := s.GetTask("nonexistent")
+	_, err := s.GetProblem("nonexistent")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestGetTasksByStatus(t *testing.T) {
+func TestGetProblemsByStatus(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	err := s.InsertTask(&model.Task{
-		ID: "task-p", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-p", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
-	err = s.InsertTask(&model.Task{
-		ID: "task-r", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	err = s.InsertProblem(&model.Problem{
+		ID: "problem-r", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
-	err = s.UpdateTaskStatus("task-r", model.TaskStatusRunning)
+	err = s.UpdateProblemStatus("problem-r", model.ProblemStatusRunning)
 	require.NoError(t, err)
 
-	pending, err := s.GetTasksByStatus(model.TaskStatusPending)
+	pending, err := s.GetProblemsByStatus(model.ProblemStatusPending)
 	require.NoError(t, err)
 	assert.Len(t, pending, 1)
-	assert.Equal(t, "task-p", pending[0].ID)
+	assert.Equal(t, "problem-p", pending[0].ID)
 
-	running, err := s.GetTasksByStatus(model.TaskStatusRunning)
+	running, err := s.GetProblemsByStatus(model.ProblemStatusRunning)
 	require.NoError(t, err)
 	assert.Len(t, running, 1)
-	assert.Equal(t, "task-r", running[0].ID)
+	assert.Equal(t, "problem-r", running[0].ID)
 }
 
-func TestValidateGoalsFile(t *testing.T) {
+func TestValidateClimbsFile(t *testing.T) {
 	tests := []struct {
 		name    string
-		gf      model.GoalsFile
+		cf      model.ClimbsFile
 		wantErr string
 	}{
 		{
 			name: "valid single repo",
-			gf: model.GoalsFile{
-				Repos: map[string]model.RepoGoals{
-					"api": {Goals: []model.GoalSpec{
+			cf: model.ClimbsFile{
+				Repos: map[string]model.RepoClimbs{
+					"api": {Climbs: []model.ClimbSpec{
 						{ID: "api-1", Description: "do thing", DependsOn: []string{}},
 					}},
 				},
@@ -202,9 +202,9 @@ func TestValidateGoalsFile(t *testing.T) {
 		},
 		{
 			name: "valid with dependencies",
-			gf: model.GoalsFile{
-				Repos: map[string]model.RepoGoals{
-					"api": {Goals: []model.GoalSpec{
+			cf: model.ClimbsFile{
+				Repos: map[string]model.RepoClimbs{
+					"api": {Climbs: []model.ClimbSpec{
 						{ID: "api-1", Description: "first", DependsOn: []string{}},
 						{ID: "api-2", Description: "second", DependsOn: []string{"api-1"}},
 					}},
@@ -212,38 +212,38 @@ func TestValidateGoalsFile(t *testing.T) {
 			},
 		},
 		{
-			name: "duplicate goal ID",
-			gf: model.GoalsFile{
-				Repos: map[string]model.RepoGoals{
-					"api": {Goals: []model.GoalSpec{{ID: "g-1", Description: "a"}}},
-					"app": {Goals: []model.GoalSpec{{ID: "g-1", Description: "b"}}},
+			name: "duplicate climb ID",
+			cf: model.ClimbsFile{
+				Repos: map[string]model.RepoClimbs{
+					"api": {Climbs: []model.ClimbSpec{{ID: "c-1", Description: "a"}}},
+					"app": {Climbs: []model.ClimbSpec{{ID: "c-1", Description: "b"}}},
 				},
 			},
-			wantErr: "duplicate goal ID",
+			wantErr: "duplicate climb ID",
 		},
 		{
-			name: "empty goal ID",
-			gf: model.GoalsFile{
-				Repos: map[string]model.RepoGoals{
-					"api": {Goals: []model.GoalSpec{{ID: "", Description: "a"}}},
+			name: "empty climb ID",
+			cf: model.ClimbsFile{
+				Repos: map[string]model.RepoClimbs{
+					"api": {Climbs: []model.ClimbSpec{{ID: "", Description: "a"}}},
 				},
 			},
 			wantErr: "empty ID",
 		},
 		{
 			name: "empty description",
-			gf: model.GoalsFile{
-				Repos: map[string]model.RepoGoals{
-					"api": {Goals: []model.GoalSpec{{ID: "api-1", Description: ""}}},
+			cf: model.ClimbsFile{
+				Repos: map[string]model.RepoClimbs{
+					"api": {Climbs: []model.ClimbSpec{{ID: "api-1", Description: ""}}},
 				},
 			},
 			wantErr: "empty description",
 		},
 		{
-			name: "depends on nonexistent goal",
-			gf: model.GoalsFile{
-				Repos: map[string]model.RepoGoals{
-					"api": {Goals: []model.GoalSpec{
+			name: "depends on nonexistent climb",
+			cf: model.ClimbsFile{
+				Repos: map[string]model.RepoClimbs{
+					"api": {Climbs: []model.ClimbSpec{
 						{ID: "api-1", Description: "a", DependsOn: []string{"nope"}},
 					}},
 				},
@@ -252,10 +252,10 @@ func TestValidateGoalsFile(t *testing.T) {
 		},
 		{
 			name: "cross-repo dependency",
-			gf: model.GoalsFile{
-				Repos: map[string]model.RepoGoals{
-					"api": {Goals: []model.GoalSpec{{ID: "api-1", Description: "a"}}},
-					"app": {Goals: []model.GoalSpec{{ID: "app-1", Description: "b", DependsOn: []string{"api-1"}}}},
+			cf: model.ClimbsFile{
+				Repos: map[string]model.RepoClimbs{
+					"api": {Climbs: []model.ClimbSpec{{ID: "api-1", Description: "a"}}},
+					"app": {Climbs: []model.ClimbSpec{{ID: "app-1", Description: "b", DependsOn: []string{"api-1"}}}},
 				},
 			},
 			wantErr: "different repo",
@@ -264,7 +264,7 @@ func TestValidateGoalsFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateGoalsFile(&tt.gf)
+			err := ValidateClimbsFile(&tt.cf)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
@@ -275,229 +275,229 @@ func TestValidateGoalsFile(t *testing.T) {
 	}
 }
 
-func TestValidateGoalsRepos(t *testing.T) {
-	gf := &model.GoalsFile{
-		Repos: map[string]model.RepoGoals{
-			"api":     {Goals: []model.GoalSpec{{ID: "api-1", Description: "a"}}},
-			"unknown": {Goals: []model.GoalSpec{{ID: "u-1", Description: "b"}}},
+func TestValidateClimbsRepos(t *testing.T) {
+	cf := &model.ClimbsFile{
+		Repos: map[string]model.RepoClimbs{
+			"api":     {Climbs: []model.ClimbSpec{{ID: "api-1", Description: "a"}}},
+			"unknown": {Climbs: []model.ClimbSpec{{ID: "u-1", Description: "b"}}},
 		},
 	}
 
-	err := ValidateGoalsRepos(gf, []string{"api", "app"})
+	err := ValidateClimbsRepos(cf, []string{"api", "app"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown")
 
-	err = ValidateGoalsRepos(gf, []string{"api", "unknown"})
+	err = ValidateClimbsRepos(cf, []string{"api", "unknown"})
 	require.NoError(t, err)
 }
 
-func TestGoalsFromFile(t *testing.T) {
-	gf := &model.GoalsFile{
-		Repos: map[string]model.RepoGoals{
-			"api": {Goals: []model.GoalSpec{
+func TestClimbsFromFile(t *testing.T) {
+	cf := &model.ClimbsFile{
+		Repos: map[string]model.RepoClimbs{
+			"api": {Climbs: []model.ClimbSpec{
 				{ID: "api-1", Description: "first", DependsOn: []string{}},
 				{ID: "api-2", Description: "second", DependsOn: []string{"api-1"}},
 			}},
-			"app": {Goals: []model.GoalSpec{
-				{ID: "app-1", Description: "app goal"},
+			"app": {Climbs: []model.ClimbSpec{
+				{ID: "app-1", Description: "app climb"},
 			}},
 		},
 	}
 
-	goals := GoalsFromFile("task-99", gf)
-	assert.Len(t, goals, 3)
+	climbs := ClimbsFromFile("problem-99", cf)
+	assert.Len(t, climbs, 3)
 
-	goalMap := make(map[string]model.Goal)
-	for _, g := range goals {
-		goalMap[g.ID] = g
+	climbMap := make(map[string]model.Climb)
+	for _, c := range climbs {
+		climbMap[c.ID] = c
 	}
 
-	assert.Equal(t, "task-99", goalMap["api-1"].TaskID)
-	assert.Equal(t, "api", goalMap["api-1"].RepoName)
-	assert.Equal(t, []string{}, goalMap["api-1"].DependsOn)
-	assert.Equal(t, []string{"api-1"}, goalMap["api-2"].DependsOn)
-	assert.Equal(t, []string{}, goalMap["app-1"].DependsOn) // nil converted to empty
-	assert.Equal(t, model.GoalStatusPending, goalMap["app-1"].Status)
+	assert.Equal(t, "problem-99", climbMap["api-1"].ProblemID)
+	assert.Equal(t, "api", climbMap["api-1"].RepoName)
+	assert.Equal(t, []string{}, climbMap["api-1"].DependsOn)
+	assert.Equal(t, []string{"api-1"}, climbMap["api-2"].DependsOn)
+	assert.Equal(t, []string{}, climbMap["app-1"].DependsOn) // nil converted to empty
+	assert.Equal(t, model.ClimbStatusPending, climbMap["app-1"].Status)
 }
 
-func TestGetPendingTasks(t *testing.T) {
+func TestGetPendingProblems(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	// Insert a pending task
-	err := s.InsertTask(&model.Task{
-		ID: "task-pending", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	// Insert a pending problem
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-pending", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
-	// Insert a running task
-	err = s.InsertTask(&model.Task{
-		ID: "task-running", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	// Insert a running problem
+	err = s.InsertProblem(&model.Problem{
+		ID: "problem-running", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
-	err = s.UpdateTaskStatus("task-running", model.TaskStatusRunning)
+	err = s.UpdateProblemStatus("problem-running", model.ProblemStatusRunning)
 	require.NoError(t, err)
 
-	pending, err := s.GetPendingTasks("test-instance")
+	pending, err := s.GetPendingProblems("test-instance")
 	require.NoError(t, err)
 	assert.Len(t, pending, 1)
-	assert.Equal(t, "task-pending", pending[0].ID)
-	assert.Equal(t, model.TaskStatusPending, pending[0].Status)
+	assert.Equal(t, "problem-pending", pending[0].ID)
+	assert.Equal(t, model.ProblemStatusPending, pending[0].Status)
 }
 
-func TestGetActiveTasks(t *testing.T) {
+func TestGetActiveProblems(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	// Insert tasks with various statuses
-	err := s.InsertTask(&model.Task{
-		ID: "task-p", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	// Insert problems with various statuses
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-p", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
-	err = s.InsertTask(&model.Task{
-		ID: "task-r", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	err = s.InsertProblem(&model.Problem{
+		ID: "problem-r", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
-	err = s.UpdateTaskStatus("task-r", model.TaskStatusRunning)
+	err = s.UpdateProblemStatus("problem-r", model.ProblemStatusRunning)
 	require.NoError(t, err)
 
-	err = s.InsertTask(&model.Task{
-		ID: "task-rv", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	err = s.InsertProblem(&model.Problem{
+		ID: "problem-rv", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
-	err = s.UpdateTaskStatus("task-rv", model.TaskStatusReviewing)
+	err = s.UpdateProblemStatus("problem-rv", model.ProblemStatusReviewing)
 	require.NoError(t, err)
 
-	err = s.InsertTask(&model.Task{
-		ID: "task-c", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	err = s.InsertProblem(&model.Problem{
+		ID: "problem-c", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
-	err = s.UpdateTaskStatus("task-c", model.TaskStatusComplete)
+	err = s.UpdateProblemStatus("problem-c", model.ProblemStatusComplete)
 	require.NoError(t, err)
 
-	active, err := s.GetActiveTasks("test-instance")
+	active, err := s.GetActiveProblems("test-instance")
 	require.NoError(t, err)
 	assert.Len(t, active, 2)
 
 	ids := []string{active[0].ID, active[1].ID}
-	assert.Contains(t, ids, "task-r")
-	assert.Contains(t, ids, "task-rv")
+	assert.Contains(t, ids, "problem-r")
+	assert.Contains(t, ids, "problem-rv")
 }
 
-func TestIncrementGoalAttempt(t *testing.T) {
+func TestIncrementClimbAttempt(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	err := s.InsertTask(&model.Task{
-		ID: "task-inc", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
-	}, []model.Goal{
-		{ID: "g-inc", TaskID: "task-inc", RepoName: "api", Description: "goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-inc", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, []model.Climb{
+		{ID: "c-inc", ProblemID: "problem-inc", RepoName: "api", Description: "climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	})
 	require.NoError(t, err)
 
-	err = s.IncrementGoalAttempt("g-inc")
+	err = s.IncrementClimbAttempt("c-inc")
 	require.NoError(t, err)
 
-	goals, err := s.GetGoalsForTask("task-inc")
+	climbs, err := s.GetClimbsForProblem("problem-inc")
 	require.NoError(t, err)
-	require.Len(t, goals, 1)
-	assert.Equal(t, 1, goals[0].Attempt)
+	require.Len(t, climbs, 1)
+	assert.Equal(t, 1, climbs[0].Attempt)
 }
 
-func TestResetGoalStatus(t *testing.T) {
+func TestResetClimbStatus(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	err := s.InsertTask(&model.Task{
-		ID: "task-reset", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
-	}, []model.Goal{
-		{ID: "g-reset", TaskID: "task-reset", RepoName: "api", Description: "goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-reset", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, []model.Climb{
+		{ID: "c-reset", ProblemID: "problem-reset", RepoName: "api", Description: "climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	})
 	require.NoError(t, err)
 
 	// Mark as complete first
-	err = s.UpdateGoalStatus("g-reset", model.GoalStatusComplete)
+	err = s.UpdateClimbStatus("c-reset", model.ClimbStatusComplete)
 	require.NoError(t, err)
 
-	goals, err := s.GetGoalsForTask("task-reset")
+	climbs, err := s.GetClimbsForProblem("problem-reset")
 	require.NoError(t, err)
-	require.Len(t, goals, 1)
-	assert.Equal(t, model.GoalStatusComplete, goals[0].Status)
-	assert.NotNil(t, goals[0].CompletedAt)
+	require.Len(t, climbs, 1)
+	assert.Equal(t, model.ClimbStatusComplete, climbs[0].Status)
+	assert.NotNil(t, climbs[0].CompletedAt)
 
 	// Reset back to pending
-	err = s.ResetGoalStatus("g-reset")
+	err = s.ResetClimbStatus("c-reset")
 	require.NoError(t, err)
 
-	goals, err = s.GetGoalsForTask("task-reset")
+	climbs, err = s.GetClimbsForProblem("problem-reset")
 	require.NoError(t, err)
-	require.Len(t, goals, 1)
-	assert.Equal(t, model.GoalStatusPending, goals[0].Status)
-	assert.Nil(t, goals[0].CompletedAt)
+	require.Len(t, climbs, 1)
+	assert.Equal(t, model.ClimbStatusPending, climbs[0].Status)
+	assert.Nil(t, climbs[0].CompletedAt)
 }
 
 func TestInsertAndGetAnchorReview(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	err := s.InsertTask(&model.Task{
-		ID: "task-sr", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-sr", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
 	review := &model.SpotterReview{
-		TaskID:  "task-sr",
-		Attempt: 1,
-		Verdict: "pass",
-		Output:  "All goals met.",
+		ProblemID: "problem-sr",
+		Attempt:   1,
+		Verdict:   "pass",
+		Output:    "All climbs met.",
 	}
 	err = s.InsertAnchorReview(review)
 	require.NoError(t, err)
 
-	reviews, err := s.GetAnchorReviewsForTask("task-sr")
+	reviews, err := s.GetAnchorReviewsForProblem("problem-sr")
 	require.NoError(t, err)
 	require.Len(t, reviews, 1)
-	assert.Equal(t, "task-sr", reviews[0].TaskID)
+	assert.Equal(t, "problem-sr", reviews[0].ProblemID)
 	assert.Equal(t, 1, reviews[0].Attempt)
 	assert.Equal(t, "pass", reviews[0].Verdict)
-	assert.Equal(t, "All goals met.", reviews[0].Output)
+	assert.Equal(t, "All climbs met.", reviews[0].Output)
 	assert.NotZero(t, reviews[0].ID)
 	assert.False(t, reviews[0].CreatedAt.IsZero())
 }
 
-func TestInsertGoals(t *testing.T) {
+func TestInsertClimbs(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
 
-	err := s.InsertTask(&model.Task{
-		ID: "task-ig", InstanceID: "test-instance", Spec: "s", GoalsJSON: "{}", Status: model.TaskStatusPending,
+	err := s.InsertProblem(&model.Problem{
+		ID: "problem-ic", InstanceID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
-	correctionGoals := []model.Goal{
-		{ID: "cg-1", TaskID: "task-ig", RepoName: "api", Description: "correction goal 1", DependsOn: []string{}, Status: model.GoalStatusPending},
-		{ID: "cg-2", TaskID: "task-ig", RepoName: "app", Description: "correction goal 2", DependsOn: []string{"cg-1"}, Status: model.GoalStatusPending},
+	correctionClimbs := []model.Climb{
+		{ID: "cc-1", ProblemID: "problem-ic", RepoName: "api", Description: "correction climb 1", DependsOn: []string{}, Status: model.ClimbStatusPending},
+		{ID: "cc-2", ProblemID: "problem-ic", RepoName: "app", Description: "correction climb 2", DependsOn: []string{"cc-1"}, Status: model.ClimbStatusPending},
 	}
 
-	err = s.InsertGoals(correctionGoals)
+	err = s.InsertClimbs(correctionClimbs)
 	require.NoError(t, err)
 
-	goals, err := s.GetGoalsForTask("task-ig")
+	climbs, err := s.GetClimbsForProblem("problem-ic")
 	require.NoError(t, err)
-	assert.Len(t, goals, 2)
+	assert.Len(t, climbs, 2)
 
-	goalMap := make(map[string]model.Goal)
-	for _, g := range goals {
-		goalMap[g.ID] = g
+	climbMap := make(map[string]model.Climb)
+	for _, c := range climbs {
+		climbMap[c.ID] = c
 	}
 
-	assert.Equal(t, "api", goalMap["cg-1"].RepoName)
-	assert.Equal(t, "correction goal 1", goalMap["cg-1"].Description)
-	assert.Equal(t, []string{}, goalMap["cg-1"].DependsOn)
-	assert.Equal(t, model.GoalStatusPending, goalMap["cg-1"].Status)
-	assert.Equal(t, 0, goalMap["cg-1"].Attempt)
+	assert.Equal(t, "api", climbMap["cc-1"].RepoName)
+	assert.Equal(t, "correction climb 1", climbMap["cc-1"].Description)
+	assert.Equal(t, []string{}, climbMap["cc-1"].DependsOn)
+	assert.Equal(t, model.ClimbStatusPending, climbMap["cc-1"].Status)
+	assert.Equal(t, 0, climbMap["cc-1"].Attempt)
 
-	assert.Equal(t, "app", goalMap["cg-2"].RepoName)
-	assert.Equal(t, []string{"cg-1"}, goalMap["cg-2"].DependsOn)
+	assert.Equal(t, "app", climbMap["cc-2"].RepoName)
+	assert.Equal(t, []string{"cc-1"}, climbMap["cc-2"].DependsOn)
 }

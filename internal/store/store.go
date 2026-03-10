@@ -20,8 +20,8 @@ func New(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-// InsertTask inserts a task and its parsed goals in a single transaction.
-func (s *Store) InsertTask(task *model.Task, goals []model.Goal) error {
+// InsertProblem inserts a problem and its parsed climbs in a single transaction.
+func (s *Store) InsertProblem(problem *model.Problem, climbs []model.Climb) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -30,142 +30,142 @@ func (s *Store) InsertTask(task *model.Task, goals []model.Goal) error {
 
 	now := time.Now().UTC()
 	_, err = tx.Exec(
-		`INSERT INTO tasks (id, instance_id, spec, goals_json, jira_ref, status, created_at, updated_at)
+		`INSERT INTO problems (id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ID, task.InstanceID, task.Spec, task.GoalsJSON, task.JiraRef, task.Status, now, now,
+		problem.ID, problem.InstanceID, problem.Spec, problem.ClimbsJSON, problem.JiraRef, problem.Status, now, now,
 	)
 	if err != nil {
-		return fmt.Errorf("inserting task: %w", err)
+		return fmt.Errorf("inserting problem: %w", err)
 	}
 
-	for _, g := range goals {
-		depsJSON, err := json.Marshal(g.DependsOn)
+	for _, c := range climbs {
+		depsJSON, err := json.Marshal(c.DependsOn)
 		if err != nil {
-			return fmt.Errorf("marshaling depends_on for goal %s: %w", g.ID, err)
+			return fmt.Errorf("marshaling depends_on for climb %s: %w", c.ID, err)
 		}
 		_, err = tx.Exec(
-			`INSERT INTO goals (id, task_id, repo_name, description, depends_on, status, attempt, created_at)
+			`INSERT INTO climbs (id, problem_id, repo_name, description, depends_on, status, attempt, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			g.ID, g.TaskID, g.RepoName, g.Description, string(depsJSON), g.Status, 0, now,
+			c.ID, c.ProblemID, c.RepoName, c.Description, string(depsJSON), c.Status, 0, now,
 		)
 		if err != nil {
-			return fmt.Errorf("inserting goal %s: %w", g.ID, err)
+			return fmt.Errorf("inserting climb %s: %w", c.ID, err)
 		}
 	}
 
 	_, err = tx.Exec(
-		`INSERT INTO events (task_id, type, payload, created_at) VALUES (?, ?, ?, ?)`,
-		task.ID, model.EventTaskCreated, "{}", now,
+		`INSERT INTO events (problem_id, type, payload, created_at) VALUES (?, ?, ?, ?)`,
+		problem.ID, model.EventProblemCreated, "{}", now,
 	)
 	if err != nil {
-		return fmt.Errorf("inserting task_created event: %w", err)
+		return fmt.Errorf("inserting problem_created event: %w", err)
 	}
 
 	return tx.Commit()
 }
 
-// GetTask retrieves a task by ID.
-func (s *Store) GetTask(id string) (*model.Task, error) {
+// GetProblem retrieves a problem by ID.
+func (s *Store) GetProblem(id string) (*model.Problem, error) {
 	row := s.db.QueryRow(
-		`SELECT id, instance_id, spec, goals_json, jira_ref, status, created_at, updated_at
-		 FROM tasks WHERE id = ?`, id,
+		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		 FROM problems WHERE id = ?`, id,
 	)
-	t := &model.Task{}
-	err := row.Scan(&t.ID, &t.InstanceID, &t.Spec, &t.GoalsJSON, &t.JiraRef, &t.Status, &t.CreatedAt, &t.UpdatedAt)
+	p := &model.Problem{}
+	err := row.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("task %q not found", id)
+		return nil, fmt.Errorf("problem %q not found", id)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("scanning task: %w", err)
+		return nil, fmt.Errorf("scanning problem: %w", err)
 	}
-	return t, nil
+	return p, nil
 }
 
-// ListTasksForInstance returns all tasks for the given instance, newest first.
-func (s *Store) ListTasksForInstance(instanceID string) ([]model.Task, error) {
+// ListProblemsForInstance returns all problems for the given instance, newest first.
+func (s *Store) ListProblemsForInstance(instanceID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, instance_id, spec, goals_json, jira_ref, status, created_at, updated_at
-		 FROM tasks WHERE instance_id = ? ORDER BY created_at DESC`, instanceID,
+		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		 FROM problems WHERE instance_id = ? ORDER BY created_at DESC`, instanceID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying tasks: %w", err)
+		return nil, fmt.Errorf("querying problems: %w", err)
 	}
 	defer rows.Close()
 
-	var tasks []model.Task
+	var problems []model.Problem
 	for rows.Next() {
-		var t model.Task
-		if err := rows.Scan(&t.ID, &t.InstanceID, &t.Spec, &t.GoalsJSON, &t.JiraRef, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scanning task: %w", err)
+		var p model.Problem
+		if err := rows.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
-		tasks = append(tasks, t)
+		problems = append(problems, p)
 	}
-	return tasks, rows.Err()
+	return problems, rows.Err()
 }
 
-// GetGoalsForTask returns all goals for a task.
-func (s *Store) GetGoalsForTask(taskID string) ([]model.Goal, error) {
+// GetClimbsForProblem returns all climbs for a problem.
+func (s *Store) GetClimbsForProblem(problemID string) ([]model.Climb, error) {
 	rows, err := s.db.Query(
-		`SELECT id, task_id, repo_name, description, depends_on, status, attempt, created_at, completed_at
-		 FROM goals WHERE task_id = ? ORDER BY id`, taskID,
+		`SELECT id, problem_id, repo_name, description, depends_on, status, attempt, created_at, completed_at
+		 FROM climbs WHERE problem_id = ? ORDER BY id`, problemID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying goals: %w", err)
+		return nil, fmt.Errorf("querying climbs: %w", err)
 	}
 	defer rows.Close()
 
-	var goals []model.Goal
+	var climbs []model.Climb
 	for rows.Next() {
-		var g model.Goal
+		var c model.Climb
 		var depsJSON string
-		if err := rows.Scan(&g.ID, &g.TaskID, &g.RepoName, &g.Description, &depsJSON, &g.Status, &g.Attempt, &g.CreatedAt, &g.CompletedAt); err != nil {
-			return nil, fmt.Errorf("scanning goal: %w", err)
+		if err := rows.Scan(&c.ID, &c.ProblemID, &c.RepoName, &c.Description, &depsJSON, &c.Status, &c.Attempt, &c.CreatedAt, &c.CompletedAt); err != nil {
+			return nil, fmt.Errorf("scanning climb: %w", err)
 		}
-		if err := json.Unmarshal([]byte(depsJSON), &g.DependsOn); err != nil {
-			g.DependsOn = nil
+		if err := json.Unmarshal([]byte(depsJSON), &c.DependsOn); err != nil {
+			c.DependsOn = nil
 		}
-		goals = append(goals, g)
+		climbs = append(climbs, c)
 	}
-	return goals, rows.Err()
+	return climbs, rows.Err()
 }
 
-// UpdateTaskStatus updates a task's status.
-func (s *Store) UpdateTaskStatus(taskID string, status model.TaskStatus) error {
+// UpdateProblemStatus updates a problem's status.
+func (s *Store) UpdateProblemStatus(problemID string, status model.ProblemStatus) error {
 	_, err := s.db.Exec(
-		`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
-		status, time.Now().UTC(), taskID,
+		`UPDATE problems SET status = ?, updated_at = ? WHERE id = ?`,
+		status, time.Now().UTC(), problemID,
 	)
 	return err
 }
 
-// UpdateGoalStatus updates a goal's status and optionally sets completed_at.
-func (s *Store) UpdateGoalStatus(goalID string, status model.GoalStatus) error {
+// UpdateClimbStatus updates a climb's status and optionally sets completed_at.
+func (s *Store) UpdateClimbStatus(climbID string, status model.ClimbStatus) error {
 	var completedAt *time.Time
-	if status == model.GoalStatusComplete {
+	if status == model.ClimbStatusComplete {
 		now := time.Now().UTC()
 		completedAt = &now
 	}
 	_, err := s.db.Exec(
-		`UPDATE goals SET status = ?, completed_at = ? WHERE id = ?`,
-		status, completedAt, goalID,
+		`UPDATE climbs SET status = ?, completed_at = ? WHERE id = ?`,
+		status, completedAt, climbID,
 	)
 	return err
 }
 
 // InsertEvent adds an audit event.
-func (s *Store) InsertEvent(taskID, goalID string, eventType model.EventType, payload string) error {
+func (s *Store) InsertEvent(problemID, climbID string, eventType model.EventType, payload string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO events (task_id, goal_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)`,
-		taskID, goalID, eventType, payload, time.Now().UTC(),
+		`INSERT INTO events (problem_id, climb_id, type, payload, created_at) VALUES (?, ?, ?, ?, ?)`,
+		problemID, climbID, eventType, payload, time.Now().UTC(),
 	)
 	return err
 }
 
-// GetEventsForTask returns all events for a task, oldest first.
-func (s *Store) GetEventsForTask(taskID string) ([]model.Event, error) {
+// GetEventsForProblem returns all events for a problem, oldest first.
+func (s *Store) GetEventsForProblem(problemID string) ([]model.Event, error) {
 	rows, err := s.db.Query(
-		`SELECT id, task_id, goal_id, type, payload, created_at
-		 FROM events WHERE task_id = ? ORDER BY created_at ASC`, taskID,
+		`SELECT id, problem_id, climb_id, type, payload, created_at
+		 FROM events WHERE problem_id = ? ORDER BY created_at ASC`, problemID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying events: %w", err)
@@ -175,7 +175,7 @@ func (s *Store) GetEventsForTask(taskID string) ([]model.Event, error) {
 	var events []model.Event
 	for rows.Next() {
 		var e model.Event
-		if err := rows.Scan(&e.ID, &e.TaskID, &e.GoalID, &e.Type, &e.Payload, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.ProblemID, &e.ClimbID, &e.Type, &e.Payload, &e.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning event: %w", err)
 		}
 		events = append(events, e)
@@ -183,57 +183,57 @@ func (s *Store) GetEventsForTask(taskID string) ([]model.Event, error) {
 	return events, rows.Err()
 }
 
-// GetTasksByStatus returns all tasks with the given status.
-func (s *Store) GetTasksByStatus(status model.TaskStatus) ([]model.Task, error) {
+// GetProblemsByStatus returns all problems with the given status.
+func (s *Store) GetProblemsByStatus(status model.ProblemStatus) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, instance_id, spec, goals_json, jira_ref, status, created_at, updated_at
-		 FROM tasks WHERE status = ? ORDER BY created_at DESC`, status,
+		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		 FROM problems WHERE status = ? ORDER BY created_at DESC`, status,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying tasks by status: %w", err)
+		return nil, fmt.Errorf("querying problems by status: %w", err)
 	}
 	defer rows.Close()
 
-	var tasks []model.Task
+	var problems []model.Problem
 	for rows.Next() {
-		var t model.Task
-		if err := rows.Scan(&t.ID, &t.InstanceID, &t.Spec, &t.GoalsJSON, &t.JiraRef, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scanning task: %w", err)
+		var p model.Problem
+		if err := rows.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
-		tasks = append(tasks, t)
+		problems = append(problems, p)
 	}
-	return tasks, rows.Err()
+	return problems, rows.Err()
 }
 
-// ValidateGoalsFile validates a parsed GoalsFile for consistency.
-// It checks that all goal IDs are unique and all depends_on references exist
+// ValidateClimbsFile validates a parsed ClimbsFile for consistency.
+// It checks that all climb IDs are unique and all depends_on references exist
 // within the same repo.
-func ValidateGoalsFile(gf *model.GoalsFile) error {
-	allIDs := make(map[string]string) // goal ID -> repo name
-	for repoName, repoGoals := range gf.Repos {
-		for _, goal := range repoGoals.Goals {
-			if goal.ID == "" {
-				return fmt.Errorf("goal in repo %q has empty ID", repoName)
+func ValidateClimbsFile(cf *model.ClimbsFile) error {
+	allIDs := make(map[string]string) // climb ID -> repo name
+	for repoName, repoClimbs := range cf.Repos {
+		for _, climb := range repoClimbs.Climbs {
+			if climb.ID == "" {
+				return fmt.Errorf("climb in repo %q has empty ID", repoName)
 			}
-			if goal.Description == "" {
-				return fmt.Errorf("goal %q in repo %q has empty description", goal.ID, repoName)
+			if climb.Description == "" {
+				return fmt.Errorf("climb %q in repo %q has empty description", climb.ID, repoName)
 			}
-			if existing, ok := allIDs[goal.ID]; ok {
-				return fmt.Errorf("duplicate goal ID %q (in repos %q and %q)", goal.ID, existing, repoName)
+			if existing, ok := allIDs[climb.ID]; ok {
+				return fmt.Errorf("duplicate climb ID %q (in repos %q and %q)", climb.ID, existing, repoName)
 			}
-			allIDs[goal.ID] = repoName
+			allIDs[climb.ID] = repoName
 		}
 	}
 
-	for repoName, repoGoals := range gf.Repos {
-		for _, goal := range repoGoals.Goals {
-			for _, dep := range goal.DependsOn {
+	for repoName, repoClimbs := range cf.Repos {
+		for _, climb := range repoClimbs.Climbs {
+			for _, dep := range climb.DependsOn {
 				depRepo, ok := allIDs[dep]
 				if !ok {
-					return fmt.Errorf("goal %q depends on %q which does not exist", goal.ID, dep)
+					return fmt.Errorf("climb %q depends on %q which does not exist", climb.ID, dep)
 				}
 				if depRepo != repoName {
-					return fmt.Errorf("goal %q depends on %q which is in a different repo (%q vs %q)", goal.ID, dep, repoName, depRepo)
+					return fmt.Errorf("climb %q depends on %q which is in a different repo (%q vs %q)", climb.ID, dep, repoName, depRepo)
 				}
 			}
 		}
@@ -242,103 +242,103 @@ func ValidateGoalsFile(gf *model.GoalsFile) error {
 	return nil
 }
 
-// ValidateGoalsRepos checks that all repos in the goals file exist in the instance.
-func ValidateGoalsRepos(gf *model.GoalsFile, instanceRepos []string) error {
+// ValidateClimbsRepos checks that all repos in the climbs file exist in the instance.
+func ValidateClimbsRepos(cf *model.ClimbsFile, instanceRepos []string) error {
 	repoSet := make(map[string]bool, len(instanceRepos))
 	for _, r := range instanceRepos {
 		repoSet[r] = true
 	}
 
 	var missing []string
-	for repoName := range gf.Repos {
+	for repoName := range cf.Repos {
 		if !repoSet[repoName] {
 			missing = append(missing, repoName)
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("goals.json references repos not in instance: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("climbs.json references repos not in instance: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }
 
-// GoalsFromFile converts a parsed GoalsFile into a slice of Goal models for a given task.
-func GoalsFromFile(taskID string, gf *model.GoalsFile) []model.Goal {
-	var goals []model.Goal
-	for repoName, repoGoals := range gf.Repos {
-		for _, spec := range repoGoals.Goals {
+// ClimbsFromFile converts a parsed ClimbsFile into a slice of Climb models for a given problem.
+func ClimbsFromFile(problemID string, cf *model.ClimbsFile) []model.Climb {
+	var climbs []model.Climb
+	for repoName, repoClimbs := range cf.Repos {
+		for _, spec := range repoClimbs.Climbs {
 			deps := spec.DependsOn
 			if deps == nil {
 				deps = []string{}
 			}
-			goals = append(goals, model.Goal{
+			climbs = append(climbs, model.Climb{
 				ID:          spec.ID,
-				TaskID:      taskID,
+				ProblemID:   problemID,
 				RepoName:    repoName,
 				Description: spec.Description,
 				DependsOn:   deps,
-				Status:      model.GoalStatusPending,
+				Status:      model.ClimbStatusPending,
 			})
 		}
 	}
-	return goals
+	return climbs
 }
 
-// GetPendingTasks returns tasks with status='pending' for the given instance, ordered by created_at ASC.
-func (s *Store) GetPendingTasks(instanceID string) ([]model.Task, error) {
+// GetPendingProblems returns problems with status='pending' for the given instance, ordered by created_at ASC.
+func (s *Store) GetPendingProblems(instanceID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, instance_id, spec, goals_json, jira_ref, status, created_at, updated_at
-		 FROM tasks WHERE instance_id = ? AND status = 'pending' ORDER BY created_at ASC`, instanceID,
+		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		 FROM problems WHERE instance_id = ? AND status = 'pending' ORDER BY created_at ASC`, instanceID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying pending tasks: %w", err)
+		return nil, fmt.Errorf("querying pending problems: %w", err)
 	}
 	defer rows.Close()
 
-	var tasks []model.Task
+	var problems []model.Problem
 	for rows.Next() {
-		var t model.Task
-		if err := rows.Scan(&t.ID, &t.InstanceID, &t.Spec, &t.GoalsJSON, &t.JiraRef, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scanning task: %w", err)
+		var p model.Problem
+		if err := rows.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
-		tasks = append(tasks, t)
+		problems = append(problems, p)
 	}
-	return tasks, rows.Err()
+	return problems, rows.Err()
 }
 
-// GetActiveTasks returns tasks with status IN ('running', 'reviewing') for the given instance, ordered by created_at ASC.
-func (s *Store) GetActiveTasks(instanceID string) ([]model.Task, error) {
+// GetActiveProblems returns problems with status IN ('running', 'reviewing') for the given instance, ordered by created_at ASC.
+func (s *Store) GetActiveProblems(instanceID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, instance_id, spec, goals_json, jira_ref, status, created_at, updated_at
-		 FROM tasks WHERE instance_id = ? AND status IN ('running', 'reviewing') ORDER BY created_at ASC`, instanceID,
+		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		 FROM problems WHERE instance_id = ? AND status IN ('running', 'reviewing') ORDER BY created_at ASC`, instanceID,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("querying active tasks: %w", err)
+		return nil, fmt.Errorf("querying active problems: %w", err)
 	}
 	defer rows.Close()
 
-	var tasks []model.Task
+	var problems []model.Problem
 	for rows.Next() {
-		var t model.Task
-		if err := rows.Scan(&t.ID, &t.InstanceID, &t.Spec, &t.GoalsJSON, &t.JiraRef, &t.Status, &t.CreatedAt, &t.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scanning task: %w", err)
+		var p model.Problem
+		if err := rows.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
-		tasks = append(tasks, t)
+		problems = append(problems, p)
 	}
-	return tasks, rows.Err()
+	return problems, rows.Err()
 }
 
-// IncrementGoalAttempt increments the attempt column by 1 for the given goal.
-func (s *Store) IncrementGoalAttempt(goalID string) error {
+// IncrementClimbAttempt increments the attempt column by 1 for the given climb.
+func (s *Store) IncrementClimbAttempt(climbID string) error {
 	_, err := s.db.Exec(
-		`UPDATE goals SET attempt = attempt + 1 WHERE id = ?`, goalID,
+		`UPDATE climbs SET attempt = attempt + 1 WHERE id = ?`, climbID,
 	)
 	return err
 }
 
-// ResetGoalStatus sets the goal status back to pending and clears completed_at.
-func (s *Store) ResetGoalStatus(goalID string) error {
+// ResetClimbStatus sets the climb status back to pending and clears completed_at.
+func (s *Store) ResetClimbStatus(climbID string) error {
 	_, err := s.db.Exec(
-		`UPDATE goals SET status = 'pending', completed_at = NULL WHERE id = ?`, goalID,
+		`UPDATE climbs SET status = 'pending', completed_at = NULL WHERE id = ?`, climbID,
 	)
 	return err
 }
@@ -346,8 +346,8 @@ func (s *Store) ResetGoalStatus(goalID string) error {
 // InsertAnchorReview inserts an anchor review record.
 func (s *Store) InsertAnchorReview(review *model.SpotterReview) error {
 	_, err := s.db.Exec(
-		`INSERT INTO spotter_reviews (task_id, attempt, verdict, output, created_at) VALUES (?, ?, ?, ?, ?)`,
-		review.TaskID, review.Attempt, review.Verdict, review.Output, time.Now().UTC(),
+		`INSERT INTO spotter_reviews (problem_id, attempt, verdict, output, created_at) VALUES (?, ?, ?, ?, ?)`,
+		review.ProblemID, review.Attempt, review.Verdict, review.Output, time.Now().UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("inserting anchor review: %w", err)
@@ -355,11 +355,11 @@ func (s *Store) InsertAnchorReview(review *model.SpotterReview) error {
 	return nil
 }
 
-// GetAnchorReviewsForTask returns anchor reviews for a task, ordered by attempt ASC.
-func (s *Store) GetAnchorReviewsForTask(taskID string) ([]model.SpotterReview, error) {
+// GetAnchorReviewsForProblem returns anchor reviews for a problem, ordered by attempt ASC.
+func (s *Store) GetAnchorReviewsForProblem(problemID string) ([]model.SpotterReview, error) {
 	rows, err := s.db.Query(
-		`SELECT id, task_id, attempt, verdict, output, created_at
-		 FROM spotter_reviews WHERE task_id = ? ORDER BY attempt ASC`, taskID,
+		`SELECT id, problem_id, attempt, verdict, output, created_at
+		 FROM spotter_reviews WHERE problem_id = ? ORDER BY attempt ASC`, problemID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying anchor reviews: %w", err)
@@ -369,7 +369,7 @@ func (s *Store) GetAnchorReviewsForTask(taskID string) ([]model.SpotterReview, e
 	var reviews []model.SpotterReview
 	for rows.Next() {
 		var r model.SpotterReview
-		if err := rows.Scan(&r.ID, &r.TaskID, &r.Attempt, &r.Verdict, &r.Output, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.ProblemID, &r.Attempt, &r.Verdict, &r.Output, &r.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning anchor review: %w", err)
 		}
 		reviews = append(reviews, r)
@@ -377,9 +377,9 @@ func (s *Store) GetAnchorReviewsForTask(taskID string) ([]model.SpotterReview, e
 	return reviews, rows.Err()
 }
 
-// InsertGoals inserts multiple goals in a single transaction.
-// This is used for correction goals from spotter redistribution.
-func (s *Store) InsertGoals(goals []model.Goal) error {
+// InsertClimbs inserts multiple climbs in a single transaction.
+// This is used for correction climbs from spotter redistribution.
+func (s *Store) InsertClimbs(climbs []model.Climb) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("beginning transaction: %w", err)
@@ -387,18 +387,18 @@ func (s *Store) InsertGoals(goals []model.Goal) error {
 	defer tx.Rollback()
 
 	now := time.Now().UTC()
-	for _, g := range goals {
-		depsJSON, err := json.Marshal(g.DependsOn)
+	for _, c := range climbs {
+		depsJSON, err := json.Marshal(c.DependsOn)
 		if err != nil {
-			return fmt.Errorf("marshaling depends_on for goal %s: %w", g.ID, err)
+			return fmt.Errorf("marshaling depends_on for climb %s: %w", c.ID, err)
 		}
 		_, err = tx.Exec(
-			`INSERT INTO goals (id, task_id, repo_name, description, depends_on, status, attempt, created_at)
+			`INSERT INTO climbs (id, problem_id, repo_name, description, depends_on, status, attempt, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			g.ID, g.TaskID, g.RepoName, g.Description, string(depsJSON), g.Status, 0, now,
+			c.ID, c.ProblemID, c.RepoName, c.Description, string(depsJSON), c.Status, 0, now,
 		)
 		if err != nil {
-			return fmt.Errorf("inserting goal %s: %w", g.ID, err)
+			return fmt.Errorf("inserting climb %s: %w", c.ID, err)
 		}
 	}
 

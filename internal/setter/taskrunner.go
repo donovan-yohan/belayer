@@ -34,9 +34,9 @@ type DoneJSON struct {
 	Notes        string   `json:"notes"`
 }
 
-// QueuedGoal is a goal waiting to be spawned.
+// QueuedGoal is a climb waiting to be spawned.
 type QueuedGoal struct {
-	Goal            model.Goal
+	Goal            model.Climb
 	TaskID          string
 	SpotterFeedback string // empty on first attempt, populated on retry after spotter rejection
 }
@@ -56,9 +56,9 @@ func (r *RealGitRunner) Run(workdir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// TaskRunner manages the lifecycle of a single task.
+// TaskRunner manages the lifecycle of a single problem.
 type TaskRunner struct {
-	task        *model.Task
+	task        *model.Problem
 	dag         *DAG
 	worktrees   map[string]string // repoName -> worktreePath
 	tmuxSession string
@@ -68,7 +68,7 @@ type TaskRunner struct {
 	logMgr      *logmgr.LogManager
 	spawner     lead.AgentSpawner
 	git         GitRunner
-	startedAt   map[string]time.Time // goalID -> when it started running
+	startedAt   map[string]time.Time // climbID -> when it started running
 
 	// Config directories for prompt/profile resolution.
 	globalConfigDir   string
@@ -83,8 +83,8 @@ type TaskRunner struct {
 	validationEnabled bool // when true, DONE.json triggers spotting instead of direct completion
 }
 
-// NewTaskRunner creates a TaskRunner for the given task.
-func NewTaskRunner(task *model.Task, instanceDir, globalCfgDir, instanceCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *TaskRunner {
+// NewTaskRunner creates a TaskRunner for the given problem.
+func NewTaskRunner(task *model.Problem, instanceDir, globalCfgDir, instanceCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *TaskRunner {
 	return &TaskRunner{
 		task:              task,
 		worktrees:         make(map[string]string),
@@ -105,13 +105,13 @@ func NewTaskRunner(task *model.Task, instanceDir, globalCfgDir, instanceCfgDir s
 // Returns ready goals that should be queued for spawning.
 func (tr *TaskRunner) Init() ([]QueuedGoal, error) {
 	// Update task status to running
-	if err := tr.store.UpdateTaskStatus(tr.task.ID, model.TaskStatusRunning); err != nil {
-		return nil, fmt.Errorf("updating task status: %w", err)
+	if err := tr.store.UpdateProblemStatus(tr.task.ID, model.ProblemStatusRunning); err != nil {
+		return nil, fmt.Errorf("updating problem status: %w", err)
 	}
-	tr.task.Status = model.TaskStatusRunning
+	tr.task.Status = model.ProblemStatusRunning
 
-	// Parse goals from the task
-	goals, err := tr.store.GetGoalsForTask(tr.task.ID)
+	// Parse climbs from the problem
+	goals, err := tr.store.GetClimbsForProblem(tr.task.ID)
 	if err != nil {
 		return nil, fmt.Errorf("getting goals: %w", err)
 	}
@@ -165,17 +165,17 @@ func (tr *TaskRunner) Init() ([]QueuedGoal, error) {
 func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 	goal := queued.Goal
 
-	// Guard: don't spawn if the goal is already running in the DAG
-	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.GoalStatusRunning {
+	// Guard: don't spawn if the climb is already running in the DAG
+	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.ClimbStatusRunning {
 		return nil
 	}
 
-	// If this is a retry after spotter failure, reset goal status to pending first
-	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.GoalStatusFailed {
-		if err := tr.store.ResetGoalStatus(goal.ID); err != nil {
-			return fmt.Errorf("resetting goal status: %w", err)
+	// If this is a retry after spotter failure, reset climb status to pending first
+	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.ClimbStatusFailed {
+		if err := tr.store.ResetClimbStatus(goal.ID); err != nil {
+			return fmt.Errorf("resetting climb status: %w", err)
 		}
-		dagGoal.Status = model.GoalStatusPending
+		dagGoal.Status = model.ClimbStatusPending
 	}
 
 	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
@@ -216,24 +216,21 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		return fmt.Errorf("writing GOAL.json for %s: %w", goal.ID, err)
 	}
 
-	// Set mail address for the lead agent.
-	// Note: session-level env var is safe because goals are spawned sequentially
-	// within a TaskRunner (dequeued one at a time). The env is set and Spawn
-	// called atomically before the next goal's SetEnvironment.
 	mailAddr := fmt.Sprintf("task/%s/lead/%s/%s", tr.task.ID, goal.RepoName, goal.ID)
-	if err := tr.tmux.SetEnvironment(tr.tmuxSession, "BELAYER_MAIL_ADDRESS", mailAddr); err != nil {
-		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS: %v", err)
-	}
 
 	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", goal.ID)
-	initialPrompt := fmt.Sprintf(`Read %s and begin working on your assignment. Follow these steps:
+	initialPrompt := fmt.Sprintf(`Read %s and begin working on your assignment. Follow the harness pipeline:
 
 1. Read %s to understand your goal and task spec
 2. If this repo does not have harness docs yet, run /harness:init
-3. Run /harness:plan to create an implementation plan for your goal
-4. Run /harness:orchestrate to execute the plan
-5. Run /harness:complete to finalize — this will reflect, review, and commit
-6. Write DONE.json in the same directory as your GOAL.json when complete`, goalJSONPath, goalJSONPath)
+3. Run /harness:plan to create an implementation plan from your goal spec
+4. Run /harness:orchestrate to execute the plan with worker agents
+5. Run /harness:review to run multi-agent code review and fix any findings
+6. Run /harness:reflect to update docs, capture learnings and retrospective
+7. Run /harness:complete to archive the plan and commit
+8. Write DONE.json in .lead/%s/ when complete
+
+You are fully autonomous. Make decisions, document drift, and keep moving.`, goalJSONPath, goalJSONPath, goal.ID)
 
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:        tr.tmuxSession,
@@ -241,18 +238,19 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		WorkDir:            worktreePath,
 		AppendSystemPrompt: string(appendPrompt),
 		InitialPrompt:      initialPrompt,
+		Env:                map[string]string{"BELAYER_MAIL_ADDRESS": mailAddr},
 	}); err != nil {
 		return fmt.Errorf("spawning agent for %s: %w", goal.ID, err)
 	}
 
 	// Update status in DAG and SQLite
 	tr.dag.MarkRunning(goal.ID)
-	if err := tr.store.UpdateGoalStatus(goal.ID, model.GoalStatusRunning); err != nil {
-		return fmt.Errorf("updating goal status: %w", err)
+	if err := tr.store.UpdateClimbStatus(goal.ID, model.ClimbStatusRunning); err != nil {
+		return fmt.Errorf("updating climb status: %w", err)
 	}
 
-	if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventGoalStarted, "{}"); err != nil {
-		return fmt.Errorf("inserting goal_started event: %w", err)
+	if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventClimbStarted, "{}"); err != nil {
+		return fmt.Errorf("inserting climb_started event: %w", err)
 	}
 
 	tr.startedAt[goal.ID] = time.Now()
@@ -265,7 +263,7 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 // goals transition to spotting instead of completing directly.
 func (tr *TaskRunner) CheckCompletions() (newlyReady []QueuedGoal, completedCount int, err error) {
 	for _, g := range tr.dag.Goals() {
-		if g.Status != model.GoalStatusRunning {
+		if g.Status != model.ClimbStatusRunning {
 			continue
 		}
 
@@ -299,13 +297,13 @@ func (tr *TaskRunner) CheckCompletions() (newlyReady []QueuedGoal, completedCoun
 		} else {
 			// Validation disabled — mark complete directly
 			tr.dag.MarkComplete(g.ID)
-			if storeErr := tr.store.UpdateGoalStatus(g.ID, model.GoalStatusComplete); storeErr != nil {
-				return nil, 0, fmt.Errorf("updating goal status: %w", storeErr)
+			if storeErr := tr.store.UpdateClimbStatus(g.ID, model.ClimbStatusComplete); storeErr != nil {
+				return nil, 0, fmt.Errorf("updating climb status: %w", storeErr)
 			}
 
 			payload, _ := json.Marshal(done)
-			if eventErr := tr.store.InsertEvent(tr.task.ID, g.ID, model.EventGoalCompleted, string(payload)); eventErr != nil {
-				return nil, 0, fmt.Errorf("inserting goal_completed event: %w", eventErr)
+			if eventErr := tr.store.InsertEvent(tr.task.ID, g.ID, model.EventClimbCompleted, string(payload)); eventErr != nil {
+				return nil, 0, fmt.Errorf("inserting climb_completed event: %w", eventErr)
 			}
 
 			delete(tr.startedAt, g.ID)
@@ -340,9 +338,9 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 	for _, g := range tr.dag.Goals() {
 		var windowName string
 		switch g.Status {
-		case model.GoalStatusRunning:
+		case model.ClimbStatusRunning:
 			windowName = fmt.Sprintf("%s-%s", g.RepoName, g.ID)
-		case model.GoalStatusSpotting:
+		case model.ClimbStatusSpotting:
 			windowName = fmt.Sprintf("spot-%s", g.ID)
 		default:
 			continue
@@ -381,7 +379,7 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 
 		// Check one more time for signal file before marking failed
 		worktreePath := tr.worktrees[g.RepoName]
-		if g.Status == model.GoalStatusSpotting {
+		if g.Status == model.ClimbStatusSpotting {
 			spotPath := filepath.Join(worktreePath, ".lead", g.ID, "SPOT.json")
 			if _, err := os.Stat(spotPath); err == nil {
 				continue // will be picked up by CheckSpottingGoals
@@ -400,27 +398,27 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 
 		// Mark failed
 		tr.dag.MarkFailed(g.ID)
-		if err := tr.store.UpdateGoalStatus(g.ID, model.GoalStatusFailed); err != nil {
-			return nil, fmt.Errorf("updating goal status: %w", err)
+		if err := tr.store.UpdateClimbStatus(g.ID, model.ClimbStatusFailed); err != nil {
+			return nil, fmt.Errorf("updating climb status: %w", err)
 		}
 
 		payload := fmt.Sprintf(`{"reason":"%s"}`, reason)
-		if err := tr.store.InsertEvent(tr.task.ID, g.ID, model.EventGoalFailed, payload); err != nil {
-			return nil, fmt.Errorf("inserting goal_failed event: %w", err)
+		if err := tr.store.InsertEvent(tr.task.ID, g.ID, model.EventClimbFailed, payload); err != nil {
+			return nil, fmt.Errorf("inserting climb_failed event: %w", err)
 		}
 
 		delete(tr.startedAt, g.ID)
 
 		// Retry if under 3 attempts
 		if g.Attempt < 3 {
-			if err := tr.store.IncrementGoalAttempt(g.ID); err != nil {
-				return nil, fmt.Errorf("incrementing goal attempt: %w", err)
+			if err := tr.store.IncrementClimbAttempt(g.ID); err != nil {
+				return nil, fmt.Errorf("incrementing climb attempt: %w", err)
 			}
-			if err := tr.store.ResetGoalStatus(g.ID); err != nil {
-				return nil, fmt.Errorf("resetting goal status: %w", err)
+			if err := tr.store.ResetClimbStatus(g.ID); err != nil {
+				return nil, fmt.Errorf("resetting climb status: %w", err)
 			}
 			g.Attempt++
-			tr.dag.Get(g.ID).Status = model.GoalStatusPending
+			tr.dag.Get(g.ID).Status = model.ClimbStatusPending
 			tr.dag.Get(g.ID).Attempt = g.Attempt
 			retryGoals = append(retryGoals, QueuedGoal{Goal: *tr.dag.Get(g.ID), TaskID: tr.task.ID})
 		}
@@ -437,7 +435,7 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 // for the setter to manage queue/lead accounting.
 func (tr *TaskRunner) CheckSpottingGoals() (resolvedCount int, newlyReady []QueuedGoal, retryGoals []QueuedGoal, err error) {
 	for _, g := range tr.dag.Goals() {
-		if g.Status != model.GoalStatusSpotting {
+		if g.Status != model.ClimbStatusSpotting {
 			continue
 		}
 
@@ -483,7 +481,7 @@ func (tr *TaskRunner) AllGoalsComplete() bool {
 // HasStuckGoals returns true if any goal has failed with max attempts reached.
 func (tr *TaskRunner) HasStuckGoals() bool {
 	for _, g := range tr.dag.Goals() {
-		if g.Status == model.GoalStatusFailed && g.Attempt >= 3 {
+		if g.Status == model.ClimbStatusFailed && g.Attempt >= 3 {
 			return true
 		}
 	}
@@ -688,13 +686,13 @@ func (tr *TaskRunner) GatherSummaries() []goalctx.GoalSummary {
 	return summaries
 }
 
-// SpawnSpotter transitions a goal to "spotting" and spawns a spotter agent in
+// SpawnSpotter transitions a climb to "spotting" and spawns a spotter agent in
 // the same tmux window the lead used (the lead has already exited).
-func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
-	// Mark goal as spotting in DAG and SQLite
+func (tr *TaskRunner) SpawnSpotter(goal *model.Climb) error {
+	// Mark climb as spotting in DAG and SQLite
 	tr.dag.MarkSpotting(goal.ID)
-	if err := tr.store.UpdateGoalStatus(goal.ID, model.GoalStatusSpotting); err != nil {
-		return fmt.Errorf("updating goal status to spotting: %w", err)
+	if err := tr.store.UpdateClimbStatus(goal.ID, model.ClimbStatusSpotting); err != nil {
+		return fmt.Errorf("updating climb status to spotting: %w", err)
 	}
 
 	worktreePath := tr.worktrees[goal.RepoName]
@@ -747,11 +745,7 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		return fmt.Errorf("writing spotter GOAL.json for %s: %w", goal.ID, err)
 	}
 
-	// Set mail address for the spotter agent
 	spotterMailAddr := fmt.Sprintf("task/%s/spotter/%s/%s", tr.task.ID, goal.RepoName, goal.ID)
-	if err := tr.tmux.SetEnvironment(tr.tmuxSession, "BELAYER_MAIL_ADDRESS", spotterMailAddr); err != nil {
-		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS for spotter: %v", err)
-	}
 
 	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", goal.ID)
 
@@ -762,12 +756,13 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		WorkDir:            worktreePath,
 		AppendSystemPrompt: string(appendPrompt),
 		InitialPrompt:      fmt.Sprintf("Read %s and begin validating the lead's work.", goalJSONPath),
+		Env:                map[string]string{"BELAYER_MAIL_ADDRESS": spotterMailAddr},
 	}); err != nil {
 		return fmt.Errorf("spawning spotter for %s: %w", goal.ID, err)
 	}
 
 	if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventSpotterSpawned,
-		fmt.Sprintf(`{"goal_id":"%s"}`, goal.ID)); err != nil {
+		fmt.Sprintf(`{"climb_id":"%s"}`, goal.ID)); err != nil {
 		log.Printf("warning: failed to insert spotter_spawned event: %v", err)
 	}
 
@@ -777,9 +772,9 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 	return nil
 }
 
-// CheckSpotResult checks for a SPOT.json file in the goal's worktree and parses it.
+// CheckSpotResult checks for a SPOT.json file in the climb's worktree and parses it.
 // Returns the result, whether one was found, and any error.
-func (tr *TaskRunner) CheckSpotResult(goal *model.Goal) (*spotter.SpotJSON, bool, error) {
+func (tr *TaskRunner) CheckSpotResult(goal *model.Climb) (*spotter.SpotJSON, bool, error) {
 	worktreePath := tr.worktrees[goal.RepoName]
 	spotPath := filepath.Join(worktreePath, ".lead", goal.ID, "SPOT.json")
 
@@ -813,39 +808,39 @@ func (tr *TaskRunner) CheckSpotResult(goal *model.Goal) (*spotter.SpotJSON, bool
 	os.Remove(spotPath)
 
 	if spot.Pass {
-		// Mark goal complete
+		// Mark climb complete
 		tr.dag.MarkComplete(goal.ID)
-		if err := tr.store.UpdateGoalStatus(goal.ID, model.GoalStatusComplete); err != nil {
-			return &spot, true, fmt.Errorf("updating goal status to complete: %w", err)
+		if err := tr.store.UpdateClimbStatus(goal.ID, model.ClimbStatusComplete); err != nil {
+			return &spot, true, fmt.Errorf("updating climb status to complete: %w", err)
 		}
 
-		if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventGoalCompleted,
+		if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventClimbCompleted,
 			string(payload)); err != nil {
-			log.Printf("warning: failed to insert goal_completed event: %v", err)
+			log.Printf("warning: failed to insert climb_completed event: %v", err)
 		}
 
 		// Check log rotation
 		tr.logMgr.CheckRotation(tr.task.ID, goal.ID)
 
-		log.Printf("spotter: goal %s passed validation", goal.ID)
+		log.Printf("spotter: climb %s passed validation", goal.ID)
 	} else {
-		// Mark goal failed for retry
+		// Mark climb failed for retry
 		tr.dag.MarkFailed(goal.ID)
-		if err := tr.store.UpdateGoalStatus(goal.ID, model.GoalStatusFailed); err != nil {
-			return &spot, true, fmt.Errorf("updating goal status to failed: %w", err)
+		if err := tr.store.UpdateClimbStatus(goal.ID, model.ClimbStatusFailed); err != nil {
+			return &spot, true, fmt.Errorf("updating climb status to failed: %w", err)
 		}
 
 		// Increment attempt for retry tracking
-		if err := tr.store.IncrementGoalAttempt(goal.ID); err != nil {
-			log.Printf("warning: failed to increment goal attempt: %v", err)
+		if err := tr.store.IncrementClimbAttempt(goal.ID); err != nil {
+			log.Printf("warning: failed to increment climb attempt: %v", err)
 		}
 		if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil {
 			dagGoal.Attempt++
 		}
 
-		if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventGoalFailed,
+		if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventClimbFailed,
 			string(payload)); err != nil {
-			log.Printf("warning: failed to insert goal_failed event: %v", err)
+			log.Printf("warning: failed to insert climb_failed event: %v", err)
 		}
 
 		// Remove DONE.json so the retry starts fresh
@@ -900,9 +895,6 @@ func (tr *TaskRunner) SpawnAnchor() error {
 
 	// Set mail address for the anchor agent
 	anchorMailAddr := fmt.Sprintf("task/%s/anchor", tr.task.ID)
-	if err := tr.tmux.SetEnvironment(tr.tmuxSession, "BELAYER_MAIL_ADDRESS", anchorMailAddr); err != nil {
-		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS for anchor: %v", err)
-	}
 
 	// Spawn agent
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
@@ -911,6 +903,7 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		WorkDir:            tr.taskDir,
 		AppendSystemPrompt: string(appendPrompt),
 		InitialPrompt:      "Read .lead/anchor/GOAL.json and begin cross-repo review.",
+		Env:                map[string]string{"BELAYER_MAIL_ADDRESS": anchorMailAddr},
 	}); err != nil {
 		return fmt.Errorf("spawning anchor agent: %w", err)
 	}
@@ -945,10 +938,10 @@ func (tr *TaskRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error) {
 
 	// Record the review in SQLite
 	review := &model.SpotterReview{
-		TaskID:  tr.task.ID,
-		Attempt: tr.anchorAttempt,
-		Verdict: verdict.Verdict,
-		Output:  string(data),
+		ProblemID: tr.task.ID,
+		Attempt:   tr.anchorAttempt,
+		Verdict:   verdict.Verdict,
+		Output:    string(data),
 	}
 	if err := tr.store.InsertAnchorReview(review); err != nil {
 		log.Printf("warning: failed to insert anchor review: %v", err)
@@ -1016,9 +1009,9 @@ func (tr *TaskRunner) createPR(repoName, worktreePath string) (string, error) {
 	return prURL, nil
 }
 
-// HandleRejection creates correction goals for failing repos and prepares for new leads.
+// HandleRejection creates correction climbs for failing repos and prepares for new leads.
 func (tr *TaskRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedGoal, error) {
-	var correctionGoals []model.Goal
+	var correctionClimbs []model.Climb
 	var queued []QueuedGoal
 
 	for repoName, rv := range verdict.Repos {
@@ -1036,35 +1029,35 @@ func (tr *TaskRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedGoal
 			}
 		}
 
-		// Create correction goals
+		// Create correction climbs
 		for i, goalDesc := range rv.Goals {
-			goalID := fmt.Sprintf("%s-corr-%d-%d", repoName, tr.anchorAttempt, i+1)
-			g := model.Goal{
-				ID:          goalID,
-				TaskID:      tr.task.ID,
+			climbID := fmt.Sprintf("%s-corr-%d-%d", repoName, tr.anchorAttempt, i+1)
+			c := model.Climb{
+				ID:          climbID,
+				ProblemID:   tr.task.ID,
 				RepoName:    repoName,
 				Description: goalDesc,
 				DependsOn:   []string{},
-				Status:      model.GoalStatusPending,
+				Status:      model.ClimbStatusPending,
 			}
-			correctionGoals = append(correctionGoals, g)
-			queued = append(queued, QueuedGoal{Goal: g, TaskID: tr.task.ID})
+			correctionClimbs = append(correctionClimbs, c)
+			queued = append(queued, QueuedGoal{Goal: c, TaskID: tr.task.ID})
 		}
 	}
 
-	if len(correctionGoals) == 0 {
+	if len(correctionClimbs) == 0 {
 		return nil, nil
 	}
 
-	// Insert correction goals into SQLite
-	if err := tr.store.InsertGoals(correctionGoals); err != nil {
-		return nil, fmt.Errorf("inserting correction goals: %w", err)
+	// Insert correction climbs into SQLite
+	if err := tr.store.InsertClimbs(correctionClimbs); err != nil {
+		return nil, fmt.Errorf("inserting correction climbs: %w", err)
 	}
 
 	// Add to DAG
-	tr.dag.AddGoals(correctionGoals)
+	tr.dag.AddGoals(correctionClimbs)
 
-	log.Printf("anchor: created %d correction goals for task %s", len(correctionGoals), tr.task.ID)
+	log.Printf("anchor: created %d correction climbs for task %s", len(correctionClimbs), tr.task.ID)
 	return queued, nil
 }
 
