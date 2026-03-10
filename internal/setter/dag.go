@@ -34,9 +34,9 @@ func BuildDAG(goals []model.Climb) *DAG {
 	return d
 }
 
-// ReadyGoals returns climbs whose status is pending and whose all DependsOn
+// ReadyClimbs returns climbs whose status is pending and whose all DependsOn
 // climbs have status complete. These are the climbs that can be spawned.
-func (d *DAG) ReadyGoals() []model.Climb {
+func (d *DAG) ReadyClimbs() []model.Climb {
 	var ready []model.Climb
 	for _, g := range d.goals {
 		if g.Status != model.ClimbStatusPending {
@@ -61,29 +61,29 @@ func (d *DAG) allDepsComplete(g *model.Climb) bool {
 }
 
 // MarkComplete sets the climb's status to complete in the DAG.
-func (d *DAG) MarkComplete(goalID string) {
-	if g, ok := d.goals[goalID]; ok {
+func (d *DAG) MarkComplete(climbID string) {
+	if g, ok := d.goals[climbID]; ok {
 		g.Status = model.ClimbStatusComplete
 	}
 }
 
 // MarkFailed sets the climb's status to failed in the DAG.
-func (d *DAG) MarkFailed(goalID string) {
-	if g, ok := d.goals[goalID]; ok {
+func (d *DAG) MarkFailed(climbID string) {
+	if g, ok := d.goals[climbID]; ok {
 		g.Status = model.ClimbStatusFailed
 	}
 }
 
 // MarkRunning sets the climb's status to running in the DAG.
-func (d *DAG) MarkRunning(goalID string) {
-	if g, ok := d.goals[goalID]; ok {
+func (d *DAG) MarkRunning(climbID string) {
+	if g, ok := d.goals[climbID]; ok {
 		g.Status = model.ClimbStatusRunning
 	}
 }
 
 // MarkSpotting sets the climb's status to spotting in the DAG.
-func (d *DAG) MarkSpotting(goalID string) {
-	if g, ok := d.goals[goalID]; ok {
+func (d *DAG) MarkSpotting(climbID string) {
+	if g, ok := d.goals[climbID]; ok {
 		g.Status = model.ClimbStatusSpotting
 	}
 }
@@ -99,12 +99,12 @@ func (d *DAG) AllComplete() bool {
 }
 
 // Get returns the climb by ID, or nil if not found.
-func (d *DAG) Get(goalID string) *model.Climb {
-	return d.goals[goalID]
+func (d *DAG) Get(climbID string) *model.Climb {
+	return d.goals[climbID]
 }
 
-// Goals returns all climbs in the DAG.
-func (d *DAG) Goals() []*model.Climb {
+// Climbs returns all climbs in the DAG.
+func (d *DAG) Climbs() []*model.Climb {
 	result := make([]*model.Climb, 0, len(d.goals))
 	for _, g := range d.goals {
 		result = append(result, g)
@@ -112,9 +112,9 @@ func (d *DAG) Goals() []*model.Climb {
 	return result
 }
 
-// AddGoals inserts new climbs into an existing DAG. Used for correction climbs
+// AddClimbs inserts new climbs into an existing DAG. Used for correction climbs
 // from anchor redistribution.
-func (d *DAG) AddGoals(goals []model.Climb) {
+func (d *DAG) AddClimbs(goals []model.Climb) {
 	for i := range goals {
 		g := goals[i]
 		d.goals[g.ID] = &g

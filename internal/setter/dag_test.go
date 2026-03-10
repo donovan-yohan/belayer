@@ -15,7 +15,7 @@ func TestBuildDAG_Simple(t *testing.T) {
 	}
 
 	dag := BuildDAG(climbs)
-	ready := dag.ReadyGoals()
+	ready := dag.ReadyClimbs()
 
 	assert.Len(t, ready, 2)
 	ids := readyIDs(ready)
@@ -32,7 +32,7 @@ func TestBuildDAG_Linear(t *testing.T) {
 	}
 
 	dag := BuildDAG(climbs)
-	ready := dag.ReadyGoals()
+	ready := dag.ReadyClimbs()
 
 	require.Len(t, ready, 1)
 	assert.Equal(t, "a", ready[0].ID)
@@ -50,13 +50,13 @@ func TestBuildDAG_Diamond(t *testing.T) {
 	dag := BuildDAG(climbs)
 
 	// Only A should be ready initially.
-	ready := dag.ReadyGoals()
+	ready := dag.ReadyClimbs()
 	require.Len(t, ready, 1)
 	assert.Equal(t, "a", ready[0].ID)
 
 	// After A completes, B and C should be ready.
 	dag.MarkComplete("a")
-	ready = dag.ReadyGoals()
+	ready = dag.ReadyClimbs()
 	assert.Len(t, ready, 2)
 	ids := readyIDs(ready)
 	assert.Contains(t, ids, "b")
@@ -65,7 +65,7 @@ func TestBuildDAG_Diamond(t *testing.T) {
 	// After B and C complete, D should be ready.
 	dag.MarkComplete("b")
 	dag.MarkComplete("c")
-	ready = dag.ReadyGoals()
+	ready = dag.ReadyClimbs()
 	require.Len(t, ready, 1)
 	assert.Equal(t, "d", ready[0].ID)
 }
@@ -79,13 +79,13 @@ func TestMarkComplete_UnblocksDependents(t *testing.T) {
 	dag := BuildDAG(climbs)
 
 	// B should not be ready yet.
-	ready := dag.ReadyGoals()
+	ready := dag.ReadyClimbs()
 	require.Len(t, ready, 1)
 	assert.Equal(t, "a", ready[0].ID)
 
 	// Complete A; B should now be ready.
 	dag.MarkComplete("a")
-	ready = dag.ReadyGoals()
+	ready = dag.ReadyClimbs()
 	require.Len(t, ready, 1)
 	assert.Equal(t, "b", ready[0].ID)
 }
@@ -106,7 +106,7 @@ func TestAllComplete(t *testing.T) {
 	assert.True(t, dag.AllComplete())
 }
 
-func TestReadyGoals_SkipsRunning(t *testing.T) {
+func TestReadyClimbs_SkipsRunning(t *testing.T) {
 	climbs := []model.Climb{
 		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
 		{ID: "b", ProblemID: "p1", Status: model.ClimbStatusPending},
@@ -115,12 +115,12 @@ func TestReadyGoals_SkipsRunning(t *testing.T) {
 	dag := BuildDAG(climbs)
 	dag.MarkRunning("a")
 
-	ready := dag.ReadyGoals()
+	ready := dag.ReadyClimbs()
 	require.Len(t, ready, 1)
 	assert.Equal(t, "b", ready[0].ID)
 }
 
-func TestReadyGoals_SkipsFailed(t *testing.T) {
+func TestReadyClimbs_SkipsFailed(t *testing.T) {
 	climbs := []model.Climb{
 		{ID: "a", ProblemID: "p1", Status: model.ClimbStatusPending},
 		{ID: "b", ProblemID: "p1", Status: model.ClimbStatusPending},
@@ -129,7 +129,7 @@ func TestReadyGoals_SkipsFailed(t *testing.T) {
 	dag := BuildDAG(climbs)
 	dag.MarkFailed("a")
 
-	ready := dag.ReadyGoals()
+	ready := dag.ReadyClimbs()
 	require.Len(t, ready, 1)
 	assert.Equal(t, "b", ready[0].ID)
 }
@@ -137,7 +137,7 @@ func TestReadyGoals_SkipsFailed(t *testing.T) {
 func TestEmptyDAG(t *testing.T) {
 	dag := BuildDAG(nil)
 
-	ready := dag.ReadyGoals()
+	ready := dag.ReadyClimbs()
 	assert.Empty(t, ready)
 	assert.True(t, dag.AllComplete())
 }

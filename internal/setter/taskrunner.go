@@ -26,16 +26,16 @@ import (
 	"github.com/donovan-yohan/belayer/internal/tmux"
 )
 
-// DoneJSON is the structured output a lead writes to DONE.json.
-type DoneJSON struct {
+// TopJSON is the structured output a lead writes to TOP.json.
+type TopJSON struct {
 	Status       string   `json:"status"`
 	Summary      string   `json:"summary"`
 	FilesChanged []string `json:"files_changed"`
 	Notes        string   `json:"notes"`
 }
 
-// QueuedGoal is a climb waiting to be spawned.
-type QueuedGoal struct {
+// QueuedClimb is a climb waiting to be spawned.
+type QueuedClimb struct {
 	Goal            model.Climb
 	TaskID          string
 	SpotterFeedback string // empty on first attempt, populated on retry after spotter rejection
@@ -56,8 +56,8 @@ func (r *RealGitRunner) Run(workdir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// TaskRunner manages the lifecycle of a single problem.
-type TaskRunner struct {
+// ProblemRunner manages the lifecycle of a single problem.
+type ProblemRunner struct {
 	task        *model.Problem
 	dag         *DAG
 	worktrees   map[string]string // repoName -> worktreePath
@@ -77,15 +77,15 @@ type TaskRunner struct {
 	// Anchor state
 	anchorAttempt int
 	anchorRunning bool
-	taskDir        string // directory for VERDICT.json
+	problemDir    string // directory for VERDICT.json
 
 	// Validation
-	validationEnabled bool // when true, DONE.json triggers spotting instead of direct completion
+	validationEnabled bool // when true, TOP.json triggers spotting instead of direct completion
 }
 
-// NewTaskRunner creates a TaskRunner for the given problem.
-func NewTaskRunner(task *model.Problem, instanceDir, globalCfgDir, instanceCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *TaskRunner {
-	return &TaskRunner{
+// NewProblemRunner creates a ProblemRunner for the given problem.
+func NewProblemRunner(task *model.Problem, instanceDir, globalCfgDir, instanceCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *ProblemRunner {
+	return &ProblemRunner{
 		task:              task,
 		worktrees:         make(map[string]string),
 		instanceDir:       instanceDir,
@@ -101,28 +101,28 @@ func NewTaskRunner(task *model.Problem, instanceDir, globalCfgDir, instanceCfgDi
 	}
 }
 
-// Init initializes the task: creates worktrees, tmux session, and builds the DAG.
-// Returns ready goals that should be queued for spawning.
-func (tr *TaskRunner) Init() ([]QueuedGoal, error) {
-	// Update task status to running
+// Init initializes the problem: creates worktrees, tmux session, and builds the DAG.
+// Returns ready climbs that should be queued for spawning.
+func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
+	// Update problem status to running
 	if err := tr.store.UpdateProblemStatus(tr.task.ID, model.ProblemStatusRunning); err != nil {
 		return nil, fmt.Errorf("updating problem status: %w", err)
 	}
 	tr.task.Status = model.ProblemStatusRunning
 
 	// Parse climbs from the problem
-	goals, err := tr.store.GetClimbsForProblem(tr.task.ID)
+	climbs, err := tr.store.GetClimbsForProblem(tr.task.ID)
 	if err != nil {
-		return nil, fmt.Errorf("getting goals: %w", err)
+		return nil, fmt.Errorf("getting climbs: %w", err)
 	}
 
 	// Build DAG
-	tr.dag = BuildDAG(goals)
+	tr.dag = BuildDAG(climbs)
 
 	// Get unique repos
 	repos := make(map[string]bool)
-	for _, g := range goals {
-		repos[g.RepoName] = true
+	for _, climb := range climbs {
+		repos[climb.RepoName] = true
 	}
 
 	// Create worktrees
@@ -134,12 +134,12 @@ func (tr *TaskRunner) Init() ([]QueuedGoal, error) {
 		tr.worktrees[repoName] = worktreePath
 	}
 
-	// Set task directory for VERDICT.json
-	tr.taskDir = filepath.Join(tr.instanceDir, "tasks", tr.task.ID)
-	os.MkdirAll(tr.taskDir, 0o755)
+	// Set problem directory for VERDICT.json
+	tr.problemDir = filepath.Join(tr.instanceDir, "tasks", tr.task.ID)
+	os.MkdirAll(tr.problemDir, 0o755)
 
 	// Create tmux session
-	tr.tmuxSession = fmt.Sprintf("belayer-task-%s", tr.task.ID)
+	tr.tmuxSession = fmt.Sprintf("belayer-problem-%s", tr.task.ID)
 	if !tr.tmux.HasSession(tr.tmuxSession) {
 		if err := tr.tmux.NewSession(tr.tmuxSession); err != nil {
 			return nil, fmt.Errorf("creating tmux session: %w", err)
@@ -151,34 +151,34 @@ func (tr *TaskRunner) Init() ([]QueuedGoal, error) {
 		return nil, fmt.Errorf("ensuring log dir: %w", err)
 	}
 
-	// Find ready goals
-	readyGoals := tr.dag.ReadyGoals()
-	var queued []QueuedGoal
-	for _, g := range readyGoals {
-		queued = append(queued, QueuedGoal{Goal: g, TaskID: tr.task.ID})
+	// Find ready climbs
+	readyClimbs := tr.dag.ReadyClimbs()
+	var queued []QueuedClimb
+	for _, climb := range readyClimbs {
+		queued = append(queued, QueuedClimb{Goal: climb, TaskID: tr.task.ID})
 	}
 
 	return queued, nil
 }
 
-// SpawnGoal creates a tmux window for a goal and launches an agent session.
-func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
-	goal := queued.Goal
+// SpawnClimb creates a tmux window for a climb and launches an agent session.
+func (tr *ProblemRunner) SpawnClimb(queued QueuedClimb) error {
+	climb := queued.Goal
 
 	// Guard: don't spawn if the climb is already running in the DAG
-	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.ClimbStatusRunning {
+	if dagClimb := tr.dag.Get(climb.ID); dagClimb != nil && dagClimb.Status == model.ClimbStatusRunning {
 		return nil
 	}
 
 	// If this is a retry after spotter failure, reset climb status to pending first
-	if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil && dagGoal.Status == model.ClimbStatusFailed {
-		if err := tr.store.ResetClimbStatus(goal.ID); err != nil {
+	if dagClimb := tr.dag.Get(climb.ID); dagClimb != nil && dagClimb.Status == model.ClimbStatusFailed {
+		if err := tr.store.ResetClimbStatus(climb.ID); err != nil {
 			return fmt.Errorf("resetting climb status: %w", err)
 		}
-		dagGoal.Status = model.ClimbStatusPending
+		dagClimb.Status = model.ClimbStatusPending
 	}
 
-	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
+	windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
 
 	// Create tmux window
 	if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
@@ -191,34 +191,34 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 	}
 
 	// Enable pipe-pane logging
-	logPath := tr.logMgr.LogPath(tr.task.ID, goal.ID)
+	logPath := tr.logMgr.LogPath(tr.task.ID, climb.ID)
 	if err := tr.tmux.PipePane(tr.tmuxSession, windowName, logPath); err != nil {
 		log.Printf("warning: pipe-pane for %s failed: %v", windowName, err)
 	}
 
 	// Prepare worktree environment with GOAL.json
-	worktreePath := tr.worktrees[goal.RepoName]
+	worktreePath := tr.worktrees[climb.RepoName]
 
 	appendPrompt, err := defaults.FS.ReadFile("claudemd/lead.md")
 	if err != nil {
 		return fmt.Errorf("reading lead system prompt: %w", err)
 	}
 
-	if err := climbctx.WriteClimbJSON(worktreePath, goal.ID, climbctx.LeadClimb{
+	if err := climbctx.WriteClimbJSON(worktreePath, climb.ID, climbctx.LeadClimb{
 		Role:            "lead",
 		ProblemSpec:     tr.task.Spec,
-		ClimbID:         goal.ID,
-		RepoName:        goal.RepoName,
-		Description:     goal.Description,
-		Attempt:         goal.Attempt,
+		ClimbID:         climb.ID,
+		RepoName:        climb.RepoName,
+		Description:     climb.Description,
+		Attempt:         climb.Attempt,
 		SpotterFeedback: queued.SpotterFeedback,
 	}); err != nil {
-		return fmt.Errorf("writing GOAL.json for %s: %w", goal.ID, err)
+		return fmt.Errorf("writing GOAL.json for %s: %w", climb.ID, err)
 	}
 
-	mailAddr := fmt.Sprintf("task/%s/lead/%s/%s", tr.task.ID, goal.RepoName, goal.ID)
+	mailAddr := fmt.Sprintf("problem/%s/lead/%s/%s", tr.task.ID, climb.RepoName, climb.ID)
 
-	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", goal.ID)
+	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", climb.ID)
 	initialPrompt := fmt.Sprintf(`Read %s and begin working on your assignment. Follow the harness pipeline:
 
 1. Read %s to understand your goal and task spec
@@ -228,9 +228,9 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 5. Run /harness:review to run multi-agent code review and fix any findings
 6. Run /harness:reflect to update docs, capture learnings and retrospective
 7. Run /harness:complete to archive the plan and commit
-8. Write DONE.json in .lead/%s/ when complete
+8. Write TOP.json in .lead/%s/ when complete
 
-You are fully autonomous. Make decisions, document drift, and keep moving.`, goalJSONPath, goalJSONPath, goal.ID)
+You are fully autonomous. Make decisions, document drift, and keep moving.`, goalJSONPath, goalJSONPath, climb.ID)
 
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:        tr.tmuxSession,
@@ -240,120 +240,120 @@ You are fully autonomous. Make decisions, document drift, and keep moving.`, goa
 		InitialPrompt:      initialPrompt,
 		Env:                map[string]string{"BELAYER_MAIL_ADDRESS": mailAddr},
 	}); err != nil {
-		return fmt.Errorf("spawning agent for %s: %w", goal.ID, err)
+		return fmt.Errorf("spawning agent for %s: %w", climb.ID, err)
 	}
 
 	// Update status in DAG and SQLite
-	tr.dag.MarkRunning(goal.ID)
-	if err := tr.store.UpdateClimbStatus(goal.ID, model.ClimbStatusRunning); err != nil {
+	tr.dag.MarkRunning(climb.ID)
+	if err := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusRunning); err != nil {
 		return fmt.Errorf("updating climb status: %w", err)
 	}
 
-	if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventClimbStarted, "{}"); err != nil {
+	if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbStarted, "{}"); err != nil {
 		return fmt.Errorf("inserting climb_started event: %w", err)
 	}
 
-	tr.startedAt[goal.ID] = time.Now()
+	tr.startedAt[climb.ID] = time.Now()
 
 	return nil
 }
 
-// CheckCompletions scans worktrees for DONE.json files and returns newly unblocked goals
-// and the number of goals that completed this tick. When validation is enabled,
-// goals transition to spotting instead of completing directly.
-func (tr *TaskRunner) CheckCompletions() (newlyReady []QueuedGoal, completedCount int, err error) {
-	for _, g := range tr.dag.Goals() {
-		if g.Status != model.ClimbStatusRunning {
+// CheckCompletions scans worktrees for TOP.json files and returns newly unblocked climbs
+// and the number of climbs that completed this tick. When validation is enabled,
+// climbs transition to spotting instead of completing directly.
+func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completedCount int, err error) {
+	for _, climb := range tr.dag.Climbs() {
+		if climb.Status != model.ClimbStatusRunning {
 			continue
 		}
 
-		worktreePath := tr.worktrees[g.RepoName]
-		donePath := filepath.Join(worktreePath, ".lead", g.ID, "DONE.json")
+		worktreePath := tr.worktrees[climb.RepoName]
+		topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
 
-		data, readErr := os.ReadFile(donePath)
+		data, readErr := os.ReadFile(topPath)
 		if readErr != nil {
 			if os.IsNotExist(readErr) {
 				continue
 			}
-			return nil, 0, fmt.Errorf("reading DONE.json for %s: %w", g.ID, readErr)
+			return nil, 0, fmt.Errorf("reading TOP.json for %s: %w", climb.ID, readErr)
 		}
 
-		// Parse DONE.json
-		var done DoneJSON
-		if jsonErr := json.Unmarshal(data, &done); jsonErr != nil {
-			log.Printf("warning: invalid DONE.json for goal %s: %v", g.ID, jsonErr)
+		// Parse TOP.json
+		var top TopJSON
+		if jsonErr := json.Unmarshal(data, &top); jsonErr != nil {
+			log.Printf("warning: invalid TOP.json for climb %s: %v", climb.ID, jsonErr)
 			continue
 		}
 
 		if tr.validationEnabled {
 			// Transition to spotting — spotter will validate before marking complete
-			if spotErr := tr.SpawnSpotter(g); spotErr != nil {
-				log.Printf("warning: failed to spawn spotter for %s: %v", g.ID, spotErr)
+			if spotErr := tr.SpawnSpotter(climb); spotErr != nil {
+				log.Printf("warning: failed to spawn spotter for %s: %v", climb.ID, spotErr)
 				continue
 			}
 			// Do NOT kill the tmux window (spotter reuses it)
-			// Do NOT count as completed (goal is still in-flight)
-			log.Printf("setter: goal %s transitioned to spotting", g.ID)
+			// Do NOT count as completed (climb is still in-flight)
+			log.Printf("setter: climb %s transitioned to spotting", climb.ID)
 		} else {
 			// Validation disabled — mark complete directly
-			tr.dag.MarkComplete(g.ID)
-			if storeErr := tr.store.UpdateClimbStatus(g.ID, model.ClimbStatusComplete); storeErr != nil {
+			tr.dag.MarkComplete(climb.ID)
+			if storeErr := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); storeErr != nil {
 				return nil, 0, fmt.Errorf("updating climb status: %w", storeErr)
 			}
 
-			payload, _ := json.Marshal(done)
-			if eventErr := tr.store.InsertEvent(tr.task.ID, g.ID, model.EventClimbCompleted, string(payload)); eventErr != nil {
+			payload, _ := json.Marshal(top)
+			if eventErr := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbCompleted, string(payload)); eventErr != nil {
 				return nil, 0, fmt.Errorf("inserting climb_completed event: %w", eventErr)
 			}
 
-			delete(tr.startedAt, g.ID)
+			delete(tr.startedAt, climb.ID)
 			completedCount++
 
 			// Kill the tmux window and its process tree
-			windowName := fmt.Sprintf("%s-%s", g.RepoName, g.ID)
+			windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
 			tr.killPaneProcessTree(windowName)
 			tr.tmux.KillWindow(tr.tmuxSession, windowName)
 
 			// Check log rotation
-			tr.logMgr.CheckRotation(tr.task.ID, g.ID)
+			tr.logMgr.CheckRotation(tr.task.ID, climb.ID)
 		}
 	}
 
-	// Only check for newly unblocked goals if something actually completed
+	// Only check for newly unblocked climbs if something actually completed
 	if completedCount > 0 {
-		readyGoals := tr.dag.ReadyGoals()
-		for _, g := range readyGoals {
-			newlyReady = append(newlyReady, QueuedGoal{Goal: g, TaskID: tr.task.ID})
+		readyClimbs := tr.dag.ReadyClimbs()
+		for _, climb := range readyClimbs {
+			newlyReady = append(newlyReady, QueuedClimb{Goal: climb, TaskID: tr.task.ID})
 		}
 	}
 
 	return newlyReady, completedCount, nil
 }
 
-// CheckStaleGoals checks for goals that have been running too long or whose window died.
-func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal, error) {
-	var retryGoals []QueuedGoal
+// CheckStaleClimbs checks for climbs that have been running too long or whose window died.
+func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedClimb, error) {
+	var retryClimbs []QueuedClimb
 	now := time.Now()
 
-	for _, g := range tr.dag.Goals() {
+	for _, climb := range tr.dag.Climbs() {
 		var windowName string
-		switch g.Status {
+		switch climb.Status {
 		case model.ClimbStatusRunning:
-			windowName = fmt.Sprintf("%s-%s", g.RepoName, g.ID)
+			windowName = fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
 		case model.ClimbStatusSpotting:
-			windowName = fmt.Sprintf("spot-%s", g.ID)
+			windowName = fmt.Sprintf("spot-%s", climb.ID)
 		default:
 			continue
 		}
 		windowDead := !tr.windowExists(windowName)
 		reason := "window died"
 
-		startedAt, tracked := tr.startedAt[g.ID]
+		startedAt, tracked := tr.startedAt[climb.ID]
 		timedOut := tracked && now.Sub(startedAt) > staleTimeout
 
 		// Check for silence — no log output for silenceThreshold
 		if !windowDead && !timedOut {
-			logPath := tr.logMgr.LogPath(tr.task.ID, g.ID)
+			logPath := tr.logMgr.LogPath(tr.task.ID, climb.ID)
 			if info, statErr := os.Stat(logPath); statErr == nil {
 				silenceThreshold := 2 * time.Minute
 				if now.Sub(info.ModTime()) > silenceThreshold {
@@ -378,15 +378,15 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 		}
 
 		// Check one more time for signal file before marking failed
-		worktreePath := tr.worktrees[g.RepoName]
-		if g.Status == model.ClimbStatusSpotting {
-			spotPath := filepath.Join(worktreePath, ".lead", g.ID, "SPOT.json")
+		worktreePath := tr.worktrees[climb.RepoName]
+		if climb.Status == model.ClimbStatusSpotting {
+			spotPath := filepath.Join(worktreePath, ".lead", climb.ID, "SPOT.json")
 			if _, err := os.Stat(spotPath); err == nil {
-				continue // will be picked up by CheckSpottingGoals
+				continue // will be picked up by CheckSpottingClimbs
 			}
 		} else {
-			donePath := filepath.Join(worktreePath, ".lead", g.ID, "DONE.json")
-			if _, err := os.Stat(donePath); err == nil {
+			topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
+			if _, err := os.Stat(topPath); err == nil {
 				continue // will be picked up by CheckCompletions
 			}
 		}
@@ -394,54 +394,54 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 		if timedOut {
 			reason = "timed out"
 		}
-		log.Printf("goal %s marked failed: %s", g.ID, reason)
+		log.Printf("climb %s marked failed: %s", climb.ID, reason)
 
 		// Mark failed
-		tr.dag.MarkFailed(g.ID)
-		if err := tr.store.UpdateClimbStatus(g.ID, model.ClimbStatusFailed); err != nil {
+		tr.dag.MarkFailed(climb.ID)
+		if err := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusFailed); err != nil {
 			return nil, fmt.Errorf("updating climb status: %w", err)
 		}
 
 		payload := fmt.Sprintf(`{"reason":"%s"}`, reason)
-		if err := tr.store.InsertEvent(tr.task.ID, g.ID, model.EventClimbFailed, payload); err != nil {
+		if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbFailed, payload); err != nil {
 			return nil, fmt.Errorf("inserting climb_failed event: %w", err)
 		}
 
-		delete(tr.startedAt, g.ID)
+		delete(tr.startedAt, climb.ID)
 
 		// Retry if under 3 attempts
-		if g.Attempt < 3 {
-			if err := tr.store.IncrementClimbAttempt(g.ID); err != nil {
+		if climb.Attempt < 3 {
+			if err := tr.store.IncrementClimbAttempt(climb.ID); err != nil {
 				return nil, fmt.Errorf("incrementing climb attempt: %w", err)
 			}
-			if err := tr.store.ResetClimbStatus(g.ID); err != nil {
+			if err := tr.store.ResetClimbStatus(climb.ID); err != nil {
 				return nil, fmt.Errorf("resetting climb status: %w", err)
 			}
-			g.Attempt++
-			tr.dag.Get(g.ID).Status = model.ClimbStatusPending
-			tr.dag.Get(g.ID).Attempt = g.Attempt
-			retryGoals = append(retryGoals, QueuedGoal{Goal: *tr.dag.Get(g.ID), TaskID: tr.task.ID})
+			climb.Attempt++
+			tr.dag.Get(climb.ID).Status = model.ClimbStatusPending
+			tr.dag.Get(climb.ID).Attempt = climb.Attempt
+			retryClimbs = append(retryClimbs, QueuedClimb{Goal: *tr.dag.Get(climb.ID), TaskID: tr.task.ID})
 		}
 	}
 
-	return retryGoals, nil
+	return retryClimbs, nil
 }
 
-// CheckSpottingGoals checks goals in "spotting" status for SPOT.json results.
-// Returns the count of goals that resolved (passed or failed), newly unblocked goals,
-// and goals to re-queue for retry with spotter feedback.
-// Note: CheckSpotResult already handles marking goals complete/failed, incrementing
-// attempts, and removing DONE.json on failure — this method only collects results
+// CheckSpottingClimbs checks climbs in "spotting" status for SPOT.json results.
+// Returns the count of climbs that resolved (passed or failed), newly unblocked climbs,
+// and climbs to re-queue for retry with spotter feedback.
+// Note: CheckSpotResult already handles marking climbs complete/failed, incrementing
+// attempts, and removing TOP.json on failure — this method only collects results
 // for the setter to manage queue/lead accounting.
-func (tr *TaskRunner) CheckSpottingGoals() (resolvedCount int, newlyReady []QueuedGoal, retryGoals []QueuedGoal, err error) {
-	for _, g := range tr.dag.Goals() {
-		if g.Status != model.ClimbStatusSpotting {
+func (tr *ProblemRunner) CheckSpottingClimbs() (resolvedCount int, newlyReady []QueuedClimb, retryClimbs []QueuedClimb, err error) {
+	for _, climb := range tr.dag.Climbs() {
+		if climb.Status != model.ClimbStatusSpotting {
 			continue
 		}
 
-		spot, found, checkErr := tr.CheckSpotResult(g)
+		spot, found, checkErr := tr.CheckSpotResult(climb)
 		if checkErr != nil {
-			log.Printf("setter: error checking spot result for %s: %v", g.ID, checkErr)
+			log.Printf("setter: error checking spot result for %s: %v", climb.ID, checkErr)
 			continue
 		}
 		if !found {
@@ -451,37 +451,37 @@ func (tr *TaskRunner) CheckSpottingGoals() (resolvedCount int, newlyReady []Queu
 		resolvedCount++
 
 		if spot.Pass {
-			// Goal validated successfully, check for newly unblocked goals
-			readyGoals := tr.dag.ReadyGoals()
-			for _, rg := range readyGoals {
-				newlyReady = append(newlyReady, QueuedGoal{Goal: rg, TaskID: tr.task.ID})
+			// Climb validated successfully, check for newly unblocked climbs
+			readyClimbs := tr.dag.ReadyClimbs()
+			for _, rc := range readyClimbs {
+				newlyReady = append(newlyReady, QueuedClimb{Goal: rc, TaskID: tr.task.ID})
 			}
 		} else {
 			// Spot failed — re-queue for retry if under max attempts
 			// (CheckSpotResult already incremented attempt, so use <= 3)
-			if g.Attempt <= 3 {
-				retryGoals = append(retryGoals, QueuedGoal{
-					Goal:            *g,
+			if climb.Attempt <= 3 {
+				retryClimbs = append(retryClimbs, QueuedClimb{
+					Goal:            *climb,
 					TaskID:          tr.task.ID,
 					SpotterFeedback: SpotterFeedbackForGoal(spot),
 				})
-				log.Printf("setter: goal %s re-queued for retry after spot failure (attempt %d)", g.ID, g.Attempt)
+				log.Printf("setter: climb %s re-queued for retry after spot failure (attempt %d)", climb.ID, climb.Attempt)
 			}
 		}
 	}
 
-	return resolvedCount, newlyReady, retryGoals, nil
+	return resolvedCount, newlyReady, retryClimbs, nil
 }
 
-// AllGoalsComplete returns true if all goals in the DAG are complete.
-func (tr *TaskRunner) AllGoalsComplete() bool {
+// AllClimbsComplete returns true if all climbs in the DAG are complete.
+func (tr *ProblemRunner) AllClimbsComplete() bool {
 	return tr.dag.AllComplete()
 }
 
-// HasStuckGoals returns true if any goal has failed with max attempts reached.
-func (tr *TaskRunner) HasStuckGoals() bool {
-	for _, g := range tr.dag.Goals() {
-		if g.Status == model.ClimbStatusFailed && g.Attempt >= 3 {
+// HasStuckClimbs returns true if any climb has failed with max attempts reached.
+func (tr *ProblemRunner) HasStuckClimbs() bool {
+	for _, climb := range tr.dag.Climbs() {
+		if climb.Status == model.ClimbStatusFailed && climb.Attempt >= 3 {
 			return true
 		}
 	}
@@ -489,7 +489,7 @@ func (tr *TaskRunner) HasStuckGoals() bool {
 }
 
 // Cleanup kills process trees in all windows, then kills the tmux session and compresses logs.
-func (tr *TaskRunner) Cleanup() {
+func (tr *ProblemRunner) Cleanup() {
 	if tr.tmuxSession != "" {
 		// Kill process trees in all windows before destroying the session
 		windows, err := tr.tmux.ListWindows(tr.tmuxSession)
@@ -505,8 +505,8 @@ func (tr *TaskRunner) Cleanup() {
 	}
 	tr.logMgr.CompressTaskLogs(tr.task.ID)
 
-	// Clean up mail for this task
-	mailTaskDir := filepath.Join(tr.instanceDir, "mail", "task", tr.task.ID)
+	// Clean up mail for this problem
+	mailTaskDir := filepath.Join(tr.instanceDir, "mail", "problem", tr.task.ID)
 	if err := os.RemoveAll(mailTaskDir); err != nil {
 		log.Printf("warning: failed to clean up task mail directory %s: %v", mailTaskDir, err)
 	}
@@ -519,7 +519,7 @@ func (tr *TaskRunner) Cleanup() {
 //
 // Note: if the pane shell has already exited (remain-on-exit), orphaned
 // processes are reparented to init and won't appear under pgrep -P.
-func (tr *TaskRunner) killPaneProcessTree(windowName string) {
+func (tr *ProblemRunner) killPaneProcessTree(windowName string) {
 	pid, err := tr.tmux.GetPanePID(tr.tmuxSession, windowName)
 	if err != nil {
 		log.Printf("warning: could not get pane PID for %s: %v", windowName, err)
@@ -571,8 +571,8 @@ func collectDescendants(ppid int) []int {
 	return pids
 }
 
-// windowExists checks if a window exists in the task's tmux session.
-func (tr *TaskRunner) windowExists(windowName string) bool {
+// windowExists checks if a window exists in the problem's tmux session.
+func (tr *ProblemRunner) windowExists(windowName string) bool {
 	windows, err := tr.tmux.ListWindows(tr.tmuxSession)
 	if err != nil {
 		return false
@@ -585,8 +585,8 @@ func (tr *TaskRunner) windowExists(windowName string) bool {
 	return false
 }
 
-// writeProfiles writes validation profiles to <worktreePath>/.lead/<goalID>/profiles/ for agent discovery.
-func (tr *TaskRunner) writeProfiles(worktreePath, goalID string) (map[string]string, error) {
+// writeProfiles writes validation profiles to <worktreePath>/.lead/<climbID>/profiles/ for agent discovery.
+func (tr *ProblemRunner) writeProfiles(worktreePath, goalID string) (map[string]string, error) {
 	profileDir := filepath.Join(worktreePath, ".lead", goalID, "profiles")
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating profiles directory: %w", err)
@@ -612,18 +612,18 @@ func (tr *TaskRunner) writeProfiles(worktreePath, goalID string) (map[string]str
 	return profiles, nil
 }
 
-// TaskID returns the task's ID.
-func (tr *TaskRunner) TaskID() string {
+// TaskID returns the problem's ID.
+func (tr *ProblemRunner) TaskID() string {
 	return tr.task.ID
 }
 
 // TmuxSession returns the tmux session name.
-func (tr *TaskRunner) TmuxSession() string {
+func (tr *ProblemRunner) TmuxSession() string {
 	return tr.tmuxSession
 }
 
 // GatherDiffs collects git diffs from all repo worktrees.
-func (tr *TaskRunner) GatherDiffs() []climbctx.RepoDiff {
+func (tr *ProblemRunner) GatherDiffs() []climbctx.RepoDiff {
 	var diffs []climbctx.RepoDiff
 	for repoName, worktreePath := range tr.worktrees {
 		diffStat, err := tr.git.Run(worktreePath, "diff", "--stat", "HEAD")
@@ -658,26 +658,26 @@ func (tr *TaskRunner) GatherDiffs() []climbctx.RepoDiff {
 	return diffs
 }
 
-// GatherSummaries reads DONE.json from each worktree and returns goal summaries.
-func (tr *TaskRunner) GatherSummaries() []climbctx.ClimbSummary {
+// GatherSummaries reads TOP.json from each worktree and returns climb summaries.
+func (tr *ProblemRunner) GatherSummaries() []climbctx.ClimbSummary {
 	var summaries []climbctx.ClimbSummary
-	for _, g := range tr.dag.Goals() {
+	for _, climb := range tr.dag.Climbs() {
 		summary := climbctx.ClimbSummary{
-			ClimbID:     g.ID,
-			RepoName:    g.RepoName,
-			Description: g.Description,
-			Status:      string(g.Status),
+			ClimbID:     climb.ID,
+			RepoName:    climb.RepoName,
+			Description: climb.Description,
+			Status:      string(climb.Status),
 		}
 
-		worktreePath := tr.worktrees[g.RepoName]
-		donePath := filepath.Join(worktreePath, ".lead", g.ID, "DONE.json")
-		data, err := os.ReadFile(donePath)
+		worktreePath := tr.worktrees[climb.RepoName]
+		topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
+		data, err := os.ReadFile(topPath)
 		if err == nil {
-			var done DoneJSON
-			if json.Unmarshal(data, &done) == nil {
-				summary.Summary = done.Summary
-				summary.Notes = done.Notes
-				summary.Status = done.Status
+			var top TopJSON
+			if json.Unmarshal(data, &top) == nil {
+				summary.Summary = top.Summary
+				summary.Notes = top.Notes
+				summary.Status = top.Status
 			}
 		}
 
@@ -688,23 +688,23 @@ func (tr *TaskRunner) GatherSummaries() []climbctx.ClimbSummary {
 
 // SpawnSpotter transitions a climb to "spotting" and spawns a spotter agent in
 // the same tmux window the lead used (the lead has already exited).
-func (tr *TaskRunner) SpawnSpotter(goal *model.Climb) error {
+func (tr *ProblemRunner) SpawnSpotter(climb *model.Climb) error {
 	// Mark climb as spotting in DAG and SQLite
-	tr.dag.MarkSpotting(goal.ID)
-	if err := tr.store.UpdateClimbStatus(goal.ID, model.ClimbStatusSpotting); err != nil {
+	tr.dag.MarkSpotting(climb.ID)
+	if err := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusSpotting); err != nil {
 		return fmt.Errorf("updating climb status to spotting: %w", err)
 	}
 
-	worktreePath := tr.worktrees[goal.RepoName]
+	worktreePath := tr.worktrees[climb.RepoName]
 
 	// Kill the lead's window and its process tree (dev servers, etc.)
-	leadWindowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
+	leadWindowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
 	tr.killPaneProcessTree(leadWindowName)
 	time.Sleep(300 * time.Millisecond) // grace period for SIGTERM handlers
 	tr.tmux.KillWindow(tr.tmuxSession, leadWindowName)
 
 	// Create a new window for the spotter
-	windowName := fmt.Sprintf("spot-%s", goal.ID)
+	windowName := fmt.Sprintf("spot-%s", climb.ID)
 	if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
 		return fmt.Errorf("creating spotter window %s: %w", windowName, err)
 	}
@@ -719,35 +719,35 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Climb) error {
 		return fmt.Errorf("reading spotter system prompt: %w", err)
 	}
 
-	// Write profiles to .lead/<goalID>/profiles/ for agent discovery
-	profiles, err := tr.writeProfiles(worktreePath, goal.ID)
+	// Write profiles to .lead/<climbID>/profiles/ for agent discovery
+	profiles, err := tr.writeProfiles(worktreePath, climb.ID)
 	if err != nil {
-		return fmt.Errorf("writing profiles for %s: %w", goal.ID, err)
+		return fmt.Errorf("writing profiles for %s: %w", climb.ID, err)
 	}
 
-	// Read DONE.json for context
-	donePath := filepath.Join(worktreePath, ".lead", goal.ID, "DONE.json")
-	doneData, readErr := os.ReadFile(donePath)
+	// Read TOP.json for context
+	topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
+	topData, readErr := os.ReadFile(topPath)
 	if readErr != nil {
-		doneData = []byte("{}")
+		topData = []byte("{}")
 	}
 
 	// Write GOAL.json for spotter
-	if err := climbctx.WriteClimbJSON(worktreePath, goal.ID, climbctx.SpotterClimb{
+	if err := climbctx.WriteClimbJSON(worktreePath, climb.ID, climbctx.SpotterClimb{
 		Role:        "spotter",
-		ClimbID:     goal.ID,
-		RepoName:    goal.RepoName,
-		Description: goal.Description,
+		ClimbID:     climb.ID,
+		RepoName:    climb.RepoName,
+		Description: climb.Description,
 		WorkDir:     worktreePath,
 		Profiles:    profiles,
-		TopJSON:     string(doneData),
+		TopJSON:     string(topData),
 	}); err != nil {
-		return fmt.Errorf("writing spotter GOAL.json for %s: %w", goal.ID, err)
+		return fmt.Errorf("writing spotter GOAL.json for %s: %w", climb.ID, err)
 	}
 
-	spotterMailAddr := fmt.Sprintf("task/%s/spotter/%s/%s", tr.task.ID, goal.RepoName, goal.ID)
+	spotterMailAddr := fmt.Sprintf("problem/%s/spotter/%s/%s", tr.task.ID, climb.RepoName, climb.ID)
 
-	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", goal.ID)
+	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", climb.ID)
 
 	// Spawn agent in a new window
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
@@ -758,102 +758,102 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Climb) error {
 		InitialPrompt:      fmt.Sprintf("Read %s and begin validating the lead's work.", goalJSONPath),
 		Env:                map[string]string{"BELAYER_MAIL_ADDRESS": spotterMailAddr},
 	}); err != nil {
-		return fmt.Errorf("spawning spotter for %s: %w", goal.ID, err)
+		return fmt.Errorf("spawning spotter for %s: %w", climb.ID, err)
 	}
 
-	if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventSpotterSpawned,
-		fmt.Sprintf(`{"climb_id":"%s"}`, goal.ID)); err != nil {
+	if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventSpotterSpawned,
+		fmt.Sprintf(`{"climb_id":"%s"}`, climb.ID)); err != nil {
 		log.Printf("warning: failed to insert spotter_spawned event: %v", err)
 	}
 
-	tr.startedAt[goal.ID] = time.Now()
+	tr.startedAt[climb.ID] = time.Now()
 
-	log.Printf("spotter: spawned for goal %s (task %s)", goal.ID, tr.task.ID)
+	log.Printf("spotter: spawned for climb %s (problem %s)", climb.ID, tr.task.ID)
 	return nil
 }
 
 // CheckSpotResult checks for a SPOT.json file in the climb's worktree and parses it.
 // Returns the result, whether one was found, and any error.
-func (tr *TaskRunner) CheckSpotResult(goal *model.Climb) (*spotter.SpotJSON, bool, error) {
-	worktreePath := tr.worktrees[goal.RepoName]
-	spotPath := filepath.Join(worktreePath, ".lead", goal.ID, "SPOT.json")
+func (tr *ProblemRunner) CheckSpotResult(climb *model.Climb) (*spotter.SpotJSON, bool, error) {
+	worktreePath := tr.worktrees[climb.RepoName]
+	spotPath := filepath.Join(worktreePath, ".lead", climb.ID, "SPOT.json")
 
 	data, err := os.ReadFile(spotPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil
 		}
-		return nil, false, fmt.Errorf("reading SPOT.json for %s: %w", goal.ID, err)
+		return nil, false, fmt.Errorf("reading SPOT.json for %s: %w", climb.ID, err)
 	}
 
 	var spot spotter.SpotJSON
 	if err := json.Unmarshal(data, &spot); err != nil {
-		return nil, false, fmt.Errorf("parsing SPOT.json for %s: %w", goal.ID, err)
+		return nil, false, fmt.Errorf("parsing SPOT.json for %s: %w", climb.ID, err)
 	}
 
 	// Record the spotter verdict event
 	payload, _ := json.Marshal(spot)
-	if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventSpotterVerdict, string(payload)); err != nil {
+	if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventSpotterVerdict, string(payload)); err != nil {
 		log.Printf("warning: failed to insert spotter_verdict event: %v", err)
 	}
 
 	// Kill the spotter tmux window and its process tree (dev servers, etc.)
-	windowName := fmt.Sprintf("spot-%s", goal.ID)
+	windowName := fmt.Sprintf("spot-%s", climb.ID)
 	tr.killPaneProcessTree(windowName)
 	time.Sleep(300 * time.Millisecond) // grace period for SIGTERM handlers
 	tr.tmux.KillWindow(tr.tmuxSession, windowName)
-	delete(tr.startedAt, goal.ID)
+	delete(tr.startedAt, climb.ID)
 
 	// Remove SPOT.json so it's not picked up again
 	os.Remove(spotPath)
 
 	if spot.Pass {
 		// Mark climb complete
-		tr.dag.MarkComplete(goal.ID)
-		if err := tr.store.UpdateClimbStatus(goal.ID, model.ClimbStatusComplete); err != nil {
+		tr.dag.MarkComplete(climb.ID)
+		if err := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); err != nil {
 			return &spot, true, fmt.Errorf("updating climb status to complete: %w", err)
 		}
 
-		if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventClimbCompleted,
+		if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbCompleted,
 			string(payload)); err != nil {
 			log.Printf("warning: failed to insert climb_completed event: %v", err)
 		}
 
 		// Check log rotation
-		tr.logMgr.CheckRotation(tr.task.ID, goal.ID)
+		tr.logMgr.CheckRotation(tr.task.ID, climb.ID)
 
-		log.Printf("spotter: climb %s passed validation", goal.ID)
+		log.Printf("spotter: climb %s passed validation", climb.ID)
 	} else {
 		// Mark climb failed for retry
-		tr.dag.MarkFailed(goal.ID)
-		if err := tr.store.UpdateClimbStatus(goal.ID, model.ClimbStatusFailed); err != nil {
+		tr.dag.MarkFailed(climb.ID)
+		if err := tr.store.UpdateClimbStatus(climb.ID, model.ClimbStatusFailed); err != nil {
 			return &spot, true, fmt.Errorf("updating climb status to failed: %w", err)
 		}
 
 		// Increment attempt for retry tracking
-		if err := tr.store.IncrementClimbAttempt(goal.ID); err != nil {
+		if err := tr.store.IncrementClimbAttempt(climb.ID); err != nil {
 			log.Printf("warning: failed to increment climb attempt: %v", err)
 		}
-		if dagGoal := tr.dag.Get(goal.ID); dagGoal != nil {
-			dagGoal.Attempt++
+		if dagClimb := tr.dag.Get(climb.ID); dagClimb != nil {
+			dagClimb.Attempt++
 		}
 
-		if err := tr.store.InsertEvent(tr.task.ID, goal.ID, model.EventClimbFailed,
+		if err := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbFailed,
 			string(payload)); err != nil {
 			log.Printf("warning: failed to insert climb_failed event: %v", err)
 		}
 
-		// Remove DONE.json so the retry starts fresh
-		os.Remove(filepath.Join(worktreePath, ".lead", goal.ID, "DONE.json"))
+		// Remove TOP.json so the retry starts fresh
+		os.Remove(filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json"))
 
-		log.Printf("spotter: goal %s failed validation with %d issues", goal.ID, len(spot.Issues))
+		log.Printf("spotter: climb %s failed validation with %d issues", climb.ID, len(spot.Issues))
 	}
 
 	return &spot, true, nil
 }
 
 // SpawnAnchor creates a tmux window for the anchor agent and launches it.
-func (tr *TaskRunner) SpawnAnchor() error {
+func (tr *ProblemRunner) SpawnAnchor() error {
 	tr.anchorAttempt++
 	windowName := "anchor"
 
@@ -884,7 +884,7 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		return fmt.Errorf("reading anchor system prompt: %w", err)
 	}
 
-	if err := climbctx.WriteClimbJSON(tr.taskDir, "anchor", climbctx.AnchorClimb{
+	if err := climbctx.WriteClimbJSON(tr.problemDir, "anchor", climbctx.AnchorClimb{
 		Role:        "anchor",
 		ProblemSpec: tr.task.Spec,
 		RepoDiffs:   tr.GatherDiffs(),
@@ -894,13 +894,13 @@ func (tr *TaskRunner) SpawnAnchor() error {
 	}
 
 	// Set mail address for the anchor agent
-	anchorMailAddr := fmt.Sprintf("task/%s/anchor", tr.task.ID)
+	anchorMailAddr := fmt.Sprintf("problem/%s/anchor", tr.task.ID)
 
 	// Spawn agent
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:        tr.tmuxSession,
 		WindowName:         windowName,
-		WorkDir:            tr.taskDir,
+		WorkDir:            tr.problemDir,
 		AppendSystemPrompt: string(appendPrompt),
 		InitialPrompt:      "Read .lead/anchor/GOAL.json and begin cross-repo review.",
 		Env:                map[string]string{"BELAYER_MAIL_ADDRESS": anchorMailAddr},
@@ -915,14 +915,14 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		log.Printf("warning: failed to insert anchor_spawned event: %v", err)
 	}
 
-	log.Printf("anchor: spawned for task %s (attempt %d)", tr.task.ID, tr.anchorAttempt)
+	log.Printf("anchor: spawned for problem %s (attempt %d)", tr.task.ID, tr.anchorAttempt)
 	return nil
 }
 
 // CheckAnchorVerdict checks for a VERDICT.json file and parses it.
 // Returns the verdict, whether one was found, and any error.
-func (tr *TaskRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error) {
-	verdictPath := filepath.Join(tr.taskDir, "VERDICT.json")
+func (tr *ProblemRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error) {
+	verdictPath := filepath.Join(tr.problemDir, "VERDICT.json")
 	data, err := os.ReadFile(verdictPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -960,12 +960,12 @@ func (tr *TaskRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error) {
 	// Remove VERDICT.json so it's not picked up again
 	os.Remove(verdictPath)
 
-	log.Printf("anchor: verdict for task %s: %s", tr.task.ID, verdict.Verdict)
+	log.Printf("anchor: verdict for problem %s: %s", tr.task.ID, verdict.Verdict)
 	return &verdict, true, nil
 }
 
-// HandleApproval creates PRs for all repos after spotter approval.
-func (tr *TaskRunner) HandleApproval() error {
+// HandleApproval creates PRs for all repos after anchor approval.
+func (tr *ProblemRunner) HandleApproval() error {
 	for repoName, worktreePath := range tr.worktrees {
 		prURL, err := tr.createPR(repoName, worktreePath)
 		if err != nil {
@@ -984,16 +984,16 @@ func (tr *TaskRunner) HandleApproval() error {
 }
 
 // createPR pushes the worktree branch and creates a PR via gh CLI.
-func (tr *TaskRunner) createPR(repoName, worktreePath string) (string, error) {
+func (tr *ProblemRunner) createPR(repoName, worktreePath string) (string, error) {
 	// Push the branch
-	branchName := fmt.Sprintf("belayer/task-%s/%s", tr.task.ID, repoName)
+	branchName := fmt.Sprintf("belayer/problem-%s/%s", tr.task.ID, repoName)
 
 	if _, err := tr.git.Run(worktreePath, "push", "-u", "origin", "HEAD:"+branchName); err != nil {
 		return "", fmt.Errorf("pushing branch: %w", err)
 	}
 
 	// Create PR via gh CLI
-	title := fmt.Sprintf("[belayer] Task %s: %s", tr.task.ID, repoName)
+	title := fmt.Sprintf("[belayer] Problem %s: %s", tr.task.ID, repoName)
 	prURL, err := tr.git.Run(worktreePath, "-c", "gh", "pr", "create", "--title", title, "--body", "Created by belayer spotter review.", "--head", branchName)
 	if err != nil {
 		// gh isn't a git command — need to exec directly
@@ -1010,21 +1010,21 @@ func (tr *TaskRunner) createPR(repoName, worktreePath string) (string, error) {
 }
 
 // HandleRejection creates correction climbs for failing repos and prepares for new leads.
-func (tr *TaskRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedGoal, error) {
+func (tr *ProblemRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedClimb, error) {
 	var correctionClimbs []model.Climb
-	var queued []QueuedGoal
+	var queued []QueuedClimb
 
 	for repoName, rv := range verdict.Repos {
 		if rv.Status != "fail" {
 			continue
 		}
 
-		// Remove old DONE.json files from the failing repo's worktree
+		// Remove old TOP.json files from the failing repo's worktree
 		worktreePath, ok := tr.worktrees[repoName]
 		if ok {
-			for _, g := range tr.dag.Goals() {
-				if g.RepoName == repoName {
-					os.Remove(filepath.Join(worktreePath, ".lead", g.ID, "DONE.json"))
+			for _, climb := range tr.dag.Climbs() {
+				if climb.RepoName == repoName {
+					os.Remove(filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json"))
 				}
 			}
 		}
@@ -1041,7 +1041,7 @@ func (tr *TaskRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedGoal
 				Status:      model.ClimbStatusPending,
 			}
 			correctionClimbs = append(correctionClimbs, c)
-			queued = append(queued, QueuedGoal{Goal: c, TaskID: tr.task.ID})
+			queued = append(queued, QueuedClimb{Goal: c, TaskID: tr.task.ID})
 		}
 	}
 
@@ -1055,25 +1055,25 @@ func (tr *TaskRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedGoal
 	}
 
 	// Add to DAG
-	tr.dag.AddGoals(correctionClimbs)
+	tr.dag.AddClimbs(correctionClimbs)
 
-	log.Printf("anchor: created %d correction climbs for task %s", len(correctionClimbs), tr.task.ID)
+	log.Printf("anchor: created %d correction climbs for problem %s", len(correctionClimbs), tr.task.ID)
 	return queued, nil
 }
 
 // AnchorAttempt returns the current anchor review attempt count.
-func (tr *TaskRunner) AnchorAttempt() int {
+func (tr *ProblemRunner) AnchorAttempt() int {
 	return tr.anchorAttempt
 }
 
 // AnchorRunning returns whether the anchor is currently active.
-func (tr *TaskRunner) AnchorRunning() bool {
+func (tr *ProblemRunner) AnchorRunning() bool {
 	return tr.anchorRunning
 }
 
-// IsSingleRepo returns true if the task involves only one repository,
+// IsSingleRepo returns true if the problem involves only one repository,
 // meaning cross-repo anchor review can be skipped.
-func (tr *TaskRunner) IsSingleRepo() bool {
+func (tr *ProblemRunner) IsSingleRepo() bool {
 	return len(tr.worktrees) <= 1
 }
 

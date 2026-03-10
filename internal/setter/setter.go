@@ -47,8 +47,8 @@ type Setter struct {
 	globalConfigDir   string
 	instanceConfigDir string
 
-	tasks       map[string]*TaskRunner // problemID -> runner
-	leadQueue   []QueuedGoal           // FIFO queue
+	problems    map[string]*ProblemRunner // problemID -> runner
+	leadQueue   []QueuedClimb             // FIFO queue
 	activeLeads int
 }
 
@@ -63,7 +63,7 @@ func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, instanceCfgDir st
 		tmux:              tm,
 		logMgr:            logmgr.New(cfg.InstanceDir + "/logs"),
 		spawner:           sp,
-		tasks:             make(map[string]*TaskRunner),
+		problems:          make(map[string]*ProblemRunner),
 	}
 }
 
@@ -72,7 +72,7 @@ func (s *Setter) Run(ctx context.Context) error {
 	log.Printf("setter: starting for instance %q (max-leads=%d, poll=%s, stale=%s)",
 		s.config.InstanceName, s.config.MaxLeads, s.config.PollInterval, s.config.StaleTimeout)
 
-	// Crash recovery: resume any running/reviewing tasks
+	// Crash recovery: resume any running/reviewing problems
 	if err := s.recover(); err != nil {
 		log.Printf("setter: recovery error: %v", err)
 	}
@@ -84,11 +84,11 @@ func (s *Setter) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			log.Println("setter: shutting down")
-			for taskID, runner := range s.tasks {
-				log.Printf("setter: cleaning up task %s", taskID)
+			for taskID, runner := range s.problems {
+				log.Printf("setter: cleaning up problem %s", taskID)
 				runner.Cleanup()
 			}
-			log.Printf("setter: cleaned up %d task(s)", len(s.tasks))
+			log.Printf("setter: cleaned up %d problem(s)", len(s.problems))
 			return ctx.Err()
 		case <-ticker.C:
 			if err := s.tick(); err != nil {
@@ -100,18 +100,18 @@ func (s *Setter) Run(ctx context.Context) error {
 
 // tick performs one iteration of the event loop.
 func (s *Setter) tick() error {
-	// 1. Poll for new pending tasks
-	if err := s.pollPendingTasks(); err != nil {
-		return fmt.Errorf("polling pending tasks: %w", err)
+	// 1. Poll for new pending problems
+	if err := s.pollPendingProblems(); err != nil {
+		return fmt.Errorf("polling pending problems: %w", err)
 	}
 
-	// 2. Process each active task
-	for taskID, runner := range s.tasks {
-		// Handle task based on current status
+	// 2. Process each active problem
+	for taskID, runner := range s.problems {
+		// Handle problem based on current status
 		taskStatus := runner.task.Status
 
 		if taskStatus == model.ProblemStatusRunning {
-			// Check for completed goals (may transition to spotting if validation enabled)
+			// Check for completed climbs (may transition to spotting if validation enabled)
 			newlyReady, completedCount, err := runner.CheckCompletions()
 			if err != nil {
 				log.Printf("setter: error checking completions for %s: %v", taskID, err)
@@ -123,10 +123,10 @@ func (s *Setter) tick() error {
 			}
 			s.leadQueue = append(s.leadQueue, newlyReady...)
 
-			// Check spotting goals for SPOT.json results
-			spotResolved, spotReady, spotRetry, spotErr := runner.CheckSpottingGoals()
+			// Check spotting climbs for SPOT.json results
+			spotResolved, spotReady, spotRetry, spotErr := runner.CheckSpottingClimbs()
 			if spotErr != nil {
-				log.Printf("setter: error checking spotting goals for %s: %v", taskID, spotErr)
+				log.Printf("setter: error checking spotting climbs for %s: %v", taskID, spotErr)
 			} else {
 				s.activeLeads -= spotResolved
 				if s.activeLeads < 0 {
@@ -136,17 +136,17 @@ func (s *Setter) tick() error {
 				s.leadQueue = append(s.leadQueue, spotRetry...)
 			}
 
-			// Check for stale goals
-			retryGoals, err := runner.CheckStaleGoals(s.config.StaleTimeout)
+			// Check for stale climbs
+			retryClimbs, err := runner.CheckStaleClimbs(s.config.StaleTimeout)
 			if err != nil {
-				log.Printf("setter: error checking stale goals for %s: %v", taskID, err)
+				log.Printf("setter: error checking stale climbs for %s: %v", taskID, err)
 				continue
 			}
-			s.leadQueue = append(s.leadQueue, retryGoals...)
+			s.leadQueue = append(s.leadQueue, retryClimbs...)
 
-			// Check if all goals are complete -> transition to reviewing
-			if runner.AllGoalsComplete() {
-				log.Printf("setter: all goals complete for task %s — transitioning to reviewing", taskID)
+			// Check if all climbs are complete -> transition to reviewing
+			if runner.AllClimbsComplete() {
+				log.Printf("setter: all climbs complete for problem %s — transitioning to reviewing", taskID)
 				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusReviewing); err != nil {
 					log.Printf("setter: error updating problem status: %v", err)
 				}
@@ -155,22 +155,22 @@ func (s *Setter) tick() error {
 				continue
 			}
 
-			// Check if task is stuck (goals failed at max attempts)
-			if runner.HasStuckGoals() {
-				log.Printf("setter: task %s has stuck goals — marking stuck", taskID)
+			// Check if problem is stuck (climbs failed at max attempts)
+			if runner.HasStuckClimbs() {
+				log.Printf("setter: problem %s has stuck climbs — marking stuck", taskID)
 				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusStuck); err != nil {
 					log.Printf("setter: error updating problem status: %v", err)
 				}
 				runner.Cleanup()
-				delete(s.tasks, taskID)
+				delete(s.problems, taskID)
 				continue
 			}
 		}
 
 		if taskStatus == model.ProblemStatusReviewing {
-			// Skip anchor review for single-repo tasks — no cross-repo alignment to check
+			// Skip anchor review for single-repo problems — no cross-repo alignment to check
 			if runner.IsSingleRepo() {
-				log.Printf("setter: single-repo task %s — skipping anchor, creating PR", taskID)
+				log.Printf("setter: single-repo problem %s — skipping anchor, creating PR", taskID)
 				if err := runner.HandleApproval(); err != nil {
 					log.Printf("setter: error creating PRs for %s: %v", taskID, err)
 				}
@@ -178,7 +178,7 @@ func (s *Setter) tick() error {
 					log.Printf("setter: error completing problem: %v", err)
 				}
 				runner.Cleanup()
-				delete(s.tasks, taskID)
+				delete(s.problems, taskID)
 				continue
 			}
 
@@ -210,23 +210,23 @@ func (s *Setter) tick() error {
 					log.Printf("setter: error completing problem: %v", err)
 				}
 				runner.Cleanup()
-				delete(s.tasks, taskID)
+				delete(s.problems, taskID)
 				continue
 			}
 
 			// Verdict is reject
 			if runner.AnchorAttempt() >= 2 {
-				log.Printf("setter: task %s stuck after %d anchor reviews", taskID, runner.AnchorAttempt())
+				log.Printf("setter: problem %s stuck after %d anchor reviews", taskID, runner.AnchorAttempt())
 				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusStuck); err != nil {
 					log.Printf("setter: error marking problem stuck: %v", err)
 				}
 				runner.Cleanup()
-				delete(s.tasks, taskID)
+				delete(s.problems, taskID)
 				continue
 			}
 
-			// Create correction goals and go back to running
-			correctionGoals, err := runner.HandleRejection(verdict)
+			// Create correction climbs and go back to running
+			correctionClimbs, err := runner.HandleRejection(verdict)
 			if err != nil {
 				log.Printf("setter: error handling rejection for %s: %v", taskID, err)
 				continue
@@ -236,8 +236,8 @@ func (s *Setter) tick() error {
 				log.Printf("setter: error updating problem status: %v", err)
 			}
 			runner.task.Status = model.ProblemStatusRunning
-			s.leadQueue = append(s.leadQueue, correctionGoals...)
-			log.Printf("setter: task %s back to running with %d correction goals", taskID, len(correctionGoals))
+			s.leadQueue = append(s.leadQueue, correctionClimbs...)
+			log.Printf("setter: problem %s back to running with %d correction climbs", taskID, len(correctionClimbs))
 		}
 	}
 
@@ -247,8 +247,8 @@ func (s *Setter) tick() error {
 	return nil
 }
 
-// pollPendingTasks picks up new pending tasks and initializes them.
-func (s *Setter) pollPendingTasks() error {
+// pollPendingProblems picks up new pending problems and initializes them.
+func (s *Setter) pollPendingProblems() error {
 	pending, err := s.store.GetPendingProblems(s.config.InstanceName)
 	if err != nil {
 		return err
@@ -256,22 +256,22 @@ func (s *Setter) pollPendingTasks() error {
 
 	for i := range pending {
 		task := &pending[i]
-		if _, exists := s.tasks[task.ID]; exists {
+		if _, exists := s.problems[task.ID]; exists {
 			continue
 		}
 
-		log.Printf("setter: initializing task %s", task.ID)
+		log.Printf("setter: initializing problem %s", task.ID)
 
-		runner := NewTaskRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
-		readyGoals, err := runner.Init()
+		runner := NewProblemRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
+		readyClimbs, err := runner.Init()
 		if err != nil {
-			log.Printf("setter: error initializing task %s: %v", task.ID, err)
+			log.Printf("setter: error initializing problem %s: %v", task.ID, err)
 			s.store.UpdateProblemStatus(task.ID, model.ProblemStatusStuck)
 			continue
 		}
 
-		s.tasks[task.ID] = runner
-		s.leadQueue = append(s.leadQueue, readyGoals...)
+		s.problems[task.ID] = runner
+		s.leadQueue = append(s.leadQueue, readyClimbs...)
 	}
 
 	return nil
@@ -283,78 +283,78 @@ func (s *Setter) processLeadQueue() {
 		queued := s.leadQueue[0]
 		s.leadQueue = s.leadQueue[1:]
 
-		runner, ok := s.tasks[queued.TaskID]
+		runner, ok := s.problems[queued.TaskID]
 		if !ok {
-			continue // task was cleaned up
+			continue // problem was cleaned up
 		}
 
-		if err := runner.SpawnGoal(queued); err != nil {
-			log.Printf("setter: error spawning goal %s: %v", queued.Goal.ID, err)
+		if err := runner.SpawnClimb(queued); err != nil {
+			log.Printf("setter: error spawning climb %s: %v", queued.Goal.ID, err)
 			continue
 		}
 
 		s.activeLeads++
-		log.Printf("setter: spawned goal %s (active leads: %d/%d)", queued.Goal.ID, s.activeLeads, s.config.MaxLeads)
+		log.Printf("setter: spawned climb %s (active leads: %d/%d)", queued.Goal.ID, s.activeLeads, s.config.MaxLeads)
 	}
 }
 
-// recover attempts to resume tasks that were running when the setter last crashed.
+// recover attempts to resume problems that were running when the setter last crashed.
 func (s *Setter) recover() error {
 	active, err := s.store.GetActiveProblems(s.config.InstanceName)
 	if err != nil {
-		return fmt.Errorf("getting active tasks: %w", err)
+		return fmt.Errorf("getting active problems: %w", err)
 	}
 
 	for i := range active {
 		task := &active[i]
-		log.Printf("setter: recovering task %s (status=%s)", task.ID, task.Status)
+		log.Printf("setter: recovering problem %s (status=%s)", task.ID, task.Status)
 
-		runner := NewTaskRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
+		runner := NewProblemRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
 
-		// Load goals and build DAG (skip worktree creation since they should exist)
-		goals, err := s.store.GetClimbsForProblem(task.ID)
+		// Load climbs and build DAG (skip worktree creation since they should exist)
+		climbs, err := s.store.GetClimbsForProblem(task.ID)
 		if err != nil {
-			log.Printf("setter: error loading goals for %s: %v", task.ID, err)
+			log.Printf("setter: error loading climbs for %s: %v", task.ID, err)
 			continue
 		}
 
-		runner.dag = BuildDAG(goals)
-		runner.tmuxSession = fmt.Sprintf("belayer-task-%s", task.ID)
-		runner.taskDir = fmt.Sprintf("%s/tasks/%s", s.config.InstanceDir, task.ID)
+		runner.dag = BuildDAG(climbs)
+		runner.tmuxSession = fmt.Sprintf("belayer-problem-%s", task.ID)
+		runner.problemDir = fmt.Sprintf("%s/tasks/%s", s.config.InstanceDir, task.ID)
 
 		// Populate worktrees map
 		repos := make(map[string]bool)
-		for _, g := range goals {
-			repos[g.RepoName] = true
+		for _, climb := range climbs {
+			repos[climb.RepoName] = true
 		}
 		for repoName := range repos {
 			worktreePath := fmt.Sprintf("%s/tasks/%s/%s", s.config.InstanceDir, task.ID, repoName)
 			runner.worktrees[repoName] = worktreePath
 		}
 
-		// Check for DONE.json files that completed while we were down
+		// Check for TOP.json files that completed while we were down
 		if _, _, err := runner.CheckCompletions(); err != nil {
 			log.Printf("setter: error checking completions during recovery for %s: %v", task.ID, err)
 		}
 
-		s.tasks[task.ID] = runner
+		s.problems[task.ID] = runner
 
-		// Queue any goals that are ready (pending with deps met)
-		readyGoals := runner.dag.ReadyGoals()
-		for _, g := range readyGoals {
-			s.leadQueue = append(s.leadQueue, QueuedGoal{Goal: g, TaskID: task.ID})
+		// Queue any climbs that are ready (pending with deps met)
+		readyClimbs := runner.dag.ReadyClimbs()
+		for _, climb := range readyClimbs {
+			s.leadQueue = append(s.leadQueue, QueuedClimb{Goal: climb, TaskID: task.ID})
 		}
 	}
 
 	if len(active) > 0 {
-		log.Printf("setter: recovered %d task(s)", len(active))
+		log.Printf("setter: recovered %d problem(s)", len(active))
 	}
 
 	return nil
 }
 
-// GoalCount returns the count of leads being managed for a goal ID check.
-func (s *Setter) GoalCount(goalID string) int {
+// GoalCount returns the count of leads being managed for a climb ID check.
+func (s *Setter) GoalCount(climbID string) int {
 	return s.activeLeads
 }
 

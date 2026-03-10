@@ -174,7 +174,7 @@ func insertTestTask(t *testing.T, s *store.Store, taskID string, goals []model.C
 	require.NoError(t, s.InsertProblem(task, goals))
 }
 
-func TestTaskRunner_Init(t *testing.T) {
+func TestProblemRunner_Init(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Climb{
@@ -194,7 +194,7 @@ func TestTaskRunner_Init(t *testing.T) {
 	require.NoError(t, err)
 
 	// We need a mock that doesn't actually create git worktrees
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   make(map[string]string),
 		instanceDir: tmpDir,
@@ -210,13 +210,13 @@ func TestTaskRunner_Init(t *testing.T) {
 	goalsFromDB, err := s.GetClimbsForProblem("task-1")
 	require.NoError(t, err)
 	runner.dag = BuildDAG(goalsFromDB)
-	runner.tmuxSession = "belayer-task-task-1"
+	runner.tmuxSession = "belayer-problem-task-1"
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir("task-1"))
 	runner.worktrees["api"] = filepath.Join(tmpDir, "tasks", "task-1", "api")
 	runner.worktrees["app"] = filepath.Join(tmpDir, "tasks", "task-1", "app")
 
-	readyGoals := runner.dag.ReadyGoals()
+	readyGoals := runner.dag.ReadyClimbs()
 
 	// api-1 and app-1 should be ready (no deps)
 	assert.Len(t, readyGoals, 2)
@@ -229,7 +229,7 @@ func TestTaskRunner_Init(t *testing.T) {
 	assert.False(t, readyIDs["api-2"])
 }
 
-func TestTaskRunner_SpawnGoal(t *testing.T) {
+func TestProblemRunner_SpawnClimb(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Climb{
@@ -238,7 +238,7 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 	insertTestTask(t, s, "task-1", goals)
 
 	task, _ := s.GetProblem("task-1")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": filepath.Join(tmpDir, "api")},
 		instanceDir: tmpDir,
@@ -246,21 +246,21 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 		tmux:        tm,
 		logMgr:      lm,
 		spawner:     sp,
-		tmuxSession: "belayer-task-task-1",
+		tmuxSession: "belayer-problem-task-1",
 		startedAt:   make(map[string]time.Time),
 	}
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "api"), 0o755))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-1")
 	runner.dag = BuildDAG(goalsFromDB)
-	require.NoError(t, tm.NewSession("belayer-task-task-1"))
+	require.NoError(t, tm.NewSession("belayer-problem-task-1"))
 	require.NoError(t, lm.EnsureDir("task-1"))
 
-	err := runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-1"})
+	err := runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-1"})
 	require.NoError(t, err)
 
 	// Check window was created
-	windows, _ := tm.ListWindows("belayer-task-task-1")
+	windows, _ := tm.ListWindows("belayer-problem-task-1")
 	assert.Contains(t, windows, "api-api-1")
 
 	// Check goal is now running in DAG
@@ -278,7 +278,7 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 
 	// Check spawner was called with correct opts
 	require.Len(t, sp.spawned, 1)
-	assert.Equal(t, "belayer-task-task-1", sp.spawned[0].TmuxSession)
+	assert.Equal(t, "belayer-problem-task-1", sp.spawned[0].TmuxSession)
 	assert.Equal(t, "api-api-1", sp.spawned[0].WindowName)
 	assert.Equal(t, filepath.Join(tmpDir, "api"), sp.spawned[0].WorkDir)
 
@@ -292,7 +292,7 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 	assert.NotEmpty(t, sp.spawned[0].AppendSystemPrompt)
 }
 
-func TestTaskRunner_SpawnGoal_SetsMailAddress(t *testing.T) {
+func TestProblemRunner_SpawnClimb_SetsMailAddress(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Climb{
@@ -301,7 +301,7 @@ func TestTaskRunner_SpawnGoal_SetsMailAddress(t *testing.T) {
 	insertTestTask(t, s, "task-1", goals)
 
 	task, _ := s.GetProblem("task-1")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": filepath.Join(tmpDir, "api")},
 		instanceDir: tmpDir,
@@ -309,26 +309,26 @@ func TestTaskRunner_SpawnGoal_SetsMailAddress(t *testing.T) {
 		tmux:        tm,
 		logMgr:      lm,
 		spawner:     sp,
-		tmuxSession: "belayer-task-task-1",
+		tmuxSession: "belayer-problem-task-1",
 		startedAt:   make(map[string]time.Time),
 	}
 	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "api"), 0o755))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-1")
 	runner.dag = BuildDAG(goalsFromDB)
-	require.NoError(t, tm.NewSession("belayer-task-task-1"))
+	require.NoError(t, tm.NewSession("belayer-problem-task-1"))
 	require.NoError(t, lm.EnsureDir("task-1"))
 
-	err := runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-1"})
+	err := runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-1"})
 	require.NoError(t, err)
 
 	// Verify BELAYER_MAIL_ADDRESS was passed via Env in SpawnOpts
 	require.NotEmpty(t, sp.spawned, "should have spawned at least one agent")
 	lastSpawn := sp.spawned[len(sp.spawned)-1]
-	assert.Equal(t, "task/task-1/lead/api/api-1", lastSpawn.Env["BELAYER_MAIL_ADDRESS"])
+	assert.Equal(t, "problem/task-1/lead/api/api-1", lastSpawn.Env["BELAYER_MAIL_ADDRESS"])
 }
 
-func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
+func TestProblemRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Climb{
@@ -341,7 +341,7 @@ func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
 
 	task, _ := s.GetProblem("task-2")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:              task,
 		worktrees:         map[string]string{"api": worktreeDir},
 		instanceDir:       tmpDir,
@@ -349,21 +349,21 @@ func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 		tmux:              tm,
 		logMgr:            lm,
 		spawner:           sp,
-		tmuxSession:       "belayer-task-task-2",
+		tmuxSession:       "belayer-problem-task-2",
 		startedAt:         make(map[string]time.Time),
 		validationEnabled: false, // direct completion
 	}
-	require.NoError(t, tm.NewSession("belayer-task-task-2"))
+	require.NoError(t, tm.NewSession("belayer-problem-task-2"))
 	require.NoError(t, lm.EnsureDir("task-2"))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-2")
 	runner.dag = BuildDAG(goalsFromDB)
 
 	// Spawn api-1
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-2"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-2"}))
 
-	// Write DONE.json for api-1
-	doneJSON := DoneJSON{
+	// Write TOP.json for api-1
+	doneJSON := TopJSON{
 		Status:       "complete",
 		Summary:      "Did the thing",
 		FilesChanged: []string{"api/main.go"},
@@ -371,7 +371,7 @@ func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 	data, _ := json.Marshal(doneJSON)
 	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
 	require.NoError(t, os.MkdirAll(goalDoneDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), data, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), data, 0o644))
 
 	// Check completions — should find api-1 complete and api-2 ready
 	newlyReady, completedCount, err := runner.CheckCompletions()
@@ -383,7 +383,7 @@ func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 	assert.Equal(t, "api-2", newlyReady[0].Goal.ID)
 }
 
-func TestTaskRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
+func TestProblemRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Climb{
@@ -396,7 +396,7 @@ func TestTaskRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
 
 	task, _ := s.GetProblem("task-2v")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:              task,
 		worktrees:         map[string]string{"api": worktreeDir},
 		instanceDir:       tmpDir,
@@ -404,21 +404,21 @@ func TestTaskRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 		tmux:              tm,
 		logMgr:            lm,
 		spawner:           sp,
-		tmuxSession:       "belayer-task-task-2v",
+		tmuxSession:       "belayer-problem-task-2v",
 		startedAt:         make(map[string]time.Time),
 		validationEnabled: true,
 	}
-	require.NoError(t, tm.NewSession("belayer-task-task-2v"))
+	require.NoError(t, tm.NewSession("belayer-problem-task-2v"))
 	require.NoError(t, lm.EnsureDir("task-2v"))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-2v")
 	runner.dag = BuildDAG(goalsFromDB)
 
 	// Spawn api-1
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-2v"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-2v"}))
 
-	// Write DONE.json for api-1 to goal-scoped path
-	doneJSON := DoneJSON{
+	// Write TOP.json for api-1 to goal-scoped path
+	doneJSON := TopJSON{
 		Status:       "complete",
 		Summary:      "Did the thing",
 		FilesChanged: []string{"api/main.go"},
@@ -426,7 +426,7 @@ func TestTaskRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 	data, _ := json.Marshal(doneJSON)
 	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
 	require.NoError(t, os.MkdirAll(goalDoneDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), data, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), data, 0o644))
 
 	// Check completions — with validation enabled, goal should be spotting, not complete
 	newlyReady, completedCount, err := runner.CheckCompletions()
@@ -438,10 +438,10 @@ func TestTaskRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
 
 	// api-2 should NOT be ready (api-1 is spotting, not complete)
-	assert.False(t, runner.AllGoalsComplete())
+	assert.False(t, runner.AllClimbsComplete())
 }
 
-func TestTaskRunner_CheckStaleGoals(t *testing.T) {
+func TestProblemRunner_CheckStaleClimbs(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Climb{
@@ -453,7 +453,7 @@ func TestTaskRunner_CheckStaleGoals(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
 
 	task, _ := s.GetProblem("task-3")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": worktreeDir},
 		instanceDir: tmpDir,
@@ -461,21 +461,21 @@ func TestTaskRunner_CheckStaleGoals(t *testing.T) {
 		tmux:        tm,
 		logMgr:      lm,
 		spawner:     sp,
-		tmuxSession: "belayer-task-task-3",
+		tmuxSession: "belayer-problem-task-3",
 		startedAt:   make(map[string]time.Time),
 	}
-	require.NoError(t, tm.NewSession("belayer-task-task-3"))
+	require.NoError(t, tm.NewSession("belayer-problem-task-3"))
 	require.NoError(t, lm.EnsureDir("task-3"))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-3")
 	runner.dag = BuildDAG(goalsFromDB)
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-3"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-3"}))
 
 	// Kill the window to simulate crash
-	tm.KillWindow("belayer-task-task-3", "api-api-1")
+	tm.KillWindow("belayer-problem-task-3", "api-api-1")
 
 	// Check stale goals
-	retryGoals, err := runner.CheckStaleGoals(30 * time.Minute)
+	retryGoals, err := runner.CheckStaleClimbs(30 * time.Minute)
 	require.NoError(t, err)
 
 	// Goal should be retried (attempt 0 -> 1)
@@ -486,7 +486,7 @@ func TestTaskRunner_CheckStaleGoals(t *testing.T) {
 	assert.Equal(t, model.ClimbStatusPending, runner.dag.Get("api-1").Status)
 }
 
-func TestTaskRunner_StaleTimeout(t *testing.T) {
+func TestProblemRunner_StaleTimeout(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
 	goals := []model.Climb{
@@ -498,7 +498,7 @@ func TestTaskRunner_StaleTimeout(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
 
 	task, _ := s.GetProblem("task-4")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": worktreeDir},
 		instanceDir: tmpDir,
@@ -506,28 +506,28 @@ func TestTaskRunner_StaleTimeout(t *testing.T) {
 		tmux:        tm,
 		logMgr:      lm,
 		spawner:     sp,
-		tmuxSession: "belayer-task-task-4",
+		tmuxSession: "belayer-problem-task-4",
 		startedAt:   make(map[string]time.Time),
 	}
-	require.NoError(t, tm.NewSession("belayer-task-task-4"))
+	require.NoError(t, tm.NewSession("belayer-problem-task-4"))
 	require.NoError(t, lm.EnsureDir("task-4"))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-4")
 	runner.dag = BuildDAG(goalsFromDB)
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-4"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-4"}))
 
 	// Backdate the start time to simulate timeout
 	runner.startedAt["api-1"] = time.Now().Add(-1 * time.Hour)
 
 	// Window is still alive, but goal timed out
-	retryGoals, err := runner.CheckStaleGoals(30 * time.Minute)
+	retryGoals, err := runner.CheckStaleClimbs(30 * time.Minute)
 	require.NoError(t, err)
 
 	require.Len(t, retryGoals, 1)
 	assert.Equal(t, "api-1", retryGoals[0].Goal.ID)
 }
 
-func TestTaskRunner_HasStuckGoals(t *testing.T) {
+func TestProblemRunner_HasStuckClimbs(t *testing.T) {
 	s, tm, lm, sp, _ := setupTestEnv(t)
 
 	goals := []model.Climb{
@@ -536,7 +536,7 @@ func TestTaskRunner_HasStuckGoals(t *testing.T) {
 	insertTestTask(t, s, "task-5", goals)
 
 	task, _ := s.GetProblem("task-5")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:      task,
 		store:     s,
 		tmux:      tm,
@@ -552,11 +552,11 @@ func TestTaskRunner_HasStuckGoals(t *testing.T) {
 	runner.dag.Get("api-1").Status = model.ClimbStatusFailed
 	runner.dag.Get("api-1").Attempt = 3
 
-	assert.True(t, runner.HasStuckGoals())
+	assert.True(t, runner.HasStuckClimbs())
 
 	// Reset to under max
 	runner.dag.Get("api-1").Attempt = 2
-	assert.False(t, runner.HasStuckGoals())
+	assert.False(t, runner.HasStuckClimbs())
 }
 
 func TestSetter_MaxLeadsCap(t *testing.T) {
@@ -574,7 +574,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
 
 	task, _ := s.GetProblem("task-6")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": worktreeDir},
 		instanceDir: tmpDir,
@@ -582,10 +582,10 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 		tmux:        tm,
 		logMgr:      lm,
 		spawner:     sp,
-		tmuxSession: "belayer-task-task-6",
+		tmuxSession: "belayer-problem-task-6",
 		startedAt:   make(map[string]time.Time),
 	}
-	require.NoError(t, tm.NewSession("belayer-task-task-6"))
+	require.NoError(t, tm.NewSession("belayer-problem-task-6"))
 	require.NoError(t, lm.EnsureDir("task-6"))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-6")
@@ -601,13 +601,13 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   map[string]*TaskRunner{"task-6": runner},
+		problems: map[string]*ProblemRunner{"task-6": runner},
 	}
 
 	// Queue all 3 goals
-	readyGoals := runner.dag.ReadyGoals()
+	readyGoals := runner.dag.ReadyClimbs()
 	for _, g := range readyGoals {
-		setter.leadQueue = append(setter.leadQueue, QueuedGoal{Goal: g, TaskID: "task-6"})
+		setter.leadQueue = append(setter.leadQueue, QueuedClimb{Goal: g, TaskID: "task-6"})
 	}
 
 	// Process queue — should only spawn 2 (maxLeads cap)
@@ -634,12 +634,12 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	worktreeDir := filepath.Join(tmpDir, "tasks", "task-7", "api")
 	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
 
-	// Write DONE.json that was written while setter was down (goal-scoped path)
-	doneJSON := DoneJSON{Status: "complete", Summary: "done while crashed"}
+	// Write TOP.json that was written while setter was down (goal-scoped path)
+	doneJSON := TopJSON{Status: "complete", Summary: "done while crashed"}
 	data, _ := json.Marshal(doneJSON)
 	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
 	require.NoError(t, os.MkdirAll(goalDoneDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), data, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), data, 0o644))
 
 	setter := &Setter{
 		config: Config{
@@ -651,7 +651,7 @@ func TestSetter_CrashRecovery(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   make(map[string]*TaskRunner),
+		problems: make(map[string]*ProblemRunner),
 	}
 
 	// Run recovery
@@ -659,11 +659,11 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	require.NoError(t, err)
 
 	// Task should have been recovered
-	require.Contains(t, setter.tasks, "task-7")
+	require.Contains(t, setter.problems, "task-7")
 
 	// With validation enabled (default), api-1 should be in spotting status
-	// (DONE.json found during recovery triggers spotter, not direct completion)
-	runner := setter.tasks["task-7"]
+	// (TOP.json found during recovery triggers spotter, not direct completion)
+	runner := setter.problems["task-7"]
 	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
 
 	// api-2 should NOT be ready yet (api-1 is spotting, not complete)
@@ -691,7 +691,7 @@ func TestSetter_RunTickCycle(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   make(map[string]*TaskRunner),
+		problems: make(map[string]*ProblemRunner),
 	}
 
 	// Run one tick with no tasks — should not error
@@ -706,7 +706,7 @@ func TestSetter_RunTickCycle(t *testing.T) {
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
-func TestDAG_AddGoals(t *testing.T) {
+func TestDAG_AddClimbs(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "p1", RepoName: "api", Description: "first", DependsOn: []string{}, Status: model.ClimbStatusComplete},
 	}
@@ -718,17 +718,17 @@ func TestDAG_AddGoals(t *testing.T) {
 		{ID: "api-corr-1-1", ProblemID: "p1", RepoName: "api", Description: "fix response", DependsOn: []string{}, Status: model.ClimbStatusPending},
 		{ID: "api-corr-1-2", ProblemID: "p1", RepoName: "api", Description: "fix tests", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
-	dag.AddGoals(corrGoals)
+	dag.AddClimbs(corrGoals)
 
 	assert.False(t, dag.AllComplete())
 	assert.NotNil(t, dag.Get("api-corr-1-1"))
 	assert.NotNil(t, dag.Get("api-corr-1-2"))
 
-	ready := dag.ReadyGoals()
+	ready := dag.ReadyClimbs()
 	assert.Len(t, ready, 2) // both correction goals should be ready
 }
 
-func newTestRunner(t *testing.T, taskID string, goals []model.Climb) (*TaskRunner, *store.Store, *mockTmux, *mockSpawner, *mockGitRunner, string) {
+func newTestRunner(t *testing.T, taskID string, goals []model.Climb) (*ProblemRunner, *store.Store, *mockTmux, *mockSpawner, *mockGitRunner, string) {
 	t.Helper()
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 	mg := newMockGitRunner()
@@ -753,7 +753,7 @@ func newTestRunner(t *testing.T, taskID string, goals []model.Climb) (*TaskRunne
 	require.NoError(t, s.UpdateProblemStatus(taskID, model.ProblemStatusRunning))
 	task.Status = model.ProblemStatusRunning
 
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   repos,
 		instanceDir: tmpDir,
@@ -762,8 +762,8 @@ func newTestRunner(t *testing.T, taskID string, goals []model.Climb) (*TaskRunne
 		logMgr:      lm,
 		spawner:     sp,
 		git:         mg,
-		tmuxSession: "belayer-task-" + taskID,
-		taskDir:     taskDir,
+		tmuxSession: "belayer-problem-" + taskID,
+		problemDir:  taskDir,
 		startedAt:   make(map[string]time.Time),
 	}
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
@@ -776,18 +776,18 @@ func newTestRunner(t *testing.T, taskID string, goals []model.Climb) (*TaskRunne
 	return runner, s, tm, sp, mg, tmpDir
 }
 
-func TestTaskRunner_SpawnAnchor(t *testing.T) {
+func TestProblemRunner_SpawnAnchor(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-s1", RepoName: "api", Description: "add endpoint", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
 	runner, _, tm, sp, mg, _ := newTestRunner(t, "task-s1", goals)
 
-	// Mark goal as complete with DONE.json (goal-scoped path)
+	// Mark goal as complete with TOP.json (goal-scoped path)
 	runner.dag.MarkComplete("api-1")
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "Added endpoint"})
 	goalDoneDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
 	os.MkdirAll(goalDoneDir, 0o755)
-	os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), doneData, 0o644)
 
 	// Set mock git responses
 	mg.responses[runner.worktrees["api"]+":diff"] = "+func NewEndpoint() {}"
@@ -808,10 +808,10 @@ func TestTaskRunner_SpawnAnchor(t *testing.T) {
 	require.Len(t, sp.spawned, 1)
 	assert.Equal(t, runner.tmuxSession, sp.spawned[0].TmuxSession)
 	assert.Equal(t, "anchor", sp.spawned[0].WindowName)
-	assert.Equal(t, runner.taskDir, sp.spawned[0].WorkDir)
+	assert.Equal(t, runner.problemDir, sp.spawned[0].WorkDir)
 
 	// Verify GOAL.json was written to goal-scoped path (.lead/anchor/)
-	goalJSON, err := os.ReadFile(filepath.Join(runner.taskDir, ".lead", "anchor", "GOAL.json"))
+	goalJSON, err := os.ReadFile(filepath.Join(runner.problemDir, ".lead", "anchor", "GOAL.json"))
 	require.NoError(t, err)
 	assert.Contains(t, string(goalJSON), "test spec")
 	assert.Contains(t, string(goalJSON), "anchor")
@@ -820,7 +820,7 @@ func TestTaskRunner_SpawnAnchor(t *testing.T) {
 	assert.NotEmpty(t, sp.spawned[0].AppendSystemPrompt)
 }
 
-func TestTaskRunner_CheckAnchorVerdict_Approve(t *testing.T) {
+func TestProblemRunner_CheckAnchorVerdict_Approve(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-s2", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
@@ -836,7 +836,7 @@ func TestTaskRunner_CheckAnchorVerdict_Approve(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(verdict)
-	require.NoError(t, os.WriteFile(filepath.Join(runner.taskDir, "VERDICT.json"), data, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(runner.problemDir, "VERDICT.json"), data, 0o644))
 
 	v, found, err := runner.CheckAnchorVerdict()
 	require.NoError(t, err)
@@ -845,7 +845,7 @@ func TestTaskRunner_CheckAnchorVerdict_Approve(t *testing.T) {
 	assert.False(t, runner.AnchorRunning())
 
 	// VERDICT.json should be removed
-	_, statErr := os.Stat(filepath.Join(runner.taskDir, "VERDICT.json"))
+	_, statErr := os.Stat(filepath.Join(runner.problemDir, "VERDICT.json"))
 	assert.True(t, os.IsNotExist(statErr))
 
 	// Review should be recorded in SQLite
@@ -855,7 +855,7 @@ func TestTaskRunner_CheckAnchorVerdict_Approve(t *testing.T) {
 	assert.Equal(t, 1, reviews[0].Attempt)
 }
 
-func TestTaskRunner_CheckAnchorVerdict_NotFound(t *testing.T) {
+func TestProblemRunner_CheckAnchorVerdict_NotFound(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-s3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
@@ -871,7 +871,7 @@ func TestTaskRunner_CheckAnchorVerdict_NotFound(t *testing.T) {
 	assert.True(t, runner.AnchorRunning()) // still running
 }
 
-func TestTaskRunner_HandleRejection(t *testing.T) {
+func TestProblemRunner_HandleRejection(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-s4", RepoName: "api", Description: "add endpoint", DependsOn: []string{}, Status: model.ClimbStatusPending},
 		{ID: "app-1", ProblemID: "task-s4", RepoName: "app", Description: "add UI", DependsOn: []string{}, Status: model.ClimbStatusPending},
@@ -879,16 +879,16 @@ func TestTaskRunner_HandleRejection(t *testing.T) {
 	runner, s, _, _, _, _ := newTestRunner(t, "task-s4", goals)
 	runner.anchorAttempt = 1
 
-	// Mark both goals as complete with DONE.json (goal-scoped paths)
+	// Mark both goals as complete with TOP.json (goal-scoped paths)
 	runner.dag.MarkComplete("api-1")
 	runner.dag.MarkComplete("app-1")
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 	apiGoalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
 	os.MkdirAll(apiGoalDir, 0o755)
-	os.WriteFile(filepath.Join(apiGoalDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(apiGoalDir, "TOP.json"), doneData, 0o644)
 	appGoalDir := filepath.Join(runner.worktrees["app"], ".lead", "app-1")
 	os.MkdirAll(appGoalDir, 0o755)
-	os.WriteFile(filepath.Join(appGoalDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(appGoalDir, "TOP.json"), doneData, 0o644)
 
 	verdict := &anchor.VerdictJSON{
 		Verdict: "reject",
@@ -908,11 +908,11 @@ func TestTaskRunner_HandleRejection(t *testing.T) {
 	assert.Equal(t, "Fix response schema", correctionGoals[0].Goal.Description)
 	assert.Equal(t, "Add error handling", correctionGoals[1].Goal.Description)
 
-	// DONE.json should be removed from failing repo only (goal-scoped paths)
-	_, apiDoneErr := os.Stat(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "DONE.json"))
+	// TOP.json should be removed from failing repo only (goal-scoped paths)
+	_, apiDoneErr := os.Stat(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "TOP.json"))
 	assert.True(t, os.IsNotExist(apiDoneErr))
-	_, appDoneErr := os.Stat(filepath.Join(runner.worktrees["app"], ".lead", "app-1", "DONE.json"))
-	assert.False(t, os.IsNotExist(appDoneErr)) // app's DONE.json should remain
+	_, appDoneErr := os.Stat(filepath.Join(runner.worktrees["app"], ".lead", "app-1", "TOP.json"))
+	assert.False(t, os.IsNotExist(appDoneErr)) // app's TOP.json should remain
 
 	// Correction goals should be in the DAG
 	assert.NotNil(t, runner.dag.Get("api-corr-1-1"))
@@ -945,7 +945,7 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-s5a")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		dag:         BuildDAG(goalsFromDB),
 		worktrees:   map[string]string{"api": worktreeDir},
@@ -955,8 +955,8 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 		logMgr:      lm,
 		spawner:     sp,
 		git:         mg,
-		tmuxSession: "belayer-task-task-s5a",
-		taskDir:     taskDir,
+		tmuxSession: "belayer-problem-task-s5a",
+		problemDir:  taskDir,
 		startedAt:   make(map[string]time.Time),
 	}
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
@@ -973,19 +973,19 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   map[string]*TaskRunner{"task-s5a": runner},
+		problems: map[string]*ProblemRunner{"task-s5a": runner},
 	}
 
 	// Disable validation for this test
 	runner.validationEnabled = false
 
-	// Spawn goal and write DONE.json
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s5a"}))
+	// Spawn goal and write TOP.json
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-s5a"}))
 	sett.activeLeads = 1
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
 	os.MkdirAll(goalDoneDir, 0o755)
-	os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), doneData, 0o644)
 
 	// First tick: detect completion, transition to reviewing
 	require.NoError(t, sett.tick())
@@ -997,7 +997,7 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 	assert.False(t, runner.AnchorRunning(), "anchor should not be spawned for single-repo task")
 	updatedTask, _ = s.GetProblem("task-s5a")
 	assert.Equal(t, model.ProblemStatusComplete, updatedTask.Status)
-	assert.NotContains(t, sett.tasks, "task-s5a") // cleaned up
+	assert.NotContains(t, sett.problems, "task-s5a") // cleaned up
 }
 
 func TestSetter_AnchorApproveFlow(t *testing.T) {
@@ -1021,7 +1021,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-s5")
 
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		dag:         BuildDAG(goalsFromDB),
 		worktrees:   map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
@@ -1031,8 +1031,8 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 		logMgr:      lm,
 		spawner:     sp,
 		git:         mg,
-		tmuxSession: "belayer-task-task-s5",
-		taskDir:     taskDir,
+		tmuxSession: "belayer-problem-task-s5",
+		problemDir:  taskDir,
 		startedAt:   make(map[string]time.Time),
 	}
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
@@ -1049,25 +1049,25 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   map[string]*TaskRunner{"task-s5": runner},
+		problems: map[string]*ProblemRunner{"task-s5": runner},
 	}
 
 	// Disable validation for this test (tests anchor flow, not spotter)
 	runner.validationEnabled = false
 
-	// Spawn both goals and write DONE.json for each (goal-scoped paths)
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s5"}))
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[1], TaskID: "task-s5"}))
+	// Spawn both goals and write TOP.json for each (goal-scoped paths)
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-s5"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[1], TaskID: "task-s5"}))
 	setter.activeLeads = 2
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 
 	apiDoneDir := filepath.Join(apiWorktreeDir, ".lead", "api-1")
 	os.MkdirAll(apiDoneDir, 0o755)
-	os.WriteFile(filepath.Join(apiDoneDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(apiDoneDir, "TOP.json"), doneData, 0o644)
 
 	webDoneDir := filepath.Join(webWorktreeDir, ".lead", "web-1")
 	os.MkdirAll(webDoneDir, 0o755)
-	os.WriteFile(filepath.Join(webDoneDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(webDoneDir, "TOP.json"), doneData, 0o644)
 
 	// First tick: detect completion, transition to reviewing
 	require.NoError(t, setter.tick())
@@ -1094,7 +1094,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	require.NoError(t, setter.tick())
 	updatedTask, _ = s.GetProblem("task-s5")
 	assert.Equal(t, model.ProblemStatusComplete, updatedTask.Status)
-	assert.NotContains(t, setter.tasks, "task-s5") // cleaned up
+	assert.NotContains(t, setter.problems, "task-s5") // cleaned up
 }
 
 func TestSetter_AnchorRejectThenApprove(t *testing.T) {
@@ -1117,7 +1117,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	require.NoError(t, os.MkdirAll(webWorktreeDir, 0o755))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-s6")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:        task,
 		dag:         BuildDAG(goalsFromDB),
 		worktrees:   map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
@@ -1127,8 +1127,8 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 		logMgr:      lm,
 		spawner:     sp,
 		git:         mg,
-		tmuxSession: "belayer-task-task-s6",
-		taskDir:     taskDir,
+		tmuxSession: "belayer-problem-task-s6",
+		problemDir:  taskDir,
 		startedAt:   make(map[string]time.Time),
 	}
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
@@ -1145,25 +1145,25 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   map[string]*TaskRunner{"task-s6": runner},
+		problems: map[string]*ProblemRunner{"task-s6": runner},
 	}
 
 	// Disable validation for this test (tests anchor reject/approve flow)
 	runner.validationEnabled = false
 
 	// Spawn both goals and complete them (goal-scoped paths)
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s6"}))
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[1], TaskID: "task-s6"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-s6"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[1], TaskID: "task-s6"}))
 	sett.activeLeads = 2
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 
 	apiDoneDir := filepath.Join(apiWorktreeDir, ".lead", "api-1")
 	os.MkdirAll(apiDoneDir, 0o755)
-	os.WriteFile(filepath.Join(apiDoneDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(apiDoneDir, "TOP.json"), doneData, 0o644)
 
 	webDoneDir := filepath.Join(webWorktreeDir, ".lead", "web-1")
 	os.MkdirAll(webDoneDir, 0o755)
-	os.WriteFile(filepath.Join(webDoneDir, "DONE.json"), doneData, 0o644)
+	os.WriteFile(filepath.Join(webDoneDir, "TOP.json"), doneData, 0o644)
 
 	// Tick 1: detect completion -> reviewing
 	require.NoError(t, sett.tick())
@@ -1197,8 +1197,8 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	corrGoalID := "api-corr-1-1"
 	corrDoneDir := filepath.Join(apiWorktreeDir, ".lead", corrGoalID)
 	os.MkdirAll(corrDoneDir, 0o755)
-	doneData2, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "fixed schema"})
-	os.WriteFile(filepath.Join(corrDoneDir, "DONE.json"), doneData2, 0o644)
+	doneData2, _ := json.Marshal(TopJSON{Status: "complete", Summary: "fixed schema"})
+	os.WriteFile(filepath.Join(corrDoneDir, "TOP.json"), doneData2, 0o644)
 
 	// Tick 4: detect correction goal completion -> reviewing again
 	require.NoError(t, sett.tick())
@@ -1252,7 +1252,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	require.NoError(t, os.MkdirAll(webWorktreeDir, 0o755))
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-s7")
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:           task,
 		dag:            BuildDAG(goalsFromDB),
 		worktrees:      map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
@@ -1262,8 +1262,8 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 		logMgr:         lm,
 		spawner:        sp,
 		git:            mg,
-		tmuxSession:    "belayer-task-task-s7",
-		taskDir:        taskDir,
+		tmuxSession:    "belayer-problem-task-s7",
+		problemDir:     taskDir,
 		startedAt:      make(map[string]time.Time),
 		anchorAttempt: 2, // already at max
 		anchorRunning: true,
@@ -1286,7 +1286,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   map[string]*TaskRunner{"task-s7": runner},
+		problems: map[string]*ProblemRunner{"task-s7": runner},
 	}
 
 	// Write reject verdict (2nd rejection at attempt 2)
@@ -1304,31 +1304,31 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	require.NoError(t, sett.tick())
 	updatedTask, _ := s.GetProblem("task-s7")
 	assert.Equal(t, model.ProblemStatusStuck, updatedTask.Status)
-	assert.NotContains(t, sett.tasks, "task-s7") // cleaned up
+	assert.NotContains(t, sett.problems, "task-s7") // cleaned up
 }
 
-func TestTaskRunner_GatherSummaries(t *testing.T) {
+func TestProblemRunner_GatherSummaries(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-gs", RepoName: "api", Description: "endpoint", DependsOn: []string{}, Status: model.ClimbStatusPending},
 		{ID: "app-1", ProblemID: "task-gs", RepoName: "app", Description: "ui", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
 	runner, _, _, _, _, _ := newTestRunner(t, "task-gs", goals)
 
-	// Mark both complete and write DONE.json
+	// Mark both complete and write TOP.json
 	runner.dag.MarkComplete("api-1")
 	runner.dag.MarkComplete("app-1")
 
-	apiDone := DoneJSON{Status: "complete", Summary: "Added endpoint", Notes: "Used middleware"}
-	appDone := DoneJSON{Status: "complete", Summary: "Added UI component"}
+	apiDone := TopJSON{Status: "complete", Summary: "Added endpoint", Notes: "Used middleware"}
+	appDone := TopJSON{Status: "complete", Summary: "Added UI component"}
 
 	apiData, _ := json.Marshal(apiDone)
 	appData, _ := json.Marshal(appDone)
 	apiGoalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
 	os.MkdirAll(apiGoalDir, 0o755)
-	os.WriteFile(filepath.Join(apiGoalDir, "DONE.json"), apiData, 0o644)
+	os.WriteFile(filepath.Join(apiGoalDir, "TOP.json"), apiData, 0o644)
 	appGoalDir := filepath.Join(runner.worktrees["app"], ".lead", "app-1")
 	os.MkdirAll(appGoalDir, 0o755)
-	os.WriteFile(filepath.Join(appGoalDir, "DONE.json"), appData, 0o644)
+	os.WriteFile(filepath.Join(appGoalDir, "TOP.json"), appData, 0o644)
 
 	summaries := runner.GatherSummaries()
 	assert.Len(t, summaries, 2)
@@ -1343,7 +1343,7 @@ func TestTaskRunner_GatherSummaries(t *testing.T) {
 	assert.Equal(t, "Added UI component", summaryMap["app-1"].Summary)
 }
 
-func TestTaskRunner_GatherDiffs(t *testing.T) {
+func TestProblemRunner_GatherDiffs(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-gd", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
@@ -1357,21 +1357,21 @@ func TestTaskRunner_GatherDiffs(t *testing.T) {
 	assert.Contains(t, diffs[0].Diff, "NewHandler")
 }
 
-func TestTaskRunner_SpawnSpotter(t *testing.T) {
+func TestProblemRunner_SpawnSpotter(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sp1", RepoName: "api", Description: "add endpoint", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
 	runner, s, _, sp, _, _ := newTestRunner(t, "task-sp1", goals)
 
 	// Spawn and complete the goal first
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-sp1"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-sp1"}))
 	assert.Equal(t, model.ClimbStatusRunning, runner.dag.Get("api-1").Status)
 
-	// Write DONE.json to goal-scoped path
+	// Write TOP.json to goal-scoped path
 	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
 	os.MkdirAll(goalDir, 0o755)
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
-	os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644)
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "Added endpoint"})
+	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
 
 	// Now spawn spotter on this goal
 	goal := runner.dag.Get("api-1")
@@ -1389,7 +1389,7 @@ func TestTaskRunner_SpawnSpotter(t *testing.T) {
 	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "spotter")
-	assert.Contains(t, string(goalJSON), "Added endpoint") // DONE.json content
+	assert.Contains(t, string(goalJSON), "Added endpoint") // TOP.json content
 
 	// Verify spotter_spawned event was recorded
 	events, _ := s.GetEventsForProblem("task-sp1")
@@ -1402,7 +1402,7 @@ func TestTaskRunner_SpawnSpotter(t *testing.T) {
 	assert.True(t, foundSpotterSpawned)
 }
 
-func TestTaskRunner_CheckSpotResult_Pass(t *testing.T) {
+func TestProblemRunner_CheckSpotResult_Pass(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sp2", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
@@ -1446,7 +1446,7 @@ func TestTaskRunner_CheckSpotResult_Pass(t *testing.T) {
 	assert.True(t, foundCompleted)
 }
 
-func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
+func TestProblemRunner_CheckSpotResult_Fail(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sp3", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
@@ -1455,12 +1455,12 @@ func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
 	// Put goal into spotting status
 	runner.dag.MarkSpotting("api-1")
 
-	// Write DONE.json and SPOT.json to goal-scoped paths
+	// Write TOP.json and SPOT.json to goal-scoped paths
 	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
 	require.NoError(t, os.MkdirAll(goalDir, 0o755))
 
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644))
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
+	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644))
 
 	// Write failing SPOT.json
 	spotData := `{"pass": false, "project_type": "frontend", "issues": [{"check": "build", "description": "Build failed", "severity": "error"}]}`
@@ -1484,8 +1484,8 @@ func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
 	_, statErr := os.Stat(filepath.Join(goalDir, "SPOT.json"))
 	assert.True(t, os.IsNotExist(statErr))
 
-	// DONE.json should be removed so retry starts fresh
-	_, doneStatErr := os.Stat(filepath.Join(goalDir, "DONE.json"))
+	// TOP.json should be removed so retry starts fresh
+	_, doneStatErr := os.Stat(filepath.Join(goalDir, "TOP.json"))
 	assert.True(t, os.IsNotExist(doneStatErr))
 
 	// Events should be recorded
@@ -1504,7 +1504,7 @@ func TestTaskRunner_CheckSpotResult_Fail(t *testing.T) {
 	assert.True(t, foundFailed)
 }
 
-func TestTaskRunner_CheckSpotResult_NotFound(t *testing.T) {
+func TestProblemRunner_CheckSpotResult_NotFound(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sp4", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
@@ -1541,7 +1541,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-sf1")
 
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:              task,
 		dag:               BuildDAG(goalsFromDB),
 		worktrees:         map[string]string{"api": worktreeDir},
@@ -1551,8 +1551,8 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 		logMgr:            lm,
 		spawner:           sp,
 		git:               mg,
-		tmuxSession:       "belayer-task-task-sf1",
-		taskDir:           taskDir,
+		tmuxSession:       "belayer-problem-task-sf1",
+		problemDir:        taskDir,
 		startedAt:         make(map[string]time.Time),
 		validationEnabled: true,
 	}
@@ -1570,20 +1570,20 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   map[string]*TaskRunner{"task-sf1": runner},
+		problems: map[string]*ProblemRunner{"task-sf1": runner},
 	}
 
 	// Spawn goal
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-sf1"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-sf1"}))
 	sett.activeLeads = 1
 
-	// Write DONE.json to goal-scoped path
+	// Write TOP.json to goal-scoped path
 	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
 	os.MkdirAll(goalDir, 0o755)
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644)
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
+	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
 
-	// Tick 1: detect DONE.json -> goal transitions to spotting (spotter spawned)
+	// Tick 1: detect TOP.json -> goal transitions to spotting (spotter spawned)
 	require.NoError(t, sett.tick())
 	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
 	assert.Equal(t, 1, sett.activeLeads) // still 1 active lead (spotter running)
@@ -1619,7 +1619,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-sf2")
 
-	runner := &TaskRunner{
+	runner := &ProblemRunner{
 		task:              task,
 		dag:               BuildDAG(goalsFromDB),
 		worktrees:         map[string]string{"api": worktreeDir},
@@ -1629,8 +1629,8 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 		logMgr:            lm,
 		spawner:           sp,
 		git:               mg,
-		tmuxSession:       "belayer-task-task-sf2",
-		taskDir:           taskDir,
+		tmuxSession:       "belayer-problem-task-sf2",
+		problemDir:        taskDir,
 		startedAt:         make(map[string]time.Time),
 		validationEnabled: true,
 	}
@@ -1648,21 +1648,21 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 		tmux:    tm,
 		logMgr:  lm,
 		spawner: sp,
-		tasks:   map[string]*TaskRunner{"task-sf2": runner},
+		problems: map[string]*ProblemRunner{"task-sf2": runner},
 	}
 
 	// Spawn goal
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-sf2"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-sf2"}))
 	sett.activeLeads = 1
 	spawnCountAfterLead := len(sp.spawned)
 
-	// Write DONE.json to goal-scoped path
+	// Write TOP.json to goal-scoped path
 	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
 	os.MkdirAll(goalDir, 0o755)
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644)
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
+	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
 
-	// Tick 1: detect DONE.json -> goal transitions to spotting
+	// Tick 1: detect TOP.json -> goal transitions to spotting
 	require.NoError(t, sett.tick())
 	assert.Equal(t, model.ClimbStatusSpotting, runner.dag.Get("api-1").Status)
 	spawnCountAfterSpotter := len(sp.spawned)
@@ -1698,14 +1698,14 @@ func TestDAG_AllComplete_FalseForSpotting(t *testing.T) {
 	assert.True(t, dag.AllComplete())
 }
 
-func TestTaskRunner_SpawnGoalWithSpotterFeedback(t *testing.T) {
+func TestProblemRunner_SpawnClimbWithSpotterFeedback(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-sfb", RepoName: "api", Description: "test goal", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
 	runner, _, _, sp, _, _ := newTestRunner(t, "task-sfb", goals)
 
 	feedback := "FAILED CHECKS:\n- build [error]: Build failed\n"
-	err := runner.SpawnGoal(QueuedGoal{
+	err := runner.SpawnClimb(QueuedClimb{
 		Goal:            goals[0],
 		TaskID:          "task-sfb",
 		SpotterFeedback: feedback,
@@ -1747,13 +1747,13 @@ func TestSpotterFeedbackForGoal(t *testing.T) {
 	})
 }
 
-func TestSpawnGoal_SetsAppendSystemPromptAndRemainOnExit(t *testing.T) {
+func TestSpawnClimb_SetsAppendSystemPromptAndRemainOnExit(t *testing.T) {
 	goals := []model.Climb{
 		{ID: "api-1", ProblemID: "task-cmd1", RepoName: "api", Description: "test goal", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	}
 	runner, _, tm, sp, _, _ := newTestRunner(t, "task-cmd1", goals)
 
-	err := runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-cmd1"})
+	err := runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-cmd1"})
 	require.NoError(t, err)
 
 	// Verify AppendSystemPrompt contains lead template content
@@ -1761,7 +1761,7 @@ func TestSpawnGoal_SetsAppendSystemPromptAndRemainOnExit(t *testing.T) {
 	assert.Contains(t, sp.spawned[0].AppendSystemPrompt, "Belayer Lead")
 
 	// Verify SetRemainOnExit was called on the window
-	assert.True(t, tm.remainOnExit["belayer-task-task-cmd1:api-api-1"])
+	assert.True(t, tm.remainOnExit["belayer-problem-task-cmd1:api-api-1"])
 
 	// Verify InitialPrompt is used (not Prompt)
 	assert.NotEmpty(t, sp.spawned[0].InitialPrompt)
@@ -1775,13 +1775,13 @@ func TestSpawnSpotter_SetsAppendSystemPromptAndProfiles(t *testing.T) {
 	runner, _, tm, sp, _, _ := newTestRunner(t, "task-cmd2", goals)
 
 	// Spawn lead first
-	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-cmd2"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-cmd2"}))
 
-	// Write DONE.json to goal-scoped path
+	// Write TOP.json to goal-scoped path
 	goalDir := filepath.Join(runner.worktrees["api"], ".lead", "api-1")
 	os.MkdirAll(goalDir, 0o755)
-	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "Added endpoint"})
-	os.WriteFile(filepath.Join(goalDir, "DONE.json"), doneData, 0o644)
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "Added endpoint"})
+	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
 
 	// Spawn spotter
 	goal := runner.dag.Get("api-1")
@@ -1801,9 +1801,9 @@ func TestSpawnSpotter_SetsAppendSystemPromptAndProfiles(t *testing.T) {
 	assert.False(t, os.IsNotExist(statErr), "profiles directory should exist")
 
 	// Verify SetRemainOnExit was called for spotter
-	assert.True(t, tm.remainOnExit["belayer-task-task-cmd2:spot-api-1"])
+	assert.True(t, tm.remainOnExit["belayer-problem-task-cmd2:spot-api-1"])
 
-	// Verify GOAL.json contains DONE.json content and profiles (goal-scoped path)
+	// Verify GOAL.json contains TOP.json content and profiles (goal-scoped path)
 	goalJSON, goalErr := os.ReadFile(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "GOAL.json"))
 	require.NoError(t, goalErr)
 	assert.Contains(t, string(goalJSON), "spotter")
