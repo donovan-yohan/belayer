@@ -1,4 +1,4 @@
-package setter
+package belayer
 
 import (
 	"context"
@@ -592,7 +592,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 	runner.dag = BuildDAG(goalsFromDB)
 
 	// Create setter with maxLeads=2
-	setter := &Setter{
+	setter := &Belayer{
 		config: Config{
 			MaxLeads:     2,
 			InstanceName: "test-instance",
@@ -641,7 +641,7 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	require.NoError(t, os.MkdirAll(goalDoneDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), data, 0o644))
 
-	setter := &Setter{
+	setter := &Belayer{
 		config: Config{
 			InstanceName: "test-instance",
 			InstanceDir:  tmpDir,
@@ -679,7 +679,7 @@ func TestSetter_CrashRecovery(t *testing.T) {
 func TestSetter_RunTickCycle(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
-	setter := &Setter{
+	setter := &Belayer{
 		config: Config{
 			InstanceName: "test-instance",
 			InstanceDir:  tmpDir,
@@ -962,7 +962,7 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir("task-s5a"))
 
-	sett := &Setter{
+	sett := &Belayer{
 		config: Config{
 			InstanceName: "test-instance",
 			InstanceDir:  tmpDir,
@@ -1038,7 +1038,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir("task-s5"))
 
-	setter := &Setter{
+	setter := &Belayer{
 		config: Config{
 			InstanceName: "test-instance",
 			InstanceDir:  tmpDir,
@@ -1134,7 +1134,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir("task-s6"))
 
-	sett := &Setter{
+	sett := &Belayer{
 		config: Config{
 			InstanceName: "test-instance",
 			InstanceDir:  tmpDir,
@@ -1275,7 +1275,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	runner.dag.MarkComplete("api-1")
 	runner.dag.MarkComplete("web-1")
 
-	sett := &Setter{
+	sett := &Belayer{
 		config: Config{
 			InstanceName: "test-instance",
 			InstanceDir:  tmpDir,
@@ -1559,7 +1559,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir("task-sf1"))
 
-	sett := &Setter{
+	sett := &Belayer{
 		config: Config{
 			InstanceName: "test-instance",
 			InstanceDir:  tmpDir,
@@ -1637,7 +1637,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir("task-sf2"))
 
-	sett := &Setter{
+	sett := &Belayer{
 		config: Config{
 			InstanceName: "test-instance",
 			InstanceDir:  tmpDir,

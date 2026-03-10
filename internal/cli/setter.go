@@ -16,7 +16,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/pidfile"
-	"github.com/donovan-yohan/belayer/internal/setter"
+	"github.com/donovan-yohan/belayer/internal/belayer"
 	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/spf13/cobra"
 )
@@ -110,7 +110,7 @@ func runSetterForeground(name, instanceDir, pidPath string, maxLeads int, pollIn
 		return fmt.Errorf("loading belayer config: %w", err)
 	}
 
-	cfg := setter.Config{
+	cfg := belayer.Config{
 		InstanceName: name,
 		InstanceDir:  instanceDir,
 		MaxLeads:     maxLeads,
@@ -120,7 +120,7 @@ func runSetterForeground(name, instanceDir, pidPath string, maxLeads int, pollIn
 
 	tm := tmux.NewRealTmux()
 	sp := lead.NewClaudeSpawner(tm)
-	s := setter.New(cfg, bcfg, globalCfgDir, instanceCfgDir, database.Conn(), tm, sp)
+	s := belayer.New(cfg, bcfg, globalCfgDir, instanceCfgDir, database.Conn(), tm, sp)
 
 	// Write PID file and clean up on exit
 	if err := pidfile.Write(pidPath, os.Getpid()); err != nil {

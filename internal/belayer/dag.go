@@ -1,4 +1,4 @@
-package setter
+package belayer
 
 import "github.com/donovan-yohan/belayer/internal/model"
 

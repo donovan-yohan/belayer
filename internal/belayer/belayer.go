@@ -1,4 +1,4 @@
-package setter
+package belayer
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/tmux"
 )
 
-// Config holds configuration for the setter daemon.
+// Config holds configuration for the belayer daemon.
 type Config struct {
 	InstanceName string
 	InstanceDir  string
@@ -34,8 +34,8 @@ func DefaultConfig() Config {
 	}
 }
 
-// Setter is the daemon that polls SQLite for pending problems and manages their lifecycle.
-type Setter struct {
+// Belayer is the daemon that polls SQLite for pending problems and manages their lifecycle.
+type Belayer struct {
 	config     Config
 	belayerCfg *belayerconfig.Config
 	store      *store.Store
@@ -52,9 +52,9 @@ type Setter struct {
 	activeLeads int
 }
 
-// New creates a new Setter with the given configuration.
-func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, instanceCfgDir string, db *sql.DB, tm tmux.TmuxManager, sp lead.AgentSpawner) *Setter {
-	return &Setter{
+// New creates a new Belayer with the given configuration.
+func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, instanceCfgDir string, db *sql.DB, tm tmux.TmuxManager, sp lead.AgentSpawner) *Belayer {
+	return &Belayer{
 		config:            cfg,
 		belayerCfg:        bcfg,
 		globalConfigDir:   globalCfgDir,
@@ -68,7 +68,7 @@ func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, instanceCfgDir st
 }
 
 // Run starts the setter event loop. It blocks until the context is cancelled.
-func (s *Setter) Run(ctx context.Context) error {
+func (s *Belayer) Run(ctx context.Context) error {
 	log.Printf("setter: starting for instance %q (max-leads=%d, poll=%s, stale=%s)",
 		s.config.InstanceName, s.config.MaxLeads, s.config.PollInterval, s.config.StaleTimeout)
 
@@ -99,7 +99,7 @@ func (s *Setter) Run(ctx context.Context) error {
 }
 
 // tick performs one iteration of the event loop.
-func (s *Setter) tick() error {
+func (s *Belayer) tick() error {
 	// 1. Poll for new pending problems
 	if err := s.pollPendingProblems(); err != nil {
 		return fmt.Errorf("polling pending problems: %w", err)
@@ -248,7 +248,7 @@ func (s *Setter) tick() error {
 }
 
 // pollPendingProblems picks up new pending problems and initializes them.
-func (s *Setter) pollPendingProblems() error {
+func (s *Belayer) pollPendingProblems() error {
 	pending, err := s.store.GetPendingProblems(s.config.InstanceName)
 	if err != nil {
 		return err
@@ -278,7 +278,7 @@ func (s *Setter) pollPendingProblems() error {
 }
 
 // processLeadQueue spawns leads from the queue up to maxLeads.
-func (s *Setter) processLeadQueue() {
+func (s *Belayer) processLeadQueue() {
 	for len(s.leadQueue) > 0 && s.activeLeads < s.config.MaxLeads {
 		queued := s.leadQueue[0]
 		s.leadQueue = s.leadQueue[1:]
@@ -299,7 +299,7 @@ func (s *Setter) processLeadQueue() {
 }
 
 // recover attempts to resume problems that were running when the setter last crashed.
-func (s *Setter) recover() error {
+func (s *Belayer) recover() error {
 	active, err := s.store.GetActiveProblems(s.config.InstanceName)
 	if err != nil {
 		return fmt.Errorf("getting active problems: %w", err)
@@ -354,7 +354,7 @@ func (s *Setter) recover() error {
 }
 
 // GoalCount returns the count of leads being managed for a climb ID check.
-func (s *Setter) GoalCount(climbID string) int {
+func (s *Belayer) GoalCount(climbID string) int {
 	return s.activeLeads
 }
 
