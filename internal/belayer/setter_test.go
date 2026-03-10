@@ -257,7 +257,7 @@ func TestProblemRunner_SpawnClimb(t *testing.T) {
 	require.NoError(t, tm.NewSession("belayer-problem-task-1"))
 	require.NoError(t, lm.EnsureDir("task-1"))
 
-	err := runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-1"})
+	err := runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-1"})
 	require.NoError(t, err)
 
 	// Check window was created
@@ -320,7 +320,7 @@ func TestProblemRunner_SpawnClimb_SetsMailAddress(t *testing.T) {
 	require.NoError(t, tm.NewSession("belayer-problem-task-1"))
 	require.NoError(t, lm.EnsureDir("task-1"))
 
-	err := runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-1"})
+	err := runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-1"})
 	require.NoError(t, err)
 
 	// Verify BELAYER_MAIL_ADDRESS was passed via Env in SpawnOpts
@@ -361,7 +361,7 @@ func TestProblemRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 	runner.dag = BuildDAG(goalsFromDB)
 
 	// Spawn api-1
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-2"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-2"}))
 
 	// Write TOP.json for api-1
 	doneJSON := TopJSON{
@@ -381,7 +381,7 @@ func TestProblemRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 
 	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status)
 	require.Len(t, newlyReady, 1)
-	assert.Equal(t, "api-2", newlyReady[0].Goal.ID)
+	assert.Equal(t, "api-2", newlyReady[0].Climb.ID)
 }
 
 func TestProblemRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
@@ -420,7 +420,7 @@ func TestProblemRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 	runner.dag = BuildDAG(goalsFromDB)
 
 	// Spawn api-1
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-2v"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-2v"}))
 
 	// Write TOP.json for api-1 to goal-scoped path
 	doneJSON := TopJSON{
@@ -445,7 +445,7 @@ func TestProblemRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 
 	// api-2 should be newly ready (api-1 is now complete)
 	require.Len(t, newlyReady, 1)
-	assert.Equal(t, "api-2", newlyReady[0].Goal.ID)
+	assert.Equal(t, "api-2", newlyReady[0].Climb.ID)
 
 	// Spotter should NOT be activated yet (api-2 is still pending)
 	assert.False(t, runner.repoSpotterActivated["api"])
@@ -479,7 +479,7 @@ func TestProblemRunner_CheckStaleClimbs(t *testing.T) {
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-3")
 	runner.dag = BuildDAG(goalsFromDB)
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-3"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-3"}))
 
 	// Kill the window to simulate crash
 	tm.KillWindow("belayer-problem-task-3", "api-api-1")
@@ -490,7 +490,7 @@ func TestProblemRunner_CheckStaleClimbs(t *testing.T) {
 
 	// Goal should be retried (attempt 0 -> 1)
 	require.Len(t, retryGoals, 1)
-	assert.Equal(t, "api-1", retryGoals[0].Goal.ID)
+	assert.Equal(t, "api-1", retryGoals[0].Climb.ID)
 
 	// Check goal is pending in DAG now (reset for retry)
 	assert.Equal(t, model.ClimbStatusPending, runner.dag.Get("api-1").Status)
@@ -524,7 +524,7 @@ func TestProblemRunner_StaleTimeout(t *testing.T) {
 
 	goalsFromDB, _ := s.GetClimbsForProblem("task-4")
 	runner.dag = BuildDAG(goalsFromDB)
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-4"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-4"}))
 
 	// Backdate the start time to simulate timeout
 	runner.startedAt["api-1"] = time.Now().Add(-1 * time.Hour)
@@ -534,7 +534,7 @@ func TestProblemRunner_StaleTimeout(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, retryGoals, 1)
-	assert.Equal(t, "api-1", retryGoals[0].Goal.ID)
+	assert.Equal(t, "api-1", retryGoals[0].Climb.ID)
 }
 
 func TestProblemRunner_HasStuckClimbs(t *testing.T) {
@@ -617,7 +617,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 	// Queue all 3 goals
 	readyGoals := runner.dag.ReadyClimbs()
 	for _, g := range readyGoals {
-		setter.leadQueue = append(setter.leadQueue, QueuedClimb{Goal: g, TaskID: "task-6"})
+		setter.leadQueue = append(setter.leadQueue, QueuedClimb{Climb: g, TaskID: "task-6"})
 	}
 
 	// Process queue — should only spawn 2 (maxLeads cap)
@@ -679,7 +679,7 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	// api-2 should be ready (api-1 is complete, dependencies met)
 	foundApi2 := false
 	for _, q := range setter.leadQueue {
-		if q.Goal.ID == "api-2" {
+		if q.Climb.ID == "api-2" {
 			foundApi2 = true
 		}
 	}
@@ -847,7 +847,7 @@ func TestProblemRunner_CheckAnchorVerdict_Approve(t *testing.T) {
 	verdict := anchor.VerdictJSON{
 		Verdict: "approve",
 		Repos: map[string]anchor.RepoVerdict{
-			"api": {Status: "pass", Goals: []string{}},
+			"api": {Status: "pass", Climbs: []string{}},
 		},
 	}
 	data, _ := json.Marshal(verdict)
@@ -908,8 +908,8 @@ func TestProblemRunner_HandleRejection(t *testing.T) {
 	verdict := &anchor.VerdictJSON{
 		Verdict: "reject",
 		Repos: map[string]anchor.RepoVerdict{
-			"api": {Status: "fail", Goals: []string{"Fix response schema", "Add error handling"}},
-			"app": {Status: "pass", Goals: []string{}},
+			"api": {Status: "fail", Climbs: []string{"Fix response schema", "Add error handling"}},
+			"app": {Status: "pass", Climbs: []string{}},
 		},
 	}
 
@@ -918,10 +918,10 @@ func TestProblemRunner_HandleRejection(t *testing.T) {
 
 	// Should have 2 correction goals for the failing api repo
 	require.Len(t, correctionGoals, 2)
-	assert.Equal(t, "api-corr-1-1", correctionGoals[0].Goal.ID)
-	assert.Equal(t, "api-corr-1-2", correctionGoals[1].Goal.ID)
-	assert.Equal(t, "Fix response schema", correctionGoals[0].Goal.Description)
-	assert.Equal(t, "Add error handling", correctionGoals[1].Goal.Description)
+	assert.Equal(t, "api-corr-1-1", correctionGoals[0].Climb.ID)
+	assert.Equal(t, "api-corr-1-2", correctionGoals[1].Climb.ID)
+	assert.Equal(t, "Fix response schema", correctionGoals[0].Climb.Description)
+	assert.Equal(t, "Add error handling", correctionGoals[1].Climb.Description)
 
 	// TOP.json should be removed from failing repo only (goal-scoped paths)
 	_, apiDoneErr := os.Stat(filepath.Join(runner.worktrees["api"], ".lead", "api-1", "TOP.json"))
@@ -995,7 +995,7 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 	runner.validationEnabled = false
 
 	// Spawn goal and write TOP.json
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-s5a"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-s5a"}))
 	sett.activeLeads = 1
 	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
@@ -1071,8 +1071,8 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	runner.validationEnabled = false
 
 	// Spawn both goals and write TOP.json for each (goal-scoped paths)
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-s5"}))
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[1], TaskID: "task-s5"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-s5"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[1], TaskID: "task-s5"}))
 	setter.activeLeads = 2
 	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 
@@ -1167,8 +1167,8 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	runner.validationEnabled = false
 
 	// Spawn both goals and complete them (goal-scoped paths)
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-s6"}))
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[1], TaskID: "task-s6"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-s6"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[1], TaskID: "task-s6"}))
 	sett.activeLeads = 2
 	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
 
@@ -1190,7 +1190,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	rejectVerdict := anchor.VerdictJSON{
 		Verdict: "reject",
 		Repos: map[string]anchor.RepoVerdict{
-			"api": {Status: "fail", Goals: []string{"Fix the schema"}},
+			"api": {Status: "fail", Climbs: []string{"Fix the schema"}},
 			"web": {Status: "pass"},
 		},
 	}
@@ -1308,7 +1308,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	rejectVerdict := anchor.VerdictJSON{
 		Verdict: "reject",
 		Repos: map[string]anchor.RepoVerdict{
-			"api": {Status: "fail", Goals: []string{"Still broken"}},
+			"api": {Status: "fail", Climbs: []string{"Still broken"}},
 			"web": {Status: "pass"},
 		},
 	}
@@ -1499,7 +1499,7 @@ func TestProblemRunner_CheckRepoSpotResults_Fail(t *testing.T) {
 	assert.Equal(t, 1, resolved)
 	assert.Empty(t, newlyReady)
 	require.Len(t, retryClimbs, 1)
-	assert.Equal(t, "api-1", retryClimbs[0].Goal.ID)
+	assert.Equal(t, "api-1", retryClimbs[0].Climb.ID)
 	assert.Contains(t, retryClimbs[0].SpotterFeedback, "Build failed")
 
 	// api-1 should be reset to pending for retry (attempt incremented)
@@ -1608,7 +1608,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 	}
 
 	// Spawn api-1 (api-2 is blocked on api-1)
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-sf1"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-sf1"}))
 	sett.activeLeads = 1
 
 	// Write TOP.json for api-1
@@ -1704,7 +1704,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	}
 
 	// Spawn goal
-	require.NoError(t, runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-sf2"}))
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-sf2"}))
 	sett.activeLeads = 1
 	spawnCountAfterLead := len(sp.spawned)
 
@@ -1796,7 +1796,7 @@ func TestProblemRunner_SpawnClimbWithSpotterFeedback(t *testing.T) {
 
 	feedback := "FAILED CHECKS:\n- build [error]: Build failed\n"
 	err := runner.SpawnClimb(QueuedClimb{
-		Goal:            goals[0],
+		Climb:           goals[0],
 		TaskID:          "task-sfb",
 		SpotterFeedback: feedback,
 	})
@@ -1843,7 +1843,7 @@ func TestSpawnClimb_SetsAppendSystemPromptAndRemainOnExit(t *testing.T) {
 	}
 	runner, _, tm, sp, _, _ := newTestRunner(t, "task-cmd1", goals)
 
-	err := runner.SpawnClimb(QueuedClimb{Goal: goals[0], TaskID: "task-cmd1"})
+	err := runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-cmd1"})
 	require.NoError(t, err)
 
 	// Verify AppendSystemPrompt contains lead template content

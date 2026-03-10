@@ -215,3 +215,59 @@ func TestClaudeSpawner_NoClaudeSpecificLeaks(t *testing.T) {
 	iface := "AgentSpawner"
 	assert.False(t, strings.Contains(iface, "Claude"))
 }
+
+func TestClaudeSpawner_EnvInjection(t *testing.T) {
+	setup := func(t *testing.T) (*mockTmux, *ClaudeSpawner) {
+		t.Helper()
+		tm := newMockTmux()
+		tm.NewSession("s")
+		tm.NewWindow("s", "w")
+		return tm, NewClaudeSpawner(tm)
+	}
+
+	t.Run("empty env produces no export prefix", func(t *testing.T) {
+		tm, spawner := setup(t)
+		err := spawner.Spawn(context.Background(), SpawnOpts{
+			TmuxSession:   "s",
+			WindowName:    "w",
+			WorkDir:       t.TempDir(),
+			InitialPrompt: "go",
+			Env:           map[string]string{},
+		})
+		require.NoError(t, err)
+		sentKeys := tm.keys["s:w"]
+		assert.NotContains(t, sentKeys, "export ")
+	})
+
+	t.Run("single env var produces export prefix", func(t *testing.T) {
+		tm, spawner := setup(t)
+		err := spawner.Spawn(context.Background(), SpawnOpts{
+			TmuxSession:   "s",
+			WindowName:    "w",
+			WorkDir:       t.TempDir(),
+			InitialPrompt: "go",
+			Env:           map[string]string{"MY_KEY": "my_value"},
+		})
+		require.NoError(t, err)
+		sentKeys := tm.keys["s:w"]
+		assert.Contains(t, sentKeys, "export MY_KEY='my_value' && ")
+	})
+
+	t.Run("multiple env vars all appear in prefix", func(t *testing.T) {
+		tm, spawner := setup(t)
+		err := spawner.Spawn(context.Background(), SpawnOpts{
+			TmuxSession:   "s",
+			WindowName:    "w",
+			WorkDir:       t.TempDir(),
+			InitialPrompt: "go",
+			Env: map[string]string{
+				"KEY_A": "val_a",
+				"KEY_B": "val_b",
+			},
+		})
+		require.NoError(t, err)
+		sentKeys := tm.keys["s:w"]
+		assert.Contains(t, sentKeys, "export KEY_A='val_a' && ")
+		assert.Contains(t, sentKeys, "export KEY_B='val_b' && ")
+	})
+}
