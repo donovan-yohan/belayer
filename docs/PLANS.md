@@ -18,6 +18,7 @@ Execution plans for active and completed work.
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Manage Session Context](exec-plans/completed/2026-03-09-manage-session-context.md) | 2026-03-10 | .claude/ workspace with slash commands for belayer manage |
 | [Mail System](exec-plans/completed/2026-03-09-mail-system.md) | 2026-03-10 | Beads-backed inter-agent mail with tmux send-keys delivery |
 | [Interactive Lead Sessions](exec-plans/completed/2026-03-08-interactive-lead-sessions.md) | 2026-03-08 | Replace claude -p with full interactive Claude Code sessions |
 | [Context-Aware Validation](exec-plans/completed/2026-03-07-context-aware-validation.md) | 2026-03-07 | Per-goal spotter validation, anchor rename, config system |

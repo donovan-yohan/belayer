@@ -52,7 +52,8 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | CLI commands | `internal/cli/` | Cobra command definitions (root, init, instance, task, status, tui, setter, message, mail) |
 | Belayer Config | `internal/belayerconfig/` | Config loader with resolution chain (instance > global > embedded defaults) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
-| Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles) via `embed.FS` |
+| Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles, manage session commands) via `embed.FS` |
+| Manage | `internal/manage/` | Manage session workspace preparation (PrepareManageDir: renders CLAUDE.md template, copies slash commands) |
 | Goal Context | `internal/goalctx/` | GOAL.json types (LeadGoal, SpotterGoal, AnchorGoal) and writer |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
 | Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_lead_execution.sql, 003_task_intake.sql) |

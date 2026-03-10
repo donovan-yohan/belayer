@@ -161,6 +161,16 @@ The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
 | `belayer mail inbox` | List unread messages without marking read |
 | `belayer mail ack <id>` | Mark a specific message as read |
 | `belayer status` | Quick status overview |
+| `belayer manage` | Launch interactive Claude session with belayer context (.claude/ workspace) |
+
+## Manage Session Context
+
+`belayer manage` creates a temp workspace with a full `.claude/` directory:
+- **CLAUDE.md** (templated): Rendered from `internal/defaults/claudemd/manage.md` with instance name and repo names. Establishes belayer as the session identity — all user requests are routed through belayer commands.
+- **Commands** (static): 6 slash commands (`/status`, `/task-create`, `/task-list`, `/logs`, `/message`, `/mail`) copied from `internal/defaults/commands/`.
+- **BELAYER_INSTANCE env var**: Set in the exec environment so all belayer CLI commands auto-resolve the instance without `--instance` flags.
+
+This is distinct from the repo's own `.claude/CLAUDE.md` which is for developing belayer itself. The manage context is runtime — deployed into sessions belayer spawns.
 
 ## Process Lifecycle
 
