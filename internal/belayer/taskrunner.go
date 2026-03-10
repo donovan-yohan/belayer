@@ -643,6 +643,17 @@ func collectDescendants(ppid int) []int {
 	return pids
 }
 
+// recreateWindow kills the process tree and window, then creates a fresh one.
+// Used when retrying spotters and anchors on subsequent attempts.
+func (tr *ProblemRunner) recreateWindow(windowName string) error {
+	tr.killPaneProcessTree(windowName)
+	_ = tr.tmux.KillWindow(tr.tmuxSession, windowName)
+	if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
+		return fmt.Errorf("recreating window %s: %w", windowName, err)
+	}
+	return nil
+}
+
 // windowExists checks if a window exists in the problem's tmux session.
 func (tr *ProblemRunner) windowExists(windowName string) bool {
 	windows, err := tr.tmux.ListWindows(tr.tmuxSession)
@@ -767,10 +778,8 @@ func (tr *ProblemRunner) ActivateSpotter(repoName string) error {
 
 	// On retry, kill and recreate the window
 	if tr.repoSpotterAttempts[repoName] > 1 {
-		tr.killPaneProcessTree(windowName)
-		_ = tr.tmux.KillWindow(tr.tmuxSession, windowName)
-		if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
-			return fmt.Errorf("recreating spotter window %s: %w", windowName, err)
+		if err := tr.recreateWindow(windowName); err != nil {
+			return err
 		}
 	}
 
@@ -852,14 +861,10 @@ func (tr *ProblemRunner) SpawnAnchor() error {
 	windowName := "anchor"
 
 	if tr.anchorAttempt > 1 {
-		// Kill previous anchor window on retry and create a fresh one
-		tr.killPaneProcessTree(windowName)
-		_ = tr.tmux.KillWindow(tr.tmuxSession, windowName)
-		if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
-			return fmt.Errorf("creating anchor window: %w", err)
+		if err := tr.recreateWindow(windowName); err != nil {
+			return err
 		}
 	}
-	// For first attempt, window was pre-created in Init()
 
 	// Keep pane open after process exits for death detection
 	if err := tr.tmux.SetRemainOnExit(tr.tmuxSession, windowName, true); err != nil {
@@ -978,28 +983,21 @@ func (tr *ProblemRunner) HandleApproval() error {
 
 // createPR pushes the worktree branch and creates a PR via gh CLI.
 func (tr *ProblemRunner) createPR(repoName, worktreePath string) (string, error) {
-	// Push the branch
 	branchName := fmt.Sprintf("belayer/problem-%s/%s", tr.task.ID, repoName)
 
 	if _, err := tr.git.Run(worktreePath, "push", "-u", "origin", "HEAD:"+branchName); err != nil {
 		return "", fmt.Errorf("pushing branch: %w", err)
 	}
 
-	// Create PR via gh CLI
 	title := fmt.Sprintf("[belayer] Problem %s: %s", tr.task.ID, repoName)
-	prURL, err := tr.git.Run(worktreePath, "-c", "gh", "pr", "create", "--title", title, "--body", "Created by belayer spotter review.", "--head", branchName)
+	cmd := exec.Command("gh", "pr", "create", "--title", title, "--body", "Created by belayer spotter review.", "--head", branchName)
+	cmd.Dir = worktreePath
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// gh isn't a git command — need to exec directly
-		cmd := exec.Command("gh", "pr", "create", "--title", title, "--body", "Created by belayer spotter review.", "--head", branchName)
-		cmd.Dir = worktreePath
-		out, execErr := cmd.CombinedOutput()
-		if execErr != nil {
-			return "", fmt.Errorf("creating PR: %s: %w", strings.TrimSpace(string(out)), execErr)
-		}
-		prURL = strings.TrimSpace(string(out))
+		return "", fmt.Errorf("creating PR: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 
-	return prURL, nil
+	return strings.TrimSpace(string(out)), nil
 }
 
 // HandleRejection creates correction climbs for failing repos and prepares for new leads.

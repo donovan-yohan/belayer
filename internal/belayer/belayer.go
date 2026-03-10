@@ -3,7 +3,6 @@ package belayer
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -354,16 +353,3 @@ func (s *Belayer) recover() error {
 	return nil
 }
 
-// GoalCount returns the count of leads being managed for a climb ID check.
-func (s *Belayer) GoalCount(climbID string) int {
-	return s.activeLeads
-}
-
-// parseClimbsJSON parses the climbs_json field of a problem into a ClimbsFile.
-func parseClimbsJSON(climbsJSON string) (*model.ClimbsFile, error) {
-	var cf model.ClimbsFile
-	if err := json.Unmarshal([]byte(climbsJSON), &cf); err != nil {
-		return nil, fmt.Errorf("parsing climbs JSON: %w", err)
-	}
-	return &cf, nil
-}
