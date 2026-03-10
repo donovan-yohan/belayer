@@ -509,7 +509,9 @@ func (tr *TaskRunner) Cleanup() {
 
 	// Clean up mail for this task
 	mailTaskDir := filepath.Join(tr.instanceDir, "mail", "task", tr.task.ID)
-	os.RemoveAll(mailTaskDir)
+	if err := os.RemoveAll(mailTaskDir); err != nil {
+		log.Printf("warning: failed to clean up task mail directory %s: %v", mailTaskDir, err)
+	}
 }
 
 // killPaneProcessTree kills all descendant processes of a tmux pane before

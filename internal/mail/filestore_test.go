@@ -45,7 +45,7 @@ func TestFileStore_Close(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, issues, 1)
 
-	err = store.Close(issues[0].ID)
+	err = store.Close("setter", issues[0].ID)
 	require.NoError(t, err)
 
 	// Unread should be empty
@@ -85,6 +85,37 @@ func TestFileStore_NestedAddress(t *testing.T) {
 	issues, err = store.List("setter")
 	require.NoError(t, err)
 	assert.Len(t, issues, 0)
+}
+
+func TestFileStore_CreateMissingTo(t *testing.T) {
+	store := setupTestFileStore(t)
+	err := store.Create("Subject", "Body", map[string]string{"msg-type": "done"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing 'to' label")
+}
+
+func TestFileStore_CloseNonexistent(t *testing.T) {
+	store := setupTestFileStore(t)
+	err := store.Close("setter", "does-not-exist.json")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestFileStore_ListSkipsMalformed(t *testing.T) {
+	store := setupTestFileStore(t)
+
+	// Create a valid message
+	require.NoError(t, store.Create("Valid", "Body", map[string]string{"to": "setter", "msg-type": "done"}))
+
+	// Write a malformed JSON file directly
+	unreadDir := filepath.Join(store.dir, "setter", "unread")
+	require.NoError(t, os.WriteFile(filepath.Join(unreadDir, "bad.json"), []byte("not json"), 0o644))
+
+	// List should return only the valid message
+	issues, err := store.List("setter")
+	require.NoError(t, err)
+	assert.Len(t, issues, 1)
+	assert.Equal(t, "Valid", issues[0].Title)
 }
 
 func TestFileStore_MultipleMessages(t *testing.T) {

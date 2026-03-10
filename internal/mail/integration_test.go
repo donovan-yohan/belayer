@@ -34,7 +34,7 @@ func TestIntegration_SendAndRead(t *testing.T) {
 	assert.Contains(t, issues[0].Description, "belayer message setter --type done")
 
 	// Close (mark read)
-	require.NoError(t, store.Close(issues[0].ID))
+	require.NoError(t, store.Close("task/abc/lead/api/g1", issues[0].ID))
 
 	// Inbox should be empty
 	issues, err = store.List("task/abc/lead/api/g1")

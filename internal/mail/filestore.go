@@ -1,8 +1,10 @@
 package mail
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,8 +63,17 @@ func (f *FileStore) Create(title, description string, labels map[string]string) 
 		return fmt.Errorf("marshaling message: %w", err)
 	}
 
-	filename := fmt.Sprintf("%d-%s.json", time.Now().UnixNano(), sanitizeFilename(labels["msg-type"]))
-	return os.WriteFile(filepath.Join(unreadDir, filename), data, 0o644)
+	filename := fmt.Sprintf("%d-%s-%s.json", time.Now().UnixNano(), sanitizeFilename(labels["msg-type"]), randomSuffix())
+	finalPath := filepath.Join(unreadDir, filename)
+	tmpPath := finalPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("writing message file: %w", err)
+	}
+	if err := os.Rename(tmpPath, finalPath); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("committing message file: %w", err)
+	}
+	return nil
 }
 
 // List returns unread messages for the given address.
@@ -83,11 +94,15 @@ func (f *FileStore) List(address string) ([]MailMessage, error) {
 		}
 		data, err := os.ReadFile(filepath.Join(unreadDir, entry.Name()))
 		if err != nil {
-			continue // skip unreadable files
+			if !os.IsNotExist(err) {
+				log.Printf("mail: failed to read message file %s: %v", entry.Name(), err)
+			}
+			continue
 		}
 		var msg fileMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
-			continue // skip malformed files
+			log.Printf("mail: skipping malformed message file %s: %v", entry.Name(), err)
+			continue
 		}
 		messages = append(messages, MailMessage{
 			ID:          entry.Name(),
@@ -100,35 +115,31 @@ func (f *FileStore) List(address string) ([]MailMessage, error) {
 
 // Close moves a message from unread/ to read/ for the given address.
 // The id is the filename (e.g., "1741234567-done.json").
-func (f *FileStore) Close(id string) error {
-	// Walk all address directories to find the file
-	return filepath.WalkDir(f.dir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip errors
+func (f *FileStore) Close(address, id string) error {
+	src := filepath.Join(f.dir, address, "unread", id)
+	if _, err := os.Stat(src); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("message %s not found at address %s", id, address)
 		}
-		if !d.IsDir() {
-			return nil
-		}
-		if filepath.Base(path) != "unread" {
-			return nil
-		}
+		return fmt.Errorf("checking message %s: %w", id, err)
+	}
 
-		src := filepath.Join(path, id)
-		if _, statErr := os.Stat(src); statErr != nil {
-			return nil // not in this directory
-		}
+	readDir := filepath.Join(f.dir, address, "read")
+	if err := os.MkdirAll(readDir, 0o755); err != nil {
+		return fmt.Errorf("creating read dir: %w", err)
+	}
+	dst := filepath.Join(readDir, id)
+	if err := os.Rename(src, dst); err != nil {
+		return fmt.Errorf("moving %s to read: %w", id, err)
+	}
+	return nil
+}
 
-		// Found it — move to read/
-		readDir := filepath.Join(filepath.Dir(path), "read")
-		if mkErr := os.MkdirAll(readDir, 0o755); mkErr != nil {
-			return fmt.Errorf("creating read dir: %w", mkErr)
-		}
-		dst := filepath.Join(readDir, id)
-		if mvErr := os.Rename(src, dst); mvErr != nil {
-			return fmt.Errorf("moving %s to read: %w", id, mvErr)
-		}
-		return filepath.SkipAll // done
-	})
+// randomSuffix returns a random 4-byte hex string to prevent filename collisions.
+func randomSuffix() string {
+	b := make([]byte, 4)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
 }
 
 // sanitizeFilename replaces characters unsafe for filenames.

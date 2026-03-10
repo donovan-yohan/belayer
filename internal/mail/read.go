@@ -41,7 +41,7 @@ func ReadAndClose(store *FileStore, address string) (string, error) {
 
 	// Close all read messages
 	for _, issue := range issues {
-		if closeErr := store.Close(issue.ID); closeErr != nil {
+		if closeErr := store.Close(address, issue.ID); closeErr != nil {
 			log.Printf("warning: failed to close message %s: %v", issue.ID, closeErr)
 		}
 	}

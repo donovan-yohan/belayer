@@ -101,12 +101,17 @@ func newMailAckCmd() *cobra.Command {
 		Short: "Mark a specific message as read",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			address := os.Getenv("BELAYER_MAIL_ADDRESS")
+			if address == "" {
+				return fmt.Errorf("BELAYER_MAIL_ADDRESS not set")
+			}
+
 			store, err := mailStore("")
 			if err != nil {
 				return err
 			}
 
-			return store.Close(args[0])
+			return store.Close(address, args[0])
 		},
 	}
 }

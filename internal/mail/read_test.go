@@ -35,7 +35,7 @@ func TestReadAndClose(t *testing.T) {
 
 	// Close them
 	for _, issue := range issues {
-		require.NoError(t, store.Close(issue.ID))
+		require.NoError(t, store.Close("setter", issue.ID))
 	}
 
 	// List again — empty
