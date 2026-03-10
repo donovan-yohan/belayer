@@ -31,7 +31,7 @@ func newLogsViewCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "view",
-		Short: "View log file for a task or goal",
+		Short: "View log file for a problem or climb",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if taskID == "" {
 				return fmt.Errorf("--task is required")
@@ -138,7 +138,7 @@ func newLogsStatsCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Total size: %s\n", formatBytes(stats.TotalSize))
 			fmt.Fprintf(cmd.OutOrStdout(), "Total files: %d\n", stats.FileCount)
 			if len(stats.TaskSizes) > 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "\nPer task:")
+				fmt.Fprintln(cmd.OutOrStdout(), "\nPer problem:")
 				for taskID, size := range stats.TaskSizes {
 					fmt.Fprintf(cmd.OutOrStdout(), "  %s: %s\n", taskID, formatBytes(size))
 				}

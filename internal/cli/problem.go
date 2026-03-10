@@ -14,18 +14,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newTaskCmd() *cobra.Command {
+func newProblemCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "task",
+		Use:   "problem",
 		Short: "Manage problems",
 	}
 
-	cmd.AddCommand(newTaskCreateCmd())
-	cmd.AddCommand(newTaskListCmd())
+	cmd.AddCommand(newProblemCreateCmd())
+	cmd.AddCommand(newProblemListCmd())
 	return cmd
 }
 
-func newTaskCreateCmd() *cobra.Command {
+func newProblemCreateCmd() *cobra.Command {
 	var specPath string
 	var climbsPath string
 	var jiraRef string
@@ -121,7 +121,7 @@ func newTaskCreateCmd() *cobra.Command {
 	return cmd
 }
 
-func newTaskListCmd() *cobra.Command {
+func newProblemListCmd() *cobra.Command {
 	var instanceName string
 
 	cmd := &cobra.Command{

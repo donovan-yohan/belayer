@@ -10,34 +10,34 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/belayer"
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/config"
 	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/pidfile"
-	"github.com/donovan-yohan/belayer/internal/belayer"
 	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
-func newSetterCmd() *cobra.Command {
+func newBelayerDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "setter",
-		Short: "Manage the setter daemon",
-		Long:  "Start, stop, and check the status of the setter daemon that orchestrates task execution.",
+		Use:   "belayer",
+		Short: "Manage the belayer daemon",
+		Long:  "Start, stop, and check the status of the belayer daemon that orchestrates problem execution.",
 	}
 
 	cmd.AddCommand(
-		newSetterStartCmd(),
-		newSetterStopCmd(),
-		newSetterStatusCmd(),
+		newBelayerDaemonStartCmd(),
+		newBelayerDaemonStopCmd(),
+		newBelayerDaemonStatusCmd(),
 	)
 
 	return cmd
 }
 
-func newSetterStartCmd() *cobra.Command {
+func newBelayerDaemonStartCmd() *cobra.Command {
 	var instanceName string
 	var foreground bool
 	var maxLeads int
@@ -46,8 +46,8 @@ func newSetterStartCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Start the setter daemon",
-		Long:  "Starts the setter daemon. By default it runs in the background. Use --foreground to run in the current terminal.",
+		Short: "Start the belayer daemon",
+		Long:  "Starts the belayer daemon. By default it runs in the background. Use --foreground to run in the current terminal.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := resolveInstanceName(instanceName)
 			if err != nil {
@@ -59,34 +59,34 @@ func newSetterStartCmd() *cobra.Command {
 				return err
 			}
 
-			pidPath := filepath.Join(instanceDir, "setter.pid")
+			pidPath := filepath.Join(instanceDir, "belayer.pid")
 
-			// Check for already running setter
+			// Check for already running belayer daemon
 			if existingPID, running := pidfile.Check(pidPath); running {
-				return fmt.Errorf("setter already running (PID %d)", existingPID)
+				return fmt.Errorf("belayer daemon already running (PID %d)", existingPID)
 			}
 			// Clean up stale PID file
 			pidfile.Remove(pidPath)
 
 			if foreground {
-				return runSetterForeground(name, instanceDir, pidPath, maxLeads, pollInterval, staleTimeout)
+				return runBelayerDaemonForeground(name, instanceDir, pidPath, maxLeads, pollInterval, staleTimeout)
 			}
 
-			return runSetterBackground(name, instanceDir, pidPath, maxLeads, pollInterval, staleTimeout)
+			return runBelayerDaemonBackground(name, instanceDir, pidPath, maxLeads, pollInterval, staleTimeout)
 		},
 	}
 
 	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (defaults to default instance)")
 	cmd.Flags().BoolVar(&foreground, "foreground", false, "Run in the foreground instead of daemonizing")
 	cmd.Flags().IntVar(&maxLeads, "max-leads", 8, "Maximum concurrent lead sessions")
-	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 5*time.Second, "Polling interval for new tasks")
-	cmd.Flags().DurationVar(&staleTimeout, "stale-timeout", 30*time.Minute, "Timeout for stale goal detection")
+	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 5*time.Second, "Polling interval for new problems")
+	cmd.Flags().DurationVar(&staleTimeout, "stale-timeout", 30*time.Minute, "Timeout for stale climb detection")
 
 	return cmd
 }
 
-// runSetterForeground runs the setter in the current process (foreground mode).
-func runSetterForeground(name, instanceDir, pidPath string, maxLeads int, pollInterval, staleTimeout time.Duration) error {
+// runBelayerDaemonForeground runs the belayer daemon in the current process (foreground mode).
+func runBelayerDaemonForeground(name, instanceDir, pidPath string, maxLeads int, pollInterval, staleTimeout time.Duration) error {
 	dbPath := filepath.Join(instanceDir, "belayer.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
@@ -135,21 +135,21 @@ func runSetterForeground(name, instanceDir, pidPath string, maxLeads int, pollIn
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Println("\nSetter shutting down...")
+		fmt.Println("\nBelayer daemon shutting down...")
 		cancel()
 	}()
 
 	return s.Run(ctx)
 }
 
-// runSetterBackground re-execs the setter in the background with --foreground,
+// runBelayerDaemonBackground re-execs the belayer daemon in the background with --foreground,
 // redirecting output to a log file.
-func runSetterBackground(name, instanceDir, pidPath string, maxLeads int, pollInterval, staleTimeout time.Duration) error {
+func runBelayerDaemonBackground(name, instanceDir, pidPath string, maxLeads int, pollInterval, staleTimeout time.Duration) error {
 	logsDir := filepath.Join(instanceDir, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return fmt.Errorf("creating logs directory: %w", err)
 	}
-	logPath := filepath.Join(logsDir, "setter.log")
+	logPath := filepath.Join(logsDir, "belayer.log")
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -158,7 +158,7 @@ func runSetterBackground(name, instanceDir, pidPath string, maxLeads int, pollIn
 
 	// Build args for re-exec with --foreground
 	args := []string{
-		"setter", "start", "--foreground",
+		"belayer", "start", "--foreground",
 		"--instance", name,
 		"--max-leads", fmt.Sprintf("%d", maxLeads),
 		"--poll-interval", pollInterval.String(),
@@ -178,13 +178,13 @@ func runSetterBackground(name, instanceDir, pidPath string, maxLeads int, pollIn
 
 	if err := child.Start(); err != nil {
 		logFile.Close()
-		return fmt.Errorf("starting setter daemon: %w", err)
+		return fmt.Errorf("starting belayer daemon: %w", err)
 	}
 
 	// Close our handle — the child owns the file now
 	logFile.Close()
 
-	fmt.Printf("Setter started (PID %d)\n", child.Process.Pid)
+	fmt.Printf("Belayer daemon started (PID %d)\n", child.Process.Pid)
 	fmt.Printf("Logs: %s\n", logPath)
 
 	// Don't wait for child — let it run detached
@@ -194,12 +194,12 @@ func runSetterBackground(name, instanceDir, pidPath string, maxLeads int, pollIn
 	return nil
 }
 
-func newSetterStopCmd() *cobra.Command {
+func newBelayerDaemonStopCmd() *cobra.Command {
 	var instanceName string
 
 	cmd := &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the setter daemon",
+		Short: "Stop the belayer daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := resolveInstanceName(instanceName)
 			if err != nil {
@@ -211,16 +211,16 @@ func newSetterStopCmd() *cobra.Command {
 				return err
 			}
 
-			pidPath := filepath.Join(instanceDir, "setter.pid")
+			pidPath := filepath.Join(instanceDir, "belayer.pid")
 			pid, running := pidfile.Check(pidPath)
 			if !running {
 				pidfile.Remove(pidPath) // clean stale
-				fmt.Println("No setter running.")
+				fmt.Println("No belayer daemon running.")
 				return nil
 			}
 
 			// Send SIGTERM
-			fmt.Printf("Stopping setter (PID %d)...\n", pid)
+			fmt.Printf("Stopping belayer daemon (PID %d)...\n", pid)
 			if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 				pidfile.Remove(pidPath)
 				return fmt.Errorf("sending SIGTERM to PID %d: %w", pid, err)
@@ -231,16 +231,16 @@ func newSetterStopCmd() *cobra.Command {
 				time.Sleep(500 * time.Millisecond)
 				if !pidfile.IsRunning(pid) {
 					pidfile.Remove(pidPath)
-					fmt.Println("Setter stopped.")
+					fmt.Println("Belayer daemon stopped.")
 					return nil
 				}
 			}
 
 			// Force kill
-			fmt.Printf("Setter did not exit in 10s, sending SIGKILL...\n")
+			fmt.Printf("Belayer daemon did not exit in 10s, sending SIGKILL...\n")
 			syscall.Kill(pid, syscall.SIGKILL)
 			pidfile.Remove(pidPath)
-			fmt.Println("Setter killed.")
+			fmt.Println("Belayer daemon killed.")
 			return nil
 		},
 	}
@@ -250,12 +250,12 @@ func newSetterStopCmd() *cobra.Command {
 	return cmd
 }
 
-func newSetterStatusCmd() *cobra.Command {
+func newBelayerDaemonStatusCmd() *cobra.Command {
 	var instanceName string
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Check if the setter daemon is running",
+		Short: "Check if the belayer daemon is running",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := resolveInstanceName(instanceName)
 			if err != nil {
@@ -267,15 +267,15 @@ func newSetterStatusCmd() *cobra.Command {
 				return err
 			}
 
-			pidPath := filepath.Join(instanceDir, "setter.pid")
+			pidPath := filepath.Join(instanceDir, "belayer.pid")
 			pid, running := pidfile.Check(pidPath)
 			if running {
-				fmt.Printf("Setter running (PID %d)\n", pid)
+				fmt.Printf("Belayer daemon running (PID %d)\n", pid)
 			} else {
 				if pid > 0 {
 					pidfile.Remove(pidPath) // clean stale
 				}
-				fmt.Println("Setter not running.")
+				fmt.Println("Belayer daemon not running.")
 			}
 			return nil
 		},

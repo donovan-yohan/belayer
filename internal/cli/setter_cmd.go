@@ -12,14 +12,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newManageCmd() *cobra.Command {
+func newSetterSessionCmd() *cobra.Command {
 	var instanceName string
 	var yolo bool
 
 	cmd := &cobra.Command{
-		Use:   "manage",
-		Short: "Start an interactive agent session for task creation",
-		Long:  "Launches a Claude Code session with belayer context. The session has slash commands for task creation, status, messaging, and more.",
+		Use:   "setter",
+		Short: "Start an interactive setter session for problem creation",
+		Long:  "Launches a Claude Code session with belayer context. The session has slash commands for problem creation, status, messaging, and more.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := resolveInstanceName(instanceName)
 			if err != nil {
@@ -41,7 +41,7 @@ func newManageCmd() *cobra.Command {
 				InstanceName: name,
 				RepoNames:    repoNames,
 			}); err != nil {
-				return fmt.Errorf("preparing manage workspace: %w", err)
+				return fmt.Errorf("preparing setter workspace: %w", err)
 			}
 
 			return execClaudeInDir(instanceDir, name, yolo)
@@ -72,7 +72,7 @@ var execClaudeInDir = func(dir string, instanceName string, skipPermissions bool
 
 	// Change to the temp dir so claude picks up .claude/ files
 	if err := os.Chdir(dir); err != nil {
-		return fmt.Errorf("changing to manage dir: %w", err)
+		return fmt.Errorf("changing to setter dir: %w", err)
 	}
 
 	args := []string{"claude"}

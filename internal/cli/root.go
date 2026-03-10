@@ -18,11 +18,11 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(
 		newInitCmd(),
 		newCragCmd(),
-		newTaskCmd(),
+		newProblemCmd(),
 		newStatusCmd(),
-		newSetterCmd(),
+		newBelayerDaemonCmd(),
 		newLogsCmd(),
-		newManageCmd(),
+		newSetterSessionCmd(),
 		newMailCmd(),
 		newMessageCmd(),
 	)
