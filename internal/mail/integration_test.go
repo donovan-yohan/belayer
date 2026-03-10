@@ -9,7 +9,7 @@ import (
 )
 
 func TestIntegration_SendAndRead(t *testing.T) {
-	store := setupTestBeads(t)
+	store := setupTestFileStore(t)
 
 	// Send a feedback message (no tmux delivery in this test)
 	err := store.Create(
@@ -43,7 +43,7 @@ func TestIntegration_SendAndRead(t *testing.T) {
 }
 
 func TestIntegration_MultipleMessages(t *testing.T) {
-	store := setupTestBeads(t)
+	store := setupTestFileStore(t)
 
 	// Send two messages to same recipient
 	require.NoError(t, store.Create("Msg 1", "Body 1", map[string]string{"to": "setter", "msg-type": "done"}))
@@ -64,7 +64,7 @@ func TestIntegration_MultipleMessages(t *testing.T) {
 }
 
 func TestIntegration_DoneSignal(t *testing.T) {
-	store := setupTestBeads(t)
+	store := setupTestFileStore(t)
 
 	// Lead sends done signal to setter
 	doneBody := `{"status":"complete","summary":"Added login validation"}`

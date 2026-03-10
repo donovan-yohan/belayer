@@ -16,8 +16,8 @@ type SendOpts struct {
 	Body    string
 }
 
-// Send writes a message to beads and delivers a nudge via tmux.
-func Send(store *BeadsStore, tm tmux.TmuxManager, opts SendOpts) error {
+// Send writes a message to the store and delivers a nudge via tmux.
+func Send(store *FileStore, tm tmux.TmuxManager, opts SendOpts) error {
 	if !opts.Type.Valid() {
 		return fmt.Errorf("invalid message type: %q", opts.Type)
 	}
@@ -40,7 +40,7 @@ func Send(store *BeadsStore, tm tmux.TmuxManager, opts SendOpts) error {
 		subject = DefaultSubject(opts.Type)
 	}
 
-	// Write to beads
+	// Write to store
 	labels := map[string]string{
 		"to":       opts.To,
 		"msg-type": string(opts.Type),
@@ -50,14 +50,14 @@ func Send(store *BeadsStore, tm tmux.TmuxManager, opts SendOpts) error {
 	}
 
 	if err := store.Create(subject, rendered, labels); err != nil {
-		return fmt.Errorf("writing to beads: %w", err)
+		return fmt.Errorf("writing to store: %w", err)
 	}
 
-	// Deliver via tmux (best-effort — message is durable in beads)
+	// Deliver via tmux (best-effort — message is durable in store)
 	session, window := addr.TmuxTarget()
 	nudgeText := "You have a new message. Run `belayer mail read` to see it."
 	if err := NudgeSession(tm, session, window, nudgeText); err != nil {
-		log.Printf("mail: delivery failed (message persisted in beads): %v", err)
+		log.Printf("mail: delivery failed (message persisted in store): %v", err)
 	}
 
 	return nil

@@ -24,7 +24,7 @@ func newMailCmd() *cobra.Command {
 	return cmd
 }
 
-func mailStore(instanceName string) (*mail.BeadsStore, error) {
+func mailStore(instanceName string) (*mail.FileStore, error) {
 	name, err := resolveInstanceName(instanceName)
 	if err != nil {
 		return nil, err
@@ -40,7 +40,7 @@ func mailStore(instanceName string) (*mail.BeadsStore, error) {
 		return nil, fmt.Errorf("creating mail directory: %w", err)
 	}
 
-	return mail.NewBeadsStore(mailDir, "belayer-mail")
+	return mail.NewFileStore(mailDir), nil
 }
 
 func newMailReadCmd() *cobra.Command {

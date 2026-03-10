@@ -22,7 +22,7 @@ func newMessageCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "message <address>",
 		Short: "Send a mail message to an agent",
-		Long:  "Send a typed message to any belayer agent (setter, lead, spotter, anchor). The message is stored in beads and delivered via tmux.",
+		Long:  "Send a typed message to any belayer agent (setter, lead, spotter, anchor). The message is stored on filesystem and delivered via tmux.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			address := args[0]

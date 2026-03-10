@@ -9,7 +9,7 @@ import (
 )
 
 func TestFormatMessages(t *testing.T) {
-	msgs := []BeadsIssue{
+	msgs := []MailMessage{
 		{ID: "mail-abc", Title: "Feedback", Description: "Fix the bug"},
 		{ID: "mail-def", Title: "Goal Assignment", Description: "Add dark mode"},
 	}
@@ -22,7 +22,7 @@ func TestFormatMessages(t *testing.T) {
 }
 
 func TestReadAndClose(t *testing.T) {
-	store := setupTestBeads(t)
+	store := setupTestFileStore(t)
 
 	// Create two messages
 	require.NoError(t, store.Create("Msg 1", "Body 1", map[string]string{"to": "setter", "msg-type": "done"}))

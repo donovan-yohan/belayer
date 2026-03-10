@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// FormatMessages formats a list of beads issues for terminal output.
-func FormatMessages(issues []BeadsIssue) string {
+// FormatMessages formats a list of mail messages for terminal output.
+func FormatMessages(issues []MailMessage) string {
 	if len(issues) == 0 {
 		return "No unread messages.\n"
 	}
@@ -26,12 +26,12 @@ func FormatMessages(issues []BeadsIssue) string {
 }
 
 // ReadInbox lists unread messages for the given address.
-func ReadInbox(store *BeadsStore, address string) ([]BeadsIssue, error) {
+func ReadInbox(store *FileStore, address string) ([]MailMessage, error) {
 	return store.List(address)
 }
 
 // ReadAndClose lists unread messages, prints them, and closes them.
-func ReadAndClose(store *BeadsStore, address string) (string, error) {
+func ReadAndClose(store *FileStore, address string) (string, error) {
 	issues, err := store.List(address)
 	if err != nil {
 		return "", err
