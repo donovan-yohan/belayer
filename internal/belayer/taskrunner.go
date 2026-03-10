@@ -36,7 +36,7 @@ type TopJSON struct {
 
 // QueuedClimb is a climb waiting to be spawned.
 type QueuedClimb struct {
-	Goal            model.Climb
+	Climb           model.Climb
 	TaskID          string
 	SpotterFeedback string // empty on first attempt, populated on retry after spotter rejection
 }
@@ -142,7 +142,9 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 
 	// Set problem directory for VERDICT.json
 	tr.problemDir = filepath.Join(tr.instanceDir, "tasks", tr.task.ID)
-	os.MkdirAll(tr.problemDir, 0o755)
+	if err := os.MkdirAll(tr.problemDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating problem directory: %w", err)
+	}
 
 	// Create tmux session
 	tr.tmuxSession = fmt.Sprintf("belayer-problem-%s", tr.task.ID)
@@ -176,7 +178,7 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 	readyClimbs := tr.dag.ReadyClimbs()
 	var queued []QueuedClimb
 	for _, climb := range readyClimbs {
-		queued = append(queued, QueuedClimb{Goal: climb, TaskID: tr.task.ID})
+		queued = append(queued, QueuedClimb{Climb:climb, TaskID: tr.task.ID})
 	}
 
 	return queued, nil
@@ -184,7 +186,7 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 
 // SpawnClimb creates a tmux window for a climb and launches an agent session.
 func (tr *ProblemRunner) SpawnClimb(queued QueuedClimb) error {
-	climb := queued.Goal
+	climb := queued.Climb
 
 	// Guard: don't spawn if the climb is already running in the DAG
 	if dagClimb := tr.dag.Get(climb.ID); dagClimb != nil && dagClimb.Status == model.ClimbStatusRunning {
@@ -281,7 +283,7 @@ You are fully autonomous. Make decisions, document drift, and keep moving.`, goa
 
 // CheckCompletions scans worktrees for TOP.json files and returns newly unblocked climbs
 // and the number of climbs that completed this tick. When validation is enabled,
-// climbs transition to spotting instead of completing directly.
+// completing all climbs for a repo triggers per-repo spotter activation.
 func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completedCount int, err error) {
 	for _, climb := range tr.dag.Climbs() {
 		if climb.Status != model.ClimbStatusRunning {
@@ -337,7 +339,7 @@ func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completed
 	if completedCount > 0 {
 		readyClimbs := tr.dag.ReadyClimbs()
 		for _, climb := range readyClimbs {
-			newlyReady = append(newlyReady, QueuedClimb{Goal: climb, TaskID: tr.task.ID})
+			newlyReady = append(newlyReady, QueuedClimb{Climb:climb, TaskID: tr.task.ID})
 		}
 	}
 
@@ -422,7 +424,7 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 			climb.Attempt++
 			tr.dag.Get(climb.ID).Status = model.ClimbStatusPending
 			tr.dag.Get(climb.ID).Attempt = climb.Attempt
-			retryClimbs = append(retryClimbs, QueuedClimb{Goal: *tr.dag.Get(climb.ID), TaskID: tr.task.ID})
+			retryClimbs = append(retryClimbs, QueuedClimb{Climb:*tr.dag.Get(climb.ID), TaskID: tr.task.ID})
 		}
 	}
 
@@ -481,7 +483,7 @@ func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady [
 			// Check for newly unblocked climbs
 			readyClimbs := tr.dag.ReadyClimbs()
 			for _, rc := range readyClimbs {
-				newlyReady = append(newlyReady, QueuedClimb{Goal: rc, TaskID: tr.task.ID})
+				newlyReady = append(newlyReady, QueuedClimb{Climb:rc, TaskID: tr.task.ID})
 			}
 		} else {
 			log.Printf("belayer: repo %s failed spotter validation with %d issues", repoName, len(spot.Issues))
@@ -489,16 +491,22 @@ func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady [
 			feedback := SpotterFeedbackForGoal(&spot)
 			for _, c := range tr.dag.ClimbsForRepo(repoName) {
 				tr.dag.MarkFailed(c.ID)
-				tr.store.UpdateClimbStatus(c.ID, model.ClimbStatusFailed)
-				tr.store.IncrementClimbAttempt(c.ID)
+				if storeErr := tr.store.UpdateClimbStatus(c.ID, model.ClimbStatusFailed); storeErr != nil {
+					log.Printf("warning: failed to update climb status to failed for %s: %v", c.ID, storeErr)
+				}
+				if storeErr := tr.store.IncrementClimbAttempt(c.ID); storeErr != nil {
+					log.Printf("warning: failed to increment climb attempt for %s: %v", c.ID, storeErr)
+				}
 				c.Attempt++
 				os.Remove(filepath.Join(worktreePath, ".lead", c.ID, "TOP.json"))
 
 				if c.Attempt <= 3 {
-					tr.store.ResetClimbStatus(c.ID)
+					if storeErr := tr.store.ResetClimbStatus(c.ID); storeErr != nil {
+						log.Printf("warning: failed to reset climb status for %s: %v", c.ID, storeErr)
+					}
 					c.Status = model.ClimbStatusPending
 					retryClimbs = append(retryClimbs, QueuedClimb{
-						Goal:            *c,
+						Climb:           *c,
 						TaskID:          tr.task.ID,
 						SpotterFeedback: feedback,
 					})
@@ -655,10 +663,14 @@ func (tr *ProblemRunner) recreateWindow(windowName string) error {
 }
 
 // windowExists checks if a window exists in the problem's tmux session.
+// On tmux errors (e.g. server temporarily unavailable), returns true to avoid
+// false stale detection. Only returns false when the tmux command succeeds but
+// the window is genuinely not found.
 func (tr *ProblemRunner) windowExists(windowName string) bool {
 	windows, err := tr.tmux.ListWindows(tr.tmuxSession)
 	if err != nil {
-		return false
+		log.Printf("warning: could not list tmux windows for session %s: %v — assuming window exists", tr.tmuxSession, err)
+		return true
 	}
 	for _, w := range windows {
 		if w == windowName {
@@ -669,8 +681,8 @@ func (tr *ProblemRunner) windowExists(windowName string) bool {
 }
 
 // writeProfiles writes validation profiles to <worktreePath>/.lead/<climbID>/profiles/ for agent discovery.
-func (tr *ProblemRunner) writeProfiles(worktreePath, goalID string) (map[string]string, error) {
-	profileDir := filepath.Join(worktreePath, ".lead", goalID, "profiles")
+func (tr *ProblemRunner) writeProfiles(worktreePath, climbID string) (map[string]string, error) {
+	profileDir := filepath.Join(worktreePath, ".lead", climbID, "profiles")
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating profiles directory: %w", err)
 	}
@@ -798,7 +810,10 @@ func (tr *ProblemRunner) ActivateSpotter(repoName string) error {
 			continue
 		}
 		var top TopJSON
-		json.Unmarshal(data, &top)
+		if err := json.Unmarshal(data, &top); err != nil {
+			log.Printf("warning: invalid TOP.json for climb %s in spotter gather: %v", c.ID, err)
+			continue
+		}
 		tops = append(tops, climbctx.ClimbTopSummary{
 			ClimbID:     c.ID,
 			Description: c.Description,
@@ -963,11 +978,16 @@ func (tr *ProblemRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error)
 }
 
 // HandleApproval creates PRs for all repos after anchor approval.
+// Returns a non-nil error if any PR creation fails; other repos are still attempted.
 func (tr *ProblemRunner) HandleApproval() error {
+	var firstErr error
 	for repoName, worktreePath := range tr.worktrees {
 		prURL, err := tr.createPR(repoName, worktreePath)
 		if err != nil {
 			log.Printf("warning: failed to create PR for %s: %v", repoName, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("creating PR for %s: %w", repoName, err)
+			}
 			continue
 		}
 
@@ -978,7 +998,7 @@ func (tr *ProblemRunner) HandleApproval() error {
 
 		log.Printf("anchor: created PR for %s: %s", repoName, prURL)
 	}
-	return nil
+	return firstErr
 }
 
 // createPR pushes the worktree branch and creates a PR via gh CLI.
@@ -1021,7 +1041,7 @@ func (tr *ProblemRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedC
 		}
 
 		// Create correction climbs
-		for i, goalDesc := range rv.Goals {
+		for i, goalDesc := range rv.Climbs {
 			climbID := fmt.Sprintf("%s-corr-%d-%d", repoName, tr.anchorAttempt, i+1)
 			c := model.Climb{
 				ID:          climbID,
@@ -1032,7 +1052,7 @@ func (tr *ProblemRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedC
 				Status:      model.ClimbStatusPending,
 			}
 			correctionClimbs = append(correctionClimbs, c)
-			queued = append(queued, QueuedClimb{Goal: c, TaskID: tr.task.ID})
+			queued = append(queued, QueuedClimb{Climb:c, TaskID: tr.task.ID})
 		}
 	}
 
