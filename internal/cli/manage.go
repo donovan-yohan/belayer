@@ -17,7 +17,7 @@ func newManageCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "manage",
 		Short: "Start an interactive agent session for task creation",
-		Long:  "Launches a Claude Code session trained on belayer CLI usage. The agent can brainstorm tasks, fetch Jira tickets, generate spec.md and goals.json, and create tasks.",
+		Long:  "Launches a Claude Code session with belayer context. The session has slash commands for task creation, status, messaging, and more.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := resolveInstanceName(instanceName)
 			if err != nil {
@@ -34,15 +34,21 @@ func newManageCmd() *cobra.Command {
 				repoNames = append(repoNames, r.Name)
 			}
 
-			prompt, err := manage.BuildPrompt(manage.PromptData{
+			// Create temp workspace with .claude/ context
+			tmpDir, err := os.MkdirTemp("", "belayer-manage-*")
+			if err != nil {
+				return fmt.Errorf("creating temp dir: %w", err)
+			}
+			// Note: no defer cleanup — process is replaced by exec
+
+			if err := manage.PrepareManageDir(tmpDir, manage.PromptData{
 				InstanceName: name,
 				RepoNames:    repoNames,
-			})
-			if err != nil {
-				return fmt.Errorf("building manage prompt: %w", err)
+			}); err != nil {
+				return fmt.Errorf("preparing manage workspace: %w", err)
 			}
 
-			return execClaude(prompt)
+			return execClaudeInDir(tmpDir, name)
 		},
 	}
 
@@ -50,13 +56,20 @@ func newManageCmd() *cobra.Command {
 	return cmd
 }
 
-// execClaude replaces the current process with a claude session.
-// Extracted for testability — tests can override this via the package-level var.
-var execClaude = func(prompt string) error {
+// execClaudeInDir replaces the current process with a claude session in the given directory.
+// Sets BELAYER_INSTANCE env var so all belayer commands auto-resolve the instance.
+var execClaudeInDir = func(dir string, instanceName string) error {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		return fmt.Errorf("claude not found in PATH: %w", err)
 	}
 
-	return syscall.Exec(claudePath, []string{"claude", "--system-prompt", prompt}, os.Environ())
+	env := append(os.Environ(), "BELAYER_INSTANCE="+instanceName)
+
+	// Change to the temp dir so claude picks up .claude/ files
+	if err := os.Chdir(dir); err != nil {
+		return fmt.Errorf("changing to manage dir: %w", err)
+	}
+
+	return syscall.Exec(claudePath, []string{"claude"}, env)
 }
