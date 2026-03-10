@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/donovan-yohan/belayer/internal/config"
 )
@@ -13,6 +14,9 @@ import (
 func resolveInstanceName(instanceName string) (string, error) {
 	if instanceName != "" {
 		return instanceName, nil
+	}
+	if envName := os.Getenv("BELAYER_INSTANCE"); envName != "" {
+		return envName, nil
 	}
 	cfg, err := config.Load()
 	if err != nil {
