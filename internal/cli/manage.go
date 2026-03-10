@@ -26,7 +26,7 @@ func newManageCmd() *cobra.Command {
 				return err
 			}
 
-			instConfig, _, err := instance.Load(name)
+			instConfig, instanceDir, err := instance.Load(name)
 			if err != nil {
 				return fmt.Errorf("loading instance %q: %w", name, err)
 			}
@@ -36,22 +36,15 @@ func newManageCmd() *cobra.Command {
 				repoNames = append(repoNames, r.Name)
 			}
 
-			// Create temp workspace with .claude/ context
-			tmpDir, err := os.MkdirTemp("", "belayer-manage-*")
-			if err != nil {
-				return fmt.Errorf("creating temp dir: %w", err)
-			}
-			// Note: no defer cleanup — process is replaced by exec
-
-			if err := manage.PrepareManageDir(tmpDir, manage.PromptData{
+			// Write .claude/ context into the instance directory (stable path avoids trust popup)
+			if err := manage.PrepareManageDir(instanceDir, manage.PromptData{
 				InstanceName: name,
 				RepoNames:    repoNames,
 			}); err != nil {
-				os.RemoveAll(tmpDir)
 				return fmt.Errorf("preparing manage workspace: %w", err)
 			}
 
-			return execClaudeInDir(tmpDir, name, yolo)
+			return execClaudeInDir(instanceDir, name, yolo)
 		},
 	}
 
