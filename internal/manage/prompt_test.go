@@ -1,69 +1,67 @@
 package manage
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestBuildPrompt(t *testing.T) {
-	data := PromptData{
+func TestPrepareManageDir(t *testing.T) {
+	dir := t.TempDir()
+
+	err := PrepareManageDir(dir, PromptData{
 		InstanceName: "my-project",
-		RepoNames:    []string{"api", "frontend", "shared-lib"},
-	}
-
-	prompt, err := BuildPrompt(data)
+		RepoNames:    []string{"api", "frontend"},
+	})
 	if err != nil {
-		t.Fatalf("BuildPrompt() error: %v", err)
+		t.Fatalf("PrepareManageDir() error: %v", err)
 	}
 
-	// Verify instance name appears
-	if !strings.Contains(prompt, `instance "my-project"`) {
-		t.Error("prompt should contain instance name")
+	// Verify .claude/CLAUDE.md was written with rendered template
+	claudeMD, err := os.ReadFile(filepath.Join(dir, ".claude", "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("reading CLAUDE.md: %v", err)
+	}
+	content := string(claudeMD)
+	if !strings.Contains(content, `instance "my-project"`) {
+		t.Error("CLAUDE.md should contain instance name")
+	}
+	if !strings.Contains(content, "api") || !strings.Contains(content, "frontend") {
+		t.Error("CLAUDE.md should contain repo names")
 	}
 
-	// Verify all repo names appear
-	for _, repo := range data.RepoNames {
-		if !strings.Contains(prompt, repo) {
-			t.Errorf("prompt should contain repo name %q", repo)
+	// Verify commands were copied
+	commands := []string{"status.md", "task-create.md", "task-list.md", "logs.md", "message.md", "mail.md"}
+	for _, cmd := range commands {
+		path := filepath.Join(dir, ".claude", "commands", cmd)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("expected command file %s to exist", cmd)
 		}
-	}
-
-	// Verify key sections are present
-	sections := []string{
-		"spec.md",
-		"goals.json",
-		"belayer task create",
-		"depends_on",
-		"Jira",
-	}
-	for _, section := range sections {
-		if !strings.Contains(prompt, section) {
-			t.Errorf("prompt should contain %q", section)
-		}
-	}
-
-	// Verify the task create command uses the right instance
-	if !strings.Contains(prompt, "--instance my-project") {
-		t.Error("prompt task create command should reference the instance name")
 	}
 }
 
-func TestBuildPromptSingleRepo(t *testing.T) {
-	data := PromptData{
+func TestPrepareManageDir_TemplateRendering(t *testing.T) {
+	dir := t.TempDir()
+
+	err := PrepareManageDir(dir, PromptData{
 		InstanceName: "solo",
 		RepoNames:    []string{"monorepo"},
-	}
-
-	prompt, err := BuildPrompt(data)
+	})
 	if err != nil {
-		t.Fatalf("BuildPrompt() error: %v", err)
+		t.Fatalf("PrepareManageDir() error: %v", err)
 	}
 
-	if !strings.Contains(prompt, "monorepo") {
-		t.Error("prompt should contain single repo name")
-	}
+	claudeMD, _ := os.ReadFile(filepath.Join(dir, ".claude", "CLAUDE.md"))
+	content := string(claudeMD)
 
-	if !strings.Contains(prompt, `instance "solo"`) {
-		t.Error("prompt should contain instance name")
+	if !strings.Contains(content, `instance "solo"`) {
+		t.Error("CLAUDE.md should contain instance name")
+	}
+	if !strings.Contains(content, "monorepo") {
+		t.Error("CLAUDE.md should contain repo name")
+	}
+	if !strings.Contains(content, "belayer task create") {
+		t.Error("CLAUDE.md should contain CLI reference")
 	}
 }
