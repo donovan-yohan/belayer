@@ -163,7 +163,21 @@ func (s *Setter) tick() error {
 		}
 
 		if taskStatus == model.TaskStatusReviewing {
-			// Spawn anchor if not already running
+			// Skip anchor review for single-repo tasks — no cross-repo alignment to check
+			if runner.IsSingleRepo() {
+				log.Printf("setter: single-repo task %s — skipping anchor, creating PR", taskID)
+				if err := runner.HandleApproval(); err != nil {
+					log.Printf("setter: error creating PRs for %s: %v", taskID, err)
+				}
+				if err := s.store.UpdateTaskStatus(taskID, model.TaskStatusComplete); err != nil {
+					log.Printf("setter: error completing task: %v", err)
+				}
+				runner.Cleanup()
+				delete(s.tasks, taskID)
+				continue
+			}
+
+			// Multi-repo: spawn anchor for cross-repo alignment review
 			if !runner.AnchorRunning() {
 				if err := runner.SpawnAnchor(); err != nil {
 					log.Printf("setter: error spawning anchor for %s: %v", taskID, err)

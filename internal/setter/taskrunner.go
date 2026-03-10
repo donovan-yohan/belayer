@@ -1062,6 +1062,12 @@ func (tr *TaskRunner) AnchorRunning() bool {
 	return tr.anchorRunning
 }
 
+// IsSingleRepo returns true if the task involves only one repository,
+// meaning cross-repo anchor review can be skipped.
+func (tr *TaskRunner) IsSingleRepo() bool {
+	return len(tr.worktrees) <= 1
+}
+
 // SpotterFeedbackForGoal formats spotter issues into a string for the lead prompt retry.
 func SpotterFeedbackForGoal(spot *spotter.SpotJSON) string {
 	if spot == nil || spot.Pass {

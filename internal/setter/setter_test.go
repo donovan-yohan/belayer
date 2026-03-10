@@ -928,9 +928,82 @@ func TestTaskRunner_HandleRejection(t *testing.T) {
 	assert.True(t, goalIDs["api-corr-1-2"])
 }
 
+func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-s5a", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-s5a", goals)
+
+	task, _ := s.GetTask("task-s5a")
+	require.NoError(t, s.UpdateTaskStatus("task-s5a", model.TaskStatusRunning))
+	task.Status = model.TaskStatusRunning
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-s5a", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-s5a")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetGoalsForTask("task-s5a")
+	runner := &TaskRunner{
+		task:        task,
+		dag:         BuildDAG(goalsFromDB),
+		worktrees:   map[string]string{"api": worktreeDir},
+		instanceDir: tmpDir,
+		store:       s,
+		tmux:        tm,
+		logMgr:      lm,
+		spawner:     sp,
+		git:         mg,
+		tmuxSession: "belayer-task-task-s5a",
+		taskDir:     taskDir,
+		startedAt:   make(map[string]time.Time),
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-s5a"))
+
+	sett := &Setter{
+		config: Config{
+			InstanceName: "test-instance",
+			InstanceDir:  tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:   s,
+		tmux:    tm,
+		logMgr:  lm,
+		spawner: sp,
+		tasks:   map[string]*TaskRunner{"task-s5a": runner},
+	}
+
+	// Disable validation for this test
+	runner.validationEnabled = false
+
+	// Spawn goal and write DONE.json
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s5a"}))
+	sett.activeLeads = 1
+	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
+	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	os.MkdirAll(goalDoneDir, 0o755)
+	os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), doneData, 0o644)
+
+	// First tick: detect completion, transition to reviewing
+	require.NoError(t, sett.tick())
+	updatedTask, _ := s.GetTask("task-s5a")
+	assert.Equal(t, model.TaskStatusReviewing, updatedTask.Status)
+
+	// Second tick: single-repo should skip anchor and go straight to complete
+	require.NoError(t, sett.tick())
+	assert.False(t, runner.AnchorRunning(), "anchor should not be spawned for single-repo task")
+	updatedTask, _ = s.GetTask("task-s5a")
+	assert.Equal(t, model.TaskStatusComplete, updatedTask.Status)
+	assert.NotContains(t, sett.tasks, "task-s5a") // cleaned up
+}
+
 func TestSetter_AnchorApproveFlow(t *testing.T) {
 	goals := []model.Goal{
-		{ID: "api-1", TaskID: "task-s5", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "api-1", TaskID: "task-s5", RepoName: "api", Description: "test api", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "web-1", TaskID: "task-s5", RepoName: "web", Description: "test web", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 	mg := newMockGitRunner()
@@ -940,16 +1013,18 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	require.NoError(t, s.UpdateTaskStatus("task-s5", model.TaskStatusRunning))
 	task.Status = model.TaskStatusRunning
 
-	worktreeDir := filepath.Join(tmpDir, "tasks", "task-s5", "api")
+	apiWorktreeDir := filepath.Join(tmpDir, "tasks", "task-s5", "api")
+	webWorktreeDir := filepath.Join(tmpDir, "tasks", "task-s5", "web")
 	taskDir := filepath.Join(tmpDir, "tasks", "task-s5")
-	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+	require.NoError(t, os.MkdirAll(apiWorktreeDir, 0o755))
+	require.NoError(t, os.MkdirAll(webWorktreeDir, 0o755))
 
 	goalsFromDB, _ := s.GetGoalsForTask("task-s5")
 
 	runner := &TaskRunner{
 		task:        task,
 		dag:         BuildDAG(goalsFromDB),
-		worktrees:   map[string]string{"api": worktreeDir},
+		worktrees:   map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
 		instanceDir: tmpDir,
 		store:       s,
 		tmux:        tm,
@@ -980,13 +1055,19 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	// Disable validation for this test (tests anchor flow, not spotter)
 	runner.validationEnabled = false
 
-	// Spawn goal and write DONE.json (goal-scoped path)
+	// Spawn both goals and write DONE.json for each (goal-scoped paths)
 	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s5"}))
-	setter.activeLeads = 1
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[1], TaskID: "task-s5"}))
+	setter.activeLeads = 2
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
-	os.MkdirAll(goalDoneDir, 0o755)
-	os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), doneData, 0o644)
+
+	apiDoneDir := filepath.Join(apiWorktreeDir, ".lead", "api-1")
+	os.MkdirAll(apiDoneDir, 0o755)
+	os.WriteFile(filepath.Join(apiDoneDir, "DONE.json"), doneData, 0o644)
+
+	webDoneDir := filepath.Join(webWorktreeDir, ".lead", "web-1")
+	os.MkdirAll(webDoneDir, 0o755)
+	os.WriteFile(filepath.Join(webDoneDir, "DONE.json"), doneData, 0o644)
 
 	// First tick: detect completion, transition to reviewing
 	require.NoError(t, setter.tick())
@@ -994,7 +1075,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	assert.Equal(t, model.TaskStatusReviewing, updatedTask.Status)
 	assert.Equal(t, 0, setter.activeLeads)
 
-	// Second tick: spawn anchor
+	// Second tick: spawn anchor (multi-repo requires anchor)
 	require.NoError(t, setter.tick())
 	assert.True(t, runner.AnchorRunning())
 
@@ -1003,6 +1084,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 		Verdict: "approve",
 		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "pass"},
+			"web": {Status: "pass"},
 		},
 	}
 	verdictData, _ := json.Marshal(verdict)
@@ -1017,7 +1099,8 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 
 func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	goals := []model.Goal{
-		{ID: "api-1", TaskID: "task-s6", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "api-1", TaskID: "task-s6", RepoName: "api", Description: "test api", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "web-1", TaskID: "task-s6", RepoName: "web", Description: "test web", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 	mg := newMockGitRunner()
@@ -1027,15 +1110,17 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	require.NoError(t, s.UpdateTaskStatus("task-s6", model.TaskStatusRunning))
 	task.Status = model.TaskStatusRunning
 
-	worktreeDir := filepath.Join(tmpDir, "tasks", "task-s6", "api")
+	apiWorktreeDir := filepath.Join(tmpDir, "tasks", "task-s6", "api")
+	webWorktreeDir := filepath.Join(tmpDir, "tasks", "task-s6", "web")
 	taskDir := filepath.Join(tmpDir, "tasks", "task-s6")
-	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+	require.NoError(t, os.MkdirAll(apiWorktreeDir, 0o755))
+	require.NoError(t, os.MkdirAll(webWorktreeDir, 0o755))
 
 	goalsFromDB, _ := s.GetGoalsForTask("task-s6")
 	runner := &TaskRunner{
 		task:        task,
 		dag:         BuildDAG(goalsFromDB),
-		worktrees:   map[string]string{"api": worktreeDir},
+		worktrees:   map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
 		instanceDir: tmpDir,
 		store:       s,
 		tmux:        tm,
@@ -1066,18 +1151,24 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	// Disable validation for this test (tests anchor reject/approve flow)
 	runner.validationEnabled = false
 
-	// Spawn goal and complete it (goal-scoped path)
+	// Spawn both goals and complete them (goal-scoped paths)
 	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-s6"}))
-	sett.activeLeads = 1
+	require.NoError(t, runner.SpawnGoal(QueuedGoal{Goal: goals[1], TaskID: "task-s6"}))
+	sett.activeLeads = 2
 	doneData, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "done"})
-	goalDoneDir := filepath.Join(worktreeDir, ".lead", "api-1")
-	os.MkdirAll(goalDoneDir, 0o755)
-	os.WriteFile(filepath.Join(goalDoneDir, "DONE.json"), doneData, 0o644)
+
+	apiDoneDir := filepath.Join(apiWorktreeDir, ".lead", "api-1")
+	os.MkdirAll(apiDoneDir, 0o755)
+	os.WriteFile(filepath.Join(apiDoneDir, "DONE.json"), doneData, 0o644)
+
+	webDoneDir := filepath.Join(webWorktreeDir, ".lead", "web-1")
+	os.MkdirAll(webDoneDir, 0o755)
+	os.WriteFile(filepath.Join(webDoneDir, "DONE.json"), doneData, 0o644)
 
 	// Tick 1: detect completion -> reviewing
 	require.NoError(t, sett.tick())
 
-	// Tick 2: spawn anchor
+	// Tick 2: spawn anchor (multi-repo)
 	require.NoError(t, sett.tick())
 
 	// Write reject verdict
@@ -1085,6 +1176,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 		Verdict: "reject",
 		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "fail", Goals: []string{"Fix the schema"}},
+			"web": {Status: "pass"},
 		},
 	}
 	rejectData, _ := json.Marshal(rejectVerdict)
@@ -1102,9 +1194,8 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	assert.Equal(t, 1, sett.activeLeads)
 
 	// Complete the correction goal (goal-scoped path)
-	// Find the correction goal ID from spawned opts
 	corrGoalID := "api-corr-1-1"
-	corrDoneDir := filepath.Join(worktreeDir, ".lead", corrGoalID)
+	corrDoneDir := filepath.Join(apiWorktreeDir, ".lead", corrGoalID)
 	os.MkdirAll(corrDoneDir, 0o755)
 	doneData2, _ := json.Marshal(DoneJSON{Status: "complete", Summary: "fixed schema"})
 	os.WriteFile(filepath.Join(corrDoneDir, "DONE.json"), doneData2, 0o644)
@@ -1123,6 +1214,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 		Verdict: "approve",
 		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "pass"},
+			"web": {Status: "pass"},
 		},
 	}
 	approveData, _ := json.Marshal(approveVerdict)
@@ -1142,7 +1234,8 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 
 func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	goals := []model.Goal{
-		{ID: "api-1", TaskID: "task-s7", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "api-1", TaskID: "task-s7", RepoName: "api", Description: "test api", DependsOn: []string{}, Status: model.GoalStatusPending},
+		{ID: "web-1", TaskID: "task-s7", RepoName: "web", Description: "test web", DependsOn: []string{}, Status: model.GoalStatusPending},
 	}
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 	mg := newMockGitRunner()
@@ -1152,15 +1245,17 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	require.NoError(t, s.UpdateTaskStatus("task-s7", model.TaskStatusReviewing))
 	task.Status = model.TaskStatusReviewing
 
-	worktreeDir := filepath.Join(tmpDir, "tasks", "task-s7", "api")
+	apiWorktreeDir := filepath.Join(tmpDir, "tasks", "task-s7", "api")
+	webWorktreeDir := filepath.Join(tmpDir, "tasks", "task-s7", "web")
 	taskDir := filepath.Join(tmpDir, "tasks", "task-s7")
-	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+	require.NoError(t, os.MkdirAll(apiWorktreeDir, 0o755))
+	require.NoError(t, os.MkdirAll(webWorktreeDir, 0o755))
 
 	goalsFromDB, _ := s.GetGoalsForTask("task-s7")
 	runner := &TaskRunner{
 		task:           task,
 		dag:            BuildDAG(goalsFromDB),
-		worktrees:      map[string]string{"api": worktreeDir},
+		worktrees:      map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
 		instanceDir:    tmpDir,
 		store:          s,
 		tmux:           tm,
@@ -1176,8 +1271,9 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	require.NoError(t, tm.NewSession(runner.tmuxSession))
 	require.NoError(t, lm.EnsureDir("task-s7"))
 
-	// Mark goal complete
+	// Mark both goals complete
 	runner.dag.MarkComplete("api-1")
+	runner.dag.MarkComplete("web-1")
 
 	sett := &Setter{
 		config: Config{
@@ -1198,6 +1294,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 		Verdict: "reject",
 		Repos: map[string]anchor.RepoVerdict{
 			"api": {Status: "fail", Goals: []string{"Still broken"}},
+			"web": {Status: "pass"},
 		},
 	}
 	rejectData, _ := json.Marshal(rejectVerdict)
