@@ -2034,3 +2034,105 @@ func TestProblemRunner_Init_SingleRepo_NoAnchorWindow(t *testing.T) {
 	assert.NotContains(t, windows, "anchor")
 }
 
+func TestProblemRunner_IsFlashed(t *testing.T) {
+	s, _, lm, sp, tmpDir := setupTestEnv(t)
+	tm := newMockTmux()
+
+	goals := []model.Climb{
+		{ID: "a1", ProblemID: "task-f1", RepoName: "api", Description: "one", DependsOn: []string{}, Status: model.ClimbStatusComplete, Attempt: 1},
+		{ID: "a2", ProblemID: "task-f1", RepoName: "api", Description: "two", DependsOn: []string{}, Status: model.ClimbStatusComplete, Attempt: 1},
+	}
+	insertTestTask(t, s, "task-f1", goals)
+
+	task, _ := s.GetProblem("task-f1")
+	runner := &ProblemRunner{
+		task:                 task,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawner:              sp,
+		startedAt:            make(map[string]time.Time),
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  map[string]int{"api": 1},
+	}
+
+	goalsFromDB, _ := s.GetClimbsForProblem("task-f1")
+	runner.dag = BuildDAG(goalsFromDB)
+	// Set attempts to 1 (default from DB)
+	for _, c := range runner.dag.ClimbsForRepo("api") {
+		c.Attempt = 1
+	}
+
+	_ = tmpDir
+	assert.True(t, runner.IsFlashed("api"))
+	assert.True(t, runner.IsFullyFlashed())
+}
+
+func TestProblemRunner_NotFlashed_RetryNeeded(t *testing.T) {
+	s, _, lm, sp, tmpDir := setupTestEnv(t)
+	tm := newMockTmux()
+
+	goals := []model.Climb{
+		{ID: "a1", ProblemID: "task-f2", RepoName: "api", Description: "one", DependsOn: []string{}, Status: model.ClimbStatusComplete, Attempt: 2},
+		{ID: "a2", ProblemID: "task-f2", RepoName: "api", Description: "two", DependsOn: []string{}, Status: model.ClimbStatusComplete, Attempt: 1},
+	}
+	insertTestTask(t, s, "task-f2", goals)
+
+	task, _ := s.GetProblem("task-f2")
+	runner := &ProblemRunner{
+		task:                 task,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawner:              sp,
+		startedAt:            make(map[string]time.Time),
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  map[string]int{"api": 1},
+	}
+
+	goalsFromDB, _ := s.GetClimbsForProblem("task-f2")
+	runner.dag = BuildDAG(goalsFromDB)
+	// Set attempts
+	for _, c := range runner.dag.ClimbsForRepo("api") {
+		if c.ID == "a1" {
+			c.Attempt = 2 // retried
+		} else {
+			c.Attempt = 1
+		}
+	}
+
+	_ = tmpDir
+	assert.False(t, runner.IsFlashed("api"))
+	assert.False(t, runner.IsFullyFlashed())
+}
+
+func TestProblemRunner_NotFlashed_SpotterRetry(t *testing.T) {
+	s, _, lm, sp, tmpDir := setupTestEnv(t)
+	tm := newMockTmux()
+
+	goals := []model.Climb{
+		{ID: "a1", ProblemID: "task-f3", RepoName: "api", Description: "one", DependsOn: []string{}, Status: model.ClimbStatusComplete, Attempt: 1},
+	}
+	insertTestTask(t, s, "task-f3", goals)
+
+	task, _ := s.GetProblem("task-f3")
+	runner := &ProblemRunner{
+		task:                 task,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawner:              sp,
+		startedAt:            make(map[string]time.Time),
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  map[string]int{"api": 2}, // spotter failed once
+	}
+
+	goalsFromDB, _ := s.GetClimbsForProblem("task-f3")
+	runner.dag = BuildDAG(goalsFromDB)
+	for _, c := range runner.dag.ClimbsForRepo("api") {
+		c.Attempt = 1
+	}
+
+	_ = tmpDir
+	assert.False(t, runner.IsFlashed("api"))
+}

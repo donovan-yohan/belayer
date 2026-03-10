@@ -144,6 +144,9 @@ func (s *Belayer) tick() error {
 
 			// Check if all climbs are complete -> transition to reviewing
 			if runner.AllClimbsComplete() {
+				if runner.IsFullyFlashed() {
+					log.Printf("setter: problem %s was FULLY FLASHED! Every repo topped first try.", taskID)
+				}
 				log.Printf("setter: all climbs complete for problem %s — transitioning to reviewing", taskID)
 				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusReviewing); err != nil {
 					log.Printf("setter: error updating problem status: %v", err)

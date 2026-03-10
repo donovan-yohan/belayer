@@ -503,6 +503,9 @@ func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady [
 
 		if spot.Pass {
 			log.Printf("belayer: repo %s passed spotter validation", repoName)
+			if tr.IsFlashed(repoName) {
+				log.Printf("belayer: repo %s was FLASHED! All climbs topped first try.", repoName)
+			}
 			// Mark this repo as fully validated
 			tr.repoSpotterActivated[repoName] = false // deactivate tracking
 
@@ -543,6 +546,30 @@ func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady [
 		}
 	}
 	return resolvedCount, newlyReady, retryClimbs, nil
+}
+
+// IsFlashed returns true if the repo was "flashed" — all climbs topped on first
+// attempt and the spotter passed on first attempt.
+func (tr *ProblemRunner) IsFlashed(repoName string) bool {
+	if tr.repoSpotterAttempts[repoName] != 1 {
+		return false
+	}
+	for _, c := range tr.dag.ClimbsForRepo(repoName) {
+		if c.Attempt != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+// IsFullyFlashed returns true if ALL repos were flashed.
+func (tr *ProblemRunner) IsFullyFlashed() bool {
+	for _, repo := range tr.dag.UniqueRepos() {
+		if !tr.IsFlashed(repo) {
+			return false
+		}
+	}
+	return true
 }
 
 // AllClimbsComplete returns true if all climbs in the DAG are complete and
