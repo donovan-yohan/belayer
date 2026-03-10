@@ -506,6 +506,10 @@ func (tr *TaskRunner) Cleanup() {
 		tr.tmux.KillSession(tr.tmuxSession)
 	}
 	tr.logMgr.CompressTaskLogs(tr.task.ID)
+
+	// Clean up mail for this task
+	mailTaskDir := filepath.Join(tr.instanceDir, "mail", "task", tr.task.ID)
+	os.RemoveAll(mailTaskDir)
 }
 
 // killPaneProcessTree kills all descendant processes of a tmux pane before
