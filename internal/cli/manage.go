@@ -14,6 +14,7 @@ import (
 
 func newManageCmd() *cobra.Command {
 	var instanceName string
+	var yolo bool
 
 	cmd := &cobra.Command{
 		Use:   "manage",
@@ -50,17 +51,18 @@ func newManageCmd() *cobra.Command {
 				return fmt.Errorf("preparing manage workspace: %w", err)
 			}
 
-			return execClaudeInDir(tmpDir, name)
+			return execClaudeInDir(tmpDir, name, yolo)
 		},
 	}
 
 	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (defaults to default instance)")
+	cmd.Flags().BoolVar(&yolo, "yolo", false, "Skip permission prompts (passes --dangerously-skip-permissions to claude)")
 	return cmd
 }
 
 // execClaudeInDir replaces the current process with a claude session in the given directory.
 // Sets BELAYER_INSTANCE env var so all belayer commands auto-resolve the instance.
-var execClaudeInDir = func(dir string, instanceName string) error {
+var execClaudeInDir = func(dir string, instanceName string, skipPermissions bool) error {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		return fmt.Errorf("claude not found in PATH: %w", err)
@@ -80,5 +82,10 @@ var execClaudeInDir = func(dir string, instanceName string) error {
 		return fmt.Errorf("changing to manage dir: %w", err)
 	}
 
-	return syscall.Exec(claudePath, []string{"claude"}, env)
+	args := []string{"claude"}
+	if skipPermissions {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+
+	return syscall.Exec(claudePath, args, env)
 }
