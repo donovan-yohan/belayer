@@ -31,6 +31,12 @@ type TmuxManager interface {
 	IsPaneDead(session, windowName string) (bool, error)
 	// CapturePaneContent captures the last N lines of visible pane content.
 	CapturePaneContent(session, windowName string, lines int) (string, error)
+	// SetEnvironment sets a tmux environment variable for a session.
+	SetEnvironment(session, key, value string) error
+	// SendKeysLiteral sends literal text (no Enter) to a specific target.
+	SendKeysLiteral(target, text string) error
+	// SendKeysRaw sends a raw key name (like "Enter", "Escape") to a target.
+	SendKeysRaw(target, key string) error
 }
 
 // RealTmux implements TmuxManager by shelling out to the tmux CLI.
@@ -162,4 +168,34 @@ func (r *RealTmux) CapturePaneContent(session, windowName string, lines int) (st
 		return "", fmt.Errorf("tmux capture-pane -t %s: %s: %w", target, strings.TrimSpace(string(output)), err)
 	}
 	return string(output), nil
+}
+
+// SetEnvironment sets a tmux environment variable for a session.
+func (r *RealTmux) SetEnvironment(session, key, value string) error {
+	cmd := exec.Command("tmux", "set-environment", "-t", session, key, value)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux set-environment -t %s %s: %s: %w", session, key, strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// SendKeysLiteral sends literal text (no Enter) to a specific target.
+func (r *RealTmux) SendKeysLiteral(target, text string) error {
+	cmd := exec.Command("tmux", "send-keys", "-t", target, "-l", text)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux send-keys -l to %s: %s: %w", target, strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// SendKeysRaw sends a raw key name (like "Enter", "Escape") to a target.
+func (r *RealTmux) SendKeysRaw(target, key string) error {
+	cmd := exec.Command("tmux", "send-keys", "-t", target, key)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux send-keys %s to %s: %s: %w", key, target, strings.TrimSpace(string(output)), err)
+	}
+	return nil
 }

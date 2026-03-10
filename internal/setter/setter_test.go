@@ -100,6 +100,18 @@ func (m *mockTmux) CapturePaneContent(session, windowName string, lines int) (st
 	return "", nil
 }
 
+func (m *mockTmux) SetEnvironment(session, key, value string) error {
+	return nil
+}
+
+func (m *mockTmux) SendKeysLiteral(target, text string) error {
+	return nil
+}
+
+func (m *mockTmux) SendKeysRaw(target, key string) error {
+	return nil
+}
+
 // mockSpawner implements lead.AgentSpawner for tests.
 type mockSpawner struct {
 	spawned []lead.SpawnOpts

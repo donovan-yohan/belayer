@@ -84,6 +84,18 @@ func (m *mockTmux) CapturePaneContent(session, windowName string, lines int) (st
 	return "", nil
 }
 
+func (m *mockTmux) SetEnvironment(session, key, value string) error {
+	return nil
+}
+
+func (m *mockTmux) SendKeysLiteral(target, text string) error {
+	return nil
+}
+
+func (m *mockTmux) SendKeysRaw(target, key string) error {
+	return nil
+}
+
 func TestClaudeSpawner_Spawn(t *testing.T) {
 	tm := newMockTmux()
 	tm.NewSession("test-session")
