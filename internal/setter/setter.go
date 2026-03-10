@@ -84,6 +84,11 @@ func (s *Setter) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			log.Println("setter: shutting down")
+			for taskID, runner := range s.tasks {
+				log.Printf("setter: cleaning up task %s", taskID)
+				runner.Cleanup()
+			}
+			log.Printf("setter: cleaned up %d task(s)", len(s.tasks))
 			return ctx.Err()
 		case <-ticker.C:
 			if err := s.tick(); err != nil {

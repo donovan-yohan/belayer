@@ -490,9 +490,19 @@ func (tr *TaskRunner) HasStuckGoals() bool {
 	return false
 }
 
-// Cleanup kills the tmux session and compresses logs.
+// Cleanup kills process trees in all windows, then kills the tmux session and compresses logs.
 func (tr *TaskRunner) Cleanup() {
 	if tr.tmuxSession != "" {
+		// Kill process trees in all windows before destroying the session
+		windows, err := tr.tmux.ListWindows(tr.tmuxSession)
+		if err == nil {
+			for _, w := range windows {
+				tr.killPaneProcessTree(w)
+			}
+			if len(windows) > 0 {
+				time.Sleep(300 * time.Millisecond) // grace period for SIGTERM handlers
+			}
+		}
 		tr.tmux.KillSession(tr.tmuxSession)
 	}
 	tr.logMgr.CompressTaskLogs(tr.task.ID)
