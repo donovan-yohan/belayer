@@ -35,7 +35,7 @@ Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and for
 Validation flows through three layers after a lead completes a goal:
 
 1. **Lead** (self-check): Runs build + tests, writes `DONE.json` on completion
-2. **Spotter** (per-goal validation): Reuses the lead's tmux window with fresh agent context. Performs runtime validation (browser checks, dev server, console errors). Writes `SPOT.json`. On failure, spotter feedback is injected into the lead prompt on retry.
+2. **Spotter** (per-goal validation): Spawns in its own tmux window (`spot-<goalID>`) after the lead's window is killed. Performs runtime validation (browser checks, dev server, console errors). Writes `SPOT.json`. On failure, spotter feedback is injected into the lead prompt on retry.
 3. **Anchor** (cross-repo alignment): Reviews all repos for consistency after all leads/spotters pass. Writes `VERDICT.json`.
 
 ### Signal Files (Legacy)
@@ -77,10 +77,11 @@ Path-like strings that deterministically map to tmux targets: `setter`, `task/<i
 ## Lead Execution
 
 Leads run as full interactive Claude Code sessions (not `claude -p`):
-- Setter prepares worktree with `.claude/CLAUDE.md` (auto-loaded by Claude Code) + `.lead/GOAL.json` (structured context)
-- Spawned via `claude --dangerously-skip-permissions "initial prompt"` in tmux
-- Agents use the full Claude Code environment: CLAUDE.md, skills, MCP tools, harness workflow
-- Writes `DONE.json` signal file on completion
+- Role instructions passed via `--append-system-prompt` (preserves built-in Claude Code behavior + user plugins)
+- Goal context written to `.lead/<goalID>/GOAL.json` (goal-scoped to avoid collisions between concurrent same-repo goals)
+- Spawned via `claude --dangerously-skip-permissions --append-system-prompt "role instructions" "initial prompt"` in tmux
+- Initial prompt drives harness workflow: `/harness:init` → `/harness:plan` → `/harness:orchestrate` → `/harness:complete`
+- Writes `DONE.json` in `.lead/<goalID>/` on completion
 - Stuck detection: log file mtime silence monitoring + pane capture for input prompt detection
 - Tmux windows use `remain-on-exit on` for exit status inspection via `#{pane_dead}`
 - .lead/ directory maintained for crash recovery

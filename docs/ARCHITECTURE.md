@@ -26,7 +26,7 @@ Setter (DAG executor daemon — manages routes/tasks)
 Lead (bundled execution loop per repo — does the climbing)
   |-- Runs in isolated git worktree
   |-- Full interactive Claude Code session (not claude -p)
-  |-- Environment: .claude/CLAUDE.md (auto-loaded) + .lead/GOAL.json (structured context)
+  |-- Role via --append-system-prompt, context via .lead/<goalID>/GOAL.json
   |-- Self-check: build + tests
   |
   v

@@ -446,8 +446,8 @@ func (tr *TaskRunner) CheckSpottingGoals() (resolvedCount int, newlyReady []Queu
 			}
 		} else {
 			// Spot failed — re-queue for retry if under max attempts
-			// (CheckSpotResult already incremented attempt and marked failed)
-			if g.Attempt < 3 {
+			// (CheckSpotResult already incremented attempt, so use <= 3)
+			if g.Attempt <= 3 {
 				retryGoals = append(retryGoals, QueuedGoal{
 					Goal:            *g,
 					TaskID:          tr.task.ID,
@@ -865,9 +865,8 @@ func (tr *TaskRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error) {
 		log.Printf("warning: failed to insert anchor_verdict event: %v", err)
 	}
 
-	// Kill the anchor window
-	windowName := fmt.Sprintf("anchor-%d", tr.anchorAttempt)
-	tr.tmux.KillWindow(tr.tmuxSession, windowName)
+	// Kill the anchor window (static name — matches SpawnAnchor)
+	tr.tmux.KillWindow(tr.tmuxSession, "anchor")
 	tr.anchorRunning = false
 
 	// Remove VERDICT.json so it's not picked up again
