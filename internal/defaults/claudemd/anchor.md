@@ -51,3 +51,10 @@ If rejected (specify correction goals):
 ```
 
 IMPORTANT: You MUST write VERDICT.json before your session ends. Include ALL repos in the verdict.
+
+## Mail
+
+You can receive messages from the orchestration system.
+When prompted, run `belayer mail read` to check your messages.
+When you complete your work, signal completion:
+  belayer message setter --type done --body '{"status":"complete","summary":"<describe what you did>"}'

@@ -48,3 +48,10 @@ If checks fail:
 ```
 
 IMPORTANT: You MUST write SPOT.json before your session ends.
+
+## Mail
+
+You can receive messages from the orchestration system.
+When prompted, run `belayer mail read` to check your messages.
+When you complete your work, signal completion:
+  belayer message setter --type done --body '{"status":"complete","summary":"<describe what you did>"}'

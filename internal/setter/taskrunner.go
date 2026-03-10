@@ -213,6 +213,12 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		return fmt.Errorf("writing GOAL.json for %s: %w", goal.ID, err)
 	}
 
+	// Set mail address for the lead agent
+	mailAddr := fmt.Sprintf("task/%s/lead/%s/%s", tr.task.ID, goal.RepoName, goal.ID)
+	if err := tr.tmux.SetEnvironment(tr.tmuxSession, "BELAYER_MAIL_ADDRESS", mailAddr); err != nil {
+		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS: %v", err)
+	}
+
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:   tr.tmuxSession,
 		WindowName:    windowName,
@@ -659,6 +665,12 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		return fmt.Errorf("writing spotter GOAL.json for %s: %w", goal.ID, err)
 	}
 
+	// Set mail address for the spotter agent
+	spotterMailAddr := fmt.Sprintf("task/%s/spotter/%s/%s", tr.task.ID, goal.RepoName, goal.ID)
+	if err := tr.tmux.SetEnvironment(tr.tmuxSession, "BELAYER_MAIL_ADDRESS", spotterMailAddr); err != nil {
+		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS for spotter: %v", err)
+	}
+
 	// Spawn agent in the existing window (lead has exited, window is idle)
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:   tr.tmuxSession,
@@ -792,6 +804,12 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		Summaries: tr.GatherSummaries(),
 	}); err != nil {
 		return fmt.Errorf("writing anchor GOAL.json: %w", err)
+	}
+
+	// Set mail address for the anchor agent
+	anchorMailAddr := fmt.Sprintf("task/%s/anchor", tr.task.ID)
+	if err := tr.tmux.SetEnvironment(tr.tmuxSession, "BELAYER_MAIL_ADDRESS", anchorMailAddr); err != nil {
+		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS for anchor: %v", err)
 	}
 
 	// Spawn agent

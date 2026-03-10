@@ -39,3 +39,10 @@ When finished, write `DONE.json` in the working directory:
 If you cannot complete the goal, write DONE.json with `"status": "failed"` and explain what blocked you.
 
 IMPORTANT: You MUST commit, push, and write DONE.json before your session ends.
+
+## Mail
+
+You can receive messages from the orchestration system.
+When prompted, run `belayer mail read` to check your messages.
+When you complete your work, signal completion:
+  belayer message setter --type done --body '{"status":"complete","summary":"<describe what you did>"}'

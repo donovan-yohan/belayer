@@ -25,6 +25,7 @@ type mockTmux struct {
 	sessions       map[string]map[string]bool // session -> set of window names
 	keys           map[string]string          // target -> last keys sent
 	remainOnExit   map[string]bool            // target -> enabled
+	envVars        map[string]string          // "session:key" -> value
 }
 
 func newMockTmux() *mockTmux {
@@ -32,6 +33,7 @@ func newMockTmux() *mockTmux {
 		sessions:     make(map[string]map[string]bool),
 		keys:         make(map[string]string),
 		remainOnExit: make(map[string]bool),
+		envVars:      make(map[string]string),
 	}
 }
 
@@ -101,6 +103,7 @@ func (m *mockTmux) CapturePaneContent(session, windowName string, lines int) (st
 }
 
 func (m *mockTmux) SetEnvironment(session, key, value string) error {
+	m.envVars[session+":"+key] = value
 	return nil
 }
 
@@ -280,6 +283,42 @@ func TestTaskRunner_SpawnGoal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(goalJSON), "test goal")
 	assert.Contains(t, string(goalJSON), "test spec")
+}
+
+func TestTaskRunner_SpawnGoal_SetsMailAddress(t *testing.T) {
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+
+	goals := []model.Goal{
+		{ID: "api-1", TaskID: "task-1", RepoName: "api", Description: "test goal", DependsOn: []string{}, Status: model.GoalStatusPending},
+	}
+	insertTestTask(t, s, "task-1", goals)
+
+	task, _ := s.GetTask("task-1")
+	runner := &TaskRunner{
+		task:        task,
+		worktrees:   map[string]string{"api": filepath.Join(tmpDir, "api")},
+		instanceDir: tmpDir,
+		store:       s,
+		tmux:        tm,
+		logMgr:      lm,
+		spawner:     sp,
+		tmuxSession: "belayer-task-task-1",
+		startedAt:   make(map[string]time.Time),
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "api"), 0o755))
+
+	goalsFromDB, _ := s.GetGoalsForTask("task-1")
+	runner.dag = BuildDAG(goalsFromDB)
+	require.NoError(t, tm.NewSession("belayer-task-task-1"))
+	require.NoError(t, lm.EnsureDir("task-1"))
+
+	err := runner.SpawnGoal(QueuedGoal{Goal: goals[0], TaskID: "task-1"})
+	require.NoError(t, err)
+
+	// Verify BELAYER_MAIL_ADDRESS was set with the correct lead address format
+	mailAddr, ok := tm.envVars["belayer-task-task-1:BELAYER_MAIL_ADDRESS"]
+	assert.True(t, ok, "BELAYER_MAIL_ADDRESS should be set")
+	assert.Equal(t, "task/task-1/lead/api/api-1", mailAddr)
 }
 
 func TestTaskRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
