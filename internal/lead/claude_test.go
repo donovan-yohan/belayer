@@ -167,6 +167,44 @@ func TestClaudeSpawner_ImplementsInterface(t *testing.T) {
 	var _ AgentSpawner = (*ClaudeSpawner)(nil)
 }
 
+func TestClaudeSpawner_AppendSystemPrompt(t *testing.T) {
+	tm := newMockTmux()
+	tm.NewSession("s")
+	tm.NewWindow("s", "w")
+
+	spawner := NewClaudeSpawner(tm)
+	err := spawner.Spawn(context.Background(), SpawnOpts{
+		TmuxSession:        "s",
+		WindowName:         "w",
+		WorkDir:            t.TempDir(),
+		InitialPrompt:      "Do the thing",
+		AppendSystemPrompt: "You are a lead agent.",
+	})
+	require.NoError(t, err)
+
+	sentKeys := tm.keys["s:w"]
+	assert.Contains(t, sentKeys, "--append-system-prompt")
+	assert.Contains(t, sentKeys, "You are a lead agent.")
+}
+
+func TestClaudeSpawner_NoAppendSystemPrompt(t *testing.T) {
+	tm := newMockTmux()
+	tm.NewSession("s")
+	tm.NewWindow("s", "w")
+
+	spawner := NewClaudeSpawner(tm)
+	err := spawner.Spawn(context.Background(), SpawnOpts{
+		TmuxSession:   "s",
+		WindowName:    "w",
+		WorkDir:       t.TempDir(),
+		InitialPrompt: "Do the thing",
+	})
+	require.NoError(t, err)
+
+	sentKeys := tm.keys["s:w"]
+	assert.NotContains(t, sentKeys, "--append-system-prompt")
+}
+
 func TestClaudeSpawner_NoClaudeSpecificLeaks(t *testing.T) {
 	// Verify the interface doesn't mention Claude
 	// This is a documentation test — the interface should be vendor-agnostic

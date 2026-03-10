@@ -12,8 +12,9 @@ type AgentSpawner interface {
 
 // SpawnOpts contains everything needed to spawn a lead session.
 type SpawnOpts struct {
-	TmuxSession   string
-	WindowName    string
-	WorkDir       string
-	InitialPrompt string
+	TmuxSession        string
+	WindowName         string
+	WorkDir            string
+	InitialPrompt      string
+	AppendSystemPrompt string // Role-specific instructions appended to default system prompt via --append-system-prompt
 }
