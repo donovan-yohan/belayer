@@ -1,6 +1,6 @@
 ---
 description: View lead session logs
-argument-hint: "[task-id] [--goal GOAL] [--tail N]"
+argument-hint: "[problem-id] [--climb CLIMB] [--tail N]"
 allowed-tools: ["Bash", "Read"]
 ---
 

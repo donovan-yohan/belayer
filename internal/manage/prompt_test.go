@@ -24,15 +24,15 @@ func TestPrepareManageDir(t *testing.T) {
 		t.Fatalf("reading CLAUDE.md: %v", err)
 	}
 	content := string(claudeMD)
-	if !strings.Contains(content, `instance "my-project"`) {
-		t.Error("CLAUDE.md should contain instance name")
+	if !strings.Contains(content, `crag "my-project"`) {
+		t.Error("CLAUDE.md should contain crag name")
 	}
 	if !strings.Contains(content, "api") || !strings.Contains(content, "frontend") {
 		t.Error("CLAUDE.md should contain repo names")
 	}
 
 	// Verify commands were copied
-	commands := []string{"status.md", "task-create.md", "task-list.md", "logs.md", "message.md", "mail.md"}
+	commands := []string{"status.md", "problem-create.md", "problem-list.md", "logs.md", "message.md", "mail.md"}
 	for _, cmd := range commands {
 		path := filepath.Join(dir, ".claude", "commands", cmd)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -55,13 +55,13 @@ func TestPrepareManageDir_TemplateRendering(t *testing.T) {
 	claudeMD, _ := os.ReadFile(filepath.Join(dir, ".claude", "CLAUDE.md"))
 	content := string(claudeMD)
 
-	if !strings.Contains(content, `instance "solo"`) {
-		t.Error("CLAUDE.md should contain instance name")
+	if !strings.Contains(content, `crag "solo"`) {
+		t.Error("CLAUDE.md should contain crag name")
 	}
 	if !strings.Contains(content, "monorepo") {
 		t.Error("CLAUDE.md should contain repo name")
 	}
-	if !strings.Contains(content, "belayer task create") {
+	if !strings.Contains(content, "belayer problem create") {
 		t.Error("CLAUDE.md should contain CLI reference")
 	}
 }

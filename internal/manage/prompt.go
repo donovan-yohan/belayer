@@ -27,19 +27,19 @@ func PrepareManageDir(dir string, data PromptData) error {
 	}
 
 	// Render and write CLAUDE.md
-	tmplBytes, err := defaults.FS.ReadFile("claudemd/manage.md")
+	tmplBytes, err := defaults.FS.ReadFile("claudemd/setter.md")
 	if err != nil {
-		return fmt.Errorf("reading manage template: %w", err)
+		return fmt.Errorf("reading setter template: %w", err)
 	}
 
-	tmpl, err := template.New("manage-claude-md").Parse(string(tmplBytes))
+	tmpl, err := template.New("setter-claude-md").Parse(string(tmplBytes))
 	if err != nil {
 		return fmt.Errorf("parsing manage template: %w", err)
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("rendering manage template: %w", err)
+		return fmt.Errorf("rendering setter template: %w", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(claudeDir, "CLAUDE.md"), buf.Bytes(), 0o644); err != nil {
