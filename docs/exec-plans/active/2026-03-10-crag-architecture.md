@@ -24,11 +24,11 @@
 - [x] Task 7: TaskRunner → ProblemRunner + signal file renames _(completed 2026-03-10)_
 - [x] Task 8: Setter daemon → Belayer package rename _(completed 2026-03-10)_
 - [x] Task 9: CLI commands rename (task→problem, setter→belayer, manage→setter) _(completed 2026-03-10)_
-- [ ] Task 10: Default prompts and slash commands rename
-- [ ] Task 11: Documentation rename (README, CLAUDE.md, docs/)
-- [ ] Task 12: Pre-create spotter/anchor windows at problem init
-- [ ] Task 13: Spotter per-repo activation + repo-level completion tracking
-- [ ] Task 14: Flash detection
+- [x] Task 10: Default prompts and slash commands rename _(completed 2026-03-10)_
+- [x] Task 11: Documentation rename (README, CLAUDE.md, docs/) _(completed 2026-03-10)_
+- [x] Task 12: Pre-create spotter/anchor windows at problem init _(completed 2026-03-10)_
+- [x] Task 13: Spotter per-repo activation + repo-level completion tracking _(completed 2026-03-10)_
+- [x] Task 14: Flash detection _(completed 2026-03-10)_
 
 ## Surprises & Discoveries
 
