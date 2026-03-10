@@ -194,14 +194,15 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		log.Printf("warning: pipe-pane for %s failed: %v", windowName, err)
 	}
 
-	// Prepare worktree environment with CLAUDE.md and GOAL.json
+	// Prepare worktree environment with GOAL.json
 	worktreePath := tr.worktrees[goal.RepoName]
 
-	if err := tr.writeClaudeMD(worktreePath, "lead"); err != nil {
-		return fmt.Errorf("writing CLAUDE.md for %s: %w", goal.ID, err)
+	appendPrompt, err := defaults.FS.ReadFile("claudemd/lead.md")
+	if err != nil {
+		return fmt.Errorf("reading lead system prompt: %w", err)
 	}
 
-	if err := goalctx.WriteGoalJSON(worktreePath, goalctx.LeadGoal{
+	if err := goalctx.WriteGoalJSON(worktreePath, goal.ID, goalctx.LeadGoal{
 		Role:            "lead",
 		TaskSpec:        tr.task.Spec,
 		GoalID:          goal.ID,
@@ -222,11 +223,22 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS: %v", err)
 	}
 
+	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", goal.ID)
+	initialPrompt := fmt.Sprintf(`Read %s and begin working on your assignment. Follow these steps:
+
+1. Read %s to understand your goal and task spec
+2. If this repo does not have harness docs yet, run /harness:init
+3. Run /harness:plan to create an implementation plan for your goal
+4. Run /harness:orchestrate to execute the plan
+5. Run /harness:complete to finalize — this will reflect, review, and commit
+6. Write DONE.json in the same directory as your GOAL.json when complete`, goalJSONPath, goalJSONPath)
+
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
-		TmuxSession:   tr.tmuxSession,
-		WindowName:    windowName,
-		WorkDir:       worktreePath,
-		InitialPrompt: "Read .lead/GOAL.json and begin working on your assignment.",
+		TmuxSession:        tr.tmuxSession,
+		WindowName:         windowName,
+		WorkDir:            worktreePath,
+		AppendSystemPrompt: string(appendPrompt),
+		InitialPrompt:      initialPrompt,
 	}); err != nil {
 		return fmt.Errorf("spawning agent for %s: %w", goal.ID, err)
 	}
@@ -256,7 +268,7 @@ func (tr *TaskRunner) CheckCompletions() (newlyReady []QueuedGoal, completedCoun
 		}
 
 		worktreePath := tr.worktrees[g.RepoName]
-		donePath := filepath.Join(worktreePath, "DONE.json")
+		donePath := filepath.Join(worktreePath, ".lead", g.ID, "DONE.json")
 
 		data, readErr := os.ReadFile(donePath)
 		if readErr != nil {
@@ -362,7 +374,7 @@ func (tr *TaskRunner) CheckStaleGoals(staleTimeout time.Duration) ([]QueuedGoal,
 
 		// Check one more time for DONE.json before marking failed
 		worktreePath := tr.worktrees[g.RepoName]
-		donePath := filepath.Join(worktreePath, "DONE.json")
+		donePath := filepath.Join(worktreePath, ".lead", g.ID, "DONE.json")
 		if _, err := os.Stat(donePath); err == nil {
 			continue // will be picked up by CheckCompletions
 		}
@@ -486,42 +498,9 @@ func (tr *TaskRunner) windowExists(windowName string) bool {
 	return false
 }
 
-// writeClaudeMD writes the role-specific CLAUDE.md template to <worktreePath>/.claude/CLAUDE.md.
-// If a CLAUDE.md already exists (e.g. from the repo itself), belayer content is prepended.
-func (tr *TaskRunner) writeClaudeMD(worktreePath, role string) error {
-	tmplBytes, err := defaults.FS.ReadFile("claudemd/" + role + ".md")
-	if err != nil {
-		return fmt.Errorf("reading %s CLAUDE.md template: %w", role, err)
-	}
-	belayerContent := string(tmplBytes)
-
-	claudeDir := filepath.Join(worktreePath, ".claude")
-	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
-		return fmt.Errorf("creating .claude directory: %w", err)
-	}
-
-	claudeMDPath := filepath.Join(claudeDir, "CLAUDE.md")
-	origPath := filepath.Join(claudeDir, "CLAUDE.md.orig")
-
-	// On first call, save the original repo CLAUDE.md (if any) so we
-	// can always reconstruct without accumulating stale role instructions.
-	if _, err := os.Stat(origPath); os.IsNotExist(err) {
-		if existing, readErr := os.ReadFile(claudeMDPath); readErr == nil && len(existing) > 0 {
-			_ = os.WriteFile(origPath, existing, 0o644)
-		}
-	}
-
-	// Rebuild from template + original repo content (never prior belayer content)
-	if orig, err := os.ReadFile(origPath); err == nil && len(orig) > 0 {
-		belayerContent = belayerContent + "\n\n---\n\n" + string(orig)
-	}
-
-	return os.WriteFile(claudeMDPath, []byte(belayerContent), 0o644)
-}
-
-// writeProfiles writes validation profiles to <worktreePath>/.lead/profiles/ for agent discovery.
-func (tr *TaskRunner) writeProfiles(worktreePath string) (map[string]string, error) {
-	profileDir := filepath.Join(worktreePath, ".lead", "profiles")
+// writeProfiles writes validation profiles to <worktreePath>/.lead/<goalID>/profiles/ for agent discovery.
+func (tr *TaskRunner) writeProfiles(worktreePath, goalID string) (map[string]string, error) {
+	profileDir := filepath.Join(worktreePath, ".lead", goalID, "profiles")
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating profiles directory: %w", err)
 	}
@@ -604,7 +583,7 @@ func (tr *TaskRunner) GatherSummaries() []goalctx.GoalSummary {
 		}
 
 		worktreePath := tr.worktrees[g.RepoName]
-		donePath := filepath.Join(worktreePath, "DONE.json")
+		donePath := filepath.Join(worktreePath, ".lead", g.ID, "DONE.json")
 		data, err := os.ReadFile(donePath)
 		if err == nil {
 			var done DoneJSON
@@ -629,34 +608,43 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		return fmt.Errorf("updating goal status to spotting: %w", err)
 	}
 
-	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
 	worktreePath := tr.worktrees[goal.RepoName]
 
-	// Ensure remain-on-exit is set for the spotter window (reused from lead)
+	// Kill the lead's window
+	leadWindowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
+	tr.tmux.KillWindow(tr.tmuxSession, leadWindowName)
+
+	// Create a new window for the spotter
+	windowName := fmt.Sprintf("spot-%s", goal.ID)
+	if err := tr.tmux.NewWindow(tr.tmuxSession, windowName); err != nil {
+		return fmt.Errorf("creating spotter window %s: %w", windowName, err)
+	}
+
+	// Keep pane open after process exits for death detection
 	if err := tr.tmux.SetRemainOnExit(tr.tmuxSession, windowName, true); err != nil {
 		log.Printf("warning: set remain-on-exit for spotter %s failed: %v", windowName, err)
 	}
 
-	// Write CLAUDE.md for spotter role
-	if err := tr.writeClaudeMD(worktreePath, "spotter"); err != nil {
-		return fmt.Errorf("writing spotter CLAUDE.md for %s: %w", goal.ID, err)
+	appendPrompt, err := defaults.FS.ReadFile("claudemd/spotter.md")
+	if err != nil {
+		return fmt.Errorf("reading spotter system prompt: %w", err)
 	}
 
-	// Write profiles to .lead/profiles/ for agent discovery
-	profiles, err := tr.writeProfiles(worktreePath)
+	// Write profiles to .lead/<goalID>/profiles/ for agent discovery
+	profiles, err := tr.writeProfiles(worktreePath, goal.ID)
 	if err != nil {
 		return fmt.Errorf("writing profiles for %s: %w", goal.ID, err)
 	}
 
 	// Read DONE.json for context
-	donePath := filepath.Join(worktreePath, "DONE.json")
+	donePath := filepath.Join(worktreePath, ".lead", goal.ID, "DONE.json")
 	doneData, readErr := os.ReadFile(donePath)
 	if readErr != nil {
 		doneData = []byte("{}")
 	}
 
 	// Write GOAL.json for spotter
-	if err := goalctx.WriteGoalJSON(worktreePath, goalctx.SpotterGoal{
+	if err := goalctx.WriteGoalJSON(worktreePath, goal.ID, goalctx.SpotterGoal{
 		Role:        "spotter",
 		GoalID:      goal.ID,
 		RepoName:    goal.RepoName,
@@ -674,12 +662,15 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 		log.Printf("warning: failed to set BELAYER_MAIL_ADDRESS for spotter: %v", err)
 	}
 
-	// Spawn agent in the existing window (lead has exited, window is idle)
+	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", goal.ID)
+
+	// Spawn agent in a new window
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
-		TmuxSession:   tr.tmuxSession,
-		WindowName:    windowName,
-		WorkDir:       worktreePath,
-		InitialPrompt: "Read .lead/GOAL.json and begin validating the lead's work.",
+		TmuxSession:        tr.tmuxSession,
+		WindowName:         windowName,
+		WorkDir:            worktreePath,
+		AppendSystemPrompt: string(appendPrompt),
+		InitialPrompt:      fmt.Sprintf("Read %s and begin validating the lead's work.", goalJSONPath),
 	}); err != nil {
 		return fmt.Errorf("spawning spotter for %s: %w", goal.ID, err)
 	}
@@ -699,7 +690,7 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 // Returns the result, whether one was found, and any error.
 func (tr *TaskRunner) CheckSpotResult(goal *model.Goal) (*spotter.SpotJSON, bool, error) {
 	worktreePath := tr.worktrees[goal.RepoName]
-	spotPath := filepath.Join(worktreePath, "SPOT.json")
+	spotPath := filepath.Join(worktreePath, ".lead", goal.ID, "SPOT.json")
 
 	data, err := os.ReadFile(spotPath)
 	if err != nil {
@@ -720,8 +711,8 @@ func (tr *TaskRunner) CheckSpotResult(goal *model.Goal) (*spotter.SpotJSON, bool
 		log.Printf("warning: failed to insert spotter_verdict event: %v", err)
 	}
 
-	// Kill the tmux window
-	windowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
+	// Kill the spotter tmux window
+	windowName := fmt.Sprintf("spot-%s", goal.ID)
 	tr.tmux.KillWindow(tr.tmuxSession, windowName)
 	delete(tr.startedAt, goal.ID)
 
@@ -765,8 +756,7 @@ func (tr *TaskRunner) CheckSpotResult(goal *model.Goal) (*spotter.SpotJSON, bool
 		}
 
 		// Remove DONE.json so the retry starts fresh
-		worktreePath := tr.worktrees[goal.RepoName]
-		os.Remove(filepath.Join(worktreePath, "DONE.json"))
+		os.Remove(filepath.Join(worktreePath, ".lead", goal.ID, "DONE.json"))
 
 		log.Printf("spotter: goal %s failed validation with %d issues", goal.ID, len(spot.Issues))
 	}
@@ -800,12 +790,12 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		log.Printf("warning: pipe-pane for anchor failed: %v", err)
 	}
 
-	// Write CLAUDE.md for anchor role
-	if err := tr.writeClaudeMD(tr.taskDir, "anchor"); err != nil {
-		return fmt.Errorf("writing anchor CLAUDE.md: %w", err)
+	appendPrompt, err := defaults.FS.ReadFile("claudemd/anchor.md")
+	if err != nil {
+		return fmt.Errorf("reading anchor system prompt: %w", err)
 	}
 
-	if err := goalctx.WriteGoalJSON(tr.taskDir, goalctx.AnchorGoal{
+	if err := goalctx.WriteGoalJSON(tr.taskDir, "anchor", goalctx.AnchorGoal{
 		Role:      "anchor",
 		TaskSpec:  tr.task.Spec,
 		RepoDiffs: tr.GatherDiffs(),
@@ -822,10 +812,11 @@ func (tr *TaskRunner) SpawnAnchor() error {
 
 	// Spawn agent
 	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
-		TmuxSession:   tr.tmuxSession,
-		WindowName:    windowName,
-		WorkDir:       tr.taskDir,
-		InitialPrompt: "Read .lead/GOAL.json and begin cross-repo review.",
+		TmuxSession:        tr.tmuxSession,
+		WindowName:         windowName,
+		WorkDir:            tr.taskDir,
+		AppendSystemPrompt: string(appendPrompt),
+		InitialPrompt:      "Read .lead/anchor/GOAL.json and begin cross-repo review.",
 	}); err != nil {
 		return fmt.Errorf("spawning anchor agent: %w", err)
 	}
@@ -941,10 +932,14 @@ func (tr *TaskRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedGoal
 			continue
 		}
 
-		// Remove old DONE.json from the failing repo's worktree
+		// Remove old DONE.json files from the failing repo's worktree
 		worktreePath, ok := tr.worktrees[repoName]
 		if ok {
-			os.Remove(filepath.Join(worktreePath, "DONE.json"))
+			for _, g := range tr.dag.Goals() {
+				if g.RepoName == repoName {
+					os.Remove(filepath.Join(worktreePath, ".lead", g.ID, "DONE.json"))
+				}
+			}
 		}
 
 		// Create correction goals

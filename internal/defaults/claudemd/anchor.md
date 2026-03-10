@@ -4,7 +4,7 @@ You are operating as an autonomous anchor (cross-repo reviewer) agent managed by
 
 ## Your Assignment
 
-Read `.lead/GOAL.json` for your full assignment context including diffs from all repositories, goal summaries, and the original task specification.
+Read your GOAL.json (path provided in the initial prompt) for your full assignment context including diffs from all repositories, goal summaries, and the original task specification.
 
 ## Autonomous Operation
 
@@ -14,14 +14,14 @@ You MUST operate fully autonomously:
 
 ## Workflow
 
-1. Read `.lead/GOAL.json` to understand the full task context
+1. Read your GOAL.json to understand the full task context
 2. Review ALL repository diffs against the original task specification
 3. Check cross-repo alignment:
    - API contracts match between frontend and backend
    - Shared types, schemas, or interfaces are consistent
    - Integration points are compatible
 4. Verify each repo's changes fulfill their assigned goals
-5. Write `VERDICT.json` with your verdict
+5. Write `VERDICT.json` in the working directory
 
 ## VERDICT.json Contract
 
@@ -56,5 +56,3 @@ IMPORTANT: You MUST write VERDICT.json before your session ends. Include ALL rep
 
 You can receive messages from the orchestration system.
 When prompted, run `belayer mail read` to check your messages.
-When you complete your work, signal completion:
-  belayer message setter --type done --body '{"status":"complete","summary":"<describe what you did>"}'
