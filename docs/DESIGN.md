@@ -152,7 +152,7 @@ The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
 | Command | Purpose |
 |---------|---------|
 | `belayer init <name> --repo <url>` | Create a new instance with repos; writes config directory to disk |
-| `belayer setter` | Start the setter daemon (DAG executor) |
+| `belayer setter start` | Start the setter daemon (DAG executor) |
 | `belayer task create [desc]` | Create task with intake pipeline + start coordinator |
 | `belayer task retry [task-id]` | Retry a failed task (reuses enriched description) |
 | `belayer task list` | List tasks for the current instance |
