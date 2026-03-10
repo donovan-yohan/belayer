@@ -16,7 +16,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/anchor"
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/defaults"
-	"github.com/donovan-yohan/belayer/internal/goalctx"
+	"github.com/donovan-yohan/belayer/internal/climbctx"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
@@ -204,10 +204,10 @@ func (tr *TaskRunner) SpawnGoal(queued QueuedGoal) error {
 		return fmt.Errorf("reading lead system prompt: %w", err)
 	}
 
-	if err := goalctx.WriteGoalJSON(worktreePath, goal.ID, goalctx.LeadGoal{
+	if err := climbctx.WriteClimbJSON(worktreePath, goal.ID, climbctx.LeadClimb{
 		Role:            "lead",
-		TaskSpec:        tr.task.Spec,
-		GoalID:          goal.ID,
+		ProblemSpec:     tr.task.Spec,
+		ClimbID:         goal.ID,
 		RepoName:        goal.RepoName,
 		Description:     goal.Description,
 		Attempt:         goal.Attempt,
@@ -623,8 +623,8 @@ func (tr *TaskRunner) TmuxSession() string {
 }
 
 // GatherDiffs collects git diffs from all repo worktrees.
-func (tr *TaskRunner) GatherDiffs() []goalctx.RepoDiff {
-	var diffs []goalctx.RepoDiff
+func (tr *TaskRunner) GatherDiffs() []climbctx.RepoDiff {
+	var diffs []climbctx.RepoDiff
 	for repoName, worktreePath := range tr.worktrees {
 		diffStat, err := tr.git.Run(worktreePath, "diff", "--stat", "HEAD")
 		if err != nil {
@@ -649,7 +649,7 @@ func (tr *TaskRunner) GatherDiffs() []goalctx.RepoDiff {
 			}
 		}
 
-		diffs = append(diffs, goalctx.RepoDiff{
+		diffs = append(diffs, climbctx.RepoDiff{
 			RepoName: repoName,
 			DiffStat: diffStat,
 			Diff:     diff,
@@ -659,11 +659,11 @@ func (tr *TaskRunner) GatherDiffs() []goalctx.RepoDiff {
 }
 
 // GatherSummaries reads DONE.json from each worktree and returns goal summaries.
-func (tr *TaskRunner) GatherSummaries() []goalctx.GoalSummary {
-	var summaries []goalctx.GoalSummary
+func (tr *TaskRunner) GatherSummaries() []climbctx.ClimbSummary {
+	var summaries []climbctx.ClimbSummary
 	for _, g := range tr.dag.Goals() {
-		summary := goalctx.GoalSummary{
-			GoalID:      g.ID,
+		summary := climbctx.ClimbSummary{
+			ClimbID:     g.ID,
 			RepoName:    g.RepoName,
 			Description: g.Description,
 			Status:      string(g.Status),
@@ -733,14 +733,14 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Climb) error {
 	}
 
 	// Write GOAL.json for spotter
-	if err := goalctx.WriteGoalJSON(worktreePath, goal.ID, goalctx.SpotterGoal{
+	if err := climbctx.WriteClimbJSON(worktreePath, goal.ID, climbctx.SpotterClimb{
 		Role:        "spotter",
-		GoalID:      goal.ID,
+		ClimbID:     goal.ID,
 		RepoName:    goal.RepoName,
 		Description: goal.Description,
 		WorkDir:     worktreePath,
 		Profiles:    profiles,
-		DoneJSON:    string(doneData),
+		TopJSON:     string(doneData),
 	}); err != nil {
 		return fmt.Errorf("writing spotter GOAL.json for %s: %w", goal.ID, err)
 	}
@@ -884,11 +884,11 @@ func (tr *TaskRunner) SpawnAnchor() error {
 		return fmt.Errorf("reading anchor system prompt: %w", err)
 	}
 
-	if err := goalctx.WriteGoalJSON(tr.taskDir, "anchor", goalctx.AnchorGoal{
-		Role:      "anchor",
-		TaskSpec:  tr.task.Spec,
-		RepoDiffs: tr.GatherDiffs(),
-		Summaries: tr.GatherSummaries(),
+	if err := climbctx.WriteClimbJSON(tr.taskDir, "anchor", climbctx.AnchorClimb{
+		Role:        "anchor",
+		ProblemSpec: tr.task.Spec,
+		RepoDiffs:   tr.GatherDiffs(),
+		Summaries:   tr.GatherSummaries(),
 	}); err != nil {
 		return fmt.Errorf("writing anchor GOAL.json: %w", err)
 	}

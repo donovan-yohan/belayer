@@ -189,7 +189,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 	}
 }
 
-func TestCleanupTaskWorktrees(t *testing.T) {
+func TestCleanupProblemWorktrees(t *testing.T) {
 	setupTestHome(t)
 	repoPath := createTestRepo(t, "cleanup-repo")
 
@@ -203,9 +203,9 @@ func TestCleanupTaskWorktrees(t *testing.T) {
 		t.Fatalf("CreateWorktree: %v", err)
 	}
 
-	// Cleanup all worktrees for the task
-	if err := CleanupTaskWorktrees(instanceDir, "task-cleanup"); err != nil {
-		t.Fatalf("CleanupTaskWorktrees: %v", err)
+	// Cleanup all worktrees for the problem
+	if err := CleanupProblemWorktrees(instanceDir, "task-cleanup"); err != nil {
+		t.Fatalf("CleanupProblemWorktrees: %v", err)
 	}
 
 	// Verify worktree gone
@@ -215,7 +215,7 @@ func TestCleanupTaskWorktrees(t *testing.T) {
 	}
 }
 
-func TestInstanceConfigPersistence(t *testing.T) {
+func TestCragConfigPersistence(t *testing.T) {
 	setupTestHome(t)
 	repoPath := createTestRepo(t, "persist-repo")
 
@@ -230,7 +230,7 @@ func TestInstanceConfigPersistence(t *testing.T) {
 		t.Fatalf("reading instance.json: %v", err)
 	}
 
-	var cfg InstanceConfig
+	var cfg CragConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		t.Fatalf("parsing instance.json: %v", err)
 	}

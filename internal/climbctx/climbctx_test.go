@@ -1,4 +1,4 @@
-package goalctx
+package climbctx
 
 import (
 	"encoding/json"
@@ -10,72 +10,72 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWriteLeadGoal(t *testing.T) {
+func TestWriteLeadClimb(t *testing.T) {
 	dir := t.TempDir()
-	goal := LeadGoal{
+	climb := LeadClimb{
 		Role:            "lead",
-		TaskSpec:        "Build an API",
-		GoalID:          "api-1",
+		ProblemSpec:     "Build an API",
+		ClimbID:         "api-1",
 		RepoName:        "api",
 		Description:     "Add /users endpoint",
 		Attempt:         1,
 		SpotterFeedback: "",
 	}
-	err := WriteGoalJSON(dir, "api-1", goal)
+	err := WriteClimbJSON(dir, "api-1", climb)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(dir, ".lead", "api-1", "GOAL.json"))
 	require.NoError(t, err)
 
-	var parsed LeadGoal
+	var parsed LeadClimb
 	require.NoError(t, json.Unmarshal(data, &parsed))
 	assert.Equal(t, "lead", parsed.Role)
-	assert.Equal(t, "api-1", parsed.GoalID)
-	assert.Equal(t, "Build an API", parsed.TaskSpec)
+	assert.Equal(t, "api-1", parsed.ClimbID)
+	assert.Equal(t, "Build an API", parsed.ProblemSpec)
 }
 
-func TestWriteSpotterGoal(t *testing.T) {
+func TestWriteSpotterClimb(t *testing.T) {
 	dir := t.TempDir()
-	goal := SpotterGoal{
+	climb := SpotterClimb{
 		Role:        "spotter",
-		GoalID:      "fe-1",
+		ClimbID:     "fe-1",
 		RepoName:    "app",
 		Description: "Scaffold frontend",
 		WorkDir:     "/tmp/worktree",
 		Profiles:    map[string]string{"frontend": "[checks]\nbuild = \"npm run build\""},
-		DoneJSON:    `{"status":"complete","summary":"done"}`,
+		TopJSON:     `{"status":"complete","summary":"done"}`,
 	}
-	err := WriteGoalJSON(dir, "fe-1", goal)
+	err := WriteClimbJSON(dir, "fe-1", climb)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(dir, ".lead", "fe-1", "GOAL.json"))
 	require.NoError(t, err)
 
-	var parsed SpotterGoal
+	var parsed SpotterClimb
 	require.NoError(t, json.Unmarshal(data, &parsed))
 	assert.Equal(t, "spotter", parsed.Role)
 	assert.Contains(t, parsed.Profiles, "frontend")
 }
 
-func TestWriteAnchorGoal(t *testing.T) {
+func TestWriteAnchorClimb(t *testing.T) {
 	dir := t.TempDir()
-	goal := AnchorGoal{
-		Role:     "anchor",
-		TaskSpec: "Build an app",
+	climb := AnchorClimb{
+		Role:        "anchor",
+		ProblemSpec: "Build an app",
 		RepoDiffs: []RepoDiff{
 			{RepoName: "api", DiffStat: "handlers.go | 25 +++", Diff: "+func Get()"},
 		},
-		Summaries: []GoalSummary{
-			{GoalID: "api-1", RepoName: "api", Summary: "Added endpoint"},
+		Summaries: []ClimbSummary{
+			{ClimbID: "api-1", RepoName: "api", Summary: "Added endpoint"},
 		},
 	}
-	err := WriteGoalJSON(dir, "anchor", goal)
+	err := WriteClimbJSON(dir, "anchor", climb)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(dir, ".lead", "anchor", "GOAL.json"))
 	require.NoError(t, err)
 
-	var parsed AnchorGoal
+	var parsed AnchorClimb
 	require.NoError(t, json.Unmarshal(data, &parsed))
 	assert.Equal(t, "anchor", parsed.Role)
 	assert.Len(t, parsed.RepoDiffs, 1)
