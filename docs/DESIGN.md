@@ -50,12 +50,12 @@ Validation flows through three layers after a lead completes a goal:
 
 ## Mail System
 
-Beads-backed inter-agent messaging. Replaces signal files with typed messages for unified orchestration.
+Filesystem-backed inter-agent messaging. Messages are JSON files in per-address directories.
 
 ### Architecture
 
-- **Storage**: Beads (`bd` CLI) database per instance at `~/.belayer/instances/<name>/mail/`. Messages stored as beads issues with routing labels.
-- **Delivery**: Sender-driven via tmux send-keys. `belayer message` writes to beads AND delivers a nudge in one operation.
+- **Storage**: JSON files in `<instanceDir>/mail/<address>/unread/` and `read/`. No external processes.
+- **Delivery**: Sender-driven via tmux send-keys. `belayer message` writes to filesystem AND delivers a nudge in one operation.
 - **Identity**: `BELAYER_MAIL_ADDRESS` env var set in tmux at spawn time. Agents derive identity automatically.
 - **Templates**: Embedded via `embed.FS` at `internal/mail/templates/`. Prepend actionable instructions at send time.
 
