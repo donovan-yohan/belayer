@@ -96,6 +96,10 @@ func (m *mockTmux) SendKeysRaw(target, key string) error {
 	return nil
 }
 
+func (m *mockTmux) GetPanePID(session, windowName string) (int, error) {
+	return 0, nil
+}
+
 func TestClaudeSpawner_Spawn(t *testing.T) {
 	tm := newMockTmux()
 	tm.NewSession("test-session")

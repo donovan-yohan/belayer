@@ -3,6 +3,7 @@ package tmux
 import (
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -37,6 +38,8 @@ type TmuxManager interface {
 	SendKeysLiteral(target, text string) error
 	// SendKeysRaw sends a raw key name (like "Enter", "Escape") to a target.
 	SendKeysRaw(target, key string) error
+	// GetPanePID returns the PID of the process running in the pane.
+	GetPanePID(session, windowName string) (int, error)
 }
 
 // RealTmux implements TmuxManager by shelling out to the tmux CLI.
@@ -198,4 +201,19 @@ func (r *RealTmux) SendKeysRaw(target, key string) error {
 		return fmt.Errorf("tmux send-keys %s to %s: %s: %w", key, target, strings.TrimSpace(string(output)), err)
 	}
 	return nil
+}
+
+// GetPanePID returns the PID of the shell process running in the pane.
+func (r *RealTmux) GetPanePID(session, windowName string) (int, error) {
+	target := session + ":" + windowName
+	cmd := exec.Command("tmux", "display-message", "-t", target, "-p", "#{pane_pid}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("tmux display-message pane_pid -t %s: %s: %w", target, strings.TrimSpace(string(output)), err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		return 0, fmt.Errorf("parsing pane PID %q: %w", strings.TrimSpace(string(output)), err)
+	}
+	return pid, nil
 }

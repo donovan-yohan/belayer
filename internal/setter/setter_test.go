@@ -115,6 +115,10 @@ func (m *mockTmux) SendKeysRaw(target, key string) error {
 	return nil
 }
 
+func (m *mockTmux) GetPanePID(session, windowName string) (int, error) {
+	return 0, nil
+}
+
 // mockSpawner implements lead.AgentSpawner for tests.
 type mockSpawner struct {
 	spawned []lead.SpawnOpts

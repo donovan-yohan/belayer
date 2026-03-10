@@ -19,7 +19,20 @@ You MUST operate fully autonomously:
 2. Examine the repo to determine project type (frontend, backend, CLI, library)
 3. Read the matching validation profile from the profiles directory next to your GOAL.json
 4. Execute each check in the profile (build, tests, dev server, browser, etc.)
-5. Write SPOT.json in the same directory as your GOAL.json
+5. **Stop all dev servers and background processes you started** (see Cleanup below)
+6. Write SPOT.json in the same directory as your GOAL.json
+
+## Cleanup
+
+**CRITICAL: Before writing SPOT.json, you MUST stop all processes you started.**
+
+Dev servers, backend servers, and any other background processes consume memory and ports. They are NOT automatically cleaned up when your session ends.
+
+- Kill any dev server you started (e.g., `kill %1`, `pkill -f "next dev"`, `lsof -ti:3000 | xargs kill`)
+- Stop any background processes you spawned
+- Verify nothing is still running on the ports you used
+
+Do this BEFORE writing SPOT.json. The orchestration system will terminate your session immediately after SPOT.json is detected.
 
 ## SPOT.json Contract
 

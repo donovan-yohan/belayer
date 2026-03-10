@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/anchor"
@@ -309,8 +311,9 @@ func (tr *TaskRunner) CheckCompletions() (newlyReady []QueuedGoal, completedCoun
 			delete(tr.startedAt, g.ID)
 			completedCount++
 
-			// Kill the tmux window
+			// Kill the tmux window and its process tree
 			windowName := fmt.Sprintf("%s-%s", g.RepoName, g.ID)
+			tr.killPaneProcessTree(windowName)
 			tr.tmux.KillWindow(tr.tmuxSession, windowName)
 
 			// Check log rotation
@@ -495,6 +498,65 @@ func (tr *TaskRunner) Cleanup() {
 	tr.logMgr.CompressTaskLogs(tr.task.ID)
 }
 
+// killPaneProcessTree kills all descendant processes of a tmux pane before
+// the window is destroyed. This is a best-effort safety net — the primary
+// cleanup mechanism is the agent instructions (spotter.md/lead.md) which
+// tell agents to stop their processes before writing result files.
+//
+// Note: if the pane shell has already exited (remain-on-exit), orphaned
+// processes are reparented to init and won't appear under pgrep -P.
+func (tr *TaskRunner) killPaneProcessTree(windowName string) {
+	pid, err := tr.tmux.GetPanePID(tr.tmuxSession, windowName)
+	if err != nil {
+		log.Printf("warning: could not get pane PID for %s: %v", windowName, err)
+		return
+	}
+	if pid <= 0 {
+		return
+	}
+
+	// Collect all descendant PIDs recursively using pgrep
+	descendants := collectDescendants(pid)
+	if len(descendants) == 0 {
+		return
+	}
+
+	// Kill descendants deepest-first (reverse order) then the root
+	for i := len(descendants) - 1; i >= 0; i-- {
+		if err := syscall.Kill(descendants[i], syscall.SIGTERM); err != nil && err != syscall.ESRCH {
+			log.Printf("cleanup: warning: kill(%d, SIGTERM): %v", descendants[i], err)
+		}
+	}
+	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
+		log.Printf("cleanup: warning: kill(%d, SIGTERM): %v", pid, err)
+	}
+
+	log.Printf("cleanup: sent SIGTERM to pane PID %d and %d descendants for window %s",
+		pid, len(descendants), windowName)
+}
+
+// collectDescendants returns all descendant PIDs of the given parent PID.
+func collectDescendants(ppid int) []int {
+	out, err := exec.Command("pgrep", "-P", strconv.Itoa(ppid)).Output()
+	if err != nil {
+		return nil // no children
+	}
+	var pids []int
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		child, err := strconv.Atoi(line)
+		if err != nil {
+			continue
+		}
+		pids = append(pids, child)
+		// Recurse into this child's descendants
+		pids = append(pids, collectDescendants(child)...)
+	}
+	return pids
+}
+
 // windowExists checks if a window exists in the task's tmux session.
 func (tr *TaskRunner) windowExists(windowName string) bool {
 	windows, err := tr.tmux.ListWindows(tr.tmuxSession)
@@ -621,8 +683,10 @@ func (tr *TaskRunner) SpawnSpotter(goal *model.Goal) error {
 
 	worktreePath := tr.worktrees[goal.RepoName]
 
-	// Kill the lead's window
+	// Kill the lead's window and its process tree (dev servers, etc.)
 	leadWindowName := fmt.Sprintf("%s-%s", goal.RepoName, goal.ID)
+	tr.killPaneProcessTree(leadWindowName)
+	time.Sleep(300 * time.Millisecond) // grace period for SIGTERM handlers
 	tr.tmux.KillWindow(tr.tmuxSession, leadWindowName)
 
 	// Create a new window for the spotter
@@ -722,8 +786,10 @@ func (tr *TaskRunner) CheckSpotResult(goal *model.Goal) (*spotter.SpotJSON, bool
 		log.Printf("warning: failed to insert spotter_verdict event: %v", err)
 	}
 
-	// Kill the spotter tmux window
+	// Kill the spotter tmux window and its process tree (dev servers, etc.)
 	windowName := fmt.Sprintf("spot-%s", goal.ID)
+	tr.killPaneProcessTree(windowName)
+	time.Sleep(300 * time.Millisecond) // grace period for SIGTERM handlers
 	tr.tmux.KillWindow(tr.tmuxSession, windowName)
 	delete(tr.startedAt, goal.ID)
 
@@ -782,6 +848,7 @@ func (tr *TaskRunner) SpawnAnchor() error {
 
 	// Kill previous anchor window on retry (it has remain-on-exit)
 	if tr.anchorAttempt > 1 {
+		tr.killPaneProcessTree(windowName)
 		_ = tr.tmux.KillWindow(tr.tmuxSession, windowName)
 	}
 
@@ -876,7 +943,8 @@ func (tr *TaskRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error) {
 		log.Printf("warning: failed to insert anchor_verdict event: %v", err)
 	}
 
-	// Kill the anchor window (static name — matches SpawnAnchor)
+	// Kill the anchor window and its process tree
+	tr.killPaneProcessTree("anchor")
 	tr.tmux.KillWindow(tr.tmuxSession, "anchor")
 	tr.anchorRunning = false
 
