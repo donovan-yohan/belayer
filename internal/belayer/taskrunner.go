@@ -21,6 +21,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/scm"
 	"github.com/donovan-yohan/belayer/internal/spotter"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/tmux"
@@ -68,6 +69,8 @@ type ProblemRunner struct {
 	logMgr      *logmgr.LogManager
 	spawner     lead.AgentSpawner
 	git         GitRunner
+	scm         scm.SCMProvider
+	prConfig    belayerconfig.PRConfig
 	startedAt   map[string]time.Time // climbID -> when it started running
 
 	// Config directories for prompt/profile resolution.
@@ -88,7 +91,7 @@ type ProblemRunner struct {
 }
 
 // NewProblemRunner creates a ProblemRunner for the given problem.
-func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *ProblemRunner {
+func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig) *ProblemRunner {
 	return &ProblemRunner{
 		task:            task,
 		worktrees:       make(map[string]string),
@@ -100,6 +103,8 @@ func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir str
 		logMgr:               lm,
 		spawner:              sp,
 		git:                  &RealGitRunner{},
+		scm:                  scmProvider,
+		prConfig:             prCfg,
 		startedAt:            make(map[string]time.Time),
 		validationEnabled:    true,
 		repoSpotterActivated: make(map[string]bool),
@@ -978,11 +983,32 @@ func (tr *ProblemRunner) CheckAnchorVerdict() (*anchor.VerdictJSON, bool, error)
 }
 
 // HandleApproval creates PRs for all repos after anchor approval.
-// Returns a non-nil error if any PR creation fails; other repos are still attempted.
-func (tr *ProblemRunner) HandleApproval() error {
+// Inserts PullRequest records, emits pr_created events, and transitions the
+// problem to pr_monitoring. Returns the first error encountered; all repos are
+// still attempted even if one fails.
+func (tr *ProblemRunner) HandleApproval(ctx context.Context) error {
 	var firstErr error
 	for repoName, worktreePath := range tr.worktrees {
-		prURL, err := tr.createPR(repoName, worktreePath)
+		branchName := fmt.Sprintf("belayer/problem-%s/%s", tr.task.ID, repoName)
+		if _, err := tr.git.Run(worktreePath, "push", "-u", "origin", "HEAD:"+branchName); err != nil {
+			log.Printf("warning: failed to push branch for %s: %v", repoName, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("pushing branch for %s: %w", repoName, err)
+			}
+			continue
+		}
+
+		title := fmt.Sprintf("[belayer] Problem %s: %s", tr.task.ID, repoName)
+		opts := model.PROptions{
+			Title: title,
+			Body:  "Created by belayer.",
+			Draft: tr.prConfig.Draft,
+		}
+		if tr.scm == nil {
+			log.Printf("warning: no SCM provider configured, skipping PR creation for %s", repoName)
+			continue
+		}
+		prStatus, err := tr.scm.CreatePR(ctx, worktreePath, opts)
 		if err != nil {
 			log.Printf("warning: failed to create PR for %s: %v", repoName, err)
 			if firstErr == nil {
@@ -991,33 +1017,40 @@ func (tr *ProblemRunner) HandleApproval() error {
 			continue
 		}
 
-		payload := fmt.Sprintf(`{"repo":"%s","url":"%s"}`, repoName, prURL)
+		pr := &model.PullRequest{
+			ProblemID:     tr.task.ID,
+			RepoName:      repoName,
+			PRNumber:      prStatus.Number,
+			URL:           prStatus.URL,
+			StackPosition: 1,
+			StackSize:     1,
+			CIStatus:      prStatus.CIStatus,
+			CIFixCount:    0,
+			ReviewStatus:  "",
+			State:         prStatus.State,
+		}
+		if _, err := tr.store.InsertPullRequest(pr); err != nil {
+			log.Printf("warning: failed to insert PR record for %s: %v", repoName, err)
+		}
+
+		payload := fmt.Sprintf(`{"repo":"%s","url":"%s"}`, repoName, prStatus.URL)
 		if err := tr.store.InsertEvent(tr.task.ID, "", model.EventPRCreated, payload); err != nil {
 			log.Printf("warning: failed to insert pr_created event: %v", err)
 		}
 
-		log.Printf("anchor: created PR for %s: %s", repoName, prURL)
-	}
-	return firstErr
-}
-
-// createPR pushes the worktree branch and creates a PR via gh CLI.
-func (tr *ProblemRunner) createPR(repoName, worktreePath string) (string, error) {
-	branchName := fmt.Sprintf("belayer/problem-%s/%s", tr.task.ID, repoName)
-
-	if _, err := tr.git.Run(worktreePath, "push", "-u", "origin", "HEAD:"+branchName); err != nil {
-		return "", fmt.Errorf("pushing branch: %w", err)
+		log.Printf("anchor: created PR for %s: %s", repoName, prStatus.URL)
 	}
 
-	title := fmt.Sprintf("[belayer] Problem %s: %s", tr.task.ID, repoName)
-	cmd := exec.Command("gh", "pr", "create", "--title", title, "--body", "Created by belayer spotter review.", "--head", branchName)
-	cmd.Dir = worktreePath
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("creating PR: %s: %w", strings.TrimSpace(string(out)), err)
+	if firstErr != nil {
+		return firstErr
 	}
 
-	return strings.TrimSpace(string(out)), nil
+	if err := tr.store.UpdateProblemStatus(tr.task.ID, model.ProblemStatusPRMonitoring); err != nil {
+		return fmt.Errorf("transitioning to pr_monitoring: %w", err)
+	}
+	tr.task.Status = model.ProblemStatusPRMonitoring
+
+	return nil
 }
 
 // HandleRejection creates correction climbs for failing repos and prepares for new leads.

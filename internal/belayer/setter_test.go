@@ -1007,11 +1007,11 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 	updatedTask, _ := s.GetProblem("task-s5a")
 	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
 
-	// Second tick: single-repo should skip anchor and go straight to complete
+	// Second tick: single-repo should skip anchor and go straight to pr_monitoring
 	require.NoError(t, sett.tick(context.Background()))
 	assert.False(t, runner.AnchorRunning(), "anchor should not be spawned for single-repo task")
 	updatedTask, _ = s.GetProblem("task-s5a")
-	assert.Equal(t, model.ProblemStatusComplete, updatedTask.Status)
+	assert.Equal(t, model.ProblemStatusPRMonitoring, updatedTask.Status)
 	assert.NotContains(t, sett.problems, "task-s5a") // cleaned up
 }
 
@@ -1105,10 +1105,10 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	verdictData, _ := json.Marshal(verdict)
 	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), verdictData, 0o644)
 
-	// Third tick: read verdict, create PRs, mark complete
+	// Third tick: read verdict, create PRs, transition to pr_monitoring
 	require.NoError(t, setter.tick(context.Background()))
 	updatedTask, _ = s.GetProblem("task-s5")
-	assert.Equal(t, model.ProblemStatusComplete, updatedTask.Status)
+	assert.Equal(t, model.ProblemStatusPRMonitoring, updatedTask.Status)
 	assert.NotContains(t, setter.problems, "task-s5") // cleaned up
 }
 
@@ -1238,7 +1238,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	// Tick 6: read approve -> complete
 	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ = s.GetProblem("task-s6")
-	assert.Equal(t, model.ProblemStatusComplete, updatedTask.Status)
+	assert.Equal(t, model.ProblemStatusPRMonitoring, updatedTask.Status)
 
 	// Verify reviews are in SQLite
 	reviews, _ := s.GetAnchorReviewsForProblem("task-s6")

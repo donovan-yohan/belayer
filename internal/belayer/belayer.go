@@ -16,6 +16,9 @@ import (
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/review"
+	"github.com/donovan-yohan/belayer/internal/scm"
+	ghscm "github.com/donovan-yohan/belayer/internal/scm/github"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/donovan-yohan/belayer/internal/tracker"
@@ -59,6 +62,12 @@ type Belayer struct {
 	lastSyncAt   time.Time
 	syncInterval time.Duration
 
+	// SCM provider and PR monitoring state.
+	scm            scm.SCMProvider
+	lastPRPollAt   time.Time
+	prPollInterval time.Duration
+	reviewCfg      belayerconfig.ReviewConfig
+
 	problems    map[string]*ProblemRunner // problemID -> runner
 	leadQueue   []QueuedClimb             // FIFO queue
 	activeLeads int
@@ -87,6 +96,8 @@ func (s *Belayer) Run(ctx context.Context) error {
 	if err := s.initTracker(); err != nil {
 		log.Printf("belayer: tracker init error: %v", err)
 	}
+
+	s.initSCM()
 
 	// Crash recovery: resume any running/reviewing problems
 	if err := s.recover(); err != nil {
@@ -191,11 +202,8 @@ func (s *Belayer) tick(ctx context.Context) error {
 			// Skip anchor review for single-repo problems — no cross-repo alignment to check
 			if runner.IsSingleRepo() {
 				log.Printf("belayer: single-repo problem %s — skipping anchor, creating PR", taskID)
-				if err := runner.HandleApproval(); err != nil {
+				if err := runner.HandleApproval(ctx); err != nil {
 					log.Printf("belayer: error creating PRs for %s: %v", taskID, err)
-				}
-				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusComplete); err != nil {
-					log.Printf("belayer: error completing problem: %v", err)
 				}
 				runner.Cleanup()
 				delete(s.problems, taskID)
@@ -223,11 +231,8 @@ func (s *Belayer) tick(ctx context.Context) error {
 
 			if verdict.Verdict == "approve" {
 				// Create PRs for all repos
-				if err := runner.HandleApproval(); err != nil {
+				if err := runner.HandleApproval(ctx); err != nil {
 					log.Printf("belayer: error creating PRs for %s: %v", taskID, err)
-				}
-				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusComplete); err != nil {
-					log.Printf("belayer: error completing problem: %v", err)
 				}
 				runner.Cleanup()
 				delete(s.problems, taskID)
@@ -261,7 +266,10 @@ func (s *Belayer) tick(ctx context.Context) error {
 		}
 	}
 
-	// 3. Process lead queue
+	// 3. Monitor open pull requests.
+	s.monitorPRs(ctx)
+
+	// 4. Process lead queue
 	s.processLeadQueue()
 
 	return nil
@@ -282,7 +290,11 @@ func (s *Belayer) pollPendingProblems() error {
 
 		log.Printf("belayer: initializing problem %s", task.ID)
 
-		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
+		var prCfg belayerconfig.PRConfig
+		if s.belayerCfg != nil {
+			prCfg = s.belayerCfg.PR
+		}
+		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawner, s.scm, prCfg)
 		readyClimbs, err := runner.Init()
 		if err != nil {
 			log.Printf("belayer: error initializing problem %s: %v", task.ID, err)
@@ -329,7 +341,11 @@ func (s *Belayer) recover() error {
 		task := &active[i]
 		log.Printf("belayer: recovering problem %s (status=%s)", task.ID, task.Status)
 
-		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
+		var prCfg belayerconfig.PRConfig
+		if s.belayerCfg != nil {
+			prCfg = s.belayerCfg.PR
+		}
+		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawner, s.scm, prCfg)
 
 		// Load climbs and build DAG (skip worktree creation since they should exist)
 		climbs, err := s.store.GetClimbsForProblem(task.ID)
@@ -503,6 +519,203 @@ func (s *Belayer) syncTracker(ctx context.Context) {
 
 	s.lastSyncAt = now
 	log.Printf("belayer: synced %d tracker issues", len(issues))
+}
+
+// initSCM initialises the SCM provider from config. Always uses GitHub for now.
+func (s *Belayer) initSCM() {
+	if s.belayerCfg != nil {
+		s.reviewCfg = s.belayerCfg.Review
+	}
+	s.scm = ghscm.New()
+
+	intervalStr := s.reviewCfg.PollInterval
+	if intervalStr == "" {
+		intervalStr = "60s"
+	}
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		log.Printf("belayer: invalid review poll_interval %q, defaulting to 60s", intervalStr)
+		interval = 60 * time.Second
+	}
+	s.prPollInterval = interval
+	log.Printf("belayer: SCM provider initialised (pr_poll_interval=%s)", s.prPollInterval)
+}
+
+// monitorPRs polls open pull requests and reacts to CI and review events.
+func (s *Belayer) monitorPRs(ctx context.Context) {
+	if s.scm == nil || s.belayerCfg == nil {
+		return
+	}
+	if !s.lastPRPollAt.IsZero() && time.Since(s.lastPRPollAt) < s.prPollInterval {
+		return
+	}
+
+	prs, err := s.store.ListMonitoredPullRequests(s.config.CragName)
+	if err != nil {
+		log.Printf("belayer: error listing monitored PRs: %v", err)
+		return
+	}
+
+	maxFix := s.reviewCfg.CIFixAttempts
+	autoMerge := s.reviewCfg.AutoMerge
+
+	for i := range prs {
+		pr := &prs[i]
+
+		curr, err := s.scm.GetPRStatus(ctx, "", pr.PRNumber)
+		if err != nil {
+			log.Printf("belayer: error getting PR status for PR #%d (%s): %v", pr.PRNumber, pr.RepoName, err)
+			continue
+		}
+
+		// Build previous status from stored fields.
+		prev := &model.PRStatus{
+			CIStatus: pr.CIStatus,
+			State:    pr.State,
+		}
+
+		var since time.Time
+		if pr.LastPolledAt != nil {
+			since = *pr.LastPolledAt
+		}
+		activity, err := s.scm.GetNewActivity(ctx, "", pr.PRNumber, since)
+		if err != nil {
+			log.Printf("belayer: error getting PR activity for PR #%d: %v", pr.PRNumber, err)
+			activity = nil
+		}
+
+		events := review.ClassifyActivity(prev, curr, activity)
+		for _, evt := range events {
+			action := review.DecideReaction(evt, pr, maxFix, autoMerge)
+			s.executeReaction(ctx, pr, evt, action)
+		}
+
+		// Update stored PR status.
+		if err := s.store.UpdatePullRequestCI(pr.ID, curr.CIStatus, pr.CIFixCount); err != nil {
+			log.Printf("belayer: error updating PR CI status for PR #%d: %v", pr.PRNumber, err)
+		}
+		currReviewState := review.HighestReviewState(curr.Reviews)
+		if currReviewState != pr.ReviewStatus {
+			if err := s.store.UpdatePullRequestReview(pr.ID, currReviewState); err != nil {
+				log.Printf("belayer: error updating PR review status for PR #%d: %v", pr.PRNumber, err)
+			}
+		}
+		if curr.State != pr.State {
+			if err := s.store.UpdatePullRequestState(pr.ID, curr.State); err != nil {
+				log.Printf("belayer: error updating PR state for PR #%d: %v", pr.PRNumber, err)
+			}
+		}
+	}
+
+	s.lastPRPollAt = time.Now()
+}
+
+// executeReaction acts on a classified PR event.
+func (s *Belayer) executeReaction(ctx context.Context, pr *model.PullRequest, evt review.ReactionEvent, action string) {
+	reaction := &model.PRReaction{
+		PRID:        pr.ID,
+		TriggerType: string(evt.Type),
+		ActionTaken: action,
+	}
+
+	switch action {
+	case "lead_dispatched":
+		if evt.Type == review.EventCIFailed {
+			pr.CIFixCount++
+			if err := s.store.UpdatePullRequestCI(pr.ID, pr.CIStatus, pr.CIFixCount); err != nil {
+				log.Printf("belayer: error incrementing CI fix count for PR #%d: %v", pr.PRNumber, err)
+			}
+			if err := s.store.InsertEvent(pr.ProblemID, "", model.EventCIFixDispatched, fmt.Sprintf(`{"pr_number":%d,"fix_count":%d}`, pr.PRNumber, pr.CIFixCount)); err != nil {
+				log.Printf("belayer: error inserting ci_fix_dispatched event: %v", err)
+			}
+			log.Printf("belayer: CI fix dispatched for PR #%d (attempt %d/%d)", pr.PRNumber, pr.CIFixCount, s.reviewCfg.CIFixAttempts)
+		} else if evt.Type == review.EventChangesRequested {
+			if err := s.store.UpdateProblemStatus(pr.ProblemID, model.ProblemStatusReviewReacting); err != nil {
+				log.Printf("belayer: error updating problem status for review reaction: %v", err)
+			}
+			if err := s.store.InsertEvent(pr.ProblemID, "", model.EventReviewReactionDispatched, fmt.Sprintf(`{"pr_number":%d}`, pr.PRNumber)); err != nil {
+				log.Printf("belayer: error inserting review_reaction_dispatched event: %v", err)
+			}
+			log.Printf("belayer: changes requested on PR #%d — problem %s set to review_reacting", pr.PRNumber, pr.ProblemID)
+		}
+
+	case "comment_replied":
+		if err := s.store.InsertEvent(pr.ProblemID, "", model.EventReviewCommentReceived, fmt.Sprintf(`{"pr_number":%d}`, pr.PRNumber)); err != nil {
+			log.Printf("belayer: error inserting review_comment_received event: %v", err)
+		}
+		log.Printf("belayer: new comment on PR #%d (full reply deferred)", pr.PRNumber)
+
+	case "marked_stuck":
+		if err := s.store.UpdateProblemStatus(pr.ProblemID, model.ProblemStatusStuck); err != nil {
+			log.Printf("belayer: error marking problem stuck: %v", err)
+		}
+		if err := s.store.InsertEvent(pr.ProblemID, "", model.EventCIFixExhausted, fmt.Sprintf(`{"pr_number":%d}`, pr.PRNumber)); err != nil {
+			log.Printf("belayer: error inserting ci_fix_exhausted event: %v", err)
+		}
+		log.Printf("belayer: PR #%d CI fix attempts exhausted — problem %s stuck", pr.PRNumber, pr.ProblemID)
+
+	case "merge_attempted":
+		if err := s.scm.Merge(ctx, "", pr.PRNumber); err != nil {
+			log.Printf("belayer: error merging PR #%d: %v", pr.PRNumber, err)
+		} else {
+			if err := s.store.UpdatePullRequestState(pr.ID, "merged"); err != nil {
+				log.Printf("belayer: error updating PR state to merged: %v", err)
+			}
+			if err := s.store.InsertEvent(pr.ProblemID, "", model.EventPRMerged, fmt.Sprintf(`{"pr_number":%d}`, pr.PRNumber)); err != nil {
+				log.Printf("belayer: error inserting pr_merged event: %v", err)
+			}
+			log.Printf("belayer: PR #%d merged", pr.PRNumber)
+		}
+
+	case "status_merged":
+		if err := s.store.UpdatePullRequestState(pr.ID, "merged"); err != nil {
+			log.Printf("belayer: error updating PR state to merged: %v", err)
+		}
+		if err := s.store.InsertEvent(pr.ProblemID, "", model.EventPRMerged, fmt.Sprintf(`{"pr_number":%d}`, pr.PRNumber)); err != nil {
+			log.Printf("belayer: error inserting pr_merged event: %v", err)
+		}
+		s.checkAllPRsMerged(pr.ProblemID)
+		log.Printf("belayer: PR #%d detected as merged", pr.PRNumber)
+
+	case "status_closed":
+		if err := s.store.UpdatePullRequestState(pr.ID, "closed"); err != nil {
+			log.Printf("belayer: error updating PR state to closed: %v", err)
+		}
+		if err := s.store.UpdateProblemStatus(pr.ProblemID, model.ProblemStatusClosed); err != nil {
+			log.Printf("belayer: error updating problem status to closed: %v", err)
+		}
+		if err := s.store.InsertEvent(pr.ProblemID, "", model.EventPRClosed, fmt.Sprintf(`{"pr_number":%d}`, pr.PRNumber)); err != nil {
+			log.Printf("belayer: error inserting pr_closed event: %v", err)
+		}
+		log.Printf("belayer: PR #%d closed — problem %s closed", pr.PRNumber, pr.ProblemID)
+	}
+
+	if err := s.store.InsertPRReaction(reaction); err != nil {
+		log.Printf("belayer: error inserting PR reaction: %v", err)
+	}
+}
+
+// checkAllPRsMerged checks if all PRs for a problem are merged, and if so
+// transitions the problem to merged status.
+func (s *Belayer) checkAllPRsMerged(problemID string) {
+	prs, err := s.store.ListPullRequestsForProblem(problemID)
+	if err != nil {
+		log.Printf("belayer: error listing PRs for problem %s: %v", problemID, err)
+		return
+	}
+	for _, pr := range prs {
+		if pr.State != "merged" {
+			return
+		}
+	}
+	if err := s.store.UpdateProblemStatus(problemID, model.ProblemStatusMerged); err != nil {
+		log.Printf("belayer: error updating problem %s to merged: %v", problemID, err)
+		return
+	}
+	if err := s.store.InsertEvent(problemID, "", model.EventPRMerged, `{"all_merged":true}`); err != nil {
+		log.Printf("belayer: error inserting all_merged event: %v", err)
+	}
+	log.Printf("belayer: all PRs merged for problem %s — problem marked merged", problemID)
 }
 
 // extractJSONStringField extracts a string value from a simple JSON payload
