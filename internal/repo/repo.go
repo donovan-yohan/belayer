@@ -44,6 +44,43 @@ func RepoNameFromURL(rawURL string) (string, error) {
 	return name, nil
 }
 
+// OwnerRepoFromURL extracts "owner/repo" from a git URL.
+// Handles HTTPS (https://github.com/org/repo.git) and SSH (git@github.com:org/repo.git) formats.
+func OwnerRepoFromURL(rawURL string) (string, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "", fmt.Errorf("empty URL")
+	}
+
+	var path string
+
+	// SSH format: git@host:org/repo.git
+	if strings.Contains(rawURL, ":") && !strings.Contains(rawURL, "://") {
+		parts := strings.SplitN(rawURL, ":", 2)
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid SSH URL: %s", rawURL)
+		}
+		path = parts[1]
+	} else {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return "", fmt.Errorf("parsing URL %q: %w", rawURL, err)
+		}
+		path = u.Path
+	}
+
+	path = strings.TrimPrefix(path, "/")
+	path = strings.TrimSuffix(path, "/")
+	path = strings.TrimSuffix(path, ".git")
+	path = strings.TrimSuffix(path, "/")
+
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("cannot extract owner/repo from %q", rawURL)
+	}
+	return parts[len(parts)-2] + "/" + parts[len(parts)-1], nil
+}
+
 // CloneBare clones a git repository as a bare repo into the target directory.
 // targetDir should end in .git by convention (e.g., repos/my-repo.git).
 func CloneBare(repoURL, targetDir string) error {

@@ -6,19 +6,19 @@ import "time"
 type ProblemStatus string
 
 const (
-	ProblemStatusPending       ProblemStatus = "pending"
-	ProblemStatusRunning       ProblemStatus = "running"
-	ProblemStatusReviewing     ProblemStatus = "reviewing"
-	ProblemStatusComplete      ProblemStatus = "complete"
-	ProblemStatusStuck         ProblemStatus = "stuck"
-	ProblemStatusImported      ProblemStatus = "imported"
-	ProblemStatusEnriching     ProblemStatus = "enriching"
-	ProblemStatusPRCreating    ProblemStatus = "pr_creating"
-	ProblemStatusPRMonitoring  ProblemStatus = "pr_monitoring"
-	ProblemStatusCIFixing      ProblemStatus = "ci_fixing"
+	ProblemStatusPending        ProblemStatus = "pending"
+	ProblemStatusRunning        ProblemStatus = "running"
+	ProblemStatusReviewing      ProblemStatus = "reviewing"
+	ProblemStatusComplete       ProblemStatus = "complete"
+	ProblemStatusStuck          ProblemStatus = "stuck"
+	ProblemStatusImported       ProblemStatus = "imported"
+	ProblemStatusEnriching      ProblemStatus = "enriching"
+	ProblemStatusPRCreating     ProblemStatus = "pr_creating"
+	ProblemStatusPRMonitoring   ProblemStatus = "pr_monitoring"
+	ProblemStatusCIFixing       ProblemStatus = "ci_fixing"
 	ProblemStatusReviewReacting ProblemStatus = "review_reacting"
-	ProblemStatusMerged        ProblemStatus = "merged"
-	ProblemStatusClosed        ProblemStatus = "closed"
+	ProblemStatusMerged         ProblemStatus = "merged"
+	ProblemStatusClosed         ProblemStatus = "closed"
 )
 
 // ClimbStatus represents the lifecycle state of a climb.
@@ -36,14 +36,14 @@ const (
 type EventType string
 
 const (
-	EventProblemCreated EventType = "problem_created"
-	EventClimbStarted   EventType = "climb_started"
-	EventClimbCompleted EventType = "climb_completed"
-	EventClimbFailed    EventType = "climb_failed"
-	EventAnchorSpawned  EventType = "anchor_spawned"
-	EventAnchorVerdict  EventType = "anchor_verdict"
-	EventSpotterSpawned EventType = "spotter_spawned"
-	EventSpotterVerdict EventType = "spotter_verdict"
+	EventProblemCreated           EventType = "problem_created"
+	EventClimbStarted             EventType = "climb_started"
+	EventClimbCompleted           EventType = "climb_completed"
+	EventClimbFailed              EventType = "climb_failed"
+	EventAnchorSpawned            EventType = "anchor_spawned"
+	EventAnchorVerdict            EventType = "anchor_verdict"
+	EventSpotterSpawned           EventType = "spotter_spawned"
+	EventSpotterVerdict           EventType = "spotter_verdict"
 	EventPRCreated                EventType = "pr_created"
 	EventIssueImported            EventType = "issue_imported"
 	EventIssueConverted           EventType = "issue_converted"
@@ -63,15 +63,15 @@ const (
 
 // Problem represents a work item submitted by the user.
 type Problem struct {
-	ID     string        `json:"id"`
-	CragID string        `json:"crag_id"`
-	Spec   string        `json:"spec"`
-	ClimbsJSON string        `json:"climbs_json"`
-	JiraRef         string        `json:"jira_ref"`
-	TrackerIssueID  string        `json:"tracker_issue_id"`
-	Status          ProblemStatus `json:"status"`
-	CreatedAt  time.Time     `json:"created_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
+	ID             string        `json:"id"`
+	CragID         string        `json:"crag_id"`
+	Spec           string        `json:"spec"`
+	ClimbsJSON     string        `json:"climbs_json"`
+	JiraRef        string        `json:"jira_ref"`
+	TrackerIssueID string        `json:"tracker_issue_id"`
+	Status         ProblemStatus `json:"status"`
+	CreatedAt      time.Time     `json:"created_at"`
+	UpdatedAt      time.Time     `json:"updated_at"`
 }
 
 // Climb represents a per-repo climb within a problem.

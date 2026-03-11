@@ -246,7 +246,7 @@ func (p *Provider) ReplyToComment(ctx context.Context, repoDir string, prNumber 
 	}
 
 	cmd := exec.CommandContext(ctx, "gh", "api",
-		fmt.Sprintf("repos/{owner}/{repo}/issues/comments/%d/replies", commentID),
+		fmt.Sprintf("repos/{owner}/{repo}/pulls/%d/comments/%d/replies", prNumber, commentID),
 		"--method", "POST",
 		"--input", "-",
 	)

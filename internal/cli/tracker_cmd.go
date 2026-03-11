@@ -14,6 +14,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/repo"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/tracker"
 	ghtracker "github.com/donovan-yohan/belayer/internal/tracker/github"
@@ -39,8 +40,11 @@ func createTracker(cfg *belayerconfig.Config, cragConfig *instance.CragConfig, c
 		if len(cragConfig.Repos) == 0 {
 			return nil, fmt.Errorf("no repos in crag for github tracker")
 		}
-		barePath := filepath.Join(cragDir, cragConfig.Repos[0].BarePath)
-		return ghtracker.New(barePath), nil
+		ownerRepo, err := repo.OwnerRepoFromURL(cragConfig.Repos[0].URL)
+		if err != nil {
+			return nil, fmt.Errorf("extracting owner/repo for tracker: %w", err)
+		}
+		return ghtracker.New(ownerRepo), nil
 	case "jira":
 		token := os.Getenv("JIRA_API_TOKEN")
 		return jiratracker.New(cfg.Tracker.Jira.BaseURL, cfg.Tracker.Jira.Project, token), nil

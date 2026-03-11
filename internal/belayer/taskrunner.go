@@ -15,8 +15,8 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/anchor"
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
-	"github.com/donovan-yohan/belayer/internal/defaults"
 	"github.com/donovan-yohan/belayer/internal/climbctx"
+	"github.com/donovan-yohan/belayer/internal/defaults"
 	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
@@ -63,7 +63,7 @@ type ProblemRunner struct {
 	dag         *DAG
 	worktrees   map[string]string // repoName -> worktreePath
 	tmuxSession string
-	cragDir string
+	cragDir     string
 	store       *store.Store
 	tmux        tmux.TmuxManager
 	logMgr      *logmgr.LogManager
@@ -74,8 +74,8 @@ type ProblemRunner struct {
 	startedAt   map[string]time.Time // climbID -> when it started running
 
 	// Config directories for prompt/profile resolution.
-	globalConfigDir   string
-	cragConfigDir string
+	globalConfigDir string
+	cragConfigDir   string
 
 	// Anchor state
 	anchorAttempt int
@@ -93,11 +93,11 @@ type ProblemRunner struct {
 // NewProblemRunner creates a ProblemRunner for the given problem.
 func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig) *ProblemRunner {
 	return &ProblemRunner{
-		task:            task,
-		worktrees:       make(map[string]string),
-		cragDir:         cragDir,
-		globalConfigDir: globalCfgDir,
-		cragConfigDir:   cragCfgDir,
+		task:                 task,
+		worktrees:            make(map[string]string),
+		cragDir:              cragDir,
+		globalConfigDir:      globalCfgDir,
+		cragConfigDir:        cragCfgDir,
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
@@ -183,7 +183,7 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 	readyClimbs := tr.dag.ReadyClimbs()
 	var queued []QueuedClimb
 	for _, climb := range readyClimbs {
-		queued = append(queued, QueuedClimb{Climb:climb, TaskID: tr.task.ID})
+		queued = append(queued, QueuedClimb{Climb: climb, TaskID: tr.task.ID})
 	}
 
 	return queued, nil
@@ -344,7 +344,7 @@ func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completed
 	if completedCount > 0 {
 		readyClimbs := tr.dag.ReadyClimbs()
 		for _, climb := range readyClimbs {
-			newlyReady = append(newlyReady, QueuedClimb{Climb:climb, TaskID: tr.task.ID})
+			newlyReady = append(newlyReady, QueuedClimb{Climb: climb, TaskID: tr.task.ID})
 		}
 	}
 
@@ -429,7 +429,7 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 			climb.Attempt++
 			tr.dag.Get(climb.ID).Status = model.ClimbStatusPending
 			tr.dag.Get(climb.ID).Attempt = climb.Attempt
-			retryClimbs = append(retryClimbs, QueuedClimb{Climb:*tr.dag.Get(climb.ID), TaskID: tr.task.ID})
+			retryClimbs = append(retryClimbs, QueuedClimb{Climb: *tr.dag.Get(climb.ID), TaskID: tr.task.ID})
 		}
 	}
 
@@ -488,7 +488,7 @@ func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady [
 			// Check for newly unblocked climbs
 			readyClimbs := tr.dag.ReadyClimbs()
 			for _, rc := range readyClimbs {
-				newlyReady = append(newlyReady, QueuedClimb{Climb:rc, TaskID: tr.task.ID})
+				newlyReady = append(newlyReady, QueuedClimb{Climb: rc, TaskID: tr.task.ID})
 			}
 		} else {
 			log.Printf("belayer: repo %s failed spotter validation with %d issues", repoName, len(spot.Issues))
@@ -1085,7 +1085,7 @@ func (tr *ProblemRunner) HandleRejection(verdict *anchor.VerdictJSON) ([]QueuedC
 				Status:      model.ClimbStatusPending,
 			}
 			correctionClimbs = append(correctionClimbs, c)
-			queued = append(queued, QueuedClimb{Climb:c, TaskID: tr.task.ID})
+			queued = append(queued, QueuedClimb{Climb: c, TaskID: tr.task.ID})
 		}
 	}
 

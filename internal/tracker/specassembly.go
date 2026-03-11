@@ -9,7 +9,7 @@ import (
 )
 
 type SpecAssemblyOutput struct {
-	Spec   string          `json:"spec"`
+	Spec   string           `json:"spec"`
 	Climbs model.ClimbsFile `json:"climbs"`
 }
 
