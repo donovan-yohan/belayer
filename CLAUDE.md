@@ -16,7 +16,6 @@ Standalone Go CLI tool that orchestrates autonomous coding agents across multipl
 |----------|------|-------------------|
 | Architecture | `docs/ARCHITECTURE.md` | Module boundaries, data flow, belayer daemon engine |
 | Design | `docs/DESIGN.md` | Patterns, SQLite schema, agentic node contracts |
-| Frontend | `docs/TUI.md` | bubbletea components, state management |
 | Quality | `docs/QUALITY.md` | Test runner, test files, isolation patterns |
 | Plans | `docs/PLANS.md` | Active work, completed plans, tech debt |
 | Design Docs | `docs/design-docs/` | Feature brainstorm outputs and design decisions |
