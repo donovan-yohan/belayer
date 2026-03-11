@@ -316,11 +316,12 @@ func (s *Store) GetPendingProblems(cragID string) ([]model.Problem, error) {
 	return problems, rows.Err()
 }
 
-// GetActiveProblems returns problems with status IN ('running', 'reviewing') for the given crag, ordered by created_at ASC.
+// GetActiveProblems returns problems with in-flight statuses for the given crag, ordered by created_at ASC.
+// In-flight statuses include: running, reviewing, imported, enriching, pr_creating, pr_monitoring, ci_fixing, review_reacting.
 func (s *Store) GetActiveProblems(cragID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
 		`SELECT id, crag_id, spec, climbs_json, jira_ref, tracker_issue_id, status, created_at, updated_at
-		 FROM problems WHERE crag_id = ? AND status IN ('running', 'reviewing') ORDER BY created_at ASC`, cragID,
+		 FROM problems WHERE crag_id = ? AND status IN ('running', 'reviewing', 'imported', 'enriching', 'pr_creating', 'pr_monitoring', 'ci_fixing', 'review_reacting') ORDER BY created_at ASC`, cragID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying active problems: %w", err)

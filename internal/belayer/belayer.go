@@ -269,7 +269,16 @@ func (s *Belayer) tick(ctx context.Context) error {
 	// 3. Monitor open pull requests.
 	s.monitorPRs(ctx)
 
-	// 4. Process lead queue
+	// 4. Handle imported problems — transition to enriching (spec assembly)
+	for _, runner := range s.problems {
+		if runner.task.Status == model.ProblemStatusImported {
+			log.Printf("belayer: problem %s imported, transitioning to enriching", runner.task.ID)
+			s.store.UpdateProblemStatus(runner.task.ID, model.ProblemStatusEnriching)
+			// TODO: spawn spec assembly agentic node (future work)
+		}
+	}
+
+	// 5. Process lead queue
 	s.processLeadQueue()
 
 	return nil
@@ -419,6 +428,10 @@ func (s *Belayer) recover() error {
 		for _, climb := range readyClimbs {
 			s.leadQueue = append(s.leadQueue, QueuedClimb{Climb: climb, TaskID: task.ID})
 		}
+
+		if task.Status == model.ProblemStatusPRMonitoring {
+			s.recoverPRMonitoring(task)
+		}
 	}
 
 	if len(active) > 0 {
@@ -426,6 +439,16 @@ func (s *Belayer) recover() error {
 	}
 
 	return nil
+}
+
+// recoverPRMonitoring restores PR monitoring state for a problem after a crash.
+func (s *Belayer) recoverPRMonitoring(problem *model.Problem) {
+	prs, err := s.store.ListPullRequestsForProblem(problem.ID)
+	if err != nil {
+		log.Printf("recover: failed to load PRs for problem %s: %v", problem.ID, err)
+		return
+	}
+	log.Printf("recover: restored %d monitored PRs for problem %s", len(prs), problem.ID)
 }
 
 // initTracker initialises the tracker from config. It is a no-op when no
