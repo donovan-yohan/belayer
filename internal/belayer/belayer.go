@@ -415,7 +415,7 @@ func (s *Belayer) recover() error {
 // initTracker initialises the tracker from config. It is a no-op when no
 // provider is configured.
 func (s *Belayer) initTracker() error {
-	if s.belayerCfg.Tracker.Provider == "" {
+	if s.belayerCfg == nil || s.belayerCfg.Tracker.Provider == "" {
 		return nil
 	}
 

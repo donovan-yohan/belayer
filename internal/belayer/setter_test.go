@@ -705,7 +705,7 @@ func TestSetter_RunTickCycle(t *testing.T) {
 	}
 
 	// Run one tick with no tasks — should not error
-	err := setter.tick()
+	err := setter.tick(context.Background())
 	require.NoError(t, err)
 
 	// Run with context cancellation
@@ -1003,12 +1003,12 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 	os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), doneData, 0o644)
 
 	// First tick: detect completion, transition to reviewing
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ := s.GetProblem("task-s5a")
 	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
 
 	// Second tick: single-repo should skip anchor and go straight to complete
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	assert.False(t, runner.AnchorRunning(), "anchor should not be spawned for single-repo task")
 	updatedTask, _ = s.GetProblem("task-s5a")
 	assert.Equal(t, model.ProblemStatusComplete, updatedTask.Status)
@@ -1085,13 +1085,13 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	os.WriteFile(filepath.Join(webDoneDir, "TOP.json"), doneData, 0o644)
 
 	// First tick: detect completion, transition to reviewing
-	require.NoError(t, setter.tick())
+	require.NoError(t, setter.tick(context.Background()))
 	updatedTask, _ := s.GetProblem("task-s5")
 	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
 	assert.Equal(t, 0, setter.activeLeads)
 
 	// Second tick: spawn anchor (multi-repo requires anchor)
-	require.NoError(t, setter.tick())
+	require.NoError(t, setter.tick(context.Background()))
 	assert.True(t, runner.AnchorRunning())
 
 	// Write VERDICT.json — approve
@@ -1106,7 +1106,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), verdictData, 0o644)
 
 	// Third tick: read verdict, create PRs, mark complete
-	require.NoError(t, setter.tick())
+	require.NoError(t, setter.tick(context.Background()))
 	updatedTask, _ = s.GetProblem("task-s5")
 	assert.Equal(t, model.ProblemStatusComplete, updatedTask.Status)
 	assert.NotContains(t, setter.problems, "task-s5") // cleaned up
@@ -1181,10 +1181,10 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	os.WriteFile(filepath.Join(webDoneDir, "TOP.json"), doneData, 0o644)
 
 	// Tick 1: detect completion -> reviewing
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 
 	// Tick 2: spawn anchor (multi-repo)
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 
 	// Write reject verdict
 	rejectVerdict := anchor.VerdictJSON{
@@ -1200,7 +1200,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	// Tick 3: read reject verdict -> back to running with correction goals
 	// tick() also calls processLeadQueue(), so correction goal is spawned immediately
 	spawnedBefore := len(sp.spawned)
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ := s.GetProblem("task-s6")
 	assert.Equal(t, model.ProblemStatusRunning, updatedTask.Status)
 
@@ -1216,12 +1216,12 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	os.WriteFile(filepath.Join(corrDoneDir, "TOP.json"), doneData2, 0o644)
 
 	// Tick 4: detect correction goal completion -> reviewing again
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ = s.GetProblem("task-s6")
 	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
 
 	// Tick 5: spawn anchor again
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	assert.Equal(t, 2, runner.AnchorAttempt())
 
 	// Write approve verdict
@@ -1236,7 +1236,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), approveData, 0o644)
 
 	// Tick 6: read approve -> complete
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ = s.GetProblem("task-s6")
 	assert.Equal(t, model.ProblemStatusComplete, updatedTask.Status)
 
@@ -1316,7 +1316,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), rejectData, 0o644)
 
 	// Tick: should detect reject at max reviews -> stuck
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ := s.GetProblem("task-s7")
 	assert.Equal(t, model.ProblemStatusStuck, updatedTask.Status)
 	assert.NotContains(t, sett.problems, "task-s7") // cleaned up
@@ -1619,7 +1619,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 
 	// Tick 1: detect TOP.json for api-1 → api-1 complete, api-2 unblocked
 	// Spotter NOT activated yet (api-2 still pending)
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status)
 	assert.False(t, runner.repoSpotterActivated["api"], "spotter should not activate while api-2 is still pending")
 	// api-2 should have been spawned from queue
@@ -1631,7 +1631,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 	os.WriteFile(filepath.Join(goal2Dir, "TOP.json"), doneData, 0o644)
 
 	// Tick 2: api-2 tops → all climbs topped → spotter activated
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-2").Status)
 	assert.True(t, runner.repoSpotterActivated["api"], "spotter should be activated after all climbs top")
 
@@ -1642,7 +1642,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 	os.WriteFile(filepath.Join(spotterDir, "SPOT.json"), []byte(spotData), 0o644)
 
 	// Tick 3: detect SPOT.json pass → repo validated, no retries
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	assert.False(t, runner.repoSpotterActivated["api"], "spotter should be deactivated after pass")
 
 	// All climbs complete → problem should transition to reviewing
@@ -1715,7 +1715,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
 
 	// Tick 1: detect TOP.json → api-1 complete, all climbs topped → spotter activated
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status)
 	assert.True(t, runner.repoSpotterActivated["api"])
 	spawnCountAfterSpotter := len(sp.spawned)
@@ -1728,7 +1728,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 	os.WriteFile(filepath.Join(spotterDir, "SPOT.json"), []byte(spotData), 0o644)
 
 	// Tick 2: detect SPOT.json fail → climbs reset and re-queued with feedback
-	require.NoError(t, sett.tick())
+	require.NoError(t, sett.tick(context.Background()))
 	assert.Equal(t, 1, runner.dag.Get("api-1").Attempt) // attempt incremented
 	assert.Equal(t, 1, sett.activeLeads)                 // lead re-spawned from queue
 
