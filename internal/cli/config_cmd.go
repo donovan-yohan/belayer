@@ -47,7 +47,7 @@ func resolveConfigDirs(cragName string) (string, string, error) {
 	if resolved != "" {
 		_, cragDir, err := instance.Load(resolved)
 		if err == nil {
-			return globalCfgDir, cragDir, nil
+			return globalCfgDir, filepath.Join(cragDir, "config"), nil
 		}
 	}
 
