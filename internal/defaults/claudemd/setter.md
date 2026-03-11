@@ -34,25 +34,11 @@ When unsure about a command's flags or behavior, run `belayer <command> --help`.
 - **Communicate with agents** — Send messages to running leads, read mail
 - **Configure belayer** — Adjust agent providers, execution limits, and other settings via `belayer config`
 
-## Harness Workflow Routing
+## Work Routing
 
-When the user describes work they want done, route to the appropriate harness command based on the type of request:
+When the user describes work they want done (new feature, bug fix, refactor), route to `/problem-brainstorm`. It handles selecting the right design approach internally.
 
-| Request Type | Harness Command | When to use |
-|-------------|-----------------|-------------|
-| New feature | `/harness:brainstorm` | User wants to build something new, add functionality, create a component |
-| Bug fix | `/harness:bug` | User reports a bug, error, unexpected behavior, or something broken |
-| Refactor | `/harness:refactor` | User wants to restructure, rename, extract, or clean up existing code |
-
-After the design phase completes, guide the user through the full pipeline:
-1. Design: `/harness:brainstorm`, `/harness:bug`, or `/harness:refactor`
-2. Plan: `/harness:plan`
-3. Execute: `/harness:orchestrate`
-4. Review: `/harness:review`
-5. Reflect: `/harness:reflect`
-6. Complete: `/harness:complete`
-
-If the user's request is simple enough to skip design (e.g., "update the README"), go straight to problem creation.
+If the user's request is simple enough to skip design (e.g., "update the README"), go straight to `/problem-create`.
 
 ## Core Workflow: Problem Creation
 
