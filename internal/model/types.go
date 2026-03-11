@@ -6,11 +6,19 @@ import "time"
 type ProblemStatus string
 
 const (
-	ProblemStatusPending   ProblemStatus = "pending"
-	ProblemStatusRunning   ProblemStatus = "running"
-	ProblemStatusReviewing ProblemStatus = "reviewing"
-	ProblemStatusComplete  ProblemStatus = "complete"
-	ProblemStatusStuck     ProblemStatus = "stuck"
+	ProblemStatusPending       ProblemStatus = "pending"
+	ProblemStatusRunning       ProblemStatus = "running"
+	ProblemStatusReviewing     ProblemStatus = "reviewing"
+	ProblemStatusComplete      ProblemStatus = "complete"
+	ProblemStatusStuck         ProblemStatus = "stuck"
+	ProblemStatusImported      ProblemStatus = "imported"
+	ProblemStatusEnriching     ProblemStatus = "enriching"
+	ProblemStatusPRCreating    ProblemStatus = "pr_creating"
+	ProblemStatusPRMonitoring  ProblemStatus = "pr_monitoring"
+	ProblemStatusCIFixing      ProblemStatus = "ci_fixing"
+	ProblemStatusReviewReacting ProblemStatus = "review_reacting"
+	ProblemStatusMerged        ProblemStatus = "merged"
+	ProblemStatusClosed        ProblemStatus = "closed"
 )
 
 // ClimbStatus represents the lifecycle state of a climb.
@@ -36,7 +44,21 @@ const (
 	EventAnchorVerdict  EventType = "anchor_verdict"
 	EventSpotterSpawned EventType = "spotter_spawned"
 	EventSpotterVerdict EventType = "spotter_verdict"
-	EventPRCreated      EventType = "pr_created"
+	EventPRCreated                EventType = "pr_created"
+	EventIssueImported            EventType = "issue_imported"
+	EventIssueConverted           EventType = "issue_converted"
+	EventPRStacked                EventType = "pr_stacked"
+	EventCIFailed                 EventType = "ci_failed"
+	EventCIFixDispatched          EventType = "ci_fix_dispatched"
+	EventCIFixSucceeded           EventType = "ci_fix_succeeded"
+	EventCIFixExhausted           EventType = "ci_fix_exhausted"
+	EventReviewCommentReceived    EventType = "review_comment_received"
+	EventReviewCommentReplied     EventType = "review_comment_replied"
+	EventChangesRequested         EventType = "changes_requested"
+	EventReviewReactionDispatched EventType = "review_reaction_dispatched"
+	EventPRApproved               EventType = "pr_approved"
+	EventPRMerged                 EventType = "pr_merged"
+	EventPRClosed                 EventType = "pr_closed"
 )
 
 // Problem represents a work item submitted by the user.
@@ -45,8 +67,9 @@ type Problem struct {
 	CragID string        `json:"crag_id"`
 	Spec   string        `json:"spec"`
 	ClimbsJSON string        `json:"climbs_json"`
-	JiraRef    string        `json:"jira_ref"`
-	Status     ProblemStatus `json:"status"`
+	JiraRef         string        `json:"jira_ref"`
+	TrackerIssueID  string        `json:"tracker_issue_id"`
+	Status          ProblemStatus `json:"status"`
 	CreatedAt  time.Time     `json:"created_at"`
 	UpdatedAt  time.Time     `json:"updated_at"`
 }

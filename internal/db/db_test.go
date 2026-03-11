@@ -74,6 +74,33 @@ func TestMigrateIdempotent(t *testing.T) {
 	}
 }
 
+func TestMigration004_PlanningReviewHats(t *testing.T) {
+	d, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer d.Close()
+
+	if err := d.Migrate(); err != nil {
+		t.Fatalf("Migrate failed: %v", err)
+	}
+
+	tables := []string{"tracker_issues", "pull_requests", "pr_reactions"}
+	for _, table := range tables {
+		var name string
+		err := d.Conn().QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+		if err != nil {
+			t.Fatalf("table %s not found: %v", table, err)
+		}
+	}
+
+	var cid int
+	err = d.Conn().QueryRow("SELECT cid FROM pragma_table_info('problems') WHERE name='tracker_issue_id'").Scan(&cid)
+	if err != nil {
+		t.Fatal("tracker_issue_id column not found on problems table")
+	}
+}
+
 func TestForeignKeysEnabled(t *testing.T) {
 	d, err := Open(":memory:")
 	if err != nil {
