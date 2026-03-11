@@ -3,6 +3,7 @@ package belayer
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -11,11 +12,15 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
+	"github.com/donovan-yohan/belayer/internal/instance"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/tmux"
+	"github.com/donovan-yohan/belayer/internal/tracker"
+	ghtracker "github.com/donovan-yohan/belayer/internal/tracker/github"
+	jiratracker "github.com/donovan-yohan/belayer/internal/tracker/jira"
 )
 
 // Config holds configuration for the belayer daemon.
@@ -46,8 +51,13 @@ type Belayer struct {
 	spawner    lead.AgentSpawner
 
 	// Config directories for prompt/profile resolution.
-	globalConfigDir   string
-	cragConfigDir string
+	globalConfigDir string
+	cragConfigDir   string
+
+	// Tracker sync state.
+	tracker      tracker.Tracker
+	lastSyncAt   time.Time
+	syncInterval time.Duration
 
 	problems    map[string]*ProblemRunner // problemID -> runner
 	leadQueue   []QueuedClimb             // FIFO queue
@@ -74,6 +84,10 @@ func (s *Belayer) Run(ctx context.Context) error {
 	log.Printf("belayer: starting for crag %q (max-leads=%d, poll=%s, stale=%s)",
 		s.config.CragName, s.config.MaxLeads, s.config.PollInterval, s.config.StaleTimeout)
 
+	if err := s.initTracker(); err != nil {
+		log.Printf("belayer: tracker init error: %v", err)
+	}
+
 	// Crash recovery: resume any running/reviewing problems
 	if err := s.recover(); err != nil {
 		log.Printf("belayer: recovery error: %v", err)
@@ -93,7 +107,7 @@ func (s *Belayer) Run(ctx context.Context) error {
 			log.Printf("belayer: cleaned up %d problem(s)", len(s.problems))
 			return ctx.Err()
 		case <-ticker.C:
-			if err := s.tick(); err != nil {
+			if err := s.tick(ctx); err != nil {
 				log.Printf("belayer: tick error: %v", err)
 			}
 		}
@@ -101,7 +115,10 @@ func (s *Belayer) Run(ctx context.Context) error {
 }
 
 // tick performs one iteration of the event loop.
-func (s *Belayer) tick() error {
+func (s *Belayer) tick(ctx context.Context) error {
+	// 0. Sync tracker issues.
+	s.syncTracker(ctx)
+
 	// 1. Poll for new pending problems
 	if err := s.pollPendingProblems(); err != nil {
 		return fmt.Errorf("polling pending problems: %w", err)
@@ -393,6 +410,99 @@ func (s *Belayer) recover() error {
 	}
 
 	return nil
+}
+
+// initTracker initialises the tracker from config. It is a no-op when no
+// provider is configured.
+func (s *Belayer) initTracker() error {
+	if s.belayerCfg.Tracker.Provider == "" {
+		return nil
+	}
+
+	intervalStr := s.belayerCfg.Tracker.SyncInterval
+	if intervalStr == "" {
+		intervalStr = "5m"
+	}
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		return fmt.Errorf("parsing tracker sync_interval %q: %w", intervalStr, err)
+	}
+	s.syncInterval = interval
+
+	switch s.belayerCfg.Tracker.Provider {
+	case "github":
+		cragConfig, _, err := instance.Load(s.config.CragName)
+		if err != nil {
+			return fmt.Errorf("loading crag for tracker: %w", err)
+		}
+		if len(cragConfig.Repos) == 0 {
+			return fmt.Errorf("no repos in crag for github tracker")
+		}
+		barePath := filepath.Join(s.config.CragDir, cragConfig.Repos[0].BarePath)
+		s.tracker = ghtracker.New(barePath)
+	case "jira":
+		token := os.Getenv("JIRA_API_TOKEN")
+		s.tracker = jiratracker.New(
+			s.belayerCfg.Tracker.Jira.BaseURL,
+			s.belayerCfg.Tracker.Jira.Project,
+			token,
+		)
+	default:
+		return fmt.Errorf("unknown tracker provider: %q", s.belayerCfg.Tracker.Provider)
+	}
+
+	log.Printf("belayer: tracker initialised (provider=%s, sync_interval=%s)", s.belayerCfg.Tracker.Provider, s.syncInterval)
+	return nil
+}
+
+// syncTracker fetches issues from the configured tracker and upserts them into
+// the local SQLite store. It is a no-op when no tracker is configured or the
+// sync interval has not elapsed.
+func (s *Belayer) syncTracker(ctx context.Context) {
+	if s.tracker == nil {
+		return
+	}
+	if !s.lastSyncAt.IsZero() && time.Since(s.lastSyncAt) < s.syncInterval {
+		return
+	}
+
+	filter := model.IssueFilter{}
+	if s.belayerCfg.Tracker.Label != "" {
+		filter.Labels = []string{s.belayerCfg.Tracker.Label}
+	}
+
+	issues, err := s.tracker.ListIssues(ctx, filter)
+	if err != nil {
+		log.Printf("belayer: tracker sync error: %v", err)
+		return
+	}
+
+	now := time.Now().UTC()
+	for _, issue := range issues {
+		commentsJSON, _ := json.Marshal(issue.Comments)
+		labelsJSON, _ := json.Marshal(issue.Labels)
+		rawJSON, _ := json.Marshal(issue.Raw)
+
+		ti := &model.TrackerIssue{
+			ID:           issue.ID,
+			Provider:     s.belayerCfg.Tracker.Provider,
+			Title:        issue.Title,
+			Body:         issue.Body,
+			CommentsJSON: string(commentsJSON),
+			LabelsJSON:   string(labelsJSON),
+			Priority:     issue.Priority,
+			Assignee:     issue.Assignee,
+			URL:          issue.URL,
+			RawJSON:      string(rawJSON),
+			SyncedAt:     now,
+		}
+		if err := s.store.InsertTrackerIssue(ti); err != nil {
+			log.Printf("belayer: error inserting tracker issue %s: %v", issue.ID, err)
+		}
+	}
+
+	s.lastSyncAt = now
+	log.Printf("belayer: synced %d tracker issues", len(issues))
 }
 
 // extractJSONStringField extracts a string value from a simple JSON payload
