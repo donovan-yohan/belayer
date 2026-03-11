@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
@@ -473,7 +473,7 @@ func (s *Belayer) initTracker() error {
 
 	switch s.belayerCfg.Tracker.Provider {
 	case "github":
-		cragConfig, _, err := instance.Load(s.config.CragName)
+		cragConfig, _, err := crag.Load(s.config.CragName)
 		if err != nil {
 			return fmt.Errorf("loading crag for tracker: %w", err)
 		}

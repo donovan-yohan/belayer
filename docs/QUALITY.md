@@ -13,7 +13,7 @@ Go's built-in `go test` with `testing` package. No external test framework.
 | `internal/db/db_test.go` | Open, Migrate (idempotent), foreign keys |
 | `internal/config/config_test.go` | Default config, JSON round-trip |
 | `internal/repo/repo_test.go` | URL parsing, worktree add/remove, bare clone |
-| `internal/instance/instance_test.go` | Crag create/load/delete, worktree management |
+| `internal/crag/crag_test.go` | Crag create/load/delete, worktree management |
 | `internal/spotter/types_test.go` | SPOT.json type parsing |
 | `internal/climbctx/climbctx_test.go` | GOAL.json types and writer (lead, spotter, anchor variants) |
 | `internal/belayerconfig/config_test.go` | Config loader, crag/global/embedded resolution chain, TOML parsing |

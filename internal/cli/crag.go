@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/spf13/cobra"
 )
 
@@ -35,7 +35,7 @@ func newCragCreateCmd() *cobra.Command {
 				return fmt.Errorf("at least one repo URL is required (use --repos)")
 			}
 
-			cragDir, err := instance.Create(name, repos)
+			cragDir, err := crag.Create(name, repos)
 			if err != nil {
 				return err
 			}
@@ -55,7 +55,7 @@ func newCragListCmd() *cobra.Command {
 		Short:   "List all crags",
 		Aliases: []string{"ls"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			crags, err := instance.List()
+			crags, err := crag.List()
 			if err != nil {
 				return err
 			}
@@ -82,7 +82,7 @@ func newCragDeleteCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			if err := instance.Delete(name); err != nil {
+			if err := crag.Delete(name); err != nil {
 				return err
 			}
 

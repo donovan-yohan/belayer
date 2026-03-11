@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/mail"
 	"github.com/spf13/cobra"
 )
@@ -30,7 +30,7 @@ func mailStore(cragName string) (*mail.FileStore, error) {
 		return nil, err
 	}
 
-	_, cragDir, err := instance.Load(name)
+	_, cragDir, err := crag.Load(name)
 	if err != nil {
 		return nil, err
 	}

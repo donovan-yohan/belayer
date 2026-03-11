@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/spf13/cobra"
 )
@@ -42,7 +42,7 @@ func newLogsViewCmd() *cobra.Command {
 				return err
 			}
 
-			_, cragDir, err := instance.Load(name)
+			_, cragDir, err := crag.Load(name)
 			if err != nil {
 				return err
 			}
@@ -93,7 +93,7 @@ func newLogsCleanupCmd() *cobra.Command {
 				return err
 			}
 
-			_, cragDir, err := instance.Load(name)
+			_, cragDir, err := crag.Load(name)
 			if err != nil {
 				return err
 			}
@@ -124,7 +124,7 @@ func newLogsStatsCmd() *cobra.Command {
 				return err
 			}
 
-			_, cragDir, err := instance.Load(name)
+			_, cragDir, err := crag.Load(name)
 			if err != nil {
 				return err
 			}

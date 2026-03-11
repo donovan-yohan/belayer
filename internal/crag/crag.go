@@ -1,4 +1,4 @@
-package instance
+package crag
 
 import (
 	"encoding/json"
@@ -13,10 +13,10 @@ import (
 )
 
 const (
-	instanceConfigFile = "instance.json"
-	reposDir           = "repos"
-	tasksDir           = "tasks"
-	dbFile             = "belayer.db"
+	cragConfigFile = "crag.json"
+	reposDir       = "repos"
+	tasksDir       = "tasks"
+	dbFile         = "belayer.db"
 )
 
 // RepoEntry describes a repository within a crag.
@@ -26,7 +26,7 @@ type RepoEntry struct {
 	BarePath string `json:"bare_path"` // Relative to crag dir
 }
 
-// CragConfig is the crag-level configuration persisted as instance.json.
+// CragConfig is the crag-level configuration persisted as crag.json.
 type CragConfig struct {
 	Name      string      `json:"name"`
 	Repos     []RepoEntry `json:"repos"`
@@ -52,12 +52,12 @@ func Create(name string, repoURLs []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	instanceDir := filepath.Join(belayerDir, "crags", name)
+	cragDir := filepath.Join(belayerDir, "crags", name)
 
 	for _, dir := range []string{
-		instanceDir,
-		filepath.Join(instanceDir, reposDir),
-		filepath.Join(instanceDir, tasksDir),
+		cragDir,
+		filepath.Join(cragDir, reposDir),
+		filepath.Join(cragDir, tasksDir),
 	} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", fmt.Errorf("creating directory %s: %w", dir, err)
@@ -68,15 +68,15 @@ func Create(name string, repoURLs []string) (string, error) {
 	for _, repoURL := range repoURLs {
 		repoName, err := repo.RepoNameFromURL(repoURL)
 		if err != nil {
-			cleanup(instanceDir)
+			cleanup(cragDir)
 			return "", fmt.Errorf("extracting repo name from %q: %w", repoURL, err)
 		}
 
 		barePath := filepath.Join(reposDir, repoName+".git")
-		fullBarePath := filepath.Join(instanceDir, barePath)
+		fullBarePath := filepath.Join(cragDir, barePath)
 
 		if err := repo.CloneBare(repoURL, fullBarePath); err != nil {
-			cleanup(instanceDir)
+			cleanup(cragDir)
 			return "", fmt.Errorf("cloning %s: %w", repoURL, err)
 		}
 
@@ -87,48 +87,48 @@ func Create(name string, repoURLs []string) (string, error) {
 		})
 	}
 
-	database, err := db.Open(filepath.Join(instanceDir, dbFile))
+	database, err := db.Open(filepath.Join(cragDir, dbFile))
 	if err != nil {
-		cleanup(instanceDir)
+		cleanup(cragDir)
 		return "", fmt.Errorf("opening database: %w", err)
 	}
 	defer database.Close()
 
 	if err := database.Migrate(); err != nil {
-		cleanup(instanceDir)
+		cleanup(cragDir)
 		return "", fmt.Errorf("running migrations: %w", err)
 	}
 
 	now := time.Now().UTC()
 	_, err = database.Conn().Exec(
 		"INSERT INTO crags (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		name, name, instanceDir, now, now,
+		name, name, cragDir, now, now,
 	)
 	if err != nil {
-		cleanup(instanceDir)
+		cleanup(cragDir)
 		return "", fmt.Errorf("inserting crag record: %w", err)
 	}
 
-	instConfig := CragConfig{
+	cragCfg := CragConfig{
 		Name:      name,
 		Repos:     repos,
 		CreatedAt: now,
 	}
-	if err := saveInstanceConfig(instanceDir, &instConfig); err != nil {
-		cleanup(instanceDir)
+	if err := saveConfig(cragDir, &cragCfg); err != nil {
+		cleanup(cragDir)
 		return "", fmt.Errorf("saving crag config: %w", err)
 	}
 
-	cfg.Crags[name] = instanceDir
+	cfg.Crags[name] = cragDir
 	if cfg.DefaultCrag == "" {
 		cfg.DefaultCrag = name
 	}
 	if err := config.Save(cfg); err != nil {
 		// Crag is created on disk but not registered — not fatal but warn-worthy
-		return instanceDir, fmt.Errorf("saving global config (crag created at %s): %w", instanceDir, err)
+		return cragDir, fmt.Errorf("saving global config (crag created at %s): %w", cragDir, err)
 	}
 
-	return instanceDir, nil
+	return cragDir, nil
 }
 
 // Load reads a crag's configuration from disk.
@@ -138,17 +138,17 @@ func Load(name string) (*CragConfig, string, error) {
 		return nil, "", fmt.Errorf("loading config: %w", err)
 	}
 
-	instanceDir, exists := cfg.Crags[name]
+	cragDir, exists := cfg.Crags[name]
 	if !exists {
 		return nil, "", fmt.Errorf("crag %q not found", name)
 	}
 
-	instConfig, err := loadInstanceConfig(instanceDir)
+	cragCfg, err := loadConfig(cragDir)
 	if err != nil {
 		return nil, "", err
 	}
 
-	return instConfig, instanceDir, nil
+	return cragCfg, cragDir, nil
 }
 
 // List returns all registered crag names and their paths.
@@ -167,12 +167,12 @@ func Delete(name string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	instanceDir, exists := cfg.Crags[name]
+	cragDir, exists := cfg.Crags[name]
 	if !exists {
 		return fmt.Errorf("crag %q not found", name)
 	}
 
-	if err := os.RemoveAll(instanceDir); err != nil {
+	if err := os.RemoveAll(cragDir); err != nil {
 		return fmt.Errorf("removing crag directory: %w", err)
 	}
 
@@ -189,29 +189,29 @@ func Delete(name string) error {
 }
 
 // findRepoEntry looks up a repo by name in the crag config.
-func findRepoEntry(instConfig *CragConfig, repoName string) (*RepoEntry, error) {
-	for i := range instConfig.Repos {
-		if instConfig.Repos[i].Name == repoName {
-			return &instConfig.Repos[i], nil
+func findRepoEntry(cfg *CragConfig, repoName string) (*RepoEntry, error) {
+	for i := range cfg.Repos {
+		if cfg.Repos[i].Name == repoName {
+			return &cfg.Repos[i], nil
 		}
 	}
 	return nil, fmt.Errorf("repo %q not found in crag", repoName)
 }
 
 // CreateWorktree creates a git worktree for a specific repo within a problem.
-func CreateWorktree(instanceDir, problemID, repoName string) (string, error) {
-	instConfig, err := loadInstanceConfig(instanceDir)
+func CreateWorktree(cragDir, problemID, repoName string) (string, error) {
+	cfg, err := loadConfig(cragDir)
 	if err != nil {
 		return "", err
 	}
 
-	entry, err := findRepoEntry(instConfig, repoName)
+	entry, err := findRepoEntry(cfg, repoName)
 	if err != nil {
 		return "", err
 	}
 
-	bareRepoDir := filepath.Join(instanceDir, entry.BarePath)
-	worktreePath := filepath.Join(instanceDir, tasksDir, problemID, repoName)
+	bareRepoDir := filepath.Join(cragDir, entry.BarePath)
+	worktreePath := filepath.Join(cragDir, tasksDir, problemID, repoName)
 	branch := fmt.Sprintf("belayer/%s/%s", problemID, repoName)
 
 	if err := repo.WorktreeAdd(bareRepoDir, worktreePath, branch); err != nil {
@@ -222,43 +222,43 @@ func CreateWorktree(instanceDir, problemID, repoName string) (string, error) {
 }
 
 // RemoveWorktree removes a git worktree for a specific repo within a problem.
-func RemoveWorktree(instanceDir, problemID, repoName string) error {
-	instConfig, err := loadInstanceConfig(instanceDir)
+func RemoveWorktree(cragDir, problemID, repoName string) error {
+	cfg, err := loadConfig(cragDir)
 	if err != nil {
 		return err
 	}
 
-	entry, err := findRepoEntry(instConfig, repoName)
+	entry, err := findRepoEntry(cfg, repoName)
 	if err != nil {
 		return err
 	}
 
-	bareRepoDir := filepath.Join(instanceDir, entry.BarePath)
-	worktreePath := filepath.Join(instanceDir, tasksDir, problemID, repoName)
+	bareRepoDir := filepath.Join(cragDir, entry.BarePath)
+	worktreePath := filepath.Join(cragDir, tasksDir, problemID, repoName)
 
 	return repo.WorktreeRemove(bareRepoDir, worktreePath)
 }
 
 // CleanupProblemWorktrees removes all worktrees for a given problem.
-func CleanupProblemWorktrees(instanceDir, problemID string) error {
-	instConfig, err := loadInstanceConfig(instanceDir)
+func CleanupProblemWorktrees(cragDir, problemID string) error {
+	cfg, err := loadConfig(cragDir)
 	if err != nil {
 		return err
 	}
 
 	var errs []error
-	for _, entry := range instConfig.Repos {
-		worktreePath := filepath.Join(instanceDir, tasksDir, problemID, entry.Name)
+	for _, entry := range cfg.Repos {
+		worktreePath := filepath.Join(cragDir, tasksDir, problemID, entry.Name)
 		if _, statErr := os.Stat(worktreePath); os.IsNotExist(statErr) {
 			continue
 		}
-		bareRepoDir := filepath.Join(instanceDir, entry.BarePath)
+		bareRepoDir := filepath.Join(cragDir, entry.BarePath)
 		if err := repo.WorktreeRemove(bareRepoDir, worktreePath); err != nil {
 			errs = append(errs, fmt.Errorf("removing worktree for %s: %w", entry.Name, err))
 		}
 	}
 
-	taskDir := filepath.Join(instanceDir, tasksDir, problemID)
+	taskDir := filepath.Join(cragDir, tasksDir, problemID)
 	os.Remove(taskDir) // Best-effort; may fail if not empty
 
 	if len(errs) > 0 {
@@ -267,18 +267,23 @@ func CleanupProblemWorktrees(instanceDir, problemID string) error {
 	return nil
 }
 
-func saveInstanceConfig(instanceDir string, cfg *CragConfig) error {
+func saveConfig(cragDir string, cfg *CragConfig) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling crag config: %w", err)
 	}
-	return os.WriteFile(filepath.Join(instanceDir, instanceConfigFile), data, 0644)
+	return os.WriteFile(filepath.Join(cragDir, cragConfigFile), data, 0644)
 }
 
-func loadInstanceConfig(instanceDir string) (*CragConfig, error) {
-	data, err := os.ReadFile(filepath.Join(instanceDir, instanceConfigFile))
+func loadConfig(cragDir string) (*CragConfig, error) {
+	// Try crag.json first, fall back to instance.json for backward compat
+	data, err := os.ReadFile(filepath.Join(cragDir, cragConfigFile))
 	if err != nil {
-		return nil, fmt.Errorf("reading crag config: %w", err)
+		// Backward compat: try legacy instance.json
+		data, err = os.ReadFile(filepath.Join(cragDir, "instance.json"))
+		if err != nil {
+			return nil, fmt.Errorf("reading crag config: %w", err)
+		}
 	}
 
 	var cfg CragConfig

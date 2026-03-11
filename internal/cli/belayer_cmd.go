@@ -14,7 +14,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/config"
 	"github.com/donovan-yohan/belayer/internal/db"
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/pidfile"
 	"github.com/donovan-yohan/belayer/internal/tmux"
@@ -54,7 +54,7 @@ func newBelayerDaemonStartCmd() *cobra.Command {
 				return err
 			}
 
-			_, cragDir, err := instance.Load(name)
+			_, cragDir, err := crag.Load(name)
 			if err != nil {
 				return err
 			}
@@ -214,7 +214,7 @@ func newBelayerDaemonStopCmd() *cobra.Command {
 				return err
 			}
 
-			_, cragDir, err := instance.Load(name)
+			_, cragDir, err := crag.Load(name)
 			if err != nil {
 				return err
 			}
@@ -270,7 +270,7 @@ func newBelayerDaemonStatusCmd() *cobra.Command {
 				return err
 			}
 
-			_, cragDir, err := instance.Load(name)
+			_, cragDir, err := crag.Load(name)
 			if err != nil {
 				return err
 			}

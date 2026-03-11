@@ -12,7 +12,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/config"
 	"github.com/donovan-yohan/belayer/internal/db"
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/repo"
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -34,7 +34,7 @@ func newTrackerCmd() *cobra.Command {
 }
 
 // createTracker creates the appropriate Tracker implementation from config.
-func createTracker(cfg *belayerconfig.Config, cragConfig *instance.CragConfig, cragDir string) (tracker.Tracker, error) {
+func createTracker(cfg *belayerconfig.Config, cragConfig *crag.CragConfig, cragDir string) (tracker.Tracker, error) {
 	switch cfg.Tracker.Provider {
 	case "github":
 		if len(cragConfig.Repos) == 0 {
@@ -55,13 +55,13 @@ func createTracker(cfg *belayerconfig.Config, cragConfig *instance.CragConfig, c
 
 // loadTrackerDeps loads crag config, belayer config, opens the DB, and creates a tracker.
 // It returns the tracker, store, cragConfig, and a cleanup func.
-func loadTrackerDeps(cragName string) (tracker.Tracker, *store.Store, *instance.CragConfig, func(), error) {
+func loadTrackerDeps(cragName string) (tracker.Tracker, *store.Store, *crag.CragConfig, func(), error) {
 	resolved, err := resolveCragName(cragName)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 
-	cragConfig, cragDir, err := instance.Load(resolved)
+	cragConfig, cragDir, err := crag.Load(resolved)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("loading crag %q: %w", resolved, err)
 	}

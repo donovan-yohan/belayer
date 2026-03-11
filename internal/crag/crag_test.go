@@ -1,4 +1,4 @@
-package instance
+package crag
 
 import (
 	"encoding/json"
@@ -41,17 +41,17 @@ func TestCreateAndLoad(t *testing.T) {
 	home := setupTestHome(t)
 	repoPath := createTestRepo(t, "my-repo")
 
-	instanceDir, err := Create("test-inst", []string{repoPath})
+	cragDir, err := Create("test-inst", []string{repoPath})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	// Verify crag directory exists
 	expectedDir := filepath.Join(home, ".belayer", "crags", "test-inst")
-	if instanceDir != expectedDir {
-		t.Errorf("crag dir = %q, want %q", instanceDir, expectedDir)
+	if cragDir != expectedDir {
+		t.Errorf("crag dir = %q, want %q", cragDir, expectedDir)
 	}
-	if _, err := os.Stat(instanceDir); os.IsNotExist(err) {
+	if _, err := os.Stat(cragDir); os.IsNotExist(err) {
 		t.Fatal("crag directory not created")
 	}
 
@@ -60,8 +60,8 @@ func TestCreateAndLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if loadedDir != instanceDir {
-		t.Errorf("loaded dir = %q, want %q", loadedDir, instanceDir)
+	if loadedDir != cragDir {
+		t.Errorf("loaded dir = %q, want %q", loadedDir, cragDir)
 	}
 	if cfg.Name != "test-inst" {
 		t.Errorf("config name = %q, want %q", cfg.Name, "test-inst")
@@ -74,13 +74,13 @@ func TestCreateAndLoad(t *testing.T) {
 	}
 
 	// Verify bare repo exists
-	bareRepoPath := filepath.Join(instanceDir, cfg.Repos[0].BarePath)
+	bareRepoPath := filepath.Join(cragDir, cfg.Repos[0].BarePath)
 	if _, err := os.Stat(bareRepoPath); os.IsNotExist(err) {
 		t.Fatal("bare repo not created")
 	}
 
 	// Verify SQLite database
-	dbPath := filepath.Join(instanceDir, "belayer.db")
+	dbPath := filepath.Join(cragDir, "belayer.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Fatal("database not created")
 	}
@@ -133,7 +133,7 @@ func TestDelete(t *testing.T) {
 	setupTestHome(t)
 	repoPath := createTestRepo(t, "repo")
 
-	instanceDir, err := Create("to-delete", []string{repoPath})
+	cragDir, err := Create("to-delete", []string{repoPath})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Verify directory removed
-	if _, err := os.Stat(instanceDir); !os.IsNotExist(err) {
+	if _, err := os.Stat(cragDir); !os.IsNotExist(err) {
 		t.Fatal("crag directory not removed")
 	}
 
@@ -161,18 +161,18 @@ func TestWorktreeLifecycle(t *testing.T) {
 	setupTestHome(t)
 	repoPath := createTestRepo(t, "wt-repo")
 
-	instanceDir, err := Create("wt-test", []string{repoPath})
+	cragDir, err := Create("wt-test", []string{repoPath})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	// Create worktree
-	worktreePath, err := CreateWorktree(instanceDir, "task-001", "wt-repo")
+	worktreePath, err := CreateWorktree(cragDir, "task-001", "wt-repo")
 	if err != nil {
 		t.Fatalf("CreateWorktree: %v", err)
 	}
 
-	expectedWT := filepath.Join(instanceDir, "tasks", "task-001", "wt-repo")
+	expectedWT := filepath.Join(cragDir, "tasks", "task-001", "wt-repo")
 	if worktreePath != expectedWT {
 		t.Errorf("worktree path = %q, want %q", worktreePath, expectedWT)
 	}
@@ -181,7 +181,7 @@ func TestWorktreeLifecycle(t *testing.T) {
 	}
 
 	// Remove worktree
-	if err := RemoveWorktree(instanceDir, "task-001", "wt-repo"); err != nil {
+	if err := RemoveWorktree(cragDir, "task-001", "wt-repo"); err != nil {
 		t.Fatalf("RemoveWorktree: %v", err)
 	}
 	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
@@ -193,23 +193,23 @@ func TestCleanupProblemWorktrees(t *testing.T) {
 	setupTestHome(t)
 	repoPath := createTestRepo(t, "cleanup-repo")
 
-	instanceDir, err := Create("cleanup-test", []string{repoPath})
+	cragDir, err := Create("cleanup-test", []string{repoPath})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
 	// Create worktree
-	if _, err := CreateWorktree(instanceDir, "task-cleanup", "cleanup-repo"); err != nil {
+	if _, err := CreateWorktree(cragDir, "task-cleanup", "cleanup-repo"); err != nil {
 		t.Fatalf("CreateWorktree: %v", err)
 	}
 
 	// Cleanup all worktrees for the problem
-	if err := CleanupProblemWorktrees(instanceDir, "task-cleanup"); err != nil {
+	if err := CleanupProblemWorktrees(cragDir, "task-cleanup"); err != nil {
 		t.Fatalf("CleanupProblemWorktrees: %v", err)
 	}
 
 	// Verify worktree gone
-	worktreePath := filepath.Join(instanceDir, "tasks", "task-cleanup", "cleanup-repo")
+	worktreePath := filepath.Join(cragDir, "tasks", "task-cleanup", "cleanup-repo")
 	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
 		t.Fatal("worktree directory not cleaned up")
 	}
@@ -219,13 +219,13 @@ func TestCragConfigPersistence(t *testing.T) {
 	setupTestHome(t)
 	repoPath := createTestRepo(t, "persist-repo")
 
-	instanceDir, err := Create("persist-test", []string{repoPath})
+	cragDir, err := Create("persist-test", []string{repoPath})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Read instance.json directly (file is still named instance.json on disk)
-	data, err := os.ReadFile(filepath.Join(instanceDir, "instance.json"))
+	// Read crag.json directly
+	data, err := os.ReadFile(filepath.Join(cragDir, "crag.json"))
 	if err != nil {
 		t.Fatalf("reading crag config: %v", err)
 	}

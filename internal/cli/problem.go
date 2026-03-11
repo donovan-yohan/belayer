@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/db"
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/spf13/cobra"
@@ -71,7 +71,7 @@ func newProblemCreateCmd() *cobra.Command {
 				return err
 			}
 
-			cragConfig, cragDir, err := instance.Load(resolvedName)
+			cragConfig, cragDir, err := crag.Load(resolvedName)
 			if err != nil {
 				return fmt.Errorf("loading crag %q: %w", resolvedName, err)
 			}
@@ -135,7 +135,7 @@ func newProblemListCmd() *cobra.Command {
 				return err
 			}
 
-			_, cragDir, err := instance.Load(resolvedName)
+			_, cragDir, err := crag.Load(resolvedName)
 			if err != nil {
 				return fmt.Errorf("loading crag %q: %w", resolvedName, err)
 			}

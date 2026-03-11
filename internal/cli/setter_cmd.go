@@ -7,7 +7,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/manage"
 	"github.com/spf13/cobra"
 )
@@ -26,13 +26,13 @@ func newSetterSessionCmd() *cobra.Command {
 				return err
 			}
 
-			instConfig, cragDir, err := instance.Load(name)
+			cragCfg, cragDir, err := crag.Load(name)
 			if err != nil {
 				return fmt.Errorf("loading crag %q: %w", name, err)
 			}
 
 			var repoNames []string
-			for _, r := range instConfig.Repos {
+			for _, r := range cragCfg.Repos {
 				repoNames = append(repoNames, r.Name)
 			}
 

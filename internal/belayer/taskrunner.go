@@ -17,7 +17,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/climbctx"
 	"github.com/donovan-yohan/belayer/internal/defaults"
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
@@ -138,7 +138,7 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 
 	// Create worktrees
 	for repoName := range repos {
-		worktreePath, err := instance.CreateWorktree(tr.cragDir, tr.task.ID, repoName)
+		worktreePath, err := crag.CreateWorktree(tr.cragDir, tr.task.ID, repoName)
 		if err != nil {
 			return nil, fmt.Errorf("creating worktree for %s: %w", repoName, err)
 		}

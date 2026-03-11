@@ -21,7 +21,7 @@ type MailMessage struct {
 // FileStore implements mail storage using the filesystem.
 // Messages are JSON files in per-address directories with unread/ and read/ subdirectories.
 type FileStore struct {
-	dir string // base mail directory (e.g., <instanceDir>/mail)
+	dir string // base mail directory (e.g., <cragDir>/mail)
 }
 
 // NewFileStore creates a FileStore rooted at the given directory.

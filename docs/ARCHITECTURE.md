@@ -61,7 +61,7 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
 | Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_rename_crag.sql, 003_rename_instance_to_crag.sql, 004_planning_review_hats.sql) |
 | Model | `internal/model/` | Domain types and status enums |
-| Crag | `internal/instance/` | Crag lifecycle (create, load, delete, worktree management) |
+| Crag | `internal/crag/` | Crag lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
 | Belayer | `internal/belayer/` | DAG executor daemon. Manages leads, spotters, and anchors |
 | Lead | `internal/lead/` | Lead execution runner, store, ClaudeSpawner (interactive sessions via tmux) |
@@ -146,7 +146,7 @@ Problem created (status: pending)
       library.toml                    # Library/package validation checklist
 
 ~/.belayer/crags/<name>/
-  instance.json                       # Crag config (repos, settings)
+  crag.json                            # Crag config (repos, settings)
   belayer.db                          # SQLite database
   config/                             # Per-crag overrides (optional)
   mail/                               # Filesystem mail store (per-address unread/read dirs)

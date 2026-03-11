@@ -8,7 +8,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/donovan-yohan/belayer/internal/db"
-	"github.com/donovan-yohan/belayer/internal/instance"
+	"github.com/donovan-yohan/belayer/internal/crag"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -30,7 +30,7 @@ func loadPRDeps(cragName string) (*store.Store, string, func(), error) {
 		return nil, "", nil, err
 	}
 
-	cragCfg, cragDir, err := instance.Load(resolved)
+	cragCfg, cragDir, err := crag.Load(resolved)
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("loading crag %q: %w", resolved, err)
 	}
