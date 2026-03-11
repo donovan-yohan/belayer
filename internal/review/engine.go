@@ -58,6 +58,39 @@ func ClassifyActivity(prev, curr *model.PRStatus, activity *model.PRActivity) []
 	return events
 }
 
+// ShouldDispatchCIFix returns true if another CI fix attempt should be made.
+func ShouldDispatchCIFix(currentFixCount, maxFixAttempts int) bool {
+	return currentFixCount < maxFixAttempts
+}
+
+// DecideReaction determines what action to take for a given PR event.
+func DecideReaction(event ReactionEvent, pr *model.PullRequest, maxFixAttempts int, autoMerge bool) string {
+	switch event.Type {
+	case EventCIFailed:
+		if ShouldDispatchCIFix(pr.CIFixCount, maxFixAttempts) {
+			return "lead_dispatched"
+		}
+		return "marked_stuck"
+	case EventCIPassed:
+		return "recorded"
+	case EventNewComment:
+		return "comment_replied"
+	case EventChangesRequested:
+		return "lead_dispatched"
+	case EventApproved:
+		if autoMerge {
+			return "merge_attempted"
+		}
+		return "recorded"
+	case EventMerged:
+		return "status_merged"
+	case EventClosed:
+		return "status_closed"
+	default:
+		return "recorded"
+	}
+}
+
 // HighestReviewState returns the most significant review state.
 // Priority: changes_requested > approved > commented > ""
 func HighestReviewState(reviews []model.Review) string {
