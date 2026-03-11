@@ -13,8 +13,8 @@ import (
 
 // PromptData holds the values injected into the manage CLAUDE.md template.
 type PromptData struct {
-	InstanceName string
-	RepoNames    []string
+	CragName  string
+	RepoNames []string
 }
 
 // PrepareManageDir writes .claude/CLAUDE.md (rendered) and .claude/commands/*.md (static)

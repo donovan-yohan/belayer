@@ -47,7 +47,7 @@ func TestCreateAndLoad(t *testing.T) {
 	}
 
 	// Verify instance directory exists
-	expectedDir := filepath.Join(home, ".belayer", "instances", "test-inst")
+	expectedDir := filepath.Join(home, ".belayer", "crags", "test-inst")
 	if instanceDir != expectedDir {
 		t.Errorf("instance dir = %q, want %q", instanceDir, expectedDir)
 	}

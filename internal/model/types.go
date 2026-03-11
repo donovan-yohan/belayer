@@ -41,9 +41,9 @@ const (
 
 // Problem represents a work item submitted by the user.
 type Problem struct {
-	ID         string        `json:"id"`
-	InstanceID string        `json:"instance_id"`
-	Spec       string        `json:"spec"`
+	ID     string        `json:"id"`
+	CragID string        `json:"crag_id"`
+	Spec   string        `json:"spec"`
 	ClimbsJSON string        `json:"climbs_json"`
 	JiraRef    string        `json:"jira_ref"`
 	Status     ProblemStatus `json:"status"`

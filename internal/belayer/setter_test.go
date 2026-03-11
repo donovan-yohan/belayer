@@ -167,7 +167,7 @@ func insertTestTask(t *testing.T, s *store.Store, taskID string, goals []model.C
 	goalsJSON, _ := json.Marshal(model.ClimbsFile{})
 	task := &model.Problem{
 		ID:         taskID,
-		InstanceID: "test-instance",
+		CragID: "test-instance",
 		Spec:       "test spec",
 		ClimbsJSON: string(goalsJSON),
 		Status:     model.ProblemStatusPending,
@@ -605,7 +605,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 	setter := &Belayer{
 		config: Config{
 			MaxLeads:     2,
-			InstanceName: "test-instance",
+			CragName: "test-instance",
 		},
 		store:   s,
 		tmux:    tm,
@@ -653,8 +653,8 @@ func TestSetter_CrashRecovery(t *testing.T) {
 
 	setter := &Belayer{
 		config: Config{
-			InstanceName: "test-instance",
-			InstanceDir:  tmpDir,
+			CragName: "test-instance",
+			CragDir:  tmpDir,
 			MaxLeads:     8,
 		},
 		store:   s,
@@ -691,8 +691,8 @@ func TestSetter_RunTickCycle(t *testing.T) {
 
 	setter := &Belayer{
 		config: Config{
-			InstanceName: "test-instance",
-			InstanceDir:  tmpDir,
+			CragName: "test-instance",
+			CragDir:  tmpDir,
 			MaxLeads:     8,
 			PollInterval: 100 * time.Millisecond,
 			StaleTimeout: 30 * time.Minute,
@@ -979,8 +979,8 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			InstanceName: "test-instance",
-			InstanceDir:  tmpDir,
+			CragName: "test-instance",
+			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
 		},
@@ -1055,8 +1055,8 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 
 	setter := &Belayer{
 		config: Config{
-			InstanceName: "test-instance",
-			InstanceDir:  tmpDir,
+			CragName: "test-instance",
+			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
 		},
@@ -1151,8 +1151,8 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			InstanceName: "test-instance",
-			InstanceDir:  tmpDir,
+			CragName: "test-instance",
+			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
 		},
@@ -1292,8 +1292,8 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			InstanceName: "test-instance",
-			InstanceDir:  tmpDir,
+			CragName: "test-instance",
+			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
 		},
@@ -1595,8 +1595,8 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			InstanceName: "test-instance",
-			InstanceDir:  tmpDir,
+			CragName: "test-instance",
+			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
 		},
@@ -1691,8 +1691,8 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			InstanceName: "test-instance",
-			InstanceDir:  tmpDir,
+			CragName: "test-instance",
+			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
 		},

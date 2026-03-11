@@ -20,8 +20,8 @@ import (
 
 // Config holds configuration for the belayer daemon.
 type Config struct {
-	InstanceName string
-	InstanceDir  string
+	CragName     string
+	CragDir      string
 	MaxLeads     int
 	PollInterval time.Duration
 	StaleTimeout time.Duration
@@ -63,7 +63,7 @@ func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, instanceCfgDir st
 		instanceConfigDir: instanceCfgDir,
 		store:             store.New(db),
 		tmux:              tm,
-		logMgr:            logmgr.New(cfg.InstanceDir + "/logs"),
+		logMgr:            logmgr.New(cfg.CragDir + "/logs"),
 		spawner:           sp,
 		problems:          make(map[string]*ProblemRunner),
 	}
@@ -71,8 +71,8 @@ func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, instanceCfgDir st
 
 // Run starts the belayer event loop. It blocks until the context is cancelled.
 func (s *Belayer) Run(ctx context.Context) error {
-	log.Printf("belayer: starting for instance %q (max-leads=%d, poll=%s, stale=%s)",
-		s.config.InstanceName, s.config.MaxLeads, s.config.PollInterval, s.config.StaleTimeout)
+	log.Printf("belayer: starting for crag %q (max-leads=%d, poll=%s, stale=%s)",
+		s.config.CragName, s.config.MaxLeads, s.config.PollInterval, s.config.StaleTimeout)
 
 	// Crash recovery: resume any running/reviewing problems
 	if err := s.recover(); err != nil {
@@ -252,7 +252,7 @@ func (s *Belayer) tick() error {
 
 // pollPendingProblems picks up new pending problems and initializes them.
 func (s *Belayer) pollPendingProblems() error {
-	pending, err := s.store.GetPendingProblems(s.config.InstanceName)
+	pending, err := s.store.GetPendingProblems(s.config.CragName)
 	if err != nil {
 		return err
 	}
@@ -265,7 +265,7 @@ func (s *Belayer) pollPendingProblems() error {
 
 		log.Printf("belayer: initializing problem %s", task.ID)
 
-		runner := NewProblemRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
+		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
 		readyClimbs, err := runner.Init()
 		if err != nil {
 			log.Printf("belayer: error initializing problem %s: %v", task.ID, err)
@@ -303,7 +303,7 @@ func (s *Belayer) processLeadQueue() {
 
 // recover attempts to resume problems that were running when the setter last crashed.
 func (s *Belayer) recover() error {
-	active, err := s.store.GetActiveProblems(s.config.InstanceName)
+	active, err := s.store.GetActiveProblems(s.config.CragName)
 	if err != nil {
 		return fmt.Errorf("getting active problems: %w", err)
 	}
@@ -312,7 +312,7 @@ func (s *Belayer) recover() error {
 		task := &active[i]
 		log.Printf("belayer: recovering problem %s (status=%s)", task.ID, task.Status)
 
-		runner := NewProblemRunner(task, s.config.InstanceDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
+		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.instanceConfigDir, s.store, s.tmux, s.logMgr, s.spawner)
 
 		// Load climbs and build DAG (skip worktree creation since they should exist)
 		climbs, err := s.store.GetClimbsForProblem(task.ID)
@@ -323,7 +323,7 @@ func (s *Belayer) recover() error {
 
 		runner.dag = BuildDAG(climbs)
 		runner.tmuxSession = fmt.Sprintf("belayer-problem-%s", task.ID)
-		runner.problemDir = filepath.Join(s.config.InstanceDir, "tasks", task.ID)
+		runner.problemDir = filepath.Join(s.config.CragDir, "tasks", task.ID)
 
 		// Populate worktrees map
 		repos := make(map[string]bool)
@@ -331,7 +331,7 @@ func (s *Belayer) recover() error {
 			repos[climb.RepoName] = true
 		}
 		for repoName := range repos {
-			runner.worktrees[repoName] = filepath.Join(s.config.InstanceDir, "tasks", task.ID, repoName)
+			runner.worktrees[repoName] = filepath.Join(s.config.CragDir, "tasks", task.ID, repoName)
 		}
 
 		// Check for TOP.json files that completed while we were down

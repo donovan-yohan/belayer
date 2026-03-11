@@ -36,7 +36,7 @@ type CragConfig struct {
 // Create creates a new belayer instance: directory structure, bare clones, DB, and config.
 func Create(name string, repoURLs []string) (string, error) {
 	if name == "" {
-		return "", fmt.Errorf("instance name cannot be empty")
+		return "", fmt.Errorf("crag name cannot be empty")
 	}
 
 	cfg, err := config.Load()
@@ -44,15 +44,15 @@ func Create(name string, repoURLs []string) (string, error) {
 		return "", fmt.Errorf("loading config: %w", err)
 	}
 
-	if _, exists := cfg.Instances[name]; exists {
-		return "", fmt.Errorf("instance %q already exists", name)
+	if _, exists := cfg.Crags[name]; exists {
+		return "", fmt.Errorf("crag %q already exists", name)
 	}
 
 	belayerDir, err := config.Dir()
 	if err != nil {
 		return "", err
 	}
-	instanceDir := filepath.Join(belayerDir, "instances", name)
+	instanceDir := filepath.Join(belayerDir, "crags", name)
 
 	for _, dir := range []string{
 		instanceDir,
@@ -101,12 +101,12 @@ func Create(name string, repoURLs []string) (string, error) {
 
 	now := time.Now().UTC()
 	_, err = database.Conn().Exec(
-		"INSERT INTO instances (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+		"INSERT INTO crags (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
 		name, name, instanceDir, now, now,
 	)
 	if err != nil {
 		cleanup(instanceDir)
-		return "", fmt.Errorf("inserting instance record: %w", err)
+		return "", fmt.Errorf("inserting crag record: %w", err)
 	}
 
 	instConfig := CragConfig{
@@ -119,13 +119,13 @@ func Create(name string, repoURLs []string) (string, error) {
 		return "", fmt.Errorf("saving instance config: %w", err)
 	}
 
-	cfg.Instances[name] = instanceDir
-	if cfg.DefaultInstance == "" {
-		cfg.DefaultInstance = name
+	cfg.Crags[name] = instanceDir
+	if cfg.DefaultCrag == "" {
+		cfg.DefaultCrag = name
 	}
 	if err := config.Save(cfg); err != nil {
-		// Instance is created on disk but not registered — not fatal but warn-worthy
-		return instanceDir, fmt.Errorf("saving global config (instance created at %s): %w", instanceDir, err)
+		// Crag is created on disk but not registered — not fatal but warn-worthy
+		return instanceDir, fmt.Errorf("saving global config (crag created at %s): %w", instanceDir, err)
 	}
 
 	return instanceDir, nil
@@ -138,9 +138,9 @@ func Load(name string) (*CragConfig, string, error) {
 		return nil, "", fmt.Errorf("loading config: %w", err)
 	}
 
-	instanceDir, exists := cfg.Instances[name]
+	instanceDir, exists := cfg.Crags[name]
 	if !exists {
-		return nil, "", fmt.Errorf("instance %q not found", name)
+		return nil, "", fmt.Errorf("crag %q not found", name)
 	}
 
 	instConfig, err := loadInstanceConfig(instanceDir)
@@ -151,34 +151,34 @@ func Load(name string) (*CragConfig, string, error) {
 	return instConfig, instanceDir, nil
 }
 
-// List returns all registered instance names and their paths.
+// List returns all registered crag names and their paths.
 func List() (map[string]string, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
-	return cfg.Instances, nil
+	return cfg.Crags, nil
 }
 
-// Delete removes an instance's directory and its global config entry.
+// Delete removes a crag's directory and its global config entry.
 func Delete(name string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	instanceDir, exists := cfg.Instances[name]
+	instanceDir, exists := cfg.Crags[name]
 	if !exists {
-		return fmt.Errorf("instance %q not found", name)
+		return fmt.Errorf("crag %q not found", name)
 	}
 
 	if err := os.RemoveAll(instanceDir); err != nil {
-		return fmt.Errorf("removing instance directory: %w", err)
+		return fmt.Errorf("removing crag directory: %w", err)
 	}
 
-	delete(cfg.Instances, name)
-	if cfg.DefaultInstance == name {
-		cfg.DefaultInstance = ""
+	delete(cfg.Crags, name)
+	if cfg.DefaultCrag == name {
+		cfg.DefaultCrag = ""
 	}
 
 	if err := config.Save(cfg); err != nil {
@@ -195,7 +195,7 @@ func findRepoEntry(instConfig *CragConfig, repoName string) (*RepoEntry, error) 
 			return &instConfig.Repos[i], nil
 		}
 	}
-	return nil, fmt.Errorf("repo %q not found in instance", repoName)
+	return nil, fmt.Errorf("repo %q not found in crag", repoName)
 }
 
 // CreateWorktree creates a git worktree for a specific repo within a problem.

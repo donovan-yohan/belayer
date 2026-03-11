@@ -9,14 +9,14 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.DefaultInstance != "" {
-		t.Errorf("expected empty default_instance, got %q", cfg.DefaultInstance)
+	if cfg.DefaultCrag != "" {
+		t.Errorf("expected empty default_crag, got %q", cfg.DefaultCrag)
 	}
-	if cfg.Instances == nil {
-		t.Fatal("expected non-nil Instances map")
+	if cfg.Crags == nil {
+		t.Fatal("expected non-nil Crags map")
 	}
-	if len(cfg.Instances) != 0 {
-		t.Errorf("expected empty Instances map, got %d entries", len(cfg.Instances))
+	if len(cfg.Crags) != 0 {
+		t.Errorf("expected empty Crags map, got %d entries", len(cfg.Crags))
 	}
 }
 
@@ -25,8 +25,8 @@ func TestSaveAndLoad(t *testing.T) {
 	cfgPath := filepath.Join(tmpDir, "config.json")
 
 	cfg := DefaultConfig()
-	cfg.DefaultInstance = "test-instance"
-	cfg.Instances["test-instance"] = "/tmp/test"
+	cfg.DefaultCrag = "test-crag"
+	cfg.Crags["test-crag"] = "/tmp/test"
 
 	// Write directly to temp path
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -48,11 +48,11 @@ func TestSaveAndLoad(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if loaded.DefaultInstance != "test-instance" {
-		t.Errorf("expected default_instance=%q, got %q", "test-instance", loaded.DefaultInstance)
+	if loaded.DefaultCrag != "test-crag" {
+		t.Errorf("expected default_crag=%q, got %q", "test-crag", loaded.DefaultCrag)
 	}
-	if loaded.Instances["test-instance"] != "/tmp/test" {
-		t.Errorf("expected instance path /tmp/test, got %q", loaded.Instances["test-instance"])
+	if loaded.Crags["test-crag"] != "/tmp/test" {
+		t.Errorf("expected crag path /tmp/test, got %q", loaded.Crags["test-crag"])
 	}
 }
 
@@ -71,7 +71,22 @@ func TestLoadNonExistent(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if loaded.DefaultInstance != "" {
-		t.Errorf("expected empty default_instance, got %q", loaded.DefaultInstance)
+	if loaded.DefaultCrag != "" {
+		t.Errorf("expected empty default_crag, got %q", loaded.DefaultCrag)
+	}
+}
+
+func TestBackwardsCompatUnmarshal(t *testing.T) {
+	// Old config format using "default_instance" and "instances"
+	old := `{"default_instance":"my-instance","instances":{"my-instance":"/tmp/mi"}}`
+	var cfg Config
+	if err := json.Unmarshal([]byte(old), &cfg); err != nil {
+		t.Fatalf("unmarshal old format: %v", err)
+	}
+	if cfg.DefaultCrag != "my-instance" {
+		t.Errorf("expected DefaultCrag=my-instance, got %q", cfg.DefaultCrag)
+	}
+	if cfg.Crags["my-instance"] != "/tmp/mi" {
+		t.Errorf("expected Crags[my-instance]=/tmp/mi, got %q", cfg.Crags["my-instance"])
 	}
 }

@@ -11,7 +11,7 @@ func TestPrepareManageDir(t *testing.T) {
 	dir := t.TempDir()
 
 	err := PrepareManageDir(dir, PromptData{
-		InstanceName: "my-project",
+		CragName: "my-project",
 		RepoNames:    []string{"api", "frontend"},
 	})
 	if err != nil {
@@ -45,7 +45,7 @@ func TestPrepareManageDir_TemplateRendering(t *testing.T) {
 	dir := t.TempDir()
 
 	err := PrepareManageDir(dir, PromptData{
-		InstanceName: "solo",
+		CragName: "solo",
 		RepoNames:    []string{"monorepo"},
 	})
 	if err != nil {

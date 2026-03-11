@@ -24,18 +24,18 @@ func newMailCmd() *cobra.Command {
 	return cmd
 }
 
-func mailStore(instanceName string) (*mail.FileStore, error) {
-	name, err := resolveInstanceName(instanceName)
+func mailStore(cragName string) (*mail.FileStore, error) {
+	name, err := resolveCragName(cragName)
 	if err != nil {
 		return nil, err
 	}
 
-	_, instanceDir, err := instance.Load(name)
+	_, cragDir, err := instance.Load(name)
 	if err != nil {
 		return nil, err
 	}
 
-	mailDir := filepath.Join(instanceDir, "mail")
+	mailDir := filepath.Join(cragDir, "mail")
 	if err := os.MkdirAll(mailDir, 0755); err != nil {
 		return nil, fmt.Errorf("creating mail directory: %w", err)
 	}

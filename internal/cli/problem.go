@@ -29,7 +29,7 @@ func newProblemCreateCmd() *cobra.Command {
 	var specPath string
 	var climbsPath string
 	var jiraRef string
-	var instanceName string
+	var cragName string
 
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -65,25 +65,25 @@ func newProblemCreateCmd() *cobra.Command {
 				return fmt.Errorf("validating climbs: %w", err)
 			}
 
-			resolvedName, err := resolveInstanceName(instanceName)
+			resolvedName, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			instConfig, instanceDir, err := instance.Load(resolvedName)
+			cragConfig, cragDir, err := instance.Load(resolvedName)
 			if err != nil {
-				return fmt.Errorf("loading instance %q: %w", resolvedName, err)
+				return fmt.Errorf("loading crag %q: %w", resolvedName, err)
 			}
 
 			var repoNames []string
-			for _, repo := range instConfig.Repos {
+			for _, repo := range cragConfig.Repos {
 				repoNames = append(repoNames, repo.Name)
 			}
 			if err := store.ValidateClimbsRepos(&climbsFile, repoNames); err != nil {
 				return err
 			}
 
-			dbPath := filepath.Join(instanceDir, "belayer.db")
+			dbPath := filepath.Join(cragDir, "belayer.db")
 			database, err := db.Open(dbPath)
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)
@@ -95,7 +95,7 @@ func newProblemCreateCmd() *cobra.Command {
 			problemID := fmt.Sprintf("problem-%d", time.Now().UnixNano())
 			problem := &model.Problem{
 				ID:         problemID,
-				InstanceID: resolvedName,
+				CragID:     resolvedName,
 				Spec:       string(specContent),
 				ClimbsJSON: string(climbsContent),
 				JiraRef:    jiraRef,
@@ -117,28 +117,28 @@ func newProblemCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&specPath, "spec", "", "Path to spec.md file (required)")
 	cmd.Flags().StringVar(&climbsPath, "climbs", "", "Path to climbs.json file (required)")
 	cmd.Flags().StringVar(&jiraRef, "jira", "", "Jira ticket reference (optional)")
-	cmd.Flags().StringVar(&instanceName, "instance", "", "Instance name (defaults to default instance)")
+	cmd.Flags().StringVar(&cragName, "crag", "", "Crag name (defaults to default crag)")
 	return cmd
 }
 
 func newProblemListCmd() *cobra.Command {
-	var instanceName string
+	var cragName string
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List problems for an instance",
+		Short: "List problems for a crag",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedName, err := resolveInstanceName(instanceName)
+			resolvedName, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			_, instanceDir, err := instance.Load(resolvedName)
+			_, cragDir, err := instance.Load(resolvedName)
 			if err != nil {
-				return fmt.Errorf("loading instance %q: %w", resolvedName, err)
+				return fmt.Errorf("loading crag %q: %w", resolvedName, err)
 			}
 
-			dbPath := filepath.Join(instanceDir, "belayer.db")
+			dbPath := filepath.Join(cragDir, "belayer.db")
 			database, err := db.Open(dbPath)
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)
@@ -146,7 +146,7 @@ func newProblemListCmd() *cobra.Command {
 			defer database.Close()
 
 			s := store.New(database.Conn())
-			problems, err := s.ListProblemsForInstance(resolvedName)
+			problems, err := s.ListProblemsForCrag(resolvedName)
 			if err != nil {
 				return fmt.Errorf("listing problems: %w", err)
 			}
@@ -165,6 +165,6 @@ func newProblemListCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&instanceName, "instance", "", "Instance name (defaults to default instance)")
+	cmd.Flags().StringVar(&cragName, "crag", "", "Crag name (defaults to default crag)")
 	return cmd
 }

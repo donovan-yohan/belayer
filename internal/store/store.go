@@ -30,9 +30,9 @@ func (s *Store) InsertProblem(problem *model.Problem, climbs []model.Climb) erro
 
 	now := time.Now().UTC()
 	_, err = tx.Exec(
-		`INSERT INTO problems (id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at)
+		`INSERT INTO problems (id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		problem.ID, problem.InstanceID, problem.Spec, problem.ClimbsJSON, problem.JiraRef, problem.Status, now, now,
+		problem.ID, problem.CragID, problem.Spec, problem.ClimbsJSON, problem.JiraRef, problem.Status, now, now,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting problem: %w", err)
@@ -67,11 +67,11 @@ func (s *Store) InsertProblem(problem *model.Problem, climbs []model.Climb) erro
 // GetProblem retrieves a problem by ID.
 func (s *Store) GetProblem(id string) (*model.Problem, error) {
 	row := s.db.QueryRow(
-		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
 		 FROM problems WHERE id = ?`, id,
 	)
 	p := &model.Problem{}
-	err := row.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("problem %q not found", id)
 	}
@@ -81,11 +81,11 @@ func (s *Store) GetProblem(id string) (*model.Problem, error) {
 	return p, nil
 }
 
-// ListProblemsForInstance returns all problems for the given instance, newest first.
-func (s *Store) ListProblemsForInstance(instanceID string) ([]model.Problem, error) {
+// ListProblemsForCrag returns all problems for the given crag, newest first.
+func (s *Store) ListProblemsForCrag(cragID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
-		 FROM problems WHERE instance_id = ? ORDER BY created_at DESC`, instanceID,
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		 FROM problems WHERE crag_id = ? ORDER BY created_at DESC`, cragID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying problems: %w", err)
@@ -95,7 +95,7 @@ func (s *Store) ListProblemsForInstance(instanceID string) ([]model.Problem, err
 	var problems []model.Problem
 	for rows.Next() {
 		var p model.Problem
-		if err := rows.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
 		problems = append(problems, p)
@@ -186,7 +186,7 @@ func (s *Store) GetEventsForProblem(problemID string) ([]model.Event, error) {
 // GetProblemsByStatus returns all problems with the given status.
 func (s *Store) GetProblemsByStatus(status model.ProblemStatus) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
 		 FROM problems WHERE status = ? ORDER BY created_at DESC`, status,
 	)
 	if err != nil {
@@ -197,7 +197,7 @@ func (s *Store) GetProblemsByStatus(status model.ProblemStatus) ([]model.Problem
 	var problems []model.Problem
 	for rows.Next() {
 		var p model.Problem
-		if err := rows.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
 		problems = append(problems, p)
@@ -242,10 +242,10 @@ func ValidateClimbsFile(cf *model.ClimbsFile) error {
 	return nil
 }
 
-// ValidateClimbsRepos checks that all repos in the climbs file exist in the instance.
-func ValidateClimbsRepos(cf *model.ClimbsFile, instanceRepos []string) error {
-	repoSet := make(map[string]bool, len(instanceRepos))
-	for _, r := range instanceRepos {
+// ValidateClimbsRepos checks that all repos in the climbs file exist in the crag.
+func ValidateClimbsRepos(cf *model.ClimbsFile, cragRepos []string) error {
+	repoSet := make(map[string]bool, len(cragRepos))
+	for _, r := range cragRepos {
 		repoSet[r] = true
 	}
 
@@ -256,7 +256,7 @@ func ValidateClimbsRepos(cf *model.ClimbsFile, instanceRepos []string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("climbs.json references repos not in instance: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("climbs.json references repos not in crag: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }
@@ -283,11 +283,11 @@ func ClimbsFromFile(problemID string, cf *model.ClimbsFile) []model.Climb {
 	return climbs
 }
 
-// GetPendingProblems returns problems with status='pending' for the given instance, ordered by created_at ASC.
-func (s *Store) GetPendingProblems(instanceID string) ([]model.Problem, error) {
+// GetPendingProblems returns problems with status='pending' for the given crag, ordered by created_at ASC.
+func (s *Store) GetPendingProblems(cragID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
-		 FROM problems WHERE instance_id = ? AND status = 'pending' ORDER BY created_at ASC`, instanceID,
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		 FROM problems WHERE crag_id = ? AND status = 'pending' ORDER BY created_at ASC`, cragID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying pending problems: %w", err)
@@ -297,7 +297,7 @@ func (s *Store) GetPendingProblems(instanceID string) ([]model.Problem, error) {
 	var problems []model.Problem
 	for rows.Next() {
 		var p model.Problem
-		if err := rows.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
 		problems = append(problems, p)
@@ -305,11 +305,11 @@ func (s *Store) GetPendingProblems(instanceID string) ([]model.Problem, error) {
 	return problems, rows.Err()
 }
 
-// GetActiveProblems returns problems with status IN ('running', 'reviewing') for the given instance, ordered by created_at ASC.
-func (s *Store) GetActiveProblems(instanceID string) ([]model.Problem, error) {
+// GetActiveProblems returns problems with status IN ('running', 'reviewing') for the given crag, ordered by created_at ASC.
+func (s *Store) GetActiveProblems(cragID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, instance_id, spec, climbs_json, jira_ref, status, created_at, updated_at
-		 FROM problems WHERE instance_id = ? AND status IN ('running', 'reviewing') ORDER BY created_at ASC`, instanceID,
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		 FROM problems WHERE crag_id = ? AND status IN ('running', 'reviewing') ORDER BY created_at ASC`, cragID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying active problems: %w", err)
@@ -319,7 +319,7 @@ func (s *Store) GetActiveProblems(instanceID string) ([]model.Problem, error) {
 	var problems []model.Problem
 	for rows.Next() {
 		var p model.Problem
-		if err := rows.Scan(&p.ID, &p.InstanceID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
 		problems = append(problems, p)

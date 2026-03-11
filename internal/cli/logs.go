@@ -25,7 +25,7 @@ func newLogsCmd() *cobra.Command {
 }
 
 func newLogsViewCmd() *cobra.Command {
-	var instanceName string
+	var cragName string
 	var taskID string
 	var goalID string
 
@@ -37,17 +37,17 @@ func newLogsViewCmd() *cobra.Command {
 				return fmt.Errorf("--task is required")
 			}
 
-			name, err := resolveInstanceName(instanceName)
+			name, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			_, instanceDir, err := instance.Load(name)
+			_, cragDir, err := instance.Load(name)
 			if err != nil {
 				return err
 			}
 
-			lm := logmgr.New(filepath.Join(instanceDir, "logs"))
+			lm := logmgr.New(filepath.Join(cragDir, "logs"))
 
 			if goalID != "" {
 				logPath := lm.LogPath(taskID, goalID)
@@ -55,7 +55,7 @@ func newLogsViewCmd() *cobra.Command {
 			}
 
 			// Show all logs for the task
-			taskDir := filepath.Join(instanceDir, "logs", taskID)
+			taskDir := filepath.Join(cragDir, "logs", taskID)
 			entries, err := os.ReadDir(taskDir)
 			if err != nil {
 				return fmt.Errorf("reading task log directory: %w", err)
@@ -75,30 +75,30 @@ func newLogsViewCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name")
+	cmd.Flags().StringVarP(&cragName, "crag", "c", "", "Crag name")
 	cmd.Flags().StringVar(&taskID, "task", "", "Task ID")
 	cmd.Flags().StringVar(&goalID, "goal", "", "Goal ID (optional, shows specific goal log)")
 	return cmd
 }
 
 func newLogsCleanupCmd() *cobra.Command {
-	var instanceName string
+	var cragName string
 
 	cmd := &cobra.Command{
 		Use:   "cleanup",
 		Short: "Clean up old log files",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, err := resolveInstanceName(instanceName)
+			name, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			_, instanceDir, err := instance.Load(name)
+			_, cragDir, err := instance.Load(name)
 			if err != nil {
 				return err
 			}
 
-			lm := logmgr.New(filepath.Join(instanceDir, "logs"))
+			lm := logmgr.New(filepath.Join(cragDir, "logs"))
 			if err := lm.Cleanup(); err != nil {
 				return fmt.Errorf("cleanup failed: %w", err)
 			}
@@ -108,28 +108,28 @@ func newLogsCleanupCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name")
+	cmd.Flags().StringVarP(&cragName, "crag", "c", "", "Crag name")
 	return cmd
 }
 
 func newLogsStatsCmd() *cobra.Command {
-	var instanceName string
+	var cragName string
 
 	cmd := &cobra.Command{
 		Use:   "stats",
 		Short: "Show log disk usage statistics",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, err := resolveInstanceName(instanceName)
+			name, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			_, instanceDir, err := instance.Load(name)
+			_, cragDir, err := instance.Load(name)
 			if err != nil {
 				return err
 			}
 
-			lm := logmgr.New(filepath.Join(instanceDir, "logs"))
+			lm := logmgr.New(filepath.Join(cragDir, "logs"))
 			stats, err := lm.Stats()
 			if err != nil {
 				return fmt.Errorf("getting stats: %w", err)
@@ -147,7 +147,7 @@ func newLogsStatsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name")
+	cmd.Flags().StringVarP(&cragName, "crag", "c", "", "Crag name")
 	return cmd
 }
 

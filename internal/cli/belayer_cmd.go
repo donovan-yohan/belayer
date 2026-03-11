@@ -38,7 +38,7 @@ func newBelayerDaemonCmd() *cobra.Command {
 }
 
 func newBelayerDaemonStartCmd() *cobra.Command {
-	var instanceName string
+	var cragName string
 	var foreground bool
 	var maxLeads int
 	var pollInterval time.Duration
@@ -49,17 +49,17 @@ func newBelayerDaemonStartCmd() *cobra.Command {
 		Short: "Start the belayer daemon",
 		Long:  "Starts the belayer daemon. By default it runs in the background. Use --foreground to run in the current terminal.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, err := resolveInstanceName(instanceName)
+			name, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			_, instanceDir, err := instance.Load(name)
+			_, cragDir, err := instance.Load(name)
 			if err != nil {
 				return err
 			}
 
-			pidPath := filepath.Join(instanceDir, "belayer.pid")
+			pidPath := filepath.Join(cragDir, "belayer.pid")
 
 			// Check for already running belayer daemon
 			if existingPID, running := pidfile.Check(pidPath); running {
@@ -69,14 +69,14 @@ func newBelayerDaemonStartCmd() *cobra.Command {
 			pidfile.Remove(pidPath)
 
 			if foreground {
-				return runBelayerDaemonForeground(name, instanceDir, pidPath, maxLeads, pollInterval, staleTimeout)
+				return runBelayerDaemonForeground(name, cragDir, pidPath, maxLeads, pollInterval, staleTimeout)
 			}
 
-			return runBelayerDaemonBackground(name, instanceDir, pidPath, maxLeads, pollInterval, staleTimeout)
+			return runBelayerDaemonBackground(name, cragDir, pidPath, maxLeads, pollInterval, staleTimeout)
 		},
 	}
 
-	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (defaults to default instance)")
+	cmd.Flags().StringVarP(&cragName, "crag", "c", "", "Crag name (defaults to default crag)")
 	cmd.Flags().BoolVar(&foreground, "foreground", false, "Run in the foreground instead of daemonizing")
 	cmd.Flags().IntVar(&maxLeads, "max-leads", 8, "Maximum concurrent lead sessions")
 	cmd.Flags().DurationVar(&pollInterval, "poll-interval", 5*time.Second, "Polling interval for new problems")
@@ -86,8 +86,8 @@ func newBelayerDaemonStartCmd() *cobra.Command {
 }
 
 // runBelayerDaemonForeground runs the belayer daemon in the current process (foreground mode).
-func runBelayerDaemonForeground(name, instanceDir, pidPath string, maxLeads int, pollInterval, staleTimeout time.Duration) error {
-	dbPath := filepath.Join(instanceDir, "belayer.db")
+func runBelayerDaemonForeground(name, cragDir, pidPath string, maxLeads int, pollInterval, staleTimeout time.Duration) error {
+	dbPath := filepath.Join(cragDir, "belayer.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
@@ -103,16 +103,16 @@ func runBelayerDaemonForeground(name, instanceDir, pidPath string, maxLeads int,
 		return fmt.Errorf("getting global config dir: %w", err)
 	}
 	globalCfgDir := filepath.Join(globalDir, "config")
-	instanceCfgDir := filepath.Join(instanceDir, "config")
+	cragCfgDir := filepath.Join(cragDir, "config")
 
-	bcfg, err := belayerconfig.Load(globalCfgDir, instanceCfgDir)
+	bcfg, err := belayerconfig.Load(globalCfgDir, cragCfgDir)
 	if err != nil {
 		return fmt.Errorf("loading belayer config: %w", err)
 	}
 
 	cfg := belayer.Config{
-		InstanceName: name,
-		InstanceDir:  instanceDir,
+		CragName:     name,
+		CragDir:      cragDir,
 		MaxLeads:     maxLeads,
 		PollInterval: pollInterval,
 		StaleTimeout: staleTimeout,
@@ -120,7 +120,7 @@ func runBelayerDaemonForeground(name, instanceDir, pidPath string, maxLeads int,
 
 	tm := tmux.NewRealTmux()
 	sp := lead.NewClaudeSpawner(tm)
-	s := belayer.New(cfg, bcfg, globalCfgDir, instanceCfgDir, database.Conn(), tm, sp)
+	s := belayer.New(cfg, bcfg, globalCfgDir, cragCfgDir, database.Conn(), tm, sp)
 
 	// Write PID file and clean up on exit
 	if err := pidfile.Write(pidPath, os.Getpid()); err != nil {
@@ -144,8 +144,8 @@ func runBelayerDaemonForeground(name, instanceDir, pidPath string, maxLeads int,
 
 // runBelayerDaemonBackground re-execs the belayer daemon in the background with --foreground,
 // redirecting output to a log file.
-func runBelayerDaemonBackground(name, instanceDir, pidPath string, maxLeads int, pollInterval, staleTimeout time.Duration) error {
-	logsDir := filepath.Join(instanceDir, "logs")
+func runBelayerDaemonBackground(name, cragDir, pidPath string, maxLeads int, pollInterval, staleTimeout time.Duration) error {
+	logsDir := filepath.Join(cragDir, "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return fmt.Errorf("creating logs directory: %w", err)
 	}
@@ -159,7 +159,7 @@ func runBelayerDaemonBackground(name, instanceDir, pidPath string, maxLeads int,
 	// Build args for re-exec with --foreground
 	args := []string{
 		"belayer", "start", "--foreground",
-		"--instance", name,
+		"--crag", name,
 		"--max-leads", fmt.Sprintf("%d", maxLeads),
 		"--poll-interval", pollInterval.String(),
 		"--stale-timeout", staleTimeout.String(),
@@ -195,23 +195,23 @@ func runBelayerDaemonBackground(name, instanceDir, pidPath string, maxLeads int,
 }
 
 func newBelayerDaemonStopCmd() *cobra.Command {
-	var instanceName string
+	var cragName string
 
 	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the belayer daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, err := resolveInstanceName(instanceName)
+			name, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			_, instanceDir, err := instance.Load(name)
+			_, cragDir, err := instance.Load(name)
 			if err != nil {
 				return err
 			}
 
-			pidPath := filepath.Join(instanceDir, "belayer.pid")
+			pidPath := filepath.Join(cragDir, "belayer.pid")
 			pid, running := pidfile.Check(pidPath)
 			if !running {
 				pidfile.Remove(pidPath) // clean stale
@@ -245,29 +245,29 @@ func newBelayerDaemonStopCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (defaults to default instance)")
+	cmd.Flags().StringVarP(&cragName, "crag", "c", "", "Crag name (defaults to default crag)")
 
 	return cmd
 }
 
 func newBelayerDaemonStatusCmd() *cobra.Command {
-	var instanceName string
+	var cragName string
 
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Check if the belayer daemon is running",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, err := resolveInstanceName(instanceName)
+			name, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			_, instanceDir, err := instance.Load(name)
+			_, cragDir, err := instance.Load(name)
 			if err != nil {
 				return err
 			}
 
-			pidPath := filepath.Join(instanceDir, "belayer.pid")
+			pidPath := filepath.Join(cragDir, "belayer.pid")
 			pid, running := pidfile.Check(pidPath)
 			if running {
 				fmt.Printf("Belayer daemon running (PID %d)\n", pid)
@@ -281,7 +281,7 @@ func newBelayerDaemonStatusCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&instanceName, "instance", "i", "", "Instance name (defaults to default instance)")
+	cmd.Flags().StringVarP(&cragName, "crag", "c", "", "Crag name (defaults to default crag)")
 
 	return cmd
 }

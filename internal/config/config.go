@@ -14,15 +14,42 @@ const (
 
 // Config represents the global belayer configuration.
 type Config struct {
-	DefaultInstance string            `json:"default_instance"`
-	Instances       map[string]string `json:"instances"` // name -> path
+	DefaultCrag string            `json:"default_crag"`
+	Crags       map[string]string `json:"crags"` // name -> path
 }
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
-		Instances: make(map[string]string),
+		Crags: make(map[string]string),
 	}
+}
+
+// UnmarshalJSON provides backwards compatibility for configs that used
+// the old "default_instance" / "instances" field names.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type raw struct {
+		DefaultCrag     string            `json:"default_crag"`
+		DefaultInstance string            `json:"default_instance"`
+		Crags           map[string]string `json:"crags"`
+		Instances       map[string]string `json:"instances"`
+	}
+	var r raw
+	if err := json.Unmarshal(data, &r); err != nil {
+		return err
+	}
+	c.DefaultCrag = r.DefaultCrag
+	if c.DefaultCrag == "" {
+		c.DefaultCrag = r.DefaultInstance
+	}
+	c.Crags = r.Crags
+	if c.Crags == nil {
+		c.Crags = r.Instances
+	}
+	if c.Crags == nil {
+		c.Crags = make(map[string]string)
+	}
+	return nil
 }
 
 // Dir returns the path to the belayer config directory (~/.belayer/).

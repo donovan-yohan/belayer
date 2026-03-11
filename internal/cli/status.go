@@ -12,23 +12,23 @@ import (
 )
 
 func newStatusCmd() *cobra.Command {
-	var instanceName string
+	var cragName string
 
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show problem and climb status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedName, err := resolveInstanceName(instanceName)
+			resolvedName, err := resolveCragName(cragName)
 			if err != nil {
 				return err
 			}
 
-			_, instanceDir, err := instance.Load(resolvedName)
+			_, cragDir, err := instance.Load(resolvedName)
 			if err != nil {
-				return fmt.Errorf("loading instance %q: %w", resolvedName, err)
+				return fmt.Errorf("loading crag %q: %w", resolvedName, err)
 			}
 
-			dbPath := filepath.Join(instanceDir, "belayer.db")
+			dbPath := filepath.Join(cragDir, "belayer.db")
 			database, err := db.Open(dbPath)
 			if err != nil {
 				return fmt.Errorf("opening database: %w", err)
@@ -38,7 +38,7 @@ func newStatusCmd() *cobra.Command {
 			s := store.New(database.Conn())
 			out := cmd.OutOrStdout()
 
-			fmt.Fprintf(out, "Instance: %s\n\n", resolvedName)
+			fmt.Fprintf(out, "Crag: %s\n\n", resolvedName)
 
 			for _, status := range []model.ProblemStatus{
 				model.ProblemStatusRunning,
@@ -73,6 +73,6 @@ func newStatusCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&instanceName, "instance", "", "Instance name (defaults to default instance)")
+	cmd.Flags().StringVar(&cragName, "crag", "", "Crag name (defaults to default crag)")
 	return cmd
 }

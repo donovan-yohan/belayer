@@ -7,13 +7,16 @@ import (
 	"github.com/donovan-yohan/belayer/internal/config"
 )
 
-// resolveInstanceName returns the instance name to use. If instanceName is
-// already set it is returned as-is; otherwise the default instance from the
-// global config is returned. An error is returned when no instance can be
+// resolveCragName returns the crag name to use. If cragName is
+// already set it is returned as-is; otherwise the default crag from the
+// global config is returned. An error is returned when no crag can be
 // determined.
-func resolveInstanceName(instanceName string) (string, error) {
-	if instanceName != "" {
-		return instanceName, nil
+func resolveCragName(cragName string) (string, error) {
+	if cragName != "" {
+		return cragName, nil
+	}
+	if envName := os.Getenv("BELAYER_CRAG"); envName != "" {
+		return envName, nil
 	}
 	if envName := os.Getenv("BELAYER_INSTANCE"); envName != "" {
 		return envName, nil
@@ -22,8 +25,8 @@ func resolveInstanceName(instanceName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("loading config: %w", err)
 	}
-	if cfg.DefaultInstance == "" {
-		return "", fmt.Errorf("no default instance set; use --instance or run `belayer instance create` first")
+	if cfg.DefaultCrag == "" {
+		return "", fmt.Errorf("no default crag set; use --crag or run `belayer crag create` first")
 	}
-	return cfg.DefaultInstance, nil
+	return cfg.DefaultCrag, nil
 }

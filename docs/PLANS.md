@@ -6,7 +6,7 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-_None_
+| [Instance-to-Crag Rename](exec-plans/active/2026-03-10-instance-to-crag-rename.md) | 2026-03-10 | Rename --instance to --crag, remove TUI references, prune stale docs |
 
 ## Tech Debt
 
