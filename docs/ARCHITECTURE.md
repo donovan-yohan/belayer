@@ -67,8 +67,10 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Lead | `internal/lead/` | Lead execution runner, store, ClaudeSpawner (interactive sessions via tmux) |
 | Spotter | `internal/spotter/` | Per-repo runtime validator. Project type detection, validation profiles, SPOT.json types |
 | Anchor | `internal/anchor/` | Cross-repo alignment reviewer. Verdict types (VerdictJSON, RepoVerdict) |
-| Intake | `internal/intake/` | Problem intake pipeline (text/Jira parsing, sufficiency check, interactive brainstorm) |
-| Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
+| Store | `internal/store/` | SQLite CRUD operations (problems, climbs, events, tracker_issues, pull_requests, pr_reactions) |
+| Tmux | `internal/tmux/` | Tmux session/window/pane management for agent spawning |
+| Log Manager | `internal/logmgr/` | Log file management for lead sessions |
+| PID File | `internal/pidfile/` | Daemon PID file locking |
 | Mail | `internal/mail/` | Filesystem-backed inter-agent mail system (message types, address resolution, FileStore, templates, tmux delivery, send/read) |
 | Tracker | `internal/tracker/` | Tracker plugin interface + GitHub Issues implementation (via `gh` CLI). Spec assembly agentic node for converting issues to problem specs |
 | SCM | `internal/scm/` | SCM provider interface + GitHub PR implementation (via `gh` CLI). PR stacking logic, PR body generation agentic node |

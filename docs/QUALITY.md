@@ -14,9 +14,6 @@ Go's built-in `go test` with `testing` package. No external test framework.
 | `internal/config/config_test.go` | Default config, JSON round-trip |
 | `internal/repo/repo_test.go` | URL parsing, worktree add/remove, bare clone |
 | `internal/instance/instance_test.go` | Crag create/load/delete, worktree management |
-| `internal/lead/runner_test.go` | Lead execution, event handling, climb tracking |
-| `internal/lead/store_test.go` | Lead store CRUD operations |
-| `internal/intake/intake_test.go` | Intake pipeline, sufficiency, brainstorm, Jira parsing |
 | `internal/spotter/types_test.go` | SPOT.json type parsing |
 | `internal/climbctx/climbctx_test.go` | GOAL.json types and writer (lead, spotter, anchor variants) |
 | `internal/belayerconfig/config_test.go` | Config loader, crag/global/embedded resolution chain, TOML parsing |
