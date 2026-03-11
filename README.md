@@ -30,13 +30,15 @@ Lead  Lead   Lead   Lead     (parallel, isolated worktrees)
 **Three layers:**
 - **User** — CLI commands
 - **Belayer** — Deterministic Go daemon; polls SQLite, manages DAG execution, enforces concurrency limits
-- **Lead** — Ephemeral Claude Code session per climb; runs in an isolated git worktree
+- **Lead** — Ephemeral agent session per climb (Claude Code or Codex CLI); runs in an isolated git worktree
 
 ## Prerequisites
 
 - **Go 1.24+**
 - **tmux** — process management for agent sessions (`brew install tmux`)
-- **Claude Code CLI** — the `claude` binary must be on your PATH ([install guide](https://docs.anthropic.com/en/docs/claude-code))
+- **Agent CLI** (at least one):
+  - **Claude Code** — the `claude` binary on your PATH ([install guide](https://docs.anthropic.com/en/docs/claude-code))
+  - **Codex CLI** — the `codex` binary on your PATH ([install guide](https://github.com/openai/codex))
 - **SQLite** — bundled via `modernc.org/sqlite` (no C dependency)
 
 ## Install
@@ -130,7 +132,7 @@ belayer belayer start -i my-project --max-leads 4
 This will:
 - Build a DAG from the climbs
 - Create isolated git worktrees per climb
-- Spawn Claude Code sessions in tmux windows
+- Spawn agent sessions (Claude Code or Codex) in tmux windows
 - Monitor for completion (via mail messages)
 - Run a cross-repo spotter review when all climbs finish
 - Create PRs on approval, or re-dispatch corrections on rejection
@@ -164,12 +166,23 @@ belayer logs -c my-project
 | `belayer mail ack <id>` | Mark a specific message as read |
 | `belayer logs` | View and manage lead session logs |
 
+## Agent Provider
+
+Belayer defaults to Claude Code. To use Codex CLI instead, set the provider in your crag's `belayer.toml`:
+
+```toml
+[agents]
+provider = "codex"
+```
+
+Config files live at `~/.belayer/crags/<crag-name>/belayer.toml` (per-crag) or `~/.belayer/belayer.toml` (global).
+
 ## Architecture
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full code map and data flow.
 
 **Key design decisions:**
-- **Stripe-style blueprint** — deterministic Go code handles orchestration; ephemeral Claude sessions handle judgment calls (decomposition, sufficiency checks, alignment reviews)
+- **Stripe-style blueprint** — deterministic Go code handles orchestration; ephemeral agent sessions handle judgment calls (decomposition, sufficiency checks, alignment reviews)
 - **Bare repos + worktrees** — each climb gets an isolated git worktree so agents can work in parallel without conflicts
 - **SQLite as single source of truth** — all state (problems, climbs, verdicts, events) lives in one database per crag
 - **DAG execution** — climbs declare dependencies; the belayer daemon only spawns a climb when all its dependencies are complete
