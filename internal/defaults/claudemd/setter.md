@@ -103,8 +103,31 @@ Add `--jira PROJ-123` to link a Jira ticket.
 | `belayer mail read` | Read incoming mail |
 | `belayer mail inbox` | Show unread message count |
 | `belayer mail ack <id>` | Acknowledge a message |
+| `belayer tracker list` | Preview matching tracker issues |
+| `belayer tracker sync` | Import tracker issues to local DB |
+| `belayer tracker show <ID>` | Show tracker issue details |
+| `belayer pr list` | List monitored PRs |
+| `belayer pr show <N>` | Detailed PR view |
+| `belayer pr retry <N>` | Retry CI fix for a PR |
 
 All commands automatically use crag "{{.CragName}}" via the BELAYER_CRAG environment variable. You do not need to pass `--crag`.
+
+## Tracker Integration
+
+This crag can pull issues from an external tracker (GitHub Issues or Jira).
+- `/belayer:ticket <ID>` -- fetch a ticket and create a problem from it
+- `/belayer:ticket-list` -- preview matching issues from the tracker
+- `/belayer:sync` -- trigger immediate tracker sync
+
+When a user says "implement ENG-1234" or "pick up the next ready ticket", use the ticket commands.
+
+## PR Monitoring
+
+Belayer monitors PRs it creates and reacts to CI failures and review comments.
+- `/belayer:prs` -- list all monitored PRs with their status
+- `/belayer:pr <number>` -- deep view of a specific PR
+
+If a problem is "stuck" due to exhausted CI fix attempts, help the user diagnose the CI failure and decide next steps.
 
 ## Jira Integration
 
