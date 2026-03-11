@@ -133,7 +133,7 @@ func TestParseGHPRActivityJSON(t *testing.T) {
 		}
 		if len(got.Reviews) != 1 {
 			t.Errorf("Reviews: got %d, want 1", len(got.Reviews))
-		} else if got.Reviews[0].State != "CHANGES_REQUESTED" {
+		} else if got.Reviews[0].State != "changes_requested" {
 			t.Errorf("Review state: got %q", got.Reviews[0].State)
 		}
 	})

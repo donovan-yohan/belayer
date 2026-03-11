@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"text/tabwriter"
 
 	"github.com/donovan-yohan/belayer/internal/db"
@@ -93,8 +94,10 @@ func newPRShowCmd() *cobra.Command {
 			}
 			defer cleanup()
 
-			var prNumber int
-			fmt.Sscanf(args[0], "%d", &prNumber)
+			prNumber, err := strconv.Atoi(args[0])
+			if err != nil {
+				return fmt.Errorf("invalid PR number %q: %w", args[0], err)
+			}
 
 			prs, err := s.ListMonitoredPullRequests(cragID)
 			if err != nil {
@@ -143,8 +146,10 @@ func newPRRetryCmd() *cobra.Command {
 			}
 			defer cleanup()
 
-			var prNumber int
-			fmt.Sscanf(args[0], "%d", &prNumber)
+			prNumber, err := strconv.Atoi(args[0])
+			if err != nil {
+				return fmt.Errorf("invalid PR number %q: %w", args[0], err)
+			}
 
 			prs, err := s.ListMonitoredPullRequests(cragID)
 			if err != nil {

@@ -22,12 +22,12 @@ func New() *Provider {
 
 // ghPRView is the JSON shape returned by gh pr view.
 type ghPRView struct {
-	Number           int            `json:"number"`
-	State            string         `json:"state"`
-	URL              string         `json:"url"`
-	Mergeable        string         `json:"mergeable"`
-	StatusCheckRollup []ghCheck     `json:"statusCheckRollup"`
-	Reviews          []ghReview     `json:"reviews"`
+	Number            int        `json:"number"`
+	State             string     `json:"state"`
+	URL               string     `json:"url"`
+	Mergeable         string     `json:"mergeable"`
+	StatusCheckRollup []ghCheck  `json:"statusCheckRollup"`
+	Reviews           []ghReview `json:"reviews"`
 }
 
 type ghCheck struct {
@@ -81,7 +81,7 @@ func parseGHPRStatusJSON(data []byte) (*model.PRStatus, error) {
 	for i, r := range gh.Reviews {
 		reviews[i] = model.Review{
 			Author: r.Author.Login,
-			State:  r.State,
+			State:  strings.ToLower(r.State),
 			Body:   r.Body,
 		}
 	}
@@ -156,7 +156,7 @@ func parseGHPRActivityJSON(commentsData, reviewsData []byte, since time.Time) (*
 	for i, r := range ghReviews {
 		reviews[i] = model.Review{
 			Author: r.Author.Login,
-			State:  r.State,
+			State:  strings.ToLower(r.State),
 			Body:   r.Body,
 		}
 	}

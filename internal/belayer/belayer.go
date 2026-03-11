@@ -80,11 +80,11 @@ func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, cragCfgDir string
 		belayerCfg:      bcfg,
 		globalConfigDir: globalCfgDir,
 		cragConfigDir:   cragCfgDir,
-		store:             store.New(db),
-		tmux:              tm,
-		logMgr:            logmgr.New(cfg.CragDir + "/logs"),
-		spawner:           sp,
-		problems:          make(map[string]*ProblemRunner),
+		store:           store.New(db),
+		tmux:            tm,
+		logMgr:          logmgr.New(cfg.CragDir + "/logs"),
+		spawner:         sp,
+		problems:        make(map[string]*ProblemRunner),
 	}
 }
 
@@ -273,7 +273,9 @@ func (s *Belayer) tick(ctx context.Context) error {
 	for _, runner := range s.problems {
 		if runner.task.Status == model.ProblemStatusImported {
 			log.Printf("belayer: problem %s imported, transitioning to enriching", runner.task.ID)
-			s.store.UpdateProblemStatus(runner.task.ID, model.ProblemStatusEnriching)
+			if err := s.store.UpdateProblemStatus(runner.task.ID, model.ProblemStatusEnriching); err != nil {
+				log.Printf("belayer: error transitioning problem %s to enriching: %v", runner.task.ID, err)
+			}
 			// TODO: spawn spec assembly agentic node (future work)
 		}
 	}
@@ -498,7 +500,7 @@ func (s *Belayer) initTracker() error {
 // the local SQLite store. It is a no-op when no tracker is configured or the
 // sync interval has not elapsed.
 func (s *Belayer) syncTracker(ctx context.Context) {
-	if s.tracker == nil {
+	if s.tracker == nil || s.belayerCfg == nil {
 		return
 	}
 	if !s.lastSyncAt.IsZero() && time.Since(s.lastSyncAt) < s.syncInterval {
@@ -757,4 +759,3 @@ func extractJSONStringField(payload, key string) string {
 	}
 	return payload[start : start+end]
 }
-
