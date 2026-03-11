@@ -202,7 +202,7 @@ func TestProblemRunner_Init(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		startedAt:   make(map[string]time.Time),
 	}
 
@@ -246,7 +246,7 @@ func TestProblemRunner_SpawnClimb(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		tmuxSession: "belayer-problem-task-1",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -309,7 +309,7 @@ func TestProblemRunner_SpawnClimb_SetsMailAddress(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		tmuxSession: "belayer-problem-task-1",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -349,7 +349,7 @@ func TestProblemRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 		store:             s,
 		tmux:              tm,
 		logMgr:            lm,
-		spawner:           sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		tmuxSession:       "belayer-problem-task-2",
 		startedAt:         make(map[string]time.Time),
 		validationEnabled: false, // direct completion
@@ -404,7 +404,7 @@ func TestProblemRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
-		spawner:              sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		tmuxSession:          "belayer-problem-task-2v",
 		startedAt:            make(map[string]time.Time),
 		validationEnabled:    true,
@@ -470,7 +470,7 @@ func TestProblemRunner_CheckStaleClimbs(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		tmuxSession: "belayer-problem-task-3",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -515,7 +515,7 @@ func TestProblemRunner_StaleTimeout(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		tmuxSession: "belayer-problem-task-4",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -551,7 +551,7 @@ func TestProblemRunner_HasStuckClimbs(t *testing.T) {
 		store:     s,
 		tmux:      tm,
 		logMgr:    lm,
-		spawner:   sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		startedAt: make(map[string]time.Time),
 	}
 
@@ -591,7 +591,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		tmuxSession: "belayer-problem-task-6",
 		startedAt:   make(map[string]time.Time),
 	}
@@ -610,7 +610,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 		store:   s,
 		tmux:    tm,
 		logMgr:  lm,
-		spawner: sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: map[string]*ProblemRunner{"task-6": runner},
 	}
 
@@ -660,7 +660,7 @@ func TestSetter_CrashRecovery(t *testing.T) {
 		store:   s,
 		tmux:    tm,
 		logMgr:  lm,
-		spawner: sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: make(map[string]*ProblemRunner),
 	}
 
@@ -700,7 +700,7 @@ func TestSetter_RunTickCycle(t *testing.T) {
 		store:   s,
 		tmux:    tm,
 		logMgr:  lm,
-		spawner: sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: make(map[string]*ProblemRunner),
 	}
 
@@ -770,7 +770,7 @@ func newTestRunner(t *testing.T, taskID string, goals []model.Climb) (*ProblemRu
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
-		spawner:              sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		git:                  mg,
 		tmuxSession:          "belayer-problem-" + taskID,
 		problemDir:           taskDir,
@@ -968,7 +968,7 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		git:         mg,
 		tmuxSession: "belayer-problem-task-s5a",
 		problemDir:  taskDir,
@@ -987,7 +987,7 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 		store:   s,
 		tmux:    tm,
 		logMgr:  lm,
-		spawner: sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: map[string]*ProblemRunner{"task-s5a": runner},
 	}
 
@@ -1044,7 +1044,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		git:         mg,
 		tmuxSession: "belayer-problem-task-s5",
 		problemDir:  taskDir,
@@ -1063,7 +1063,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 		store:   s,
 		tmux:    tm,
 		logMgr:  lm,
-		spawner: sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: map[string]*ProblemRunner{"task-s5": runner},
 	}
 
@@ -1140,7 +1140,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		git:         mg,
 		tmuxSession: "belayer-problem-task-s6",
 		problemDir:  taskDir,
@@ -1159,7 +1159,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 		store:   s,
 		tmux:    tm,
 		logMgr:  lm,
-		spawner: sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: map[string]*ProblemRunner{"task-s6": runner},
 	}
 
@@ -1275,7 +1275,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 		store:          s,
 		tmux:           tm,
 		logMgr:         lm,
-		spawner:        sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		git:            mg,
 		tmuxSession:    "belayer-problem-task-s7",
 		problemDir:     taskDir,
@@ -1300,7 +1300,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 		store:   s,
 		tmux:    tm,
 		logMgr:  lm,
-		spawner: sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: map[string]*ProblemRunner{"task-s7": runner},
 	}
 
@@ -1579,7 +1579,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
-		spawner:              sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		git:                  mg,
 		tmuxSession:          "belayer-problem-task-sf1",
 		problemDir:           taskDir,
@@ -1603,7 +1603,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 		store:    s,
 		tmux:     tm,
 		logMgr:   lm,
-		spawner:  sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: map[string]*ProblemRunner{"task-sf1": runner},
 	}
 
@@ -1675,7 +1675,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
-		spawner:              sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		git:                  mg,
 		tmuxSession:          "belayer-problem-task-sf2",
 		problemDir:           taskDir,
@@ -1699,7 +1699,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 		store:    s,
 		tmux:     tm,
 		logMgr:   lm,
-		spawner:  sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		problems: map[string]*ProblemRunner{"task-sf2": runner},
 	}
 
@@ -1952,7 +1952,7 @@ func TestProblemRunner_Init_PreCreatesSpotterWindows(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		startedAt:   make(map[string]time.Time),
 	}
 
@@ -2009,7 +2009,7 @@ func TestProblemRunner_Init_SingleRepo_NoAnchorWindow(t *testing.T) {
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
-		spawner:     sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		startedAt:   make(map[string]time.Time),
 	}
 
@@ -2050,7 +2050,7 @@ func TestProblemRunner_IsFlashed(t *testing.T) {
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
-		spawner:              sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		startedAt:            make(map[string]time.Time),
 		repoSpotterActivated: make(map[string]bool),
 		repoSpotterAttempts:  map[string]int{"api": 1},
@@ -2084,7 +2084,7 @@ func TestProblemRunner_NotFlashed_RetryNeeded(t *testing.T) {
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
-		spawner:              sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		startedAt:            make(map[string]time.Time),
 		repoSpotterActivated: make(map[string]bool),
 		repoSpotterAttempts:  map[string]int{"api": 1},
@@ -2121,7 +2121,7 @@ func TestProblemRunner_NotFlashed_SpotterRetry(t *testing.T) {
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
-		spawner:              sp,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
 		startedAt:            make(map[string]time.Time),
 		repoSpotterActivated: make(map[string]bool),
 		repoSpotterAttempts:  map[string]int{"api": 2}, // spotter failed once

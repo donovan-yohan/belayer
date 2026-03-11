@@ -67,7 +67,7 @@ type ProblemRunner struct {
 	store       *store.Store
 	tmux        tmux.TmuxManager
 	logMgr      *logmgr.LogManager
-	spawner     lead.AgentSpawner
+	spawners    *lead.SpawnerSet
 	git         GitRunner
 	scm         scm.SCMProvider
 	prConfig    belayerconfig.PRConfig
@@ -91,7 +91,7 @@ type ProblemRunner struct {
 }
 
 // NewProblemRunner creates a ProblemRunner for the given problem.
-func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig) *ProblemRunner {
+func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp *lead.SpawnerSet, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig) *ProblemRunner {
 	return &ProblemRunner{
 		task:                 task,
 		worktrees:            make(map[string]string),
@@ -101,7 +101,7 @@ func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir str
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
-		spawner:              sp,
+		spawners:             sp,
 		git:                  &RealGitRunner{},
 		scm:                  scmProvider,
 		prConfig:             prCfg,
@@ -260,7 +260,7 @@ func (tr *ProblemRunner) SpawnClimb(queued QueuedClimb) error {
 
 You are fully autonomous. Make decisions, document drift, and keep moving.`, goalJSONPath, goalJSONPath, climb.ID)
 
-	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
+	if err := tr.spawners.Lead.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:        tr.tmuxSession,
 		WindowName:         windowName,
 		WorkDir:            worktreePath,
@@ -855,7 +855,7 @@ func (tr *ProblemRunner) ActivateSpotter(repoName string) error {
 	goalJSONPath := fmt.Sprintf(".lead/spotter-%s/GOAL.json", repoName)
 
 	// Activate via Spawn (window already exists from Init)
-	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
+	if err := tr.spawners.Spotter.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:        tr.tmuxSession,
 		WindowName:         windowName,
 		WorkDir:            worktreePath,
@@ -915,7 +915,7 @@ func (tr *ProblemRunner) SpawnAnchor() error {
 	anchorMailAddr := fmt.Sprintf("problem/%s/anchor", tr.task.ID)
 
 	// Spawn agent
-	if err := tr.spawner.Spawn(context.Background(), lead.SpawnOpts{
+	if err := tr.spawners.Anchor.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:        tr.tmuxSession,
 		WindowName:         windowName,
 		WorkDir:            tr.problemDir,

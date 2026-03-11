@@ -168,11 +168,14 @@ belayer logs -c my-project
 
 ## Agent Provider
 
-Belayer defaults to Claude Code. To use Codex CLI instead, set the provider in your crag's `belayer.toml`:
+Belayer defaults to Claude Code for all roles. You can switch the default or mix providers per role in your crag's `belayer.toml`:
 
 ```toml
 [agents]
-provider = "codex"
+provider = "claude"              # default for all roles
+lead_provider = "codex"          # override: leads use Codex
+# spotter_provider = ""          # empty = use default (claude)
+# anchor_provider = ""           # empty = use default (claude)
 ```
 
 Config files live at `~/.belayer/crags/<crag-name>/belayer.toml` (per-crag) or `~/.belayer/belayer.toml` (global).

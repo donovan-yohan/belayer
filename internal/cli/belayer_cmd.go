@@ -119,9 +119,14 @@ func runBelayerDaemonForeground(name, cragDir, pidPath string, maxLeads int, pol
 	}
 
 	tm := tmux.NewRealTmux()
-	sp, err := lead.NewSpawner(bcfg.Agents.Provider, tm)
+	sp, err := lead.NewSpawnerSet(lead.SpawnerSetConfig{
+		DefaultProvider: bcfg.Agents.Provider,
+		LeadProvider:    bcfg.Agents.LeadProvider,
+		SpotterProvider: bcfg.Agents.SpotterProvider,
+		AnchorProvider:  bcfg.Agents.AnchorProvider,
+	}, tm)
 	if err != nil {
-		return fmt.Errorf("creating agent spawner: %w", err)
+		return fmt.Errorf("creating agent spawners: %w", err)
 	}
 	s := belayer.New(cfg, bcfg, globalCfgDir, cragCfgDir, database.Conn(), tm, sp)
 

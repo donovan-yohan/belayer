@@ -22,10 +22,13 @@ type Config struct {
 
 // AgentsConfig configures the AI agent provider and models.
 type AgentsConfig struct {
-	Provider    string `toml:"provider"`
-	LeadModel   string `toml:"lead_model"`
-	ReviewModel string `toml:"review_model"`
-	Permissions string `toml:"permissions"`
+	Provider         string `toml:"provider"`          // Default provider for all roles
+	LeadProvider     string `toml:"lead_provider"`     // Override for lead sessions (empty = use provider)
+	SpotterProvider  string `toml:"spotter_provider"`  // Override for spotter sessions (empty = use provider)
+	AnchorProvider   string `toml:"anchor_provider"`   // Override for anchor sessions (empty = use provider)
+	LeadModel        string `toml:"lead_model"`
+	ReviewModel      string `toml:"review_model"`
+	Permissions      string `toml:"permissions"`
 }
 
 // ExecutionConfig controls lead execution parameters.

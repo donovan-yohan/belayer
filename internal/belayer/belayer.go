@@ -52,7 +52,7 @@ type Belayer struct {
 	store      *store.Store
 	tmux       tmux.TmuxManager
 	logMgr     *logmgr.LogManager
-	spawner    lead.AgentSpawner
+	spawners   *lead.SpawnerSet
 
 	// Config directories for prompt/profile resolution.
 	globalConfigDir string
@@ -75,7 +75,7 @@ type Belayer struct {
 }
 
 // New creates a new Belayer with the given configuration.
-func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, cragCfgDir string, db *sql.DB, tm tmux.TmuxManager, sp lead.AgentSpawner) *Belayer {
+func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, cragCfgDir string, db *sql.DB, tm tmux.TmuxManager, sp *lead.SpawnerSet) *Belayer {
 	return &Belayer{
 		config:          cfg,
 		belayerCfg:      bcfg,
@@ -84,7 +84,7 @@ func New(cfg Config, bcfg *belayerconfig.Config, globalCfgDir, cragCfgDir string
 		store:           store.New(db),
 		tmux:            tm,
 		logMgr:          logmgr.New(cfg.CragDir + "/logs"),
-		spawner:         sp,
+		spawners:        sp,
 		problems:        make(map[string]*ProblemRunner),
 	}
 }
@@ -306,7 +306,7 @@ func (s *Belayer) pollPendingProblems() error {
 		if s.belayerCfg != nil {
 			prCfg = s.belayerCfg.PR
 		}
-		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawner, s.scm, prCfg)
+		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg)
 		readyClimbs, err := runner.Init()
 		if err != nil {
 			log.Printf("belayer: error initializing problem %s: %v", task.ID, err)
@@ -357,7 +357,7 @@ func (s *Belayer) recover() error {
 		if s.belayerCfg != nil {
 			prCfg = s.belayerCfg.PR
 		}
-		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawner, s.scm, prCfg)
+		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg)
 
 		// Load climbs and build DAG (skip worktree creation since they should exist)
 		climbs, err := s.store.GetClimbsForProblem(task.ID)
