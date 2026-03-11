@@ -6,7 +6,7 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-| [Instance-to-Crag Rename](exec-plans/active/2026-03-10-instance-to-crag-rename.md) | 2026-03-10 | Rename --instance to --crag, remove TUI references, prune stale docs |
+| _(none)_ | | |
 
 ## Tech Debt
 
@@ -18,6 +18,7 @@ Execution plans for active and completed work.
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Instance-to-Crag Rename](exec-plans/completed/2026-03-10-instance-to-crag-rename.md) | 2026-03-11 | Rename --instance to --crag, remove TUI references, prune stale docs |
 | [Crag Architecture](exec-plans/completed/2026-03-10-crag-architecture.md) | 2026-03-10 | Climbing terminology overhaul + per-role window layout with deferred activation |
 | [Crag Review Fixes](exec-plans/completed/2026-03-10-crag-review-fixes.md) | 2026-03-10 | Post-review fixes: rename completion, error handling, robustness |
 | [Filesystem Mail Store](exec-plans/completed/2026-03-10-filesystem-mail-store.md) | 2026-03-10 | Replace beads/dolt mail backend with pure filesystem store |

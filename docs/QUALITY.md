@@ -19,7 +19,7 @@ Go's built-in `go test` with `testing` package. No external test framework.
 | `internal/intake/intake_test.go` | Intake pipeline, sufficiency, brainstorm, Jira parsing |
 | `internal/spotter/types_test.go` | SPOT.json type parsing |
 | `internal/climbctx/climbctx_test.go` | GOAL.json types and writer (lead, spotter, anchor variants) |
-| `internal/belayerconfig/config_test.go` | Config loader, resolution chain, TOML parsing |
+| `internal/belayerconfig/config_test.go` | Config loader, crag/global/embedded resolution chain, TOML parsing |
 | `internal/defaults/defaults_test.go` | Embedded file system (belayer.toml, prompts, profiles exist) |
 | `internal/defaults/write_test.go` | WriteToDir (file creation, no-overwrite behavior) |
 | `internal/belayer/belayer_test.go` | Belayer daemon lifecycle, spotting flow, anchor flow, crash recovery |

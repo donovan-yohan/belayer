@@ -59,7 +59,7 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Manage | `internal/manage/` | Setter session workspace preparation (PrepareManageDir: renders CLAUDE.md template, copies slash commands) |
 | Climb Context | `internal/climbctx/` | GOAL.json types (LeadClimb, SpotterClimb, AnchorClimb) and writer |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
-| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_rename_crag.sql) |
+| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_rename_crag.sql, 003_rename_instance_to_crag.sql) |
 | Model | `internal/model/` | Domain types and status enums |
 | Crag | `internal/instance/` | Crag lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
@@ -119,7 +119,7 @@ Problem Input (text/Jira) --> Intake Pipeline (sufficiency + brainstorm) --> Dec
   mail/                               # Filesystem mail store (per-address unread/read dirs)
   repos/                              # Bare repo clones
     <repo-name>.git
-  problems/                           # Per-problem worktrees
+  tasks/                              # Per-problem worktrees
     <problem-id>/
       <repo-name>/                    # Git worktree
         .lead/                        # Lead state directory

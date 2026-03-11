@@ -1,6 +1,6 @@
 # Instance-to-Crag Rename + TUI Cleanup Implementation Plan
 
-> **Status**: Active | **Created**: 2026-03-10 | **Last Updated**: 2026-03-10
+> **Status**: Completed | **Created**: 2026-03-10 | **Completed**: 2026-03-11
 > **Design Doc**: N/A (cleanup/rename, not a new feature)
 > **For Claude:** Use /harness:orchestrate to execute this plan.
 
@@ -15,26 +15,28 @@
 | 2026-03-10 | Design | Keep `internal/instance/` package name as-is | Go package renames are high-churn, low-value; the exported API uses `CragConfig` already |
 | 2026-03-10 | Design | Rename disk path from `~/.belayer/instances/` to `~/.belayer/crags/` | ARCHITECTURE.md already documents `crags/` but code uses `instances/` |
 | 2026-03-10 | Design | Add backwards-compat migration for existing disk layout | Users with existing crags need them to still work after upgrade |
+| 2026-03-11 | Retrospective | Plan completed | All 10 tasks done + review-phase internal renames across 12 additional files |
 
 ## Progress
 
 - [x] Task 1: DB migration 003 — rename `instances` table and `instance_id` columns _(completed 2026-03-11)_
-- [ ] Task 2: Rename Go struct fields and store methods (`InstanceID` → `CragID`, etc.)
-- [ ] Task 3: Rename CLI flags `--instance/-i` → `--crag/-c` and helper function
-- [ ] Task 4: Rename env var `BELAYER_INSTANCE` → `BELAYER_CRAG`
-- [ ] Task 5: Rename config fields (`DefaultInstance` → `DefaultCrag`, `Instances` → `Crags`)
-- [ ] Task 6: Rename disk path `instances/` → `crags/` in `instance.Create()`
+- [x] Task 2-6: All Go code renames (batched as single task) _(completed 2026-03-11)_
 - [x] Task 7: Remove TUI references from docs and code _(completed 2026-03-11)_
-- [ ] Task 8: Update live docs (CLAUDE.md, ARCHITECTURE.md, DESIGN.md, README.md, PLANS.md)
-- [ ] Task 9: Run full test suite and fix breakages
+- [x] Task 8: Update live docs (CLAUDE.md, ARCHITECTURE.md, DESIGN.md, README.md, PLANS.md) _(completed 2026-03-11)_
+- [x] Task 9: Run full test suite and fix breakages _(completed 2026-03-11)_
 
 ## Surprises & Discoveries
 
-_None yet — updated during execution by /harness:orchestrate._
+| 2026-03-11 | Worker also updated `testutil/db.go` to insert into `crags` table | Sensible — tests would fail without it | Included in commit |
+| 2026-03-11 | Review found internal struct fields/params still using "instance" naming | `belayer.go`, `taskrunner.go`, `belayerconfig/config.go`, `logmgr.go` had internal `instanceDir`/`instanceConfigDir` fields | Fixed in review pass |
+| 2026-03-11 | Review found `tasks/` vs `problems/` doc mismatch | ARCHITECTURE.md and DESIGN.md said `problems/` but code uses `tasks/` | Fixed in docs |
+| 2026-03-11 | Review found migration 003 not listed in ARCHITECTURE.md Code Map | Migration list was stale | Fixed |
 
 ## Plan Drift
 
-_None yet — updated when tasks deviate from plan during execution._
+| Date | Planned | Actual | Impact |
+|------|---------|--------|--------|
+| 2026-03-11 | Plan only covered user-facing renames | Review revealed ~40 internal struct field/param/method renames needed | Added 12 additional files to the change set |
 
 ---
 
@@ -571,13 +573,17 @@ Expected: Shows `--crag` / `-c` flag, no `--instance`
 
 ## Outcomes & Retrospective
 
-_Filled by /harness:complete when work is done._
-
 **What worked:**
--
+- Plan correctly identified all user-facing rename targets (CLI flags, env vars, config fields, DB columns)
+- Backwards-compat `UnmarshalJSON` for config.json planned upfront — no user disruption
+- Batching tasks 2-6+9 into a single worker was more efficient than sequential handoff
+- TUI cleanup was clean — confident deletion because we verified the code never existed
 
 **What didn't:**
--
+- Plan missed ~40 internal struct field/param renames (`instanceConfigDir`, `instanceDir` in belayer.go, taskrunner.go, belayerconfig, logmgr) — caught in review
+- Pre-existing doc error (`problems/` vs `tasks/` directory name) wasn't caught until reflect phase
+- The `internal/instance/` package name remains as-is (correct decision, but the `instance.json` config file on disk is now confusing context)
 
 **Learnings to codify:**
--
+- When doing rename operations, grep for the old name in struct fields and function params, not just user-facing code
+- Always verify doc claims against actual disk paths during reflect — docs can silently drift

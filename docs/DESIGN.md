@@ -88,7 +88,7 @@ Leads run as full interactive Claude Code sessions (not `claude -p`):
 
 Follows extend-cli pattern:
 - Bare repos in `repos/` directory (shared object storage)
-- Git worktrees per problem in `problems/<problem-id>/<repo-name>/`
+- Git worktrees per problem in `tasks/<problem-id>/<repo-name>/`
 - Selective repo creation (only repos relevant to the problem)
 
 ## Agentic Node Contract
