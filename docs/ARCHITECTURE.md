@@ -6,8 +6,8 @@ This document describes the high-level architecture of belayer.
 
 Belayer is a standalone Go CLI that orchestrates autonomous coding agents across multiple repositories. A user creates a long-lived crag (configured with target repos), submits work problems (text or Jira tickets), and the belayer daemon decomposes problems into per-repo climbs, spawns lead execution loops in isolated git worktrees, monitors progress via SQLite, and validates cross-repo alignment using ephemeral Claude sessions before creating PRs.
 
-Input: work items (text, Jira tickets), user clarifications during brainstorm.
-Output: per-repo PRs with aligned implementations, structured progress reports.
+Input: work items (text, Jira tickets, or tracker issues via GitHub Issues/Jira), user clarifications during brainstorm.
+Output: per-repo PRs with aligned implementations, structured progress reports, automated CI fix attempts and review monitoring.
 
 ## Orchestration Layers
 
@@ -52,14 +52,14 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Module | Path | Purpose |
 |--------|------|---------|
 | CLI entry | `cmd/belayer/main.go` | Binary entry point |
-| CLI commands | `internal/cli/` | Cobra command definitions (root, init, crag, problem, status, belayer, setter, message, mail) |
+| CLI commands | `internal/cli/` | Cobra command definitions (root, init, crag, problem, status, belayer, setter, message, mail, tracker, pr) |
 | Belayer Config | `internal/belayerconfig/` | Config loader with resolution chain (crag > global > embedded defaults) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
 | Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles, setter session commands) via `embed.FS` |
 | Manage | `internal/manage/` | Setter session workspace preparation (PrepareManageDir: renders CLAUDE.md template, copies slash commands) |
 | Climb Context | `internal/climbctx/` | GOAL.json types (LeadClimb, SpotterClimb, AnchorClimb) and writer |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
-| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_rename_crag.sql, 003_rename_instance_to_crag.sql) |
+| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_rename_crag.sql, 003_rename_instance_to_crag.sql, 004_planning_review_hats.sql) |
 | Model | `internal/model/` | Domain types and status enums |
 | Crag | `internal/instance/` | Crag lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
@@ -70,6 +70,9 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Intake | `internal/intake/` | Problem intake pipeline (text/Jira parsing, sufficiency check, interactive brainstorm) |
 | Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
 | Mail | `internal/mail/` | Filesystem-backed inter-agent mail system (message types, address resolution, FileStore, templates, tmux delivery, send/read) |
+| Tracker | `internal/tracker/` | Tracker plugin interface + GitHub Issues implementation (via `gh` CLI). Spec assembly agentic node for converting issues to problem specs |
+| SCM | `internal/scm/` | SCM provider interface + GitHub PR implementation (via `gh` CLI). PR stacking logic, PR body generation agentic node |
+| Review | `internal/review/` | Reaction engine: event classification (CI failures, reviews, comments), decision logic, action dispatch |
 
 ## Data Flow
 
@@ -97,6 +100,34 @@ Problem Input (text/Jira) --> Intake Pipeline (sufficiency + brainstorm) --> Dec
                     PASS       FAIL
                       |          |
                  Create PRs  Re-dispatch with feedback
+                      |
+                      v
+                 PR Monitoring (polling CI + reviews)
+                      |
+              +-------+-------+
+              v               v
+         CI Failure      Review Comment
+              |               |
+         CI Fix Lead    Notify setter
+         (1 attempt)    (human-driven)
+              |
+              v
+         All PRs merged → problem complete
+```
+
+### Tracker Intake (Planning Hat)
+
+```
+Tracker (GitHub Issues / Jira)
+    |-- polling via gh/API
+    v
+Sync → tracker_issues table
+    |
+    v
+Spec Assembly (agentic node, Claude)
+    |-- converts issue → problem spec + climbs
+    v
+Problem created (status: pending)
 ```
 
 ## Directory Layout
