@@ -189,10 +189,10 @@ func TestCleanup_RemovesEmptyTaskDirs(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestCleanup_EnforcesInstanceSizeLimit(t *testing.T) {
+func TestCleanup_EnforcesCragSizeLimit(t *testing.T) {
 	dir := t.TempDir()
 	lm := New(dir)
-	lm.maxInstanceSize = 100 // 100 bytes total limit
+	lm.maxCragSize = 100 // 100 bytes total limit
 
 	// Create two task directories with files that exceed the limit.
 	task1Dir := filepath.Join(dir, "task-old")

@@ -15,7 +15,7 @@ func TestInsertAndGetProblem(t *testing.T) {
 
 	problem := &model.Problem{
 		ID:         "problem-1",
-		CragID: "test-instance",
+		CragID: "test-crag",
 		Spec:       "# My Spec\nDo the thing.",
 		ClimbsJSON: `{"repos":{"api":{"climbs":[{"id":"api-1","description":"Add endpoint","depends_on":[]}]}}}`,
 		JiraRef:    "PROJ-123",
@@ -31,7 +31,7 @@ func TestInsertAndGetProblem(t *testing.T) {
 	got, err := s.GetProblem("problem-1")
 	require.NoError(t, err)
 	assert.Equal(t, "problem-1", got.ID)
-	assert.Equal(t, "test-instance", got.CragID)
+	assert.Equal(t, "test-crag", got.CragID)
 	assert.Equal(t, "# My Spec\nDo the thing.", got.Spec)
 	assert.Equal(t, "PROJ-123", got.JiraRef)
 	assert.Equal(t, model.ProblemStatusPending, got.Status)
@@ -43,7 +43,7 @@ func TestInsertProblemWithClimbs(t *testing.T) {
 
 	problem := &model.Problem{
 		ID:         "problem-2",
-		CragID: "test-instance",
+		CragID: "test-crag",
 		Spec:       "spec content",
 		ClimbsJSON: "{}",
 		Status:     model.ProblemStatusPending,
@@ -78,7 +78,7 @@ func TestInsertProblemCreatesEvent(t *testing.T) {
 
 	problem := &model.Problem{
 		ID:         "problem-3",
-		CragID: "test-instance",
+		CragID: "test-crag",
 		Spec:       "spec",
 		ClimbsJSON: "{}",
 		Status:     model.ProblemStatusPending,
@@ -100,12 +100,12 @@ func TestListProblemsForCrag(t *testing.T) {
 
 	for _, id := range []string{"problem-a", "problem-b"} {
 		err := s.InsertProblem(&model.Problem{
-			ID: id, CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+			ID: id, CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 		}, nil)
 		require.NoError(t, err)
 	}
 
-	problems, err := s.ListProblemsForCrag("test-instance")
+	problems, err := s.ListProblemsForCrag("test-crag")
 	require.NoError(t, err)
 	assert.Len(t, problems, 2)
 }
@@ -115,7 +115,7 @@ func TestUpdateProblemStatus(t *testing.T) {
 	s := New(db)
 
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-4", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-4", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
@@ -132,7 +132,7 @@ func TestUpdateClimbStatus(t *testing.T) {
 	s := New(db)
 
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-5", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-5", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, []model.Climb{
 		{ID: "c-1", ProblemID: "problem-5", RepoName: "api", Description: "climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	})
@@ -162,12 +162,12 @@ func TestGetProblemsByStatus(t *testing.T) {
 	s := New(db)
 
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-p", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-p", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
 	err = s.InsertProblem(&model.Problem{
-		ID: "problem-r", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-r", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 	err = s.UpdateProblemStatus("problem-r", model.ProblemStatusRunning)
@@ -326,19 +326,19 @@ func TestGetPendingProblems(t *testing.T) {
 
 	// Insert a pending problem
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-pending", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-pending", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
 	// Insert a running problem
 	err = s.InsertProblem(&model.Problem{
-		ID: "problem-running", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-running", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 	err = s.UpdateProblemStatus("problem-running", model.ProblemStatusRunning)
 	require.NoError(t, err)
 
-	pending, err := s.GetPendingProblems("test-instance")
+	pending, err := s.GetPendingProblems("test-crag")
 	require.NoError(t, err)
 	assert.Len(t, pending, 1)
 	assert.Equal(t, "problem-pending", pending[0].ID)
@@ -351,32 +351,32 @@ func TestGetActiveProblems(t *testing.T) {
 
 	// Insert problems with various statuses
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-p", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-p", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
 	err = s.InsertProblem(&model.Problem{
-		ID: "problem-r", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-r", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 	err = s.UpdateProblemStatus("problem-r", model.ProblemStatusRunning)
 	require.NoError(t, err)
 
 	err = s.InsertProblem(&model.Problem{
-		ID: "problem-rv", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-rv", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 	err = s.UpdateProblemStatus("problem-rv", model.ProblemStatusReviewing)
 	require.NoError(t, err)
 
 	err = s.InsertProblem(&model.Problem{
-		ID: "problem-c", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-c", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 	err = s.UpdateProblemStatus("problem-c", model.ProblemStatusComplete)
 	require.NoError(t, err)
 
-	active, err := s.GetActiveProblems("test-instance")
+	active, err := s.GetActiveProblems("test-crag")
 	require.NoError(t, err)
 	assert.Len(t, active, 2)
 
@@ -390,7 +390,7 @@ func TestIncrementClimbAttempt(t *testing.T) {
 	s := New(db)
 
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-inc", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-inc", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, []model.Climb{
 		{ID: "c-inc", ProblemID: "problem-inc", RepoName: "api", Description: "climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	})
@@ -410,7 +410,7 @@ func TestResetClimbStatus(t *testing.T) {
 	s := New(db)
 
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-reset", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-reset", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, []model.Climb{
 		{ID: "c-reset", ProblemID: "problem-reset", RepoName: "api", Description: "climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
 	})
@@ -442,7 +442,7 @@ func TestInsertAndGetAnchorReview(t *testing.T) {
 	s := New(db)
 
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-sr", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-sr", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 
@@ -471,7 +471,7 @@ func TestInsertClimbs(t *testing.T) {
 	s := New(db)
 
 	err := s.InsertProblem(&model.Problem{
-		ID: "problem-ic", CragID: "test-instance", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+		ID: "problem-ic", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
 	}, nil)
 	require.NoError(t, err)
 

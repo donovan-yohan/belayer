@@ -46,16 +46,16 @@ func TestCreateAndLoad(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Verify instance directory exists
+	// Verify crag directory exists
 	expectedDir := filepath.Join(home, ".belayer", "crags", "test-inst")
 	if instanceDir != expectedDir {
-		t.Errorf("instance dir = %q, want %q", instanceDir, expectedDir)
+		t.Errorf("crag dir = %q, want %q", instanceDir, expectedDir)
 	}
 	if _, err := os.Stat(instanceDir); os.IsNotExist(err) {
-		t.Fatal("instance directory not created")
+		t.Fatal("crag directory not created")
 	}
 
-	// Verify instance.json
+	// Verify crag config loads correctly
 	cfg, loadedDir, err := Load("test-inst")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -95,7 +95,7 @@ func TestCreateDuplicate(t *testing.T) {
 	}
 
 	if _, err := Create("dup-test", []string{repoPath}); err == nil {
-		t.Fatal("expected error for duplicate instance name")
+		t.Fatal("expected error for duplicate crag name")
 	}
 }
 
@@ -104,12 +104,12 @@ func TestList(t *testing.T) {
 	repoPath := createTestRepo(t, "repo")
 
 	// Empty list
-	instances, err := List()
+	crags, err := List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(instances) != 0 {
-		t.Errorf("expected 0 instances, got %d", len(instances))
+	if len(crags) != 0 {
+		t.Errorf("expected 0 crags, got %d", len(crags))
 	}
 
 	// Create and list
@@ -117,15 +117,15 @@ func TestList(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	instances, err = List()
+	crags, err = List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(instances) != 1 {
-		t.Errorf("expected 1 instance, got %d", len(instances))
+	if len(crags) != 1 {
+		t.Errorf("expected 1 crag, got %d", len(crags))
 	}
-	if _, ok := instances["inst-a"]; !ok {
-		t.Error("instance inst-a not found in list")
+	if _, ok := crags["inst-a"]; !ok {
+		t.Error("crag inst-a not found in list")
 	}
 }
 
@@ -144,16 +144,16 @@ func TestDelete(t *testing.T) {
 
 	// Verify directory removed
 	if _, err := os.Stat(instanceDir); !os.IsNotExist(err) {
-		t.Fatal("instance directory not removed")
+		t.Fatal("crag directory not removed")
 	}
 
 	// Verify not in list
-	instances, err := List()
+	crags, err := List()
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if _, ok := instances["to-delete"]; ok {
-		t.Error("deleted instance still in list")
+	if _, ok := crags["to-delete"]; ok {
+		t.Error("deleted crag still in list")
 	}
 }
 
@@ -224,15 +224,15 @@ func TestCragConfigPersistence(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Read instance.json directly
+	// Read instance.json directly (file is still named instance.json on disk)
 	data, err := os.ReadFile(filepath.Join(instanceDir, "instance.json"))
 	if err != nil {
-		t.Fatalf("reading instance.json: %v", err)
+		t.Fatalf("reading crag config: %v", err)
 	}
 
 	var cfg CragConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("parsing instance.json: %v", err)
+		t.Fatalf("parsing crag config: %v", err)
 	}
 
 	if cfg.Name != "persist-test" {

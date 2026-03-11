@@ -62,7 +62,7 @@ type ProblemRunner struct {
 	dag         *DAG
 	worktrees   map[string]string // repoName -> worktreePath
 	tmuxSession string
-	instanceDir string
+	cragDir string
 	store       *store.Store
 	tmux        tmux.TmuxManager
 	logMgr      *logmgr.LogManager
@@ -72,7 +72,7 @@ type ProblemRunner struct {
 
 	// Config directories for prompt/profile resolution.
 	globalConfigDir   string
-	instanceConfigDir string
+	cragConfigDir string
 
 	// Anchor state
 	anchorAttempt int
@@ -88,13 +88,13 @@ type ProblemRunner struct {
 }
 
 // NewProblemRunner creates a ProblemRunner for the given problem.
-func NewProblemRunner(task *model.Problem, instanceDir, globalCfgDir, instanceCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *ProblemRunner {
+func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp lead.AgentSpawner) *ProblemRunner {
 	return &ProblemRunner{
-		task:                 task,
-		worktrees:            make(map[string]string),
-		instanceDir:          instanceDir,
-		globalConfigDir:      globalCfgDir,
-		instanceConfigDir:    instanceCfgDir,
+		task:            task,
+		worktrees:       make(map[string]string),
+		cragDir:         cragDir,
+		globalConfigDir: globalCfgDir,
+		cragConfigDir:   cragCfgDir,
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
@@ -133,7 +133,7 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 
 	// Create worktrees
 	for repoName := range repos {
-		worktreePath, err := instance.CreateWorktree(tr.instanceDir, tr.task.ID, repoName)
+		worktreePath, err := instance.CreateWorktree(tr.cragDir, tr.task.ID, repoName)
 		if err != nil {
 			return nil, fmt.Errorf("creating worktree for %s: %w", repoName, err)
 		}
@@ -141,7 +141,7 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 	}
 
 	// Set problem directory for VERDICT.json
-	tr.problemDir = filepath.Join(tr.instanceDir, "tasks", tr.task.ID)
+	tr.problemDir = filepath.Join(tr.cragDir, "tasks", tr.task.ID)
 	if err := os.MkdirAll(tr.problemDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating problem directory: %w", err)
 	}
@@ -586,7 +586,7 @@ func (tr *ProblemRunner) Cleanup() {
 	tr.logMgr.CompressTaskLogs(tr.task.ID)
 
 	// Clean up mail for this problem
-	mailTaskDir := filepath.Join(tr.instanceDir, "mail", "problem", tr.task.ID)
+	mailTaskDir := filepath.Join(tr.cragDir, "mail", "problem", tr.task.ID)
 	if err := os.RemoveAll(mailTaskDir); err != nil {
 		log.Printf("warning: failed to clean up task mail directory %s: %v", mailTaskDir, err)
 	}
@@ -690,7 +690,7 @@ func (tr *ProblemRunner) writeProfiles(worktreePath, climbID string) (map[string
 	profiles := make(map[string]string)
 	profileNames := []string{"frontend", "backend", "cli", "library"}
 	for _, name := range profileNames {
-		content, loadErr := belayerconfig.LoadProfile(tr.globalConfigDir, tr.instanceConfigDir, name)
+		content, loadErr := belayerconfig.LoadProfile(tr.globalConfigDir, tr.cragConfigDir, name)
 		if loadErr != nil {
 			if embedded, readErr := defaults.FS.ReadFile("profiles/" + name + ".toml"); readErr == nil {
 				content = string(embedded)

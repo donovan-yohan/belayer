@@ -47,8 +47,8 @@ type AnchorConfig struct {
 	MaxAttempts int  `toml:"max_attempts"`
 }
 
-// Load resolves configuration with precedence: instance > global > embedded defaults.
-func Load(globalDir, instanceDir string) (*Config, error) {
+// Load resolves configuration with precedence: crag > global > embedded defaults.
+func Load(globalDir, cragDir string) (*Config, error) {
 	var cfg Config
 
 	// 1. Start with embedded defaults.
@@ -67,10 +67,10 @@ func Load(globalDir, instanceDir string) (*Config, error) {
 		}
 	}
 
-	// 3. Overlay instance config if present.
-	if instanceDir != "" {
-		if err := overlayFile(filepath.Join(instanceDir, "belayer.toml"), &cfg); err != nil {
-			return nil, fmt.Errorf("loading instance config: %w", err)
+	// 3. Overlay crag config if present.
+	if cragDir != "" {
+		if err := overlayFile(filepath.Join(cragDir, "belayer.toml"), &cfg); err != nil {
+			return nil, fmt.Errorf("loading crag config: %w", err)
 		}
 	}
 
@@ -92,18 +92,18 @@ func overlayFile(path string, cfg *Config) error {
 	return nil
 }
 
-// LoadProfile reads a validation profile with resolution: instance > global > embedded.
-func LoadProfile(globalDir, instanceDir, name string) (string, error) {
-	return resolveFile(globalDir, instanceDir, "profiles", name+".toml")
+// LoadProfile reads a validation profile with resolution: crag > global > embedded.
+func LoadProfile(globalDir, cragDir, name string) (string, error) {
+	return resolveFile(globalDir, cragDir, "profiles", name+".toml")
 }
 
-// resolveFile checks instance, then global, then embedded FS for a file.
-func resolveFile(globalDir, instanceDir, subdir, filename string) (string, error) {
+// resolveFile checks crag, then global, then embedded FS for a file.
+func resolveFile(globalDir, cragDir, subdir, filename string) (string, error) {
 	rel := filepath.Join(subdir, filename)
 
-	// 1. Instance directory.
-	if instanceDir != "" {
-		data, err := os.ReadFile(filepath.Join(instanceDir, rel))
+	// 1. Crag directory.
+	if cragDir != "" {
+		data, err := os.ReadFile(filepath.Join(cragDir, rel))
 		if err == nil {
 			return string(data), nil
 		}

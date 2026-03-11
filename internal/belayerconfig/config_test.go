@@ -40,32 +40,32 @@ func TestLoadConfig_GlobalOverride(t *testing.T) {
 	assert.True(t, cfg.Validation.Enabled)          // still default
 }
 
-func TestLoadConfig_InstanceOverride(t *testing.T) {
+func TestLoadConfig_CragOverride(t *testing.T) {
 	global := t.TempDir()
-	instance := t.TempDir()
+	crag := t.TempDir()
 
 	err := os.WriteFile(filepath.Join(global, "belayer.toml"), []byte("[agents]\nprovider = \"codex\"\n"), 0644)
 	require.NoError(t, err)
-	err = os.WriteFile(filepath.Join(instance, "belayer.toml"), []byte("[agents]\nprovider = \"claude\"\n"), 0644)
+	err = os.WriteFile(filepath.Join(crag, "belayer.toml"), []byte("[agents]\nprovider = \"claude\"\n"), 0644)
 	require.NoError(t, err)
 
-	cfg, err := Load(global, instance)
+	cfg, err := Load(global, crag)
 	require.NoError(t, err)
-	assert.Equal(t, "claude", cfg.Agents.Provider) // instance wins
+	assert.Equal(t, "claude", cfg.Agents.Provider) // crag wins
 }
 
-func TestLoadConfig_InstanceOverridesGlobal(t *testing.T) {
+func TestLoadConfig_CragOverridesGlobal(t *testing.T) {
 	global := t.TempDir()
-	instance := t.TempDir()
+	crag := t.TempDir()
 
 	err := os.WriteFile(filepath.Join(global, "belayer.toml"), []byte("[execution]\nmax_leads = 4\nmax_retries = 5\n"), 0644)
 	require.NoError(t, err)
-	err = os.WriteFile(filepath.Join(instance, "belayer.toml"), []byte("[execution]\nmax_leads = 2\n"), 0644)
+	err = os.WriteFile(filepath.Join(crag, "belayer.toml"), []byte("[execution]\nmax_leads = 2\n"), 0644)
 	require.NoError(t, err)
 
-	cfg, err := Load(global, instance)
+	cfg, err := Load(global, crag)
 	require.NoError(t, err)
-	assert.Equal(t, 2, cfg.Execution.MaxLeads)   // instance wins
+	assert.Equal(t, 2, cfg.Execution.MaxLeads)   // crag wins
 	assert.Equal(t, 5, cfg.Execution.MaxRetries)  // global override preserved
 	assert.Equal(t, "5s", cfg.Execution.PollInterval) // embedded default preserved
 }

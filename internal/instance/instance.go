@@ -19,11 +19,11 @@ const (
 	dbFile             = "belayer.db"
 )
 
-// RepoEntry describes a repository within an instance.
+// RepoEntry describes a repository within a crag.
 type RepoEntry struct {
 	Name     string `json:"name"`
 	URL      string `json:"url"`
-	BarePath string `json:"bare_path"` // Relative to instance dir
+	BarePath string `json:"bare_path"` // Relative to crag dir
 }
 
 // CragConfig is the crag-level configuration persisted as instance.json.
@@ -33,7 +33,7 @@ type CragConfig struct {
 	CreatedAt time.Time   `json:"created_at"`
 }
 
-// Create creates a new belayer instance: directory structure, bare clones, DB, and config.
+// Create creates a new belayer crag: directory structure, bare clones, DB, and config.
 func Create(name string, repoURLs []string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("crag name cannot be empty")
@@ -116,7 +116,7 @@ func Create(name string, repoURLs []string) (string, error) {
 	}
 	if err := saveInstanceConfig(instanceDir, &instConfig); err != nil {
 		cleanup(instanceDir)
-		return "", fmt.Errorf("saving instance config: %w", err)
+		return "", fmt.Errorf("saving crag config: %w", err)
 	}
 
 	cfg.Crags[name] = instanceDir
@@ -270,7 +270,7 @@ func CleanupProblemWorktrees(instanceDir, problemID string) error {
 func saveInstanceConfig(instanceDir string, cfg *CragConfig) error {
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshaling instance config: %w", err)
+		return fmt.Errorf("marshaling crag config: %w", err)
 	}
 	return os.WriteFile(filepath.Join(instanceDir, instanceConfigFile), data, 0644)
 }
@@ -278,12 +278,12 @@ func saveInstanceConfig(instanceDir string, cfg *CragConfig) error {
 func loadInstanceConfig(instanceDir string) (*CragConfig, error) {
 	data, err := os.ReadFile(filepath.Join(instanceDir, instanceConfigFile))
 	if err != nil {
-		return nil, fmt.Errorf("reading instance config: %w", err)
+		return nil, fmt.Errorf("reading crag config: %w", err)
 	}
 
 	var cfg CragConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing instance config: %w", err)
+		return nil, fmt.Errorf("parsing crag config: %w", err)
 	}
 	return &cfg, nil
 }

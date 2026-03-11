@@ -14,9 +14,9 @@ import (
 // LogManager handles log lifecycle for the setter daemon, including rotation,
 // compression, and cleanup of per-goal log files.
 type LogManager struct {
-	logsDir         string // base directory for logs (e.g., <instanceDir>/logs)
-	maxGoalLogSize  int64  // per-goal log size limit in bytes (default 10MB)
-	maxInstanceSize int64  // total instance log size limit in bytes (default 500MB)
+	logsDir        string // base directory for logs (e.g., <cragDir>/logs)
+	maxGoalLogSize int64  // per-goal log size limit in bytes (default 10MB)
+	maxCragSize    int64  // total crag log size limit in bytes (default 500MB)
 	retentionDays   int    // days to keep compressed logs (default 7)
 }
 
@@ -32,7 +32,7 @@ func New(logsDir string) *LogManager {
 	return &LogManager{
 		logsDir:         logsDir,
 		maxGoalLogSize:  10 * 1024 * 1024,  // 10MB
-		maxInstanceSize: 500 * 1024 * 1024, // 500MB
+		maxCragSize: 500 * 1024 * 1024, // 500MB
 		retentionDays:   7,
 	}
 }
@@ -205,9 +205,9 @@ func (lm *LogManager) Cleanup() error {
 		}
 	}
 
-	// Phase 3: Check total instance size and remove oldest task directories if over limit.
-	if err := lm.enforceInstanceSize(); err != nil {
-		return fmt.Errorf("enforcing instance size limit: %w", err)
+	// Phase 3: Check total crag size and remove oldest task directories if over limit.
+	if err := lm.enforceCragSize(); err != nil {
+		return fmt.Errorf("enforcing crag size limit: %w", err)
 	}
 
 	return nil
@@ -221,9 +221,9 @@ type taskDirInfo struct {
 	modTime time.Time
 }
 
-// enforceInstanceSize removes the oldest task directories until total size is
-// within maxInstanceSize.
-func (lm *LogManager) enforceInstanceSize() error {
+// enforceCragSize removes the oldest task directories until total size is
+// within maxCragSize.
+func (lm *LogManager) enforceCragSize() error {
 	taskDirs, err := os.ReadDir(lm.logsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -253,7 +253,7 @@ func (lm *LogManager) enforceInstanceSize() error {
 		totalSize += size
 	}
 
-	if totalSize <= lm.maxInstanceSize {
+	if totalSize <= lm.maxCragSize {
 		return nil
 	}
 
@@ -263,7 +263,7 @@ func (lm *LogManager) enforceInstanceSize() error {
 	})
 
 	for _, d := range dirs {
-		if totalSize <= lm.maxInstanceSize {
+		if totalSize <= lm.maxCragSize {
 			break
 		}
 		if err := os.RemoveAll(d.path); err != nil {

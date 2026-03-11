@@ -167,7 +167,7 @@ func insertTestTask(t *testing.T, s *store.Store, taskID string, goals []model.C
 	goalsJSON, _ := json.Marshal(model.ClimbsFile{})
 	task := &model.Problem{
 		ID:         taskID,
-		CragID: "test-instance",
+		CragID: "test-crag",
 		Spec:       "test spec",
 		ClimbsJSON: string(goalsJSON),
 		Status:     model.ProblemStatusPending,
@@ -185,7 +185,7 @@ func TestProblemRunner_Init(t *testing.T) {
 	}
 	insertTestTask(t, s, "task-1", goals)
 
-	// Create fake instance dir structure with worktree dirs
+	// Create fake crag dir structure with worktree dirs
 	for _, repoName := range []string{"api", "app"} {
 		wtDir := filepath.Join(tmpDir, "tasks", "task-1", repoName)
 		require.NoError(t, os.MkdirAll(wtDir, 0o755))
@@ -198,7 +198,7 @@ func TestProblemRunner_Init(t *testing.T) {
 	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   make(map[string]string),
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -242,7 +242,7 @@ func TestProblemRunner_SpawnClimb(t *testing.T) {
 	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": filepath.Join(tmpDir, "api")},
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -305,7 +305,7 @@ func TestProblemRunner_SpawnClimb_SetsMailAddress(t *testing.T) {
 	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": filepath.Join(tmpDir, "api")},
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -345,7 +345,7 @@ func TestProblemRunner_CheckCompletions_ValidationDisabled(t *testing.T) {
 	runner := &ProblemRunner{
 		task:              task,
 		worktrees:         map[string]string{"api": worktreeDir},
-		instanceDir:       tmpDir,
+		cragDir:       tmpDir,
 		store:             s,
 		tmux:              tm,
 		logMgr:            lm,
@@ -400,7 +400,7 @@ func TestProblemRunner_CheckCompletions_ValidationEnabled(t *testing.T) {
 	runner := &ProblemRunner{
 		task:                 task,
 		worktrees:            map[string]string{"api": worktreeDir},
-		instanceDir:          tmpDir,
+		cragDir:          tmpDir,
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
@@ -466,7 +466,7 @@ func TestProblemRunner_CheckStaleClimbs(t *testing.T) {
 	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": worktreeDir},
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -511,7 +511,7 @@ func TestProblemRunner_StaleTimeout(t *testing.T) {
 	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": worktreeDir},
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -587,7 +587,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   map[string]string{"api": worktreeDir},
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -605,7 +605,7 @@ func TestSetter_MaxLeadsCap(t *testing.T) {
 	setter := &Belayer{
 		config: Config{
 			MaxLeads:     2,
-			CragName: "test-instance",
+			CragName: "test-crag",
 		},
 		store:   s,
 		tmux:    tm,
@@ -653,7 +653,7 @@ func TestSetter_CrashRecovery(t *testing.T) {
 
 	setter := &Belayer{
 		config: Config{
-			CragName: "test-instance",
+			CragName: "test-crag",
 			CragDir:  tmpDir,
 			MaxLeads:     8,
 		},
@@ -691,7 +691,7 @@ func TestSetter_RunTickCycle(t *testing.T) {
 
 	setter := &Belayer{
 		config: Config{
-			CragName: "test-instance",
+			CragName: "test-crag",
 			CragDir:  tmpDir,
 			MaxLeads:     8,
 			PollInterval: 100 * time.Millisecond,
@@ -766,7 +766,7 @@ func newTestRunner(t *testing.T, taskID string, goals []model.Climb) (*ProblemRu
 	runner := &ProblemRunner{
 		task:                 task,
 		worktrees:            repos,
-		instanceDir:          tmpDir,
+		cragDir:          tmpDir,
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
@@ -964,7 +964,7 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 		task:        task,
 		dag:         BuildDAG(goalsFromDB),
 		worktrees:   map[string]string{"api": worktreeDir},
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -979,7 +979,7 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			CragName: "test-instance",
+			CragName: "test-crag",
 			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
@@ -1040,7 +1040,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 		task:        task,
 		dag:         BuildDAG(goalsFromDB),
 		worktrees:   map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -1055,7 +1055,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 
 	setter := &Belayer{
 		config: Config{
-			CragName: "test-instance",
+			CragName: "test-crag",
 			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
@@ -1136,7 +1136,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 		task:        task,
 		dag:         BuildDAG(goalsFromDB),
 		worktrees:   map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -1151,7 +1151,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			CragName: "test-instance",
+			CragName: "test-crag",
 			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
@@ -1271,7 +1271,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 		task:           task,
 		dag:            BuildDAG(goalsFromDB),
 		worktrees:      map[string]string{"api": apiWorktreeDir, "web": webWorktreeDir},
-		instanceDir:    tmpDir,
+		cragDir:    tmpDir,
 		store:          s,
 		tmux:           tm,
 		logMgr:         lm,
@@ -1292,7 +1292,7 @@ func TestSetter_AnchorMaxReviewsStuck(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			CragName: "test-instance",
+			CragName: "test-crag",
 			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
@@ -1575,7 +1575,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 		task:                 task,
 		dag:                  BuildDAG(goalsFromDB),
 		worktrees:            map[string]string{"api": worktreeDir},
-		instanceDir:          tmpDir,
+		cragDir:          tmpDir,
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
@@ -1595,7 +1595,7 @@ func TestSetter_SpottingFlow_Pass(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			CragName: "test-instance",
+			CragName: "test-crag",
 			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
@@ -1671,7 +1671,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 		task:                 task,
 		dag:                  BuildDAG(goalsFromDB),
 		worktrees:            map[string]string{"api": worktreeDir},
-		instanceDir:          tmpDir,
+		cragDir:          tmpDir,
 		store:                s,
 		tmux:                 tm,
 		logMgr:               lm,
@@ -1691,7 +1691,7 @@ func TestSetter_SpottingFlow_FailRetry(t *testing.T) {
 
 	sett := &Belayer{
 		config: Config{
-			CragName: "test-instance",
+			CragName: "test-crag",
 			CragDir:  tmpDir,
 			MaxLeads:     8,
 			StaleTimeout: 30 * time.Minute,
@@ -1948,7 +1948,7 @@ func TestProblemRunner_Init_PreCreatesSpotterWindows(t *testing.T) {
 	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   make(map[string]string),
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
@@ -2005,7 +2005,7 @@ func TestProblemRunner_Init_SingleRepo_NoAnchorWindow(t *testing.T) {
 	runner := &ProblemRunner{
 		task:        task,
 		worktrees:   make(map[string]string),
-		instanceDir: tmpDir,
+		cragDir: tmpDir,
 		store:       s,
 		tmux:        tm,
 		logMgr:      lm,
