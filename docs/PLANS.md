@@ -6,18 +6,23 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-| _(none)_ | | |
+_None currently active._
 
 ## Tech Debt
 
 | Issue | Severity | Notes |
 |-------|----------|-------|
 | Flaky `TestProcessPendingProblem_Decomposition` | Low | TempDir cleanup race condition; passes ~2/3 runs |
+| Empty `repoDir` in `monitorPRs` SCM calls | Medium | All SCM polling passes "" as repoDir; works incidentally for single-repo crags but fails for multi-repo |
+| `HandleApproval` partial failure orphans PRs | Medium | Successful PR inserts not cleaned up when later repos fail; problem stays in `reviewing` |
+| Missing integration tests for daemon PR lifecycle | Medium | `executeReaction`, `monitorPRs`, `checkAllPRsMerged`, `HandleApproval` SCM path all untested |
+| Bare string types for PR status fields | Low | `CIStatus`, `ReviewStatus`, `State` should be typed constants like `ProblemStatus` |
 
 ## Completed Plans
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Planning & Review Hats](exec-plans/completed/2026-03-11-planning-review-hats.md) | 2026-03-11 | Tracker intake, SCM provider, PR monitoring & reaction engine |
 | [Instance-to-Crag Rename](exec-plans/completed/2026-03-10-instance-to-crag-rename.md) | 2026-03-11 | Rename --instance to --crag, remove TUI references, prune stale docs |
 | [Crag Architecture](exec-plans/completed/2026-03-10-crag-architecture.md) | 2026-03-10 | Climbing terminology overhaul + per-role window layout with deferred activation |
 | [Crag Review Fixes](exec-plans/completed/2026-03-10-crag-review-fixes.md) | 2026-03-10 | Post-review fixes: rename completion, error handling, robustness |

@@ -24,3 +24,4 @@
 | [PRD-belayer-orchestrator](PRD-belayer-orchestrator.md) | Original project PRD: multi-repo coding agent orchestrator | 2026-03-06 |
 | [PRD-agent-friendly-architecture](PRD-agent-friendly-architecture.md) | Agent-friendly architecture PRD | 2026-03-07 |
 | [2026-03-09-manage-session-context](2026-03-09-manage-session-context.md) | Manage session context design (historical) | 2026-03-09 |
+| [2026-03-11-planning-review-hats-design](2026-03-11-planning-review-hats-design.md) | Planning hat (tracker intake) and review hat (PR monitoring, CI fix, review reaction) | 2026-03-11 |

@@ -1,6 +1,6 @@
 # Planning & Review Hats Implementation Plan
 
-> **Status**: Active | **Created**: 2026-03-11 | **Last Updated**: 2026-03-11
+> **Status**: Completed | **Created**: 2026-03-11 | **Completed**: 2026-03-11
 > **Design Doc**: `docs/design-docs/2026-03-11-planning-review-hats-design.md`
 > **For Claude:** Use /harness:orchestrate to execute this plan.
 
@@ -17,6 +17,7 @@
 | 2026-03-11 | Design | `jira_ref` deprecated, not backfilled | New `tracker_issue_id` supersedes it |
 | 2026-03-11 | Design | CI fix cap is per-PR | Each PR independently tracks fix attempts; relevant for stacked PRs |
 | 2026-03-11 | Design | Crag-level tracker config | Different crags may use different trackers |
+| 2026-03-11 | Retrospective | Plan completed | 19/19 tasks, 7 surprises, 7 review fixes (3 critical). Full planning & review hats implemented. |
 
 ## Progress
 
