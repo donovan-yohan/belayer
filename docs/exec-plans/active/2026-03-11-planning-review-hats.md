@@ -48,6 +48,9 @@
 | 2026-03-11 | tracker_issues.problem_id FK constraint rejects empty string | Store needed sql.NullString for unlinked issues | Worker-2 used sql.NullString + scanTrackerIssue helper |
 | 2026-03-11 | GitHub CI checks can have NEUTRAL/SKIPPED conclusions | SCM provider needed to treat these as success-equivalent | Worker-9 added NEUTRAL+SKIPPED alongside SUCCESS |
 | 2026-03-11 | tick() signature changed to accept context.Context | Existing setter_test.go calls broke (18 call sites) | Orchestrator fixed: replaced .tick() with .tick(context.Background()) + nil guard on belayerCfg |
+| 2026-03-11 | GitHub tracker passed bare filesystem path to `gh -R` | All tracker CLI commands would fail at runtime | Review fix: added `repo.OwnerRepoFromURL()` helper, pass `owner/repo` format |
+| 2026-03-11 | `ReplyToComment` used non-existent GitHub API endpoint | PR review replies would always 404 | Review fix: corrected to `pulls/{pr}/comments/{id}/replies` |
+| 2026-03-11 | `Review.State` not lowercased from GitHub API | Reaction engine would never detect `changes_requested`/`approved` | Review fix: added `strings.ToLower()` in both parse functions |
 
 ## Plan Drift
 
@@ -3399,13 +3402,22 @@ git commit -m "feat: add setter slash commands for tracker and PR monitoring"
 
 ## Outcomes & Retrospective
 
-_Filled by /harness:complete when work is done._
+**Summary:** 19/19 tasks completed, 1 drift entry, 7 surprises. 7 review findings fixed (3 critical: gh -R format, API endpoint, Review.State casing). 12 findings deferred (test coverage gaps, type design improvements).
 
 **What worked:**
--
+- 5-wave parallel execution with dependency tracking — completed 19 tasks efficiently
+- Plan review before execution caught CLI pattern issues that would have been runtime failures
+- Micro-reviews after each wave caught stale docs immediately
+- Code review caught 3 critical runtime bugs (gh -R format, API endpoint, Review.State)
 
 **What didn't:**
--
+- tmux pane limits blocked spawning review agents after orchestration — needed manual cleanup
+- Worker agents in overlapping packages can accidentally stage each other's files
+- Empty `repoDir` passed to SCM methods in `monitorPRs` — not caught until review (needs integration tests)
+- Partial PR creation failure leaves orphaned records (structural issue, deferred)
 
 **Learnings to codify:**
--
+- GitHub API returns UPPER_CASE for review states — always lowercase-normalize at the boundary
+- `gh -R` expects `owner/repo` format, not filesystem paths — use `repo.OwnerRepoFromURL()`
+- When changing daemon method signatures, check all test call sites (blast radius)
+- Shut down orchestration workers before spawning review agents to avoid pane exhaustion

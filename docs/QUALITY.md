@@ -25,6 +25,13 @@ Go's built-in `go test` with `testing` package. No external test framework.
 | `internal/belayer/belayer_test.go` | Belayer daemon lifecycle, spotting flow, anchor flow, crash recovery |
 | `internal/belayer/dag_test.go` | DAG construction and traversal |
 | `internal/lead/claude_test.go` | ClaudeSpawner env injection (empty, single, multiple env vars) |
+| `internal/store/store_test.go` | Store CRUD: tracker_issues, pull_requests, pr_reactions, problem tracker_issue_id |
+| `internal/review/engine_test.go` | Reaction engine: event classification, CI/review state, decision logic |
+| `internal/scm/stacking_test.go` | PR stacking: greedy bin-packing, single climb, empty input |
+| `internal/scm/prbodygen_test.go` | PR body generation: prompt builder, output parser |
+| `internal/scm/github/github_test.go` | GitHub SCM: PR status parsing, activity parsing, CI status logic |
+| `internal/tracker/github/github_test.go` | GitHub tracker: issue list/detail JSON parsing |
+| `internal/tracker/specassembly_test.go` | Spec assembly: prompt builder, output parser |
 
 ## Conventions
 
