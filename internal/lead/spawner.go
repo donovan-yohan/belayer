@@ -1,6 +1,11 @@
 package lead
 
-import "context"
+import (
+	"context"
+	"fmt"
+
+	"github.com/donovan-yohan/belayer/internal/tmux"
+)
 
 // AgentSpawner launches agent sessions in tmux windows.
 // This is the vendor abstraction boundary — implementations exist for
@@ -18,4 +23,17 @@ type SpawnOpts struct {
 	InitialPrompt      string
 	AppendSystemPrompt string            // Role-specific instructions appended to default system prompt via --append-system-prompt
 	Env                map[string]string // Per-window environment variables (injected via export, not tmux session env)
+}
+
+// NewSpawner creates an AgentSpawner for the given provider.
+// Supported providers: "claude", "codex".
+func NewSpawner(provider string, tm tmux.TmuxManager) (AgentSpawner, error) {
+	switch provider {
+	case "claude":
+		return NewClaudeSpawner(tm), nil
+	case "codex":
+		return NewCodexSpawner(tm), nil
+	default:
+		return nil, fmt.Errorf("unknown agent provider: %q (expected \"claude\" or \"codex\")", provider)
+	}
 }

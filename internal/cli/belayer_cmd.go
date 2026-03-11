@@ -119,7 +119,10 @@ func runBelayerDaemonForeground(name, cragDir, pidPath string, maxLeads int, pol
 	}
 
 	tm := tmux.NewRealTmux()
-	sp := lead.NewClaudeSpawner(tm)
+	sp, err := lead.NewSpawner(bcfg.Agents.Provider, tm)
+	if err != nil {
+		return fmt.Errorf("creating agent spawner: %w", err)
+	}
 	s := belayer.New(cfg, bcfg, globalCfgDir, cragCfgDir, database.Conn(), tm, sp)
 
 	// Write PID file and clean up on exit

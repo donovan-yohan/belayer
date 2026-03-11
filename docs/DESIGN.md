@@ -74,10 +74,11 @@ Path-like strings that deterministically map to tmux targets: `belayer`, `proble
 
 ## Lead Execution
 
-Leads run as full interactive Claude Code sessions (not `claude -p`):
-- Role instructions passed via `--append-system-prompt` (preserves built-in Claude Code behavior + user plugins)
+Leads run as full interactive agent sessions (not single-shot) via the `AgentSpawner` interface (`internal/lead/spawner.go`). The `agents.provider` config field selects the runtime:
+- **Claude** (`ClaudeSpawner`): `claude --dangerously-skip-permissions --append-system-prompt "role" "prompt"` — role instructions via dedicated flag
+- **Codex** (`CodexSpawner`): `codex --dangerously-bypass-approvals-and-sandbox "prompt"` — role instructions prepended to prompt (no system prompt flag)
+- Factory function `NewSpawner(provider, tm)` in `spawner.go` selects the spawner based on config
 - Climb context written to `.lead/<climbID>/GOAL.json` (climb-scoped to avoid collisions between concurrent same-repo climbs)
-- Spawned via `claude --dangerously-skip-permissions --append-system-prompt "role instructions" "initial prompt"` in tmux
 - Initial prompt drives harness workflow: `/harness:init` → `/harness:plan` → `/harness:orchestrate` → `/harness:complete`
 - Writes `TOP.json` in `.lead/<climbID>/` on completion
 - Stuck detection: log file mtime silence monitoring + pane capture for input prompt detection

@@ -25,3 +25,4 @@
 | [PRD-agent-friendly-architecture](PRD-agent-friendly-architecture.md) | Agent-friendly architecture PRD | 2026-03-07 |
 | [2026-03-09-manage-session-context](2026-03-09-manage-session-context.md) | Manage session context design (historical) | 2026-03-09 |
 | [2026-03-11-planning-review-hats-design](2026-03-11-planning-review-hats-design.md) | Planning hat (tracker intake) and review hat (PR monitoring, CI fix, review reaction) | 2026-03-11 |
+| [2026-03-11-multi-provider-spawner-design](2026-03-11-multi-provider-spawner-design.md) | Multi-provider AgentSpawner: CodexSpawner + factory function + config wiring | 2026-03-11 |

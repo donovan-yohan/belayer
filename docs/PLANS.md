@@ -22,6 +22,7 @@ _None currently active._
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Multi-Provider Spawner](exec-plans/completed/2026-03-11-multi-provider-spawner.md) | 2026-03-11 | CodexSpawner + factory function + config wiring |
 | [Planning & Review Hats](exec-plans/completed/2026-03-11-planning-review-hats.md) | 2026-03-11 | Tracker intake, SCM provider, PR monitoring & reaction engine |
 | [Instance-to-Crag Rename](exec-plans/completed/2026-03-10-instance-to-crag-rename.md) | 2026-03-11 | Rename --instance to --crag, remove TUI references, prune stale docs |
 | [Crag Architecture](exec-plans/completed/2026-03-10-crag-architecture.md) | 2026-03-10 | Climbing terminology overhaul + per-role window layout with deferred activation |
