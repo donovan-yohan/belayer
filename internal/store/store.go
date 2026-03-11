@@ -64,14 +64,25 @@ func (s *Store) InsertProblem(problem *model.Problem, climbs []model.Climb) erro
 	return tx.Commit()
 }
 
+// scanProblem scans a problem row using the provided scan function.
+func scanProblem(scan func(...any) error) (*model.Problem, error) {
+	p := &model.Problem{}
+	var trackerIssueID sql.NullString
+	err := scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &trackerIssueID, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	p.TrackerIssueID = trackerIssueID.String
+	return p, nil
+}
+
 // GetProblem retrieves a problem by ID.
 func (s *Store) GetProblem(id string) (*model.Problem, error) {
 	row := s.db.QueryRow(
-		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, tracker_issue_id, status, created_at, updated_at
 		 FROM problems WHERE id = ?`, id,
 	)
-	p := &model.Problem{}
-	err := row.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+	p, err := scanProblem(row.Scan)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("problem %q not found", id)
 	}
@@ -84,7 +95,7 @@ func (s *Store) GetProblem(id string) (*model.Problem, error) {
 // ListProblemsForCrag returns all problems for the given crag, newest first.
 func (s *Store) ListProblemsForCrag(cragID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, tracker_issue_id, status, created_at, updated_at
 		 FROM problems WHERE crag_id = ? ORDER BY created_at DESC`, cragID,
 	)
 	if err != nil {
@@ -94,11 +105,11 @@ func (s *Store) ListProblemsForCrag(cragID string) ([]model.Problem, error) {
 
 	var problems []model.Problem
 	for rows.Next() {
-		var p model.Problem
-		if err := rows.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		p, err := scanProblem(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
-		problems = append(problems, p)
+		problems = append(problems, *p)
 	}
 	return problems, rows.Err()
 }
@@ -186,7 +197,7 @@ func (s *Store) GetEventsForProblem(problemID string) ([]model.Event, error) {
 // GetProblemsByStatus returns all problems with the given status.
 func (s *Store) GetProblemsByStatus(status model.ProblemStatus) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, tracker_issue_id, status, created_at, updated_at
 		 FROM problems WHERE status = ? ORDER BY created_at DESC`, status,
 	)
 	if err != nil {
@@ -196,11 +207,11 @@ func (s *Store) GetProblemsByStatus(status model.ProblemStatus) ([]model.Problem
 
 	var problems []model.Problem
 	for rows.Next() {
-		var p model.Problem
-		if err := rows.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		p, err := scanProblem(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
-		problems = append(problems, p)
+		problems = append(problems, *p)
 	}
 	return problems, rows.Err()
 }
@@ -286,7 +297,7 @@ func ClimbsFromFile(problemID string, cf *model.ClimbsFile) []model.Climb {
 // GetPendingProblems returns problems with status='pending' for the given crag, ordered by created_at ASC.
 func (s *Store) GetPendingProblems(cragID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, tracker_issue_id, status, created_at, updated_at
 		 FROM problems WHERE crag_id = ? AND status = 'pending' ORDER BY created_at ASC`, cragID,
 	)
 	if err != nil {
@@ -296,11 +307,11 @@ func (s *Store) GetPendingProblems(cragID string) ([]model.Problem, error) {
 
 	var problems []model.Problem
 	for rows.Next() {
-		var p model.Problem
-		if err := rows.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		p, err := scanProblem(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
-		problems = append(problems, p)
+		problems = append(problems, *p)
 	}
 	return problems, rows.Err()
 }
@@ -308,7 +319,7 @@ func (s *Store) GetPendingProblems(cragID string) ([]model.Problem, error) {
 // GetActiveProblems returns problems with status IN ('running', 'reviewing') for the given crag, ordered by created_at ASC.
 func (s *Store) GetActiveProblems(cragID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
-		`SELECT id, crag_id, spec, climbs_json, jira_ref, status, created_at, updated_at
+		`SELECT id, crag_id, spec, climbs_json, jira_ref, tracker_issue_id, status, created_at, updated_at
 		 FROM problems WHERE crag_id = ? AND status IN ('running', 'reviewing') ORDER BY created_at ASC`, cragID,
 	)
 	if err != nil {
@@ -318,11 +329,11 @@ func (s *Store) GetActiveProblems(cragID string) ([]model.Problem, error) {
 
 	var problems []model.Problem
 	for rows.Next() {
-		var p model.Problem
-		if err := rows.Scan(&p.ID, &p.CragID, &p.Spec, &p.ClimbsJSON, &p.JiraRef, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		p, err := scanProblem(rows.Scan)
+		if err != nil {
 			return nil, fmt.Errorf("scanning problem: %w", err)
 		}
-		problems = append(problems, p)
+		problems = append(problems, *p)
 	}
 	return problems, rows.Err()
 }
@@ -443,6 +454,167 @@ func (s *Store) ListTrackerIssues(unlinkedOnly bool) ([]model.TrackerIssue, erro
 func (s *Store) LinkTrackerIssueToProblem(issueID, problemID string) error {
 	_, err := s.db.Exec(`UPDATE tracker_issues SET problem_id = ? WHERE id = ?`, problemID, issueID)
 	return err
+}
+
+// scanPullRequest scans a pull_request row using the provided scan function.
+func scanPullRequest(scan func(...any) error) (*model.PullRequest, error) {
+	pr := &model.PullRequest{}
+	var lastPolledAt sql.NullTime
+	err := scan(
+		&pr.ID, &pr.ProblemID, &pr.RepoName, &pr.PRNumber, &pr.URL,
+		&pr.StackPosition, &pr.StackSize, &pr.CIStatus, &pr.CIFixCount,
+		&pr.ReviewStatus, &pr.State, &lastPolledAt, &pr.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if lastPolledAt.Valid {
+		pr.LastPolledAt = &lastPolledAt.Time
+	}
+	return pr, nil
+}
+
+// InsertPullRequest inserts a pull request and returns its auto-generated ID.
+func (s *Store) InsertPullRequest(pr *model.PullRequest) (int64, error) {
+	result, err := s.db.Exec(
+		`INSERT INTO pull_requests (problem_id, repo_name, pr_number, url, stack_position, stack_size, ci_status, ci_fix_count, review_status, state, last_polled_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		pr.ProblemID, pr.RepoName, pr.PRNumber, pr.URL, pr.StackPosition, pr.StackSize,
+		pr.CIStatus, pr.CIFixCount, pr.ReviewStatus, pr.State, pr.LastPolledAt, time.Now().UTC(),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("inserting pull request: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("getting last insert id: %w", err)
+	}
+	return id, nil
+}
+
+// GetPullRequest retrieves a pull request by ID.
+func (s *Store) GetPullRequest(id int64) (*model.PullRequest, error) {
+	row := s.db.QueryRow(
+		`SELECT id, problem_id, repo_name, pr_number, url, stack_position, stack_size, ci_status, ci_fix_count, review_status, state, last_polled_at, created_at
+		 FROM pull_requests WHERE id = ?`, id,
+	)
+	pr, err := scanPullRequest(row.Scan)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("pull request %d not found", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scanning pull request: %w", err)
+	}
+	return pr, nil
+}
+
+// ListPullRequestsForProblem returns all pull requests for the given problem.
+func (s *Store) ListPullRequestsForProblem(problemID string) ([]model.PullRequest, error) {
+	rows, err := s.db.Query(
+		`SELECT id, problem_id, repo_name, pr_number, url, stack_position, stack_size, ci_status, ci_fix_count, review_status, state, last_polled_at, created_at
+		 FROM pull_requests WHERE problem_id = ? ORDER BY created_at ASC`, problemID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying pull requests: %w", err)
+	}
+	defer rows.Close()
+
+	var prs []model.PullRequest
+	for rows.Next() {
+		pr, err := scanPullRequest(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scanning pull request: %w", err)
+		}
+		prs = append(prs, *pr)
+	}
+	return prs, rows.Err()
+}
+
+// ListMonitoredPullRequests returns open pull requests for problems belonging to the given crag.
+func (s *Store) ListMonitoredPullRequests(cragID string) ([]model.PullRequest, error) {
+	rows, err := s.db.Query(
+		`SELECT pr.id, pr.problem_id, pr.repo_name, pr.pr_number, pr.url, pr.stack_position, pr.stack_size, pr.ci_status, pr.ci_fix_count, pr.review_status, pr.state, pr.last_polled_at, pr.created_at
+		 FROM pull_requests pr
+		 JOIN problems p ON pr.problem_id = p.id
+		 WHERE p.crag_id = ? AND pr.state = 'open'
+		 ORDER BY pr.created_at ASC`, cragID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying monitored pull requests: %w", err)
+	}
+	defer rows.Close()
+
+	var prs []model.PullRequest
+	for rows.Next() {
+		pr, err := scanPullRequest(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scanning pull request: %w", err)
+		}
+		prs = append(prs, *pr)
+	}
+	return prs, rows.Err()
+}
+
+// UpdatePullRequestCI updates ci_status and ci_fix_count for a pull request.
+func (s *Store) UpdatePullRequestCI(id int64, ciStatus string, ciFixCount int) error {
+	_, err := s.db.Exec(
+		`UPDATE pull_requests SET ci_status = ?, ci_fix_count = ?, last_polled_at = ? WHERE id = ?`,
+		ciStatus, ciFixCount, time.Now().UTC(), id,
+	)
+	return err
+}
+
+// UpdatePullRequestReview updates review_status for a pull request.
+func (s *Store) UpdatePullRequestReview(id int64, reviewStatus string) error {
+	_, err := s.db.Exec(
+		`UPDATE pull_requests SET review_status = ?, last_polled_at = ? WHERE id = ?`,
+		reviewStatus, time.Now().UTC(), id,
+	)
+	return err
+}
+
+// UpdatePullRequestState updates the state of a pull request.
+func (s *Store) UpdatePullRequestState(id int64, state string) error {
+	_, err := s.db.Exec(
+		`UPDATE pull_requests SET state = ?, last_polled_at = ? WHERE id = ?`,
+		state, time.Now().UTC(), id,
+	)
+	return err
+}
+
+// InsertPRReaction inserts a PR reaction record.
+func (s *Store) InsertPRReaction(reaction *model.PRReaction) error {
+	_, err := s.db.Exec(
+		`INSERT INTO pr_reactions (pr_id, trigger_type, trigger_payload, action_taken, lead_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		reaction.PRID, reaction.TriggerType, reaction.TriggerPayload, reaction.ActionTaken, reaction.LeadID, time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("inserting pr reaction: %w", err)
+	}
+	return nil
+}
+
+// ListPRReactions returns all reactions for the given pull request, ordered by created_at ASC.
+func (s *Store) ListPRReactions(prID int64) ([]model.PRReaction, error) {
+	rows, err := s.db.Query(
+		`SELECT id, pr_id, trigger_type, trigger_payload, action_taken, lead_id, created_at
+		 FROM pr_reactions WHERE pr_id = ? ORDER BY created_at ASC`, prID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying pr reactions: %w", err)
+	}
+	defer rows.Close()
+
+	var reactions []model.PRReaction
+	for rows.Next() {
+		var r model.PRReaction
+		if err := rows.Scan(&r.ID, &r.PRID, &r.TriggerType, &r.TriggerPayload, &r.ActionTaken, &r.LeadID, &r.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning pr reaction: %w", err)
+		}
+		reactions = append(reactions, r)
+	}
+	return reactions, rows.Err()
 }
 
 // InsertClimbs inserts multiple climbs in a single transaction.

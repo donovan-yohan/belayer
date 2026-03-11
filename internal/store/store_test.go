@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -555,6 +556,170 @@ func TestLinkTrackerIssueToProblem(t *testing.T) {
 	got, err := s.GetTrackerIssue("GH-99")
 	require.NoError(t, err)
 	assert.Equal(t, "prob-link", got.ProblemID)
+}
+
+func insertTestProblem(t *testing.T, s *Store, id string) {
+	t.Helper()
+	err := s.InsertProblem(&model.Problem{
+		ID: id, CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, nil)
+	require.NoError(t, err)
+}
+
+func TestInsertAndGetPullRequest(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-pr-1")
+
+	pr := &model.PullRequest{
+		ProblemID:    "prob-pr-1",
+		RepoName:     "api",
+		PRNumber:     42,
+		URL:          "https://github.com/org/api/pull/42",
+		StackPosition: 1,
+		StackSize:    1,
+		CIStatus:     "pending",
+		CIFixCount:   0,
+		ReviewStatus: "pending",
+		State:        "open",
+	}
+
+	id, err := s.InsertPullRequest(pr)
+	require.NoError(t, err)
+	assert.Positive(t, id)
+
+	got, err := s.GetPullRequest(id)
+	require.NoError(t, err)
+	assert.Equal(t, id, got.ID)
+	assert.Equal(t, "prob-pr-1", got.ProblemID)
+	assert.Equal(t, "api", got.RepoName)
+	assert.Equal(t, 42, got.PRNumber)
+	assert.Equal(t, "https://github.com/org/api/pull/42", got.URL)
+	assert.Equal(t, "open", got.State)
+	assert.Equal(t, "pending", got.CIStatus)
+	assert.Nil(t, got.LastPolledAt)
+	assert.False(t, got.CreatedAt.IsZero())
+}
+
+func TestListPullRequestsForProblem(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-pr-list")
+
+	for i := 1; i <= 3; i++ {
+		_, err := s.InsertPullRequest(&model.PullRequest{
+			ProblemID: "prob-pr-list", RepoName: "api", PRNumber: i,
+			URL: "https://github.com/org/api/pull/" + fmt.Sprintf("%d", i),
+			StackPosition: i, StackSize: 3, CIStatus: "pending", ReviewStatus: "pending", State: "open",
+		})
+		require.NoError(t, err)
+	}
+
+	prs, err := s.ListPullRequestsForProblem("prob-pr-list")
+	require.NoError(t, err)
+	assert.Len(t, prs, 3)
+}
+
+func TestUpdatePullRequestCI(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-pr-ci")
+
+	id, err := s.InsertPullRequest(&model.PullRequest{
+		ProblemID: "prob-pr-ci", RepoName: "api", PRNumber: 1,
+		URL: "https://github.com/org/api/pull/1",
+		CIStatus: "pending", ReviewStatus: "pending", State: "open",
+	})
+	require.NoError(t, err)
+
+	err = s.UpdatePullRequestCI(id, "failed", 2)
+	require.NoError(t, err)
+
+	got, err := s.GetPullRequest(id)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", got.CIStatus)
+	assert.Equal(t, 2, got.CIFixCount)
+	assert.NotNil(t, got.LastPolledAt)
+}
+
+func TestUpdatePullRequestState(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-pr-state")
+
+	id, err := s.InsertPullRequest(&model.PullRequest{
+		ProblemID: "prob-pr-state", RepoName: "api", PRNumber: 5,
+		URL: "https://github.com/org/api/pull/5",
+		CIStatus: "pending", ReviewStatus: "pending", State: "open",
+	})
+	require.NoError(t, err)
+
+	err = s.UpdatePullRequestState(id, "merged")
+	require.NoError(t, err)
+
+	got, err := s.GetPullRequest(id)
+	require.NoError(t, err)
+	assert.Equal(t, "merged", got.State)
+	assert.NotNil(t, got.LastPolledAt)
+}
+
+func TestListMonitoredPullRequests(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-monitored")
+
+	openID, err := s.InsertPullRequest(&model.PullRequest{
+		ProblemID: "prob-monitored", RepoName: "api", PRNumber: 10,
+		URL: "https://github.com/org/api/pull/10",
+		CIStatus: "pending", ReviewStatus: "pending", State: "open",
+	})
+	require.NoError(t, err)
+
+	closedID, err := s.InsertPullRequest(&model.PullRequest{
+		ProblemID: "prob-monitored", RepoName: "api", PRNumber: 11,
+		URL: "https://github.com/org/api/pull/11",
+		CIStatus: "success", ReviewStatus: "approved", State: "merged",
+	})
+	require.NoError(t, err)
+	_ = closedID
+
+	monitored, err := s.ListMonitoredPullRequests("test-crag")
+	require.NoError(t, err)
+	require.Len(t, monitored, 1)
+	assert.Equal(t, openID, monitored[0].ID)
+}
+
+func TestInsertAndListPRReactions(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-reaction")
+
+	prID, err := s.InsertPullRequest(&model.PullRequest{
+		ProblemID: "prob-reaction", RepoName: "api", PRNumber: 20,
+		URL: "https://github.com/org/api/pull/20",
+		CIStatus: "pending", ReviewStatus: "pending", State: "open",
+	})
+	require.NoError(t, err)
+
+	reaction := &model.PRReaction{
+		PRID:           prID,
+		TriggerType:    "ci_failed",
+		TriggerPayload: `{"run_id": "123"}`,
+		ActionTaken:    "dispatched_fix",
+		LeadID:         "lead-abc",
+	}
+	err = s.InsertPRReaction(reaction)
+	require.NoError(t, err)
+
+	reactions, err := s.ListPRReactions(prID)
+	require.NoError(t, err)
+	require.Len(t, reactions, 1)
+	assert.Equal(t, prID, reactions[0].PRID)
+	assert.Equal(t, "ci_failed", reactions[0].TriggerType)
+	assert.Equal(t, "dispatched_fix", reactions[0].ActionTaken)
+	assert.Equal(t, "lead-abc", reactions[0].LeadID)
+	assert.NotZero(t, reactions[0].ID)
+	assert.False(t, reactions[0].CreatedAt.IsZero())
 }
 
 func TestInsertClimbs(t *testing.T) {
