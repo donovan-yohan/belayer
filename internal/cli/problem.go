@@ -29,6 +29,7 @@ func newProblemCreateCmd() *cobra.Command {
 	var specPath string
 	var climbsPath string
 	var jiraRef string
+	var ticketID string
 	var cragName string
 
 	cmd := &cobra.Command{
@@ -36,8 +37,8 @@ func newProblemCreateCmd() *cobra.Command {
 		Short: "Create a new problem from a spec and climbs file",
 		Long:  "Validates spec.md and climbs.json, then writes the problem and climbs to SQLite.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if specPath == "" {
-				return fmt.Errorf("--spec is required")
+			if specPath == "" && ticketID == "" {
+				return fmt.Errorf("--spec or --ticket is required")
 			}
 			if climbsPath == "" {
 				return fmt.Errorf("--climbs is required")
@@ -114,9 +115,10 @@ func newProblemCreateCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&specPath, "spec", "", "Path to spec.md file (required)")
+	cmd.Flags().StringVar(&specPath, "spec", "", "Path to spec.md file (required unless --ticket is set)")
 	cmd.Flags().StringVar(&climbsPath, "climbs", "", "Path to climbs.json file (required)")
 	cmd.Flags().StringVar(&jiraRef, "jira", "", "Jira ticket reference (optional)")
+	cmd.Flags().StringVar(&ticketID, "ticket", "", "Tracker issue ID to fetch and use as spec")
 	cmd.Flags().StringVar(&cragName, "crag", "", "Crag name (defaults to default crag)")
 	return cmd
 }
