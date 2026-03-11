@@ -27,6 +27,7 @@ func NewRootCmd() *cobra.Command {
 		newMessageCmd(),
 		newTrackerCmd(),
 		newPRCmd(),
+		newConfigCmd(),
 	)
 
 	return cmd
