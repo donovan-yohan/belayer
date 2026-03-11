@@ -377,6 +377,74 @@ func (s *Store) GetAnchorReviewsForProblem(problemID string) ([]model.SpotterRev
 	return reviews, rows.Err()
 }
 
+// InsertTrackerIssue inserts or replaces a tracker issue.
+// An empty ProblemID is stored as NULL to satisfy the foreign key constraint.
+func (s *Store) InsertTrackerIssue(issue *model.TrackerIssue) error {
+	problemID := sql.NullString{String: issue.ProblemID, Valid: issue.ProblemID != ""}
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO tracker_issues (id, provider, title, body, comments_json, labels_json, priority, assignee, url, raw_json, problem_id, synced_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		issue.ID, issue.Provider, issue.Title, issue.Body, issue.CommentsJSON, issue.LabelsJSON,
+		issue.Priority, issue.Assignee, issue.URL, issue.RawJSON, problemID, issue.SyncedAt,
+	)
+	return err
+}
+
+func scanTrackerIssue(scan func(...any) error) (*model.TrackerIssue, error) {
+	ti := &model.TrackerIssue{}
+	var problemID sql.NullString
+	err := scan(&ti.ID, &ti.Provider, &ti.Title, &ti.Body, &ti.CommentsJSON, &ti.LabelsJSON,
+		&ti.Priority, &ti.Assignee, &ti.URL, &ti.RawJSON, &problemID, &ti.SyncedAt)
+	if err != nil {
+		return nil, err
+	}
+	ti.ProblemID = problemID.String
+	return ti, nil
+}
+
+// GetTrackerIssue retrieves a tracker issue by ID.
+func (s *Store) GetTrackerIssue(id string) (*model.TrackerIssue, error) {
+	row := s.db.QueryRow(
+		`SELECT id, provider, title, body, comments_json, labels_json, priority, assignee, url, raw_json, problem_id, synced_at
+		 FROM tracker_issues WHERE id = ?`, id,
+	)
+	ti, err := scanTrackerIssue(row.Scan)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("tracker issue %q not found", id)
+	}
+	return ti, err
+}
+
+// ListTrackerIssues returns all tracker issues, newest first.
+// If unlinkedOnly is true, only issues with no problem_id are returned.
+func (s *Store) ListTrackerIssues(unlinkedOnly bool) ([]model.TrackerIssue, error) {
+	query := `SELECT id, provider, title, body, comments_json, labels_json, priority, assignee, url, raw_json, problem_id, synced_at FROM tracker_issues`
+	if unlinkedOnly {
+		query += ` WHERE problem_id IS NULL`
+	}
+	query += ` ORDER BY synced_at DESC`
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var issues []model.TrackerIssue
+	for rows.Next() {
+		ti, err := scanTrackerIssue(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, *ti)
+	}
+	return issues, rows.Err()
+}
+
+// LinkTrackerIssueToProblem sets the problem_id for a tracker issue.
+func (s *Store) LinkTrackerIssueToProblem(issueID, problemID string) error {
+	_, err := s.db.Exec(`UPDATE tracker_issues SET problem_id = ? WHERE id = ?`, problemID, issueID)
+	return err
+}
+
 // InsertClimbs inserts multiple climbs in a single transaction.
 // This is used for correction climbs from spotter redistribution.
 func (s *Store) InsertClimbs(climbs []model.Climb) error {

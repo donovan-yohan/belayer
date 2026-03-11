@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/testutil"
@@ -464,6 +465,96 @@ func TestInsertAndGetAnchorReview(t *testing.T) {
 	assert.Equal(t, "All climbs met.", reviews[0].Output)
 	assert.NotZero(t, reviews[0].ID)
 	assert.False(t, reviews[0].CreatedAt.IsZero())
+}
+
+func TestInsertAndGetTrackerIssue(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	issue := &model.TrackerIssue{
+		ID:           "GH-42",
+		Provider:     "github",
+		Title:        "Fix the bug",
+		Body:         "Detailed description",
+		CommentsJSON: `[]`,
+		LabelsJSON:   `["bug"]`,
+		Priority:     "high",
+		Assignee:     "alice",
+		URL:          "https://github.com/org/repo/issues/42",
+		RawJSON:      `{}`,
+		ProblemID:    "",
+		SyncedAt:     time.Now().UTC(),
+	}
+
+	err := s.InsertTrackerIssue(issue)
+	require.NoError(t, err)
+
+	got, err := s.GetTrackerIssue("GH-42")
+	require.NoError(t, err)
+	assert.Equal(t, "GH-42", got.ID)
+	assert.Equal(t, "github", got.Provider)
+	assert.Equal(t, "Fix the bug", got.Title)
+	assert.Equal(t, "high", got.Priority)
+	assert.Equal(t, "alice", got.Assignee)
+}
+
+func TestGetTrackerIssueNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	_, err := s.GetTrackerIssue("nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestListTrackerIssues(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertProblem(&model.Problem{
+		ID: "prob-1", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, nil)
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	issues := []*model.TrackerIssue{
+		{ID: "GH-1", Provider: "github", Title: "Linked issue", SyncedAt: now, ProblemID: "prob-1"},
+		{ID: "GH-2", Provider: "github", Title: "Unlinked issue", SyncedAt: now, ProblemID: ""},
+	}
+	for _, ti := range issues {
+		require.NoError(t, s.InsertTrackerIssue(ti))
+	}
+
+	all, err := s.ListTrackerIssues(false)
+	require.NoError(t, err)
+	assert.Len(t, all, 2)
+
+	unlinked, err := s.ListTrackerIssues(true)
+	require.NoError(t, err)
+	require.Len(t, unlinked, 1)
+	assert.Equal(t, "GH-2", unlinked[0].ID)
+}
+
+func TestLinkTrackerIssueToProblem(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertProblem(&model.Problem{
+		ID: "prob-link", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, nil)
+	require.NoError(t, err)
+
+	issue := &model.TrackerIssue{
+		ID: "GH-99", Provider: "github", Title: "Issue to link", SyncedAt: time.Now().UTC(),
+	}
+	require.NoError(t, s.InsertTrackerIssue(issue))
+
+	err = s.LinkTrackerIssueToProblem("GH-99", "prob-link")
+	require.NoError(t, err)
+
+	got, err := s.GetTrackerIssue("GH-99")
+	require.NoError(t, err)
+	assert.Equal(t, "prob-link", got.ProblemID)
 }
 
 func TestInsertClimbs(t *testing.T) {
