@@ -28,7 +28,7 @@ Lead  Lead   Lead   Lead     (parallel, isolated worktrees)
 ```
 
 **Three layers:**
-- **User** — CLI commands and TUI dashboard
+- **User** — CLI commands
 - **Belayer** — Deterministic Go daemon; polls SQLite, manages DAG execution, enforces concurrency limits
 - **Lead** — Ephemeral Claude Code session per climb; runs in an isolated git worktree
 
@@ -80,13 +80,13 @@ This bare-clones the repos into `~/.belayer/crags/my-project/repos/`.
 Launch an interactive Claude session that knows your crag's repos and can generate problem specs:
 
 ```bash
-belayer setter -i my-project
+belayer setter -c my-project
 ```
 
 Or create a problem directly from a spec and climbs file:
 
 ```bash
-belayer problem create -i my-project --spec spec.md --climbs climbs.json
+belayer problem create -c my-project --spec spec.md --climbs climbs.json
 ```
 
 <details>
@@ -139,13 +139,10 @@ This will:
 
 ```bash
 # Quick status
-belayer status -i my-project
-
-# Interactive TUI dashboard
-belayer tui -i my-project
+belayer status -c my-project
 
 # View lead session logs
-belayer logs -i my-project
+belayer logs -c my-project
 ```
 
 ## CLI Reference
@@ -161,7 +158,6 @@ belayer logs -i my-project
 | `belayer problem list` | List problems for a crag |
 | `belayer belayer start` | Start the daemon that executes problems |
 | `belayer status` | Show problem and climb status |
-| `belayer tui` | Interactive bubbletea dashboard |
 | `belayer message <addr>` | Send a typed mail message to an agent |
 | `belayer mail read` | Read unread messages and mark as read |
 | `belayer mail inbox` | List unread messages without marking read |

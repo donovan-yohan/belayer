@@ -132,19 +132,6 @@ The belayer daemon (`internal/belayer/`) is the central orchestration layer:
 - **Anchor retry**: Max alignment attempts (default 2) prevents infinite re-dispatch loops; alignment attempts counted via `alignment_started` events
 - **PR creation**: Best-effort push + `gh pr create` per repo; PR URLs recorded as `prs_created` events; failures don't block problem completion
 
-## TUI Dashboard
-
-The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
-
-- **Read-only**: Polls SQLite at 1-second intervals via `tea.Tick`; never writes to the database
-- **Three-pane layout**: Problem list (left, ~30% width), problem detail with leads (right, ~70%), event log (bottom, ~30% height)
-- **Keyboard navigation**: j/k for up/down, tab to cycle panes, enter to select, esc to go back, 1/2/3 to jump to pane, q to quit
-- **Responsive**: Adapts to terminal size via `tea.WindowSizeMsg`
-- **TUI-specific store**: `tui.Store` wraps `*sql.DB` with read-only queries optimized for the dashboard (denormalized `ProblemSummary`, `LeadDetail`, `EventEntry`)
-- **Status badges**: Color-coded per status using lipgloss (green=complete, yellow=running, red=failed, orange=stuck)
-- **Event scrolling**: Events pane shows scroll indicators (`↑ N more above` / `↓ N more below`) and position (`Events (3/10)`) when focused
-- **Testing**: Temp-file SQLite (not `:memory:`) for tests due to connection pool isolation issues
-
 ## CLI Commands
 
 | Command | Purpose |
@@ -155,7 +142,6 @@ The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
 | `belayer problem create [desc]` | Create problem with intake pipeline |
 | `belayer problem retry [problem-id]` | Retry a failed problem (reuses enriched description) |
 | `belayer problem list` | List problems for the current crag |
-| `belayer tui` | Launch the monitoring dashboard |
 | `belayer message <addr> --type <type> --body "..."` | Send a typed mail message to an agent |
 | `belayer mail read` | Read all unread messages (marks as read) |
 | `belayer mail inbox` | List unread messages without marking read |
@@ -168,7 +154,7 @@ The TUI (`internal/tui/`) is a bubbletea-based terminal dashboard:
 `belayer setter` creates a temp workspace with a full `.claude/` directory:
 - **CLAUDE.md** (templated): Rendered from `internal/defaults/claudemd/setter.md` with crag name and repo names. Establishes the setter as the session identity — all user requests are routed through belayer commands.
 - **Commands** (static): 6 slash commands (`/status`, `/problem-create`, `/problem-list`, `/logs`, `/message`, `/mail`) copied from `internal/defaults/commands/`.
-- **BELAYER_INSTANCE env var**: Set in the exec environment so all belayer CLI commands auto-resolve the crag without `--instance` flags.
+- **BELAYER_CRAG env var**: Set in the exec environment so all belayer CLI commands auto-resolve the crag without `--crag` flags.
 
 This is distinct from the repo's own `.claude/CLAUDE.md` which is for developing belayer itself. The setter context is runtime — deployed into sessions belayer spawns.
 
@@ -215,5 +201,4 @@ Climbing metaphors throughout:
 ## See Also
 
 - [Architecture](ARCHITECTURE.md) — module boundaries and data flow
-- [TUI](TUI.md) — bubbletea component details
 - [Quality](QUALITY.md) — testing strategy

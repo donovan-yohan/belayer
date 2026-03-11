@@ -14,7 +14,7 @@ Output: per-repo PRs with aligned implementations, structured progress reports.
 Belayer uses climbing metaphors for its agent hierarchy:
 
 ```
-User (CLI / TUI)
+User (CLI)
   |
   v
 Setter (interactive Claude session — human defines problems)
@@ -52,7 +52,7 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Module | Path | Purpose |
 |--------|------|---------|
 | CLI entry | `cmd/belayer/main.go` | Binary entry point |
-| CLI commands | `internal/cli/` | Cobra command definitions (root, init, crag, problem, status, tui, belayer, setter, message, mail) |
+| CLI commands | `internal/cli/` | Cobra command definitions (root, init, crag, problem, status, belayer, setter, message, mail) |
 | Belayer Config | `internal/belayerconfig/` | Config loader with resolution chain (crag > global > embedded defaults) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
 | Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles, setter session commands) via `embed.FS` |
@@ -61,7 +61,7 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
 | Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_rename_crag.sql) |
 | Model | `internal/model/` | Domain types and status enums |
-| Instance | `internal/instance/` | Crag lifecycle (create, load, delete, worktree management) |
+| Crag | `internal/instance/` | Crag lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
 | Belayer | `internal/belayer/` | DAG executor daemon. Manages leads, spotters, and anchors |
 | Lead | `internal/lead/` | Lead execution runner, store, ClaudeSpawner (interactive sessions via tmux) |
@@ -70,7 +70,6 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Intake | `internal/intake/` | Problem intake pipeline (text/Jira parsing, sufficiency check, interactive brainstorm) |
 | Coordinator | `internal/coordinator/` | Coordinator engine (state machine, agentic nodes, retry scheduler) |
 | Mail | `internal/mail/` | Filesystem-backed inter-agent mail system (message types, address resolution, FileStore, templates, tmux delivery, send/read) |
-| TUI | `internal/tui/` | bubbletea dashboard (model, views, styles, keys, read-only store) |
 
 ## Data Flow
 
