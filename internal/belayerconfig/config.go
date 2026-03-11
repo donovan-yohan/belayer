@@ -15,6 +15,9 @@ type Config struct {
 	Execution  ExecutionConfig  `toml:"execution"`
 	Validation ValidationConfig `toml:"validation"`
 	Anchor     AnchorConfig     `toml:"anchor"`
+	Tracker    TrackerConfig    `toml:"tracker"`
+	Review     ReviewConfig     `toml:"review"`
+	PR         PRConfig         `toml:"pr"`
 }
 
 // AgentsConfig configures the AI agent provider and models.
@@ -45,6 +48,35 @@ type ValidationConfig struct {
 type AnchorConfig struct {
 	Enabled     bool `toml:"enabled"`
 	MaxAttempts int  `toml:"max_attempts"`
+}
+
+// TrackerConfig configures the issue tracker integration.
+type TrackerConfig struct {
+	Provider     string              `toml:"provider"`
+	Label        string              `toml:"label"`
+	SyncInterval string              `toml:"sync_interval"`
+	GitHub       TrackerGitHubConfig `toml:"github"`
+	Jira         TrackerJiraConfig   `toml:"jira"`
+}
+
+type TrackerGitHubConfig struct{}
+
+type TrackerJiraConfig struct {
+	BaseURL string `toml:"base_url"`
+	Project string `toml:"project"`
+}
+
+// ReviewConfig controls PR review and CI fix behaviour.
+type ReviewConfig struct {
+	PollInterval  string `toml:"poll_interval"`
+	CIFixAttempts int    `toml:"ci_fix_attempts"`
+	AutoMerge     bool   `toml:"auto_merge"`
+}
+
+// PRConfig controls pull request creation settings.
+type PRConfig struct {
+	StackThreshold int  `toml:"stack_threshold"`
+	Draft          bool `toml:"draft"`
 }
 
 // Load resolves configuration with precedence: crag > global > embedded defaults.

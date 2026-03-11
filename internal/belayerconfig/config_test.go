@@ -94,3 +94,28 @@ func TestLoadProfile_NotFound(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
+
+func TestLoadConfig_TrackerAndReviewDefaults(t *testing.T) {
+	cfg, err := Load("", "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Tracker.Provider != "github" {
+		t.Errorf("Tracker.Provider = %q, want %q", cfg.Tracker.Provider, "github")
+	}
+	if cfg.Tracker.Label != "belayer" {
+		t.Errorf("Tracker.Label = %q, want %q", cfg.Tracker.Label, "belayer")
+	}
+	if cfg.Review.CIFixAttempts != 2 {
+		t.Errorf("Review.CIFixAttempts = %d, want 2", cfg.Review.CIFixAttempts)
+	}
+	if cfg.Review.PollInterval != "60s" {
+		t.Errorf("Review.PollInterval = %q, want %q", cfg.Review.PollInterval, "60s")
+	}
+	if cfg.PR.StackThreshold != 1000 {
+		t.Errorf("PR.StackThreshold = %d, want 1000", cfg.PR.StackThreshold)
+	}
+	if !cfg.PR.Draft {
+		t.Error("PR.Draft should be true by default")
+	}
+}

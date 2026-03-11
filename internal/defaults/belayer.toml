@@ -19,3 +19,23 @@ browser_tool = "chrome-devtools"
 [anchor]
 enabled = true
 max_attempts = 2
+
+[tracker]
+provider = "github"
+label = "belayer"
+sync_interval = "24h"
+
+[tracker.github]
+
+[tracker.jira]
+base_url = ""
+project = ""
+
+[review]
+poll_interval = "60s"
+ci_fix_attempts = 2
+auto_merge = false
+
+[pr]
+stack_threshold = 1000
+draft = true
