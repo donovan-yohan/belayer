@@ -118,7 +118,7 @@ func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir str
 
 // Init initializes the problem: creates worktrees, tmux session, and builds the DAG.
 // Returns ready climbs that should be queued for spawning.
-func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
+func (tr *ProblemRunner) Init(ctx context.Context) ([]QueuedClimb, error) {
 	// Update problem status to running
 	if err := tr.store.UpdateProblemStatus(tr.task.ID, model.ProblemStatusRunning); err != nil {
 		return nil, fmt.Errorf("updating problem status: %w", err)
@@ -142,7 +142,7 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 
 	// Create worktrees — via environment provider or direct git worktree creation.
 	if tr.envClient != nil {
-		createResp, err := tr.envClient.CreateEnv(context.Background(), tr.task.ID, "")
+		createResp, err := tr.envClient.CreateEnv(ctx, tr.task.ID, "")
 		if err != nil {
 			return nil, fmt.Errorf("creating environment: %w", err)
 		}
@@ -150,13 +150,23 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 		if err := tr.store.InsertEnvironment(tr.task.ID,
 			fmt.Sprintf("%s %s", tr.envClient.Command, tr.envClient.Subcommand),
 			tr.task.ID, string(envJSON)); err != nil {
+			// Best-effort destroy the env we just created
+			_ = tr.envClient.DestroyEnv(context.Background(), tr.task.ID)
 			return nil, fmt.Errorf("storing environment: %w", err)
 		}
 		for repoName := range repos {
 			branch := fmt.Sprintf("belayer/%s/%s", tr.task.ID, repoName)
-			wtResp, err := tr.envClient.AddWorktree(context.Background(), tr.task.ID, repoName, branch, "")
+			wtResp, err := tr.envClient.AddWorktree(ctx, tr.task.ID, repoName, branch, "")
 			if err != nil {
+				// Clean up: destroy environment and remove DB record
+				_ = tr.envClient.DestroyEnv(context.Background(), tr.task.ID)
+				_ = tr.store.DeleteEnvironment(tr.task.ID)
 				return nil, fmt.Errorf("adding worktree for %s: %w", repoName, err)
+			}
+			if wtResp == nil {
+				_ = tr.envClient.DestroyEnv(context.Background(), tr.task.ID)
+				_ = tr.store.DeleteEnvironment(tr.task.ID)
+				return nil, fmt.Errorf("adding worktree for %s: nil response", repoName)
 			}
 			tr.worktrees[repoName] = wtResp.Path
 		}
@@ -617,7 +627,9 @@ func (tr *ProblemRunner) Cleanup() {
 
 	// Destroy the environment via provider (removes worktrees and associated resources).
 	if tr.envClient != nil {
-		if err := tr.envClient.DestroyEnv(context.Background(), tr.task.ID); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := tr.envClient.DestroyEnv(cleanupCtx, tr.task.ID); err != nil {
 			log.Printf("warning: failed to destroy environment: %v", err)
 		}
 	}

@@ -334,13 +334,13 @@ func newEnvListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all environments",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			s, _, cleanup, err := openCragStore(cragName)
+			s, cragDir, cleanup, err := openCragStore(cragName)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			resp, err := env.List(s)
+			resp, err := env.List(s, cragDir)
 			if err != nil {
 				return err
 			}

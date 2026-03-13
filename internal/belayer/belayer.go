@@ -133,7 +133,7 @@ func (s *Belayer) tick(ctx context.Context) error {
 	s.syncTracker(ctx)
 
 	// 1. Poll for new pending problems
-	if err := s.pollPendingProblems(); err != nil {
+	if err := s.pollPendingProblems(ctx); err != nil {
 		return fmt.Errorf("polling pending problems: %w", err)
 	}
 
@@ -289,7 +289,7 @@ func (s *Belayer) tick(ctx context.Context) error {
 }
 
 // pollPendingProblems picks up new pending problems and initializes them.
-func (s *Belayer) pollPendingProblems() error {
+func (s *Belayer) pollPendingProblems(ctx context.Context) error {
 	pending, err := s.store.GetPendingProblems(s.config.CragName)
 	if err != nil {
 		return err
@@ -312,7 +312,7 @@ func (s *Belayer) pollPendingProblems() error {
 			}
 		}
 		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg, envClient)
-		readyClimbs, err := runner.Init()
+		readyClimbs, err := runner.Init(ctx)
 		if err != nil {
 			log.Printf("belayer: error initializing problem %s: %v", task.ID, err)
 			s.store.UpdateProblemStatus(task.ID, model.ProblemStatusStuck)

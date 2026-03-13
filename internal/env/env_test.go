@@ -144,14 +144,14 @@ func TestList(t *testing.T) {
 	envID := "env-test-5"
 	s, cragDir := setupTestCrag(t, envID)
 
-	resp, err := List(s)
+	resp, err := List(s, cragDir)
 	require.NoError(t, err)
 	assert.Empty(t, resp.Environments)
 
 	_, err = Create(s, cragDir, envID, "")
 	require.NoError(t, err)
 
-	resp, err = List(s)
+	resp, err = List(s, cragDir)
 	require.NoError(t, err)
 	require.Len(t, resp.Environments, 1)
 	assert.Equal(t, envID, resp.Environments[0].Name)

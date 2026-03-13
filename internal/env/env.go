@@ -102,7 +102,7 @@ func Logs(name, service string) (*envprovider.LogsEnvResponse, error) {
 }
 
 // List returns a summary of all environments.
-func List(s *store.Store) (*envprovider.ListEnvsResponse, error) {
+func List(s *store.Store, cragDir string) (*envprovider.ListEnvsResponse, error) {
 	envs, err := s.ListEnvironments()
 	if err != nil {
 		return nil, fmt.Errorf("listing environments: %w", err)
@@ -110,10 +110,19 @@ func List(s *store.Store) (*envprovider.ListEnvsResponse, error) {
 
 	summaries := make([]envprovider.EnvSummary, len(envs))
 	for i, e := range envs {
+		var wtCount int
+		tasksDir := filepath.Join(cragDir, "tasks", e.EnvName)
+		if entries, err := os.ReadDir(tasksDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					wtCount++
+				}
+			}
+		}
 		summaries[i] = envprovider.EnvSummary{
 			Name:          e.EnvName,
 			Index:         i,
-			WorktreeCount: 0,
+			WorktreeCount: wtCount,
 			CreatedAt:     e.CreatedAt.Format(time.RFC3339),
 		}
 	}

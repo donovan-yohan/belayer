@@ -61,6 +61,9 @@ func (c *Client) run(ctx context.Context, action string, flags ...string) ([]byt
 			if jsonErr := json.Unmarshal(payload, &errResp); jsonErr == nil && errResp.Error != "" {
 				return nil, fmt.Errorf("envprovider %s: %s (code: %s)", action, errResp.Error, errResp.Code)
 			}
+			if len(payload) == 0 {
+				return nil, fmt.Errorf("envprovider %s: exit %d (no output)", action, exitErr.ExitCode())
+			}
 			return nil, fmt.Errorf("envprovider %s: exit %d: %s", action, exitErr.ExitCode(), string(payload))
 		}
 		return nil, fmt.Errorf("envprovider %s: %w", action, err)
