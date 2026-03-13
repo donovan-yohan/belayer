@@ -13,18 +13,27 @@ import (
 type Client struct {
 	Command    string
 	Subcommand string
+	CragName   string
 }
 
 // NewClient creates a Client that invokes [command subcommand action --flags... --json].
-func NewClient(command, subcommand string) *Client {
-	return &Client{Command: command, Subcommand: subcommand}
+// cragName is appended as --crag <name> to every command when non-empty.
+func NewClient(command, subcommand, cragName string) *Client {
+	return &Client{Command: command, Subcommand: subcommand, CragName: cragName}
 }
 
 // run executes the provider command for the given action and flags, always appending --json.
 // On non-zero exit it attempts to parse an ErrorResponse from output and returns a descriptive error.
 func (c *Client) run(ctx context.Context, action string, flags ...string) ([]byte, error) {
-	args := make([]string, 0, 2+len(flags)+1)
+	baseSize := 2 + len(flags) + 1
+	if c.CragName != "" {
+		baseSize += 2
+	}
+	args := make([]string, 0, baseSize)
 	args = append(args, c.Subcommand, action)
+	if c.CragName != "" {
+		args = append(args, "--crag", c.CragName)
+	}
 	args = append(args, flags...)
 	args = append(args, "--json")
 

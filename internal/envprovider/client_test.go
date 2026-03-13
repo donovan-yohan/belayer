@@ -66,7 +66,7 @@ func TestClient_CreateEnv(t *testing.T) {
 		},
 	})
 
-	c := NewClient(script, "env")
+	c := NewClient(script, "env", "")
 	resp, err := c.CreateEnv(context.Background(), "dev-1", "")
 	if err != nil {
 		t.Fatalf("CreateEnv: %v", err)
@@ -103,7 +103,7 @@ exit 0
 		t.Fatalf("write script: %v", err)
 	}
 
-	c := NewClient(script, "env")
+	c := NewClient(script, "env", "")
 	resp, err := c.CreateEnv(context.Background(), "dev-snap", "snap-1")
 	if err != nil {
 		t.Fatalf("CreateEnv with snapshot: %v", err)
@@ -124,7 +124,7 @@ func TestClient_AddWorktree(t *testing.T) {
 		},
 	})
 
-	c := NewClient(script, "env")
+	c := NewClient(script, "env", "")
 	resp, err := c.AddWorktree(context.Background(), "dev-1", "myrepo", "feature-x", "")
 	if err != nil {
 		t.Fatalf("AddWorktree: %v", err)
@@ -143,7 +143,7 @@ func TestClient_ErrorResponse(t *testing.T) {
 		},
 	})
 
-	c := NewClient(script, "env")
+	c := NewClient(script, "env", "")
 	_, err := c.CreateEnv(context.Background(), "dev-1", "")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -166,7 +166,7 @@ func TestClient_ListEnvs(t *testing.T) {
 		},
 	})
 
-	c := NewClient(script, "env")
+	c := NewClient(script, "env", "")
 	resp, err := c.ListEnvs(context.Background())
 	if err != nil {
 		t.Fatalf("ListEnvs: %v", err)
@@ -181,7 +181,7 @@ func TestClient_DestroyEnv(t *testing.T) {
 		"destroy": map[string]string{"status": "ok"},
 	})
 
-	c := NewClient(script, "env")
+	c := NewClient(script, "env", "")
 	if err := c.DestroyEnv(context.Background(), "dev-1"); err != nil {
 		t.Fatalf("DestroyEnv: %v", err)
 	}

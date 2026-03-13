@@ -13,6 +13,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/crag"
+	"github.com/donovan-yohan/belayer/internal/envprovider"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
@@ -303,10 +304,14 @@ func (s *Belayer) pollPendingProblems() error {
 		log.Printf("belayer: initializing problem %s", task.ID)
 
 		var prCfg belayerconfig.PRConfig
+		var envClient *envprovider.Client
 		if s.belayerCfg != nil {
 			prCfg = s.belayerCfg.PR
+			if s.belayerCfg.Environment.Command != "" {
+				envClient = envprovider.NewClient(s.belayerCfg.Environment.Command, s.belayerCfg.Environment.Subcommand, s.config.CragName)
+			}
 		}
-		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg)
+		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg, envClient)
 		readyClimbs, err := runner.Init()
 		if err != nil {
 			log.Printf("belayer: error initializing problem %s: %v", task.ID, err)
@@ -354,10 +359,14 @@ func (s *Belayer) recover() error {
 		log.Printf("belayer: recovering problem %s (status=%s)", task.ID, task.Status)
 
 		var prCfg belayerconfig.PRConfig
+		var envClient *envprovider.Client
 		if s.belayerCfg != nil {
 			prCfg = s.belayerCfg.PR
+			if s.belayerCfg.Environment.Command != "" {
+				envClient = envprovider.NewClient(s.belayerCfg.Environment.Command, s.belayerCfg.Environment.Subcommand, s.config.CragName)
+			}
 		}
-		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg)
+		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg, envClient)
 
 		// Load climbs and build DAG (skip worktree creation since they should exist)
 		climbs, err := s.store.GetClimbsForProblem(task.ID)

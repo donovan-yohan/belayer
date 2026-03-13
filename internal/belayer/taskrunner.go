@@ -18,6 +18,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/climbctx"
 	"github.com/donovan-yohan/belayer/internal/defaults"
 	"github.com/donovan-yohan/belayer/internal/crag"
+	"github.com/donovan-yohan/belayer/internal/envprovider"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
 	"github.com/donovan-yohan/belayer/internal/model"
@@ -71,6 +72,7 @@ type ProblemRunner struct {
 	git         GitRunner
 	scm         scm.SCMProvider
 	prConfig    belayerconfig.PRConfig
+	envClient   *envprovider.Client // nil = legacy direct worktree creation
 	startedAt   map[string]time.Time // climbID -> when it started running
 
 	// Config directories for prompt/profile resolution.
@@ -91,7 +93,8 @@ type ProblemRunner struct {
 }
 
 // NewProblemRunner creates a ProblemRunner for the given problem.
-func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp *lead.SpawnerSet, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig) *ProblemRunner {
+// envClient may be nil, in which case Init falls back to direct crag worktree creation.
+func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp *lead.SpawnerSet, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig, envClient *envprovider.Client) *ProblemRunner {
 	return &ProblemRunner{
 		task:                 task,
 		worktrees:            make(map[string]string),
@@ -105,6 +108,7 @@ func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir str
 		git:                  &RealGitRunner{},
 		scm:                  scmProvider,
 		prConfig:             prCfg,
+		envClient:            envClient,
 		startedAt:            make(map[string]time.Time),
 		validationEnabled:    true,
 		repoSpotterActivated: make(map[string]bool),
@@ -136,13 +140,34 @@ func (tr *ProblemRunner) Init() ([]QueuedClimb, error) {
 		repos[climb.RepoName] = true
 	}
 
-	// Create worktrees
-	for repoName := range repos {
-		worktreePath, err := crag.CreateWorktree(tr.cragDir, tr.task.ID, repoName)
+	// Create worktrees — via environment provider or direct git worktree creation.
+	if tr.envClient != nil {
+		createResp, err := tr.envClient.CreateEnv(context.Background(), tr.task.ID, "")
 		if err != nil {
-			return nil, fmt.Errorf("creating worktree for %s: %w", repoName, err)
+			return nil, fmt.Errorf("creating environment: %w", err)
 		}
-		tr.worktrees[repoName] = worktreePath
+		envJSON, _ := json.Marshal(createResp)
+		if err := tr.store.InsertEnvironment(tr.task.ID,
+			fmt.Sprintf("%s %s", tr.envClient.Command, tr.envClient.Subcommand),
+			tr.task.ID, string(envJSON)); err != nil {
+			return nil, fmt.Errorf("storing environment: %w", err)
+		}
+		for repoName := range repos {
+			branch := fmt.Sprintf("belayer/%s/%s", tr.task.ID, repoName)
+			wtResp, err := tr.envClient.AddWorktree(context.Background(), tr.task.ID, repoName, branch, "")
+			if err != nil {
+				return nil, fmt.Errorf("adding worktree for %s: %w", repoName, err)
+			}
+			tr.worktrees[repoName] = wtResp.Path
+		}
+	} else {
+		for repoName := range repos {
+			worktreePath, err := crag.CreateWorktree(tr.cragDir, tr.task.ID, repoName)
+			if err != nil {
+				return nil, fmt.Errorf("creating worktree for %s: %w", repoName, err)
+			}
+			tr.worktrees[repoName] = worktreePath
+		}
 	}
 
 	// Set problem directory for VERDICT.json
@@ -590,6 +615,13 @@ func (tr *ProblemRunner) Cleanup() {
 	}
 	tr.logMgr.CompressTaskLogs(tr.task.ID)
 
+	// Destroy the environment via provider (removes worktrees and associated resources).
+	if tr.envClient != nil {
+		if err := tr.envClient.DestroyEnv(context.Background(), tr.task.ID); err != nil {
+			log.Printf("warning: failed to destroy environment: %v", err)
+		}
+	}
+
 	// Clean up mail for this problem
 	mailTaskDir := filepath.Join(tr.cragDir, "mail", "problem", tr.task.ID)
 	if err := os.RemoveAll(mailTaskDir); err != nil {
@@ -1000,9 +1032,10 @@ func (tr *ProblemRunner) HandleApproval(ctx context.Context) error {
 
 		title := fmt.Sprintf("[belayer] Problem %s: %s", tr.task.ID, repoName)
 		opts := model.PROptions{
-			Title: title,
-			Body:  "Created by belayer.",
-			Draft: tr.prConfig.Draft,
+			Title:      title,
+			Body:       "Created by belayer.",
+			HeadBranch: branchName,
+			Draft:      tr.prConfig.Draft,
 		}
 		if tr.scm == nil {
 			log.Printf("warning: no SCM provider configured, skipping PR creation for %s", repoName)
