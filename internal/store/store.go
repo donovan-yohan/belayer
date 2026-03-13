@@ -653,6 +653,27 @@ func (s *Store) DeleteEnvironment(problemID string) error {
 	return err
 }
 
+// ListEnvironments returns all environment records ordered by created_at ASC.
+func (s *Store) ListEnvironments() ([]model.Environment, error) {
+	rows, err := s.db.Query(
+		`SELECT problem_id, provider_command, env_name, env_json, created_at FROM environments ORDER BY created_at ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying environments: %w", err)
+	}
+	defer rows.Close()
+
+	var envs []model.Environment
+	for rows.Next() {
+		var e model.Environment
+		if err := rows.Scan(&e.ProblemID, &e.ProviderCommand, &e.EnvName, &e.EnvJSON, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning environment: %w", err)
+		}
+		envs = append(envs, e)
+	}
+	return envs, rows.Err()
+}
+
 // UpdateClimbWorktreePath sets the worktree_path for a climb.
 func (s *Store) UpdateClimbWorktreePath(climbID, worktreePath string) error {
 	_, err := s.db.Exec(`UPDATE climbs SET worktree_path = ? WHERE id = ?`, worktreePath, climbID)
