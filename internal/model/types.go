@@ -123,3 +123,12 @@ type ClimbSpec struct {
 	Description string   `json:"description"`
 	DependsOn   []string `json:"depends_on"`
 }
+
+// Environment records the provider command and env vars for a problem.
+type Environment struct {
+	ProblemID       string    `json:"problem_id"`
+	ProviderCommand string    `json:"provider_command"`
+	EnvName         string    `json:"env_name"`
+	EnvJSON         string    `json:"env_json"`
+	CreatedAt       time.Time `json:"created_at"`
+}

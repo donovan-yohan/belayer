@@ -722,6 +722,71 @@ func TestInsertAndListPRReactions(t *testing.T) {
 	assert.False(t, reactions[0].CreatedAt.IsZero())
 }
 
+func TestInsertGetDeleteEnvironment(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-env-1")
+
+	err := s.InsertEnvironment("prob-env-1", "myenv start", "dev", `{"FOO":"bar"}`)
+	require.NoError(t, err)
+
+	got, err := s.GetEnvironment("prob-env-1")
+	require.NoError(t, err)
+	assert.Equal(t, "prob-env-1", got.ProblemID)
+	assert.Equal(t, "myenv start", got.ProviderCommand)
+	assert.Equal(t, "dev", got.EnvName)
+	assert.Equal(t, `{"FOO":"bar"}`, got.EnvJSON)
+	assert.False(t, got.CreatedAt.IsZero())
+
+	err = s.DeleteEnvironment("prob-env-1")
+	require.NoError(t, err)
+
+	_, err = s.GetEnvironment("prob-env-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestGetEnvironmentNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	_, err := s.GetEnvironment("nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestUpdateAndGetClimbWorktreePath(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertProblem(&model.Problem{
+		ID: "prob-wt", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, []model.Climb{
+		{ID: "c-wt", ProblemID: "prob-wt", RepoName: "api", Description: "climb", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	})
+	require.NoError(t, err)
+
+	path, err := s.GetClimbWorktreePath("c-wt")
+	require.NoError(t, err)
+	assert.Equal(t, "", path)
+
+	err = s.UpdateClimbWorktreePath("c-wt", "/tmp/worktrees/c-wt")
+	require.NoError(t, err)
+
+	path, err = s.GetClimbWorktreePath("c-wt")
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/worktrees/c-wt", path)
+}
+
+func TestGetClimbWorktreePathNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	_, err := s.GetClimbWorktreePath("nonexistent")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
 func TestInsertClimbs(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)

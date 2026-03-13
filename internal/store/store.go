@@ -618,6 +618,60 @@ func (s *Store) ListPRReactions(prID int64) ([]model.PRReaction, error) {
 	return reactions, rows.Err()
 }
 
+// InsertEnvironment inserts an environment record for a problem.
+func (s *Store) InsertEnvironment(problemID, providerCommand, envName, envJSON string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO environments (problem_id, provider_command, env_name, env_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+		problemID, providerCommand, envName, envJSON, time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("inserting environment: %w", err)
+	}
+	return nil
+}
+
+// GetEnvironment retrieves the environment record for a problem.
+func (s *Store) GetEnvironment(problemID string) (*model.Environment, error) {
+	row := s.db.QueryRow(
+		`SELECT problem_id, provider_command, env_name, env_json, created_at FROM environments WHERE problem_id = ?`,
+		problemID,
+	)
+	e := &model.Environment{}
+	err := row.Scan(&e.ProblemID, &e.ProviderCommand, &e.EnvName, &e.EnvJSON, &e.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("environment for problem %q not found", problemID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scanning environment: %w", err)
+	}
+	return e, nil
+}
+
+// DeleteEnvironment removes the environment record for a problem.
+func (s *Store) DeleteEnvironment(problemID string) error {
+	_, err := s.db.Exec(`DELETE FROM environments WHERE problem_id = ?`, problemID)
+	return err
+}
+
+// UpdateClimbWorktreePath sets the worktree_path for a climb.
+func (s *Store) UpdateClimbWorktreePath(climbID, worktreePath string) error {
+	_, err := s.db.Exec(`UPDATE climbs SET worktree_path = ? WHERE id = ?`, worktreePath, climbID)
+	return err
+}
+
+// GetClimbWorktreePath returns the worktree_path for a climb.
+func (s *Store) GetClimbWorktreePath(climbID string) (string, error) {
+	var path string
+	err := s.db.QueryRow(`SELECT worktree_path FROM climbs WHERE id = ?`, climbID).Scan(&path)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("climb %q not found", climbID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("scanning worktree_path: %w", err)
+	}
+	return path, nil
+}
+
 // InsertClimbs inserts multiple climbs in a single transaction.
 // This is used for correction climbs from spotter redistribution.
 func (s *Store) InsertClimbs(climbs []model.Climb) error {
