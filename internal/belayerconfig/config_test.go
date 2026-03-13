@@ -95,6 +95,14 @@ func TestLoadProfile_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestLoadConfig_EnvironmentDefaults(t *testing.T) {
+	cfg, err := Load("", "")
+	require.NoError(t, err)
+	assert.Equal(t, "belayer", cfg.Environment.Command)
+	assert.Equal(t, "env", cfg.Environment.Subcommand)
+	assert.Equal(t, "", cfg.Environment.Snapshot)
+}
+
 func TestLoadConfig_TrackerAndReviewDefaults(t *testing.T) {
 	cfg, err := Load("", "")
 	if err != nil {

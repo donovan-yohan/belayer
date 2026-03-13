@@ -39,3 +39,8 @@ auto_merge = false
 [pr]
 stack_threshold = 1000
 draft = true
+
+[environment]
+command = "belayer"
+subcommand = "env"
+snapshot = ""

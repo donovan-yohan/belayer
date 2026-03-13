@@ -11,13 +11,21 @@ import (
 
 // Config holds the full belayer configuration.
 type Config struct {
-	Agents     AgentsConfig     `toml:"agents"`
-	Execution  ExecutionConfig  `toml:"execution"`
-	Validation ValidationConfig `toml:"validation"`
-	Anchor     AnchorConfig     `toml:"anchor"`
-	Tracker    TrackerConfig    `toml:"tracker"`
-	Review     ReviewConfig     `toml:"review"`
-	PR         PRConfig         `toml:"pr"`
+	Agents      AgentsConfig      `toml:"agents"`
+	Execution   ExecutionConfig   `toml:"execution"`
+	Validation  ValidationConfig  `toml:"validation"`
+	Anchor      AnchorConfig      `toml:"anchor"`
+	Tracker     TrackerConfig     `toml:"tracker"`
+	Review      ReviewConfig      `toml:"review"`
+	PR          PRConfig          `toml:"pr"`
+	Environment EnvironmentConfig `toml:"environment"`
+}
+
+// EnvironmentConfig configures the environment snapshot provider.
+type EnvironmentConfig struct {
+	Command    string `toml:"command"`
+	Subcommand string `toml:"subcommand"`
+	Snapshot   string `toml:"snapshot"`
 }
 
 // AgentsConfig configures the AI agent provider and models.
