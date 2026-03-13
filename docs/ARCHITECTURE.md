@@ -52,14 +52,14 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Module | Path | Purpose |
 |--------|------|---------|
 | CLI entry | `cmd/belayer/main.go` | Binary entry point |
-| CLI commands | `internal/cli/` | Cobra command definitions (root, init, crag, problem, status, belayer, setter, message, mail, tracker, pr) |
+| CLI commands | `internal/cli/` | Cobra command definitions (root, init, crag, problem, status, belayer, setter, message, mail, tracker, pr, env) |
 | Belayer Config | `internal/belayerconfig/` | Config loader with resolution chain (crag > global > embedded defaults) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
 | Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles, setter session commands) via `embed.FS` |
 | Manage | `internal/manage/` | Setter session workspace preparation (PrepareManageDir: renders CLAUDE.md template, copies slash commands) |
 | Climb Context | `internal/climbctx/` | GOAL.json types (LeadClimb, SpotterClimb, AnchorClimb) and writer |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
-| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql, 002_rename_crag.sql, 003_rename_instance_to_crag.sql, 004_planning_review_hats.sql) |
+| Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql through 005_environments.sql) |
 | Model | `internal/model/` | Domain types and status enums |
 | Crag | `internal/crag/` | Crag lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
@@ -74,6 +74,8 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Mail | `internal/mail/` | Filesystem-backed inter-agent mail system (message types, address resolution, FileStore, templates, tmux delivery, send/read) |
 | Tracker | `internal/tracker/` | Tracker plugin interface + GitHub Issues implementation (via `gh` CLI). Spec assembly agentic node for converting issues to problem specs |
 | SCM | `internal/scm/` | SCM provider interface + GitHub PR implementation (via `gh` CLI). PR stacking logic, PR body generation agentic node |
+| Env Provider | `internal/envprovider/` | Provider client: shells out to configured command (e.g., `belayer env`, `extend env`) for environment lifecycle, parses JSON responses |
+| Env (builtin) | `internal/env/` | Default `belayer env` provider implementation: wraps bare-repo + worktree logic behind the JSON contract |
 | Review | `internal/review/` | Reaction engine: event classification (CI failures, reviews, comments), decision logic, action dispatch |
 
 ## Data Flow

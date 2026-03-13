@@ -27,6 +27,7 @@ Defined across `internal/db/migrations/`. Key tables:
 | `leads` | Execution loop state per repo per problem |
 | `events` | Audit trail of all state changes |
 | `agentic_decisions` | Outputs from ephemeral Claude sessions |
+| `environments` | Provider-managed environments (per-problem, stores JSON response) |
 
 Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and foreign keys enabled.
 
@@ -84,6 +85,19 @@ Leads run as full interactive agent sessions (not single-shot) via the `AgentSpa
 - Stuck detection: log file mtime silence monitoring + pane capture for input prompt detection
 - Tmux windows use `remain-on-exit on` for exit status inspection via `#{pane_dead}`
 - .lead/ directory maintained for crash recovery
+
+## Environment Provider
+
+The daemon uses a single provider model for all environment lifecycle operations (creating worktrees, provisioning infrastructure). Instead of separate code paths for builtin vs. external environments, the daemon always shells out to a configured command and parses JSON responses.
+
+- **Config**: `[environment]` section in `belayer.toml` specifies `command` (default: "belayer") and `subcommand` (default: "env")
+- **Default provider**: `belayer env` wraps existing bare-repo + worktree logic behind the JSON contract
+- **External providers**: e.g., `extend env` for fullstack projects with Docker, DB, port isolation
+- **Swapping is config-only**: Change `command = "extend"` in belayer.toml — no code changes
+- **Worktree paths as data**: Daemon stores paths returned by the provider, not computed from convention
+- **Per-problem environments**: Leads within a problem share infra; simultaneous problems get separate environments
+- **JSON contract**: `create`, `add-worktree`, `remove-worktree`, `reset`, `destroy`, `status`, `logs`, `list` — all with `--json` flag
+- **Cleanup on failure**: If CreateEnv succeeds but AddWorktree fails, environment is destroyed (no orphans)
 
 ## Repo Isolation
 
@@ -156,6 +170,7 @@ The belayer daemon (`internal/belayer/`) is the central orchestration layer:
 | `belayer pr list` | List monitored PRs |
 | `belayer pr show <number>` | Detailed PR view with reaction history |
 | `belayer pr retry <number>` | Reset CI fix count for manual retry |
+| `belayer env create/add-worktree/destroy/...` | Environment provider CLI (default provider wrapping bare-repo + worktree logic) |
 | `belayer setter` | Launch interactive Claude session with belayer context (.claude/ workspace) |
 
 ## Setter Session Context
@@ -178,7 +193,7 @@ Resolution chain: crag config > global config > embedded defaults.
 - `belayerconfig.Load()` merges TOML configs following the chain
 - `belayerconfig.LoadProfile()` resolves validation profiles from config dirs
 - Embedded defaults via Go `embed.FS` in `internal/defaults/`
-- `belayer.toml` schema: `[agents]`, `[execution]`, `[validation]`, `[anchor]` sections
+- `belayer.toml` schema: `[agents]`, `[execution]`, `[validation]`, `[anchor]`, `[environment]` sections
 - **Validation profiles**: Human-readable TOML checklists the LLM interprets
 
 ## Environment Preparation
