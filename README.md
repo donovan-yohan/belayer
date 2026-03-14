@@ -32,6 +32,24 @@ Lead  Lead   Lead   Lead     (parallel, isolated worktrees)
 - **Belayer** — Deterministic Go daemon; polls SQLite, manages DAG execution, enforces concurrency limits
 - **Lead** — Ephemeral agent session per climb (Claude Code or Codex CLI); runs in an isolated git worktree
 
+## Claude Code Marketplace
+
+This repository is a valid [Claude Code marketplace](https://github.com/anthropics/claude-code-plugins) plugin repository. It vendors two plugins that are automatically available when you work in this project:
+
+- **harness** (`plugins/harness/`) — 3-tier documentation system with living execution plans: brainstorm, bug, refactor, plan, orchestrate, complete, and the strangler-fig refactoring skill
+- **pr** (`plugins/pr/`) — Pull request lifecycle management: authoring, reviewing, resolving, and updating PRs
+
+### Installing the plugins
+
+These plugins are vendored in the `plugins/` directory and are picked up automatically by Claude Code when working in this repo. No additional installation is needed for contributors.
+
+If you want to use these plugins in **other projects**, install them from the marketplace:
+
+```bash
+claude plugin add donovan-yohan/belayer --path plugins/harness
+claude plugin add donovan-yohan/belayer --path plugins/pr
+```
+
 ## Prerequisites
 
 - **Go 1.24+**
