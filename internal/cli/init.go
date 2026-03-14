@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const githubRepo = "donovanyohan/belayer"
+const githubRepo = "donovan-yohan/belayer"
 
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{

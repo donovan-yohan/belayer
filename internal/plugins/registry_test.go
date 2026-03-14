@@ -11,7 +11,7 @@ func TestRegisterMarketplace_WritesNewEntry(t *testing.T) {
 	dir := t.TempDir()
 	r := NewRegistry(dir)
 
-	err := r.RegisterMarketplace("donovanyohan/belayer")
+	err := r.RegisterMarketplace("donovan-yohan/belayer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -34,8 +34,8 @@ func TestRegisterMarketplace_IdempotentSkipsExisting(t *testing.T) {
 	dir := t.TempDir()
 	r := NewRegistry(dir)
 
-	_ = r.RegisterMarketplace("donovanyohan/belayer")
-	err := r.RegisterMarketplace("donovanyohan/belayer")
+	_ = r.RegisterMarketplace("donovan-yohan/belayer")
+	err := r.RegisterMarketplace("donovan-yohan/belayer")
 	if err != nil {
 		t.Fatalf("second call should not error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestRegisterMarketplace_CorruptJSONReturnsError(t *testing.T) {
 	os.WriteFile(filepath.Join(pluginsDir, "known_marketplaces.json"), []byte("{not valid json"), 0644)
 
 	r := NewRegistry(dir)
-	err := r.RegisterMarketplace("donovanyohan/belayer")
+	err := r.RegisterMarketplace("donovan-yohan/belayer")
 	if err == nil {
 		t.Fatal("expected error for corrupt JSON, got nil")
 	}
@@ -124,7 +124,7 @@ func TestRegisterMarketplace_MergesWithExistingFile(t *testing.T) {
 	os.WriteFile(filepath.Join(pluginsDir, "known_marketplaces.json"), []byte(existing), 0644)
 
 	r := NewRegistry(dir)
-	err := r.RegisterMarketplace("donovanyohan/belayer")
+	err := r.RegisterMarketplace("donovan-yohan/belayer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

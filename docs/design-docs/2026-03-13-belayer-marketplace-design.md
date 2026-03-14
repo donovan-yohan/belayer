@@ -89,7 +89,7 @@ Writes to `~/.claude/plugins/known_marketplaces.json`:
   "belayer": {
     "source": {
       "source": "github",
-      "repo": "donovanyohan/belayer"
+      "repo": "donovan-yohan/belayer"
     },
     "installLocation": "~/.claude/plugins/marketplaces/belayer",
     "lastUpdated": "<timestamp>",
@@ -126,7 +126,7 @@ Writes to `~/.claude/plugins/installed_plugins.json`:
 `belayer init` only writes JSON entries to the two registry files — it does not clone or cache anything itself. Claude Code lazily handles the GitHub clone on its next launch or marketplace update cycle. The flow:
 
 1. `belayer init` writes marketplace entry to `known_marketplaces.json` and plugin entries to `installed_plugins.json`
-2. On next Claude Code session start, Claude Code sees the new marketplace, clones `donovanyohan/belayer` into `~/.claude/plugins/marketplaces/belayer/`, and caches plugins under `~/.claude/plugins/cache/belayer/`
+2. On next Claude Code session start, Claude Code sees the new marketplace, clones `donovan-yohan/belayer` into `~/.claude/plugins/marketplaces/belayer/`, and caches plugins under `~/.claude/plugins/cache/belayer/`
 3. Subsequent updates happen via Claude Code's normal auto-update (git pull)
 
 **Note:** The registry file formats are based on observed structure of existing Claude Code installations. If the format changes upstream, this logic will need to be updated.
