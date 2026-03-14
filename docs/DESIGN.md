@@ -222,6 +222,15 @@ Climbing metaphors throughout:
 
 > The **setter** defines **problems** at the **crag**. The **belayer** sends **leads** up their **climbs**. When they **top** out, the **spotter** validates. If no retries were needed, it was **flashed**.
 
+## Plugin Marketplace
+
+The belayer repo doubles as a Claude Code marketplace. A `.claude-plugin/marketplace.json` at the repo root lists bundled plugins, and `plugins/` contains their source (markdown commands, agents, skills).
+
+- **Bundled plugins**: `harness` (documentation + execution workflow) and `pr` (PR lifecycle management)
+- **Auto-install**: `belayer init` registers the belayer GitHub repo as a marketplace in Claude Code's `~/.claude/plugins/` registry
+- **Canonical source**: Belayer owns these plugins. Changes flow from here back to llm-agents, not the reverse.
+- **Atomic writes**: Registry file updates use temp-file + rename to avoid corrupting Claude Code's plugin state on interrupt
+
 ## See Also
 
 - [Architecture](ARCHITECTURE.md) — module boundaries and data flow

@@ -74,6 +74,7 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Mail | `internal/mail/` | Filesystem-backed inter-agent mail system (message types, address resolution, FileStore, templates, tmux delivery, send/read) |
 | Tracker | `internal/tracker/` | Tracker plugin interface + GitHub Issues implementation (via `gh` CLI). Spec assembly agentic node for converting issues to problem specs |
 | SCM | `internal/scm/` | SCM provider interface + GitHub PR implementation (via `gh` CLI). PR stacking logic, PR body generation agentic node |
+| Plugins | `internal/plugins/` | Claude Code marketplace registration: writes to `~/.claude/plugins/` registry files during `belayer init` |
 | Env Provider | `internal/envprovider/` | Provider client: shells out to configured command (e.g., `belayer env`, `extend env`) for environment lifecycle, parses JSON responses |
 | Env (builtin) | `internal/env/` | Default `belayer env` provider implementation: wraps bare-repo + worktree logic behind the JSON contract |
 | Review | `internal/review/` | Reaction engine: event classification (CI failures, reviews, comments), decision logic, action dispatch |

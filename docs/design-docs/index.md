@@ -27,3 +27,5 @@
 | [2026-03-11-planning-review-hats-design](2026-03-11-planning-review-hats-design.md) | Planning hat (tracker intake) and review hat (PR monitoring, CI fix, review reaction) | 2026-03-11 |
 | [2026-03-11-multi-provider-spawner-design](2026-03-11-multi-provider-spawner-design.md) | Multi-provider AgentSpawner: CodexSpawner + factory function + config wiring | 2026-03-11 |
 | [2026-03-11-instance-to-crag-complete-rename-design](2026-03-11-instance-to-crag-complete-rename-design.md) | Complete instance→crag rename: package, config file, internal vars, docs | 2026-03-11 |
+| [2026-03-12-environment-provider-design](2026-03-12-environment-provider-design.md) | Environment provider interface for external tool integration (extend-cli) | 2026-03-12 |
+| [2026-03-13-belayer-marketplace-design](2026-03-13-belayer-marketplace-design.md) | Belayer marketplace: vendor harness + pr plugins, auto-install via `belayer init` | 2026-03-13 |
