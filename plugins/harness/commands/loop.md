@@ -39,25 +39,27 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
    - Determine the default branch: `git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'` — fall back to checking for `main` then `master` if that fails
    - Skip to "Multi-Goal Execution" (below Phase 9)
 
-3. Create the **Loop Decision Log** file at `docs/exec-plans/active/.loop-decision-log.md`:
+3. Derive a **slug** from the design doc filename for use in all loop artifacts. Strip the suffix (`-design.md`, `-bug-analysis.md`, `-refactor-scope.md`) to get the slug. For example, `docs/design-docs/auth-refactor-design.md` → slug `auth-refactor`.
+
+4. Create the **Loop Decision Log** file at `docs/exec-plans/active/.loop-decision-log-{slug}.md`:
    ```markdown
-   # Loop Decision Log
+   # Loop Decision Log: {slug}
    | Phase | Decision | Rationale | Alternatives Considered |
    |-------|----------|-----------|------------------------|
    ```
-   Append to this file after every autonomous decision throughout the loop. This persists across context and provides recovery state if the loop crashes.
+   Append to this file after every autonomous decision throughout the loop. This persists across context and provides recovery state if the loop crashes. The slug-based path ensures multiple concurrent loops do not collide.
 
 ### Phase 2: Plan
 
-4. Execute `/harness:plan` inline, passing the design doc path. Plan executes autonomously by default and requires no overrides.
+5. Execute `/harness:plan` inline, passing the design doc path. Plan executes autonomously by default and requires no overrides.
 
-5. Append to decision log: which design doc was used, any ambiguities resolved during planning.
+6. Append to decision log: which design doc was used, any ambiguities resolved during planning.
 
-6. Note the plan file path in `docs/exec-plans/active/` for subsequent phases.
+7. Note the plan file path in `docs/exec-plans/active/` for subsequent phases.
 
 ### Phase 3: Orchestrate (Autonomous)
 
-7. Execute `/harness:orchestrate` inline with the following overrides:
+8. Execute `/harness:orchestrate` inline with the following overrides:
 
    <LOOP_OVERRIDES>
    These overrides REPLACE conflicting instructions from /harness:orchestrate:
@@ -69,11 +71,11 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
    - **Decision logging:** For every non-trivial decision, append to the Loop Decision Log file.
    </LOOP_OVERRIDES>
 
-8. When orchestrate completes, append summary to decision log: tasks completed, surprises, drift entries.
+9. When orchestrate completes, append summary to decision log: tasks completed, surprises, drift entries.
 
 ### Phase 4: Review
 
-9. Execute `/harness:review` inline with the following overrides:
+10. Execute `/harness:review` inline with the following overrides:
 
    <LOOP_OVERRIDES>
    These overrides REPLACE conflicting instructions from /harness:review:
@@ -81,17 +83,17 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
    - **No resolution prompt:** Do not present the Phase 5 "Which approach?" options (review.md steps 8-9). Do not wait for user selection. Findings are auto-triaged as described below.
    </LOOP_OVERRIDES>
 
-10. **Auto-triage findings** using this rule:
+11. **Auto-triage findings** using this rule:
     - **Minor** (affects only readability, maintainability, or style — e.g., naming, comments, simplification, formatting): fix inline immediately
     - **Significant** (could cause incorrect behavior at runtime or in production — e.g., logic bugs, missing tests, security concerns, silent failures, inadequate error handling): collect into a fix task list
     - **When in doubt, treat as significant.**
     - Append each triage decision to the decision log with rationale
 
-11. If significant issues exist, proceed to Phase 5. Otherwise, skip to Phase 6.
+12. If significant issues exist, proceed to Phase 5. Otherwise, skip to Phase 6.
 
 ### Phase 5: Fix Cycle (max 2 iterations)
 
-12. Set `fix_iteration = 1`. Create a lightweight fix plan at `docs/exec-plans/active/.loop-fix-plan.md`:
+13. Set `fix_iteration = 1`. Create a lightweight fix plan at `docs/exec-plans/active/.loop-fix-plan-{slug}.md`:
     ```markdown
     # Fix Plan (Loop Iteration {fix_iteration})
 
@@ -114,26 +116,26 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
     ### Task 2: ...
     ```
 
-13. Execute `/harness:orchestrate` inline with:
+14. Execute `/harness:orchestrate` inline with:
     - The fix plan path (not the original plan)
     - Same `LOOP_OVERRIDES` as Phase 3 (no checkpoints, auto-resolve, decision logging)
 
-14. Re-run `/harness:review` inline (with Phase 4 LOOP_OVERRIDES) scoped to the fix commits only.
+15. Re-run `/harness:review` inline (with Phase 4 LOOP_OVERRIDES) scoped to the fix commits only.
 
-15. If new significant issues are found AND `fix_iteration == 1`:
+16. If new significant issues are found AND `fix_iteration == 1`:
     - Set `fix_iteration = 2`
     - Append to decision log: "Entering fix cycle iteration 2"
-    - Repeat steps 12-14
+    - Repeat steps 13-15
 
-16. If issues remain after iteration 2:
+17. If issues remain after iteration 2:
     - Append all unresolved issues to the decision log as "deferred"
     - Do NOT enter a third cycle — proceed to Phase 6
 
-17. Clean up: delete `docs/exec-plans/active/.loop-fix-plan.md`
+18. Clean up: delete `docs/exec-plans/active/.loop-fix-plan-{slug}.md`
 
 ### Phase 6: Reflect (Autonomous)
 
-18. Execute `/harness:reflect` inline with the following overrides:
+19. Execute `/harness:reflect` inline with the following overrides:
 
     <LOOP_OVERRIDES>
     These overrides REPLACE conflicting instructions from /harness:reflect:
@@ -145,7 +147,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
     - **Auto-approve doc fixes:** Apply all staleness fixes and doc updates without asking for confirmation. For file deletions: add a tombstone note to the file AND append the path to the decision log — do not delete the file.
     </LOOP_OVERRIDES>
 
-19. Check if prune is warranted:
+20. Check if prune is warranted:
     - Did reflect detect deleted-code staleness?
     - Has the project not been pruned in 30+ days? Check: `git log --all --oneline --grep="prune" --since="30 days ago"`
     - If either condition is true, execute `/harness:prune --fix` inline
@@ -153,7 +155,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 ### Phase 7: Complete (Autonomous)
 
-20. Execute `/harness:complete` inline with the following overrides:
+21. Execute `/harness:complete` inline with the following overrides:
 
     <LOOP_OVERRIDES>
     These overrides REPLACE conflicting instructions from /harness:complete:
@@ -165,17 +167,17 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 ### Phase 8: PR Decision
 
-21. Determine whether to open a PR by checking:
+22. Determine whether to open a PR by checking:
     - **Remote exists?** `git remote -v` — if no remote, skip PR
     - **Not on main/master?** If on main/master, skip PR (work is already on trunk)
     - **PR workflow present?** Check for `.github/` directory or CLAUDE.md mentions of PR requirements
     - **Project convention?** Check if CLAUDE.md has PR instructions
 
-22. If conditions favor a PR:
+23. If conditions favor a PR:
     - Try invoking `/pr:author`. If the command is not recognized, fall back to `gh pr create`
     - Append to decision log: "Opened PR — {rationale}"
 
-23. If conditions are unclear or unfavorable:
+24. If conditions are unclear or unfavorable:
     - Append to decision log: "Skipped PR — {rationale}"
     - Include recommendation in the final summary
 
@@ -183,7 +185,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 **Note:** If in multi-goal mode, skip this section — use the Multi-Goal Summary above instead.
 
-24. Read the full Loop Decision Log file. Output the complete summary:
+25. Read the full Loop Decision Log file. Output the complete summary:
 
     ```
     ## Loop Complete
@@ -211,7 +213,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
     - {or "Skipped — {reason}. Run `/pr:author` to create manually."}
     ```
 
-25. Clean up: delete `docs/exec-plans/active/.loop-decision-log.md`
+26. Clean up: delete `docs/exec-plans/active/.loop-decision-log-{slug}.md`
 
 ## Multi-Goal Execution
 
@@ -301,7 +303,7 @@ Then STOP the loop immediately and output:
 **Phase:** {which phase failed}
 **Reason:** {what went wrong}
 **State:** {what has been completed so far}
-**Decision Log:** {read and include full contents of .loop-decision-log.md}
+**Decision Log:** {read and include full contents of .loop-decision-log-{slug}.md}
 
 The plan remains active at: docs/exec-plans/active/{file}
 

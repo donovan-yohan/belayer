@@ -1,11 +1,11 @@
 {
   "name": "harness",
   "version": "2.1.0",
-  "description": "3-tier documentation system with living execution plans: brainstorm, bug, refactor, plan, orchestrate, complete",
+  "description": "3-tier documentation system with living execution plans: brainstorm, bug, refactor, plan, orchestrate, batch, complete",
   "author": {
     "name": "donovanyohan"
   },
-  "keywords": ["documentation", "claude-md", "planning", "brainstorm", "bug", "refactor", "strangler-fig", "orchestrate", "maintenance", "reflect", "loop", "autonomous"],
+  "keywords": ["documentation", "claude-md", "planning", "brainstorm", "bug", "refactor", "strangler-fig", "orchestrate", "batch", "maintenance", "reflect", "loop", "autonomous"],
   "agents": [
     "./agents/harness-pruner.md"
   ],
@@ -17,6 +17,7 @@
     "./commands/refactor-status.md",
     "./commands/plan.md",
     "./commands/orchestrate.md",
+    "./commands/batch.md",
     "./commands/review.md",
     "./commands/complete.md",
     "./commands/reflect.md",
