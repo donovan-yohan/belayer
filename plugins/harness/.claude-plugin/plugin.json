@@ -1,7 +1,7 @@
 {
   "name": "harness",
-  "version": "2.1.0",
-  "description": "3-tier documentation system with living execution plans: brainstorm, bug, refactor, plan, orchestrate, batch, complete",
+  "version": "2.2.0",
+  "description": "3-tier documentation system with living execution plans: brainstorm, bug, refactor, plan, orchestrate, batch, complete. Multi-persona review loops with configurable personas.",
   "author": {
     "name": "donovanyohan"
   },
