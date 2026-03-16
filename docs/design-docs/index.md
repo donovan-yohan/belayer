@@ -29,3 +29,5 @@
 | [2026-03-11-instance-to-crag-complete-rename-design](2026-03-11-instance-to-crag-complete-rename-design.md) | Complete instance→crag rename: package, config file, internal vars, docs | 2026-03-11 |
 | [2026-03-12-environment-provider-design](2026-03-12-environment-provider-design.md) | Environment provider interface for external tool integration (extend-cli) | 2026-03-12 |
 | [2026-03-13-belayer-marketplace-design](2026-03-13-belayer-marketplace-design.md) | Belayer marketplace: vendor harness + pr plugins, auto-install via `belayer init` | 2026-03-13 |
+| [2026-03-16-review-loops-test-infra-design](2026-03-16-review-loops-test-infra-design.md) | Multi-persona review loops, test contracts, spotter shift, persistent learnings | 2026-03-16 |
+| [2026-03-16-review-deferred-items-design](2026-03-16-review-deferred-items-design.md) | Test coverage, typed enums, HandleApproval bug fix | 2026-03-16 |

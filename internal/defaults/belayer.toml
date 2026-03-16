@@ -36,6 +36,10 @@ poll_interval = "60s"
 ci_fix_attempts = 2
 auto_merge = false
 
+[review_loop]
+max_review_cycles = 3
+max_spotter_cycles = 2
+
 [pr]
 stack_threshold = 1000
 draft = true

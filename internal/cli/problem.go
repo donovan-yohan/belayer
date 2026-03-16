@@ -3,12 +3,14 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/donovan-yohan/belayer/internal/db"
+	agenticpkg "github.com/donovan-yohan/belayer/internal/agentic"
 	"github.com/donovan-yohan/belayer/internal/crag"
+	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/spf13/cobra"
@@ -92,6 +94,35 @@ func newProblemCreateCmd() *cobra.Command {
 			defer database.Close()
 
 			s := store.New(database.Conn())
+
+			// Learning retrieval: surface relevant past learnings before creating the problem.
+			learnings, lErr := s.ListLearnings(resolvedName, true, "")
+			if lErr != nil {
+				log.Printf("warning: listing learnings: %v", lErr)
+			} else if len(learnings) > 0 {
+				result, rErr := agenticpkg.RunRetrieval(cmd.Context(), "sonnet", agenticpkg.RetrievalInput{
+					ProblemSpec: string(specContent),
+					Learnings:  learnings,
+				})
+				if rErr != nil {
+					log.Printf("warning: learning retrieval: %v", rErr)
+				} else if len(result.RelevantLearnings) > 0 {
+					fmt.Fprintln(cmd.OutOrStdout(), "\n--- Relevant Learnings ---")
+					for _, rl := range result.RelevantLearnings {
+						idPrefix := rl.ID
+						if len(idPrefix) > 8 {
+							idPrefix = idPrefix[:8]
+						}
+						fmt.Fprintf(cmd.OutOrStdout(), "  [%s] %s\n    → %s\n", idPrefix, rl.Description, rl.Recommendation)
+						// Increment access count for retrieved learnings
+						_ = s.IncrementLearningAccess(rl.ID)
+					}
+					if result.SetterGuidance != "" {
+						fmt.Fprintf(cmd.OutOrStdout(), "\n  Guidance: %s\n", result.SetterGuidance)
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), "---")
+				}
+			}
 
 			problemID := fmt.Sprintf("problem-%d", time.Now().UnixNano())
 			problem := &model.Problem{

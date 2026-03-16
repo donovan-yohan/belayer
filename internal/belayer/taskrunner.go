@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/agentic"
 	"github.com/donovan-yohan/belayer/internal/anchor"
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/climbctx"
@@ -72,6 +73,7 @@ type ProblemRunner struct {
 	git         GitRunner
 	scm         scm.SCMProvider
 	prConfig    belayerconfig.PRConfig
+	reviewLoop  belayerconfig.ReviewLoopConfig
 	envClient   *envprovider.Client // nil = legacy direct worktree creation
 	startedAt   map[string]time.Time // climbID -> when it started running
 
@@ -88,13 +90,19 @@ type ProblemRunner struct {
 	validationEnabled bool // when true, TOP.json triggers spotting instead of direct completion
 
 	// Repo-level spotter tracking
-	repoSpotterActivated map[string]bool // repo -> whether spotter has been activated
-	repoSpotterAttempts  map[string]int  // repo -> spotter attempt count
+	repoSpotterActivated     map[string]bool     // repo -> whether spotter has been activated
+	repoSpotterAttempts      map[string]int      // repo -> spotter attempt count
+	reviewIncompleteClimbIDs map[string]bool     // climbID -> true if TOP.json status was review_incomplete
+	// Populated during CheckCompletions; ActivateSpotter uses TOP.json directly instead.
+
+	// Cached learning retrieval — run once per problem, shared across all leads.
+	cachedLearnings     []climbctx.LeadLearning
+	learningsRetrieved  bool
 }
 
 // NewProblemRunner creates a ProblemRunner for the given problem.
 // envClient may be nil, in which case Init falls back to direct crag worktree creation.
-func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp *lead.SpawnerSet, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig, envClient *envprovider.Client) *ProblemRunner {
+func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp *lead.SpawnerSet, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig, reviewLoopCfg belayerconfig.ReviewLoopConfig, envClient *envprovider.Client) *ProblemRunner {
 	return &ProblemRunner{
 		task:                 task,
 		worktrees:            make(map[string]string),
@@ -108,11 +116,13 @@ func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir str
 		git:                  &RealGitRunner{},
 		scm:                  scmProvider,
 		prConfig:             prCfg,
+		reviewLoop:           reviewLoopCfg,
 		envClient:            envClient,
 		startedAt:            make(map[string]time.Time),
-		validationEnabled:    true,
-		repoSpotterActivated: make(map[string]bool),
-		repoSpotterAttempts:  make(map[string]int),
+		validationEnabled:        true,
+		repoSpotterActivated:     make(map[string]bool),
+		repoSpotterAttempts:      make(map[string]int),
+		reviewIncompleteClimbIDs: make(map[string]bool),
 	}
 }
 
@@ -133,12 +143,7 @@ func (tr *ProblemRunner) Init(ctx context.Context) ([]QueuedClimb, error) {
 
 	// Build DAG
 	tr.dag = BuildDAG(climbs)
-
-	// Get unique repos
-	repos := make(map[string]bool)
-	for _, climb := range climbs {
-		repos[climb.RepoName] = true
-	}
+	repos := tr.dag.UniqueRepos()
 
 	// Create worktrees — via environment provider or direct git worktree creation.
 	if tr.envClient != nil {
@@ -150,15 +155,13 @@ func (tr *ProblemRunner) Init(ctx context.Context) ([]QueuedClimb, error) {
 		if err := tr.store.InsertEnvironment(tr.task.ID,
 			fmt.Sprintf("%s %s", tr.envClient.Command, tr.envClient.Subcommand),
 			tr.task.ID, string(envJSON)); err != nil {
-			// Best-effort destroy the env we just created
 			_ = tr.envClient.DestroyEnv(context.Background(), tr.task.ID)
 			return nil, fmt.Errorf("storing environment: %w", err)
 		}
-		for repoName := range repos {
+		for _, repoName := range repos {
 			branch := fmt.Sprintf("belayer/%s/%s", tr.task.ID, repoName)
 			wtResp, err := tr.envClient.AddWorktree(ctx, tr.task.ID, repoName, branch, "")
 			if err != nil {
-				// Clean up: destroy environment and remove DB record
 				_ = tr.envClient.DestroyEnv(context.Background(), tr.task.ID)
 				_ = tr.store.DeleteEnvironment(tr.task.ID)
 				return nil, fmt.Errorf("adding worktree for %s: %w", repoName, err)
@@ -171,7 +174,7 @@ func (tr *ProblemRunner) Init(ctx context.Context) ([]QueuedClimb, error) {
 			tr.worktrees[repoName] = wtResp.Path
 		}
 	} else {
-		for repoName := range repos {
+		for _, repoName := range repos {
 			worktreePath, err := crag.CreateWorktree(tr.cragDir, tr.task.ID, repoName)
 			if err != nil {
 				return nil, fmt.Errorf("creating worktree for %s: %w", repoName, err)
@@ -195,7 +198,7 @@ func (tr *ProblemRunner) Init(ctx context.Context) ([]QueuedClimb, error) {
 	}
 
 	// Pre-create spotter windows (one per unique repo, deferred activation)
-	for repo := range repos {
+	for _, repo := range repos {
 		spotWindow := fmt.Sprintf("spot-%s", repo)
 		if err := tr.tmux.NewWindow(tr.tmuxSession, spotWindow); err != nil {
 			log.Printf("warning: failed to pre-create spotter window %s: %v", spotWindow, err)
@@ -214,6 +217,9 @@ func (tr *ProblemRunner) Init(ctx context.Context) ([]QueuedClimb, error) {
 		return nil, fmt.Errorf("ensuring log dir: %w", err)
 	}
 
+	// Pre-fetch learnings so SpawnClimb doesn't block the tick loop.
+	tr.retrieveLearnings()
+
 	// Find ready climbs
 	readyClimbs := tr.dag.ReadyClimbs()
 	var queued []QueuedClimb
@@ -228,17 +234,17 @@ func (tr *ProblemRunner) Init(ctx context.Context) ([]QueuedClimb, error) {
 func (tr *ProblemRunner) SpawnClimb(queued QueuedClimb) error {
 	climb := queued.Climb
 
-	// Guard: don't spawn if the climb is already running in the DAG
-	if dagClimb := tr.dag.Get(climb.ID); dagClimb != nil && dagClimb.Status == model.ClimbStatusRunning {
-		return nil
-	}
-
-	// If this is a retry after spotter failure, reset climb status to pending first
-	if dagClimb := tr.dag.Get(climb.ID); dagClimb != nil && dagClimb.Status == model.ClimbStatusFailed {
-		if err := tr.store.ResetClimbStatus(climb.ID); err != nil {
-			return fmt.Errorf("resetting climb status: %w", err)
+	// Guard: don't spawn if already running; reset if retrying after failure
+	if dagClimb := tr.dag.Get(climb.ID); dagClimb != nil {
+		switch dagClimb.Status {
+		case model.ClimbStatusRunning:
+			return nil
+		case model.ClimbStatusFailed:
+			if err := tr.store.ResetClimbStatus(climb.ID); err != nil {
+				return fmt.Errorf("resetting climb status: %w", err)
+			}
+			dagClimb.Status = model.ClimbStatusPending
 		}
-		dagClimb.Status = model.ClimbStatusPending
 	}
 
 	windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
@@ -268,13 +274,14 @@ func (tr *ProblemRunner) SpawnClimb(queued QueuedClimb) error {
 	}
 
 	if err := climbctx.WriteClimbJSON(worktreePath, climb.ID, climbctx.LeadClimb{
-		Role:            "lead",
-		ProblemSpec:     tr.task.Spec,
-		ClimbID:         climb.ID,
-		RepoName:        climb.RepoName,
-		Description:     climb.Description,
-		Attempt:         climb.Attempt,
-		SpotterFeedback: queued.SpotterFeedback,
+		Role:              "lead",
+		ProblemSpec:       tr.task.Spec,
+		ClimbID:           climb.ID,
+		RepoName:          climb.RepoName,
+		Description:       climb.Description,
+		Attempt:           climb.Attempt,
+		SpotterFeedback:   queued.SpotterFeedback,
+		RelevantLearnings: tr.retrieveLearnings(),
 	}); err != nil {
 		return fmt.Errorf("writing GOAL.json for %s: %w", climb.ID, err)
 	}
@@ -321,6 +328,52 @@ You are fully autonomous. Make decisions, document drift, and keep moving.`, goa
 	return nil
 }
 
+// retrieveLearnings returns cached relevant learnings for this problem.
+// Runs the learning retrieval agentic node on first call, caches the result
+// for all subsequent leads in the same problem.
+func (tr *ProblemRunner) retrieveLearnings() []climbctx.LeadLearning {
+	if tr.learningsRetrieved {
+		return tr.cachedLearnings
+	}
+	tr.learningsRetrieved = true
+
+	learnings, err := tr.store.ListLearnings(tr.task.CragID, true, "")
+	if err != nil {
+		log.Printf("warning: listing learnings for problem %s: %v", tr.task.ID, err)
+		return nil
+	}
+	if len(learnings) == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	result, err := agentic.RunRetrieval(ctx, "sonnet", agentic.RetrievalInput{
+		ProblemSpec: tr.task.Spec,
+		Learnings:  learnings,
+	})
+	if err != nil {
+		log.Printf("warning: learning retrieval failed for problem %s, leads will not receive past learnings: %v", tr.task.ID, err)
+		return nil
+	}
+
+	for _, rl := range result.RelevantLearnings {
+		tr.cachedLearnings = append(tr.cachedLearnings, climbctx.LeadLearning{
+			Description:    rl.Description,
+			Recommendation: rl.Recommendation,
+			Relevance:      rl.Relevance,
+		})
+		// Increment access count for retrieved learnings (best-effort)
+		_ = tr.store.IncrementLearningAccess(rl.ID)
+	}
+
+	if len(tr.cachedLearnings) > 0 {
+		log.Printf("belayer: %d relevant learnings retrieved for problem %s", len(tr.cachedLearnings), tr.task.ID)
+	}
+	return tr.cachedLearnings
+}
+
 // CheckCompletions scans worktrees for TOP.json files and returns newly unblocked climbs
 // and the number of climbs that completed this tick. When validation is enabled,
 // completing all climbs for a repo triggers per-repo spotter activation.
@@ -352,6 +405,11 @@ func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completed
 			return nil, 0, fmt.Errorf("updating climb status: %w", storeErr)
 		}
 
+		// Track review_incomplete leads so the spotter can be informed.
+		if top.Status == model.TopStatusReviewIncomplete {
+			tr.reviewIncompleteClimbIDs[climb.ID] = true
+		}
+
 		payload, _ := json.Marshal(top)
 		if eventErr := tr.store.InsertEvent(tr.task.ID, climb.ID, model.EventClimbCompleted, string(payload)); eventErr != nil {
 			return nil, 0, fmt.Errorf("inserting climb_completed event: %w", eventErr)
@@ -365,6 +423,8 @@ func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completed
 		tr.tmux.KillWindow(tr.tmuxSession, windowName)
 		tr.logMgr.CheckRotation(tr.task.ID, climb.ID)
 
+		// Gate spotter activation: all climbs for the repo must be topped (complete
+		// or review_incomplete — both are acceptable for spotter gating purposes).
 		if tr.validationEnabled && !tr.repoSpotterActivated[climb.RepoName] && tr.dag.AllClimbsForRepoTopped(climb.RepoName) {
 			if spotErr := tr.ActivateSpotter(climb.RepoName); spotErr != nil {
 				log.Printf("warning: failed to activate spotter for %s: %v", climb.RepoName, spotErr)
@@ -461,10 +521,10 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 			if err := tr.store.ResetClimbStatus(climb.ID); err != nil {
 				return nil, fmt.Errorf("resetting climb status: %w", err)
 			}
-			climb.Attempt++
-			tr.dag.Get(climb.ID).Status = model.ClimbStatusPending
-			tr.dag.Get(climb.ID).Attempt = climb.Attempt
-			retryClimbs = append(retryClimbs, QueuedClimb{Climb: *tr.dag.Get(climb.ID), TaskID: tr.task.ID})
+			dagClimb := tr.dag.Get(climb.ID)
+			dagClimb.Status = model.ClimbStatusPending
+			dagClimb.Attempt = climb.Attempt + 1
+			retryClimbs = append(retryClimbs, QueuedClimb{Climb: *dagClimb, TaskID: tr.task.ID})
 		}
 	}
 
@@ -528,35 +588,151 @@ func (tr *ProblemRunner) CheckRepoSpotResults() (resolvedCount int, newlyReady [
 		} else {
 			log.Printf("belayer: repo %s failed spotter validation with %d issues", repoName, len(spot.Issues))
 
-			feedback := SpotterFeedbackForGoal(&spot)
-			for _, c := range tr.dag.ClimbsForRepo(repoName) {
-				tr.dag.MarkFailed(c.ID)
-				if storeErr := tr.store.UpdateClimbStatus(c.ID, model.ClimbStatusFailed); storeErr != nil {
-					log.Printf("warning: failed to update climb status to failed for %s: %v", c.ID, storeErr)
+			// Check max spotter cycles before creating correction climbs.
+			maxCycles := tr.reviewLoop.MaxSpotterCycles
+			if maxCycles <= 0 {
+				maxCycles = 2 // fallback default
+			}
+			if tr.repoSpotterAttempts[repoName] >= maxCycles {
+				log.Printf("belayer: repo %s reached max spotter cycles (%d) — transitioning to needs_human", repoName, maxCycles)
+				tr.repoSpotterActivated[repoName] = false
+				if storeErr := tr.store.UpdateProblemStatus(tr.task.ID, model.ProblemStatusNeedsHuman); storeErr != nil {
+					log.Printf("warning: failed to update problem status to needs_human for %s: %v", tr.task.ID, storeErr)
 				}
-				if storeErr := tr.store.IncrementClimbAttempt(c.ID); storeErr != nil {
-					log.Printf("warning: failed to increment climb attempt for %s: %v", c.ID, storeErr)
+				tr.task.Status = model.ProblemStatusNeedsHuman
+				if evtErr := tr.store.InsertEvent(tr.task.ID, "", model.EventNeedsHuman,
+					fmt.Sprintf(`{"reason":"max_spotter_cycles_exceeded","repo":"%s","cycles":%d}`, repoName, tr.repoSpotterAttempts[repoName])); evtErr != nil {
+					log.Printf("warning: failed to insert needs_human event: %v", evtErr)
 				}
-				c.Attempt++
-				os.Remove(filepath.Join(worktreePath, ".lead", c.ID, "TOP.json"))
+				break // Stop processing — problem is escalated
+			}
 
-				if c.Attempt <= 3 {
-					if storeErr := tr.store.ResetClimbStatus(c.ID); storeErr != nil {
-						log.Printf("warning: failed to reset climb status for %s: %v", c.ID, storeErr)
+			// Create correction climbs from SPOT.json if provided; otherwise fall back
+			// to retrying the existing climbs with spotter feedback.
+			useFallback := true
+			if len(spot.CorrectionClimbs) > 0 {
+				correctionClimbs, createErr := tr.createSpotterCorrectionClimbs(repoName, worktreePath, &spot)
+				if createErr != nil {
+					log.Printf("warning: failed to create correction climbs for %s, falling back to retry: %v", repoName, createErr)
+					// Fall through to the existing-climb retry path below
+				} else {
+					retryClimbs = append(retryClimbs, correctionClimbs...)
+					tr.repoSpotterActivated[repoName] = false
+					useFallback = false
+				}
+			}
+			if useFallback {
+				// Fallback: retry existing climbs with spotter feedback.
+				feedback := SpotterFeedbackForGoal(&spot)
+				for _, c := range tr.dag.ClimbsForRepo(repoName) {
+					tr.dag.MarkFailed(c.ID)
+					if storeErr := tr.store.UpdateClimbStatus(c.ID, model.ClimbStatusFailed); storeErr != nil {
+						log.Printf("warning: failed to update climb status to failed for %s: %v", c.ID, storeErr)
 					}
-					c.Status = model.ClimbStatusPending
-					retryClimbs = append(retryClimbs, QueuedClimb{
-						Climb:           *c,
-						TaskID:          tr.task.ID,
-						SpotterFeedback: feedback,
-					})
+					if storeErr := tr.store.IncrementClimbAttempt(c.ID); storeErr != nil {
+						log.Printf("warning: failed to increment climb attempt for %s: %v", c.ID, storeErr)
+					}
+					c.Attempt++
+					os.Remove(filepath.Join(worktreePath, ".lead", c.ID, "TOP.json"))
+
+					if c.Attempt <= 3 {
+						if storeErr := tr.store.ResetClimbStatus(c.ID); storeErr != nil {
+							log.Printf("warning: failed to reset climb status for %s: %v", c.ID, storeErr)
+						}
+						c.Status = model.ClimbStatusPending
+						retryClimbs = append(retryClimbs, QueuedClimb{
+							Climb:           *c,
+							TaskID:          tr.task.ID,
+							SpotterFeedback: feedback,
+						})
+					}
 				}
 			}
 
+			// Reset spotter activation so it can re-activate after correction climbs complete.
 			tr.repoSpotterActivated[repoName] = false
 		}
 	}
 	return resolvedCount, newlyReady, retryClimbs, nil
+}
+
+// createSpotterCorrectionClimbs creates new Climb records from SPOT.json correction_climbs,
+// inserts them into SQLite and the DAG, removes old TOP.json files for the repo's climbs,
+// and returns them as QueuedClimbs ready for spawning.
+func (tr *ProblemRunner) createSpotterCorrectionClimbs(repoName, worktreePath string, spot *spotter.SpotJSON) ([]QueuedClimb, error) {
+	var correctionClimbs []model.Climb
+	var queued []QueuedClimb
+
+	cycleNum := tr.repoSpotterAttempts[repoName]
+
+	for i, cc := range spot.CorrectionClimbs {
+		climbID := fmt.Sprintf("%s-spot-corr-%d-%d", repoName, cycleNum, i+1)
+		c := model.Climb{
+			ID:          climbID,
+			ProblemID:   tr.task.ID,
+			RepoName:    repoName,
+			Description: cc.Description,
+			DependsOn:   []string{},
+			Status:      model.ClimbStatusPending,
+			Attempt:     1,
+		}
+		correctionClimbs = append(correctionClimbs, c)
+
+		// Build feedback string from the correction climb context and issues addressed.
+		var feedbackBuf strings.Builder
+		if len(cc.IssuesAddressed) > 0 {
+			feedbackBuf.WriteString("ISSUES TO ADDRESS:\n")
+			for _, issue := range cc.IssuesAddressed {
+				feedbackBuf.WriteString(fmt.Sprintf("- %s\n", issue))
+			}
+		}
+		if cc.Context != "" {
+			feedbackBuf.WriteString("\nCONTEXT:\n")
+			feedbackBuf.WriteString(cc.Context)
+			feedbackBuf.WriteString("\n")
+		}
+
+		queued = append(queued, QueuedClimb{
+			Climb:           c,
+			TaskID:          tr.task.ID,
+			SpotterFeedback: feedbackBuf.String(),
+		})
+	}
+
+	if len(correctionClimbs) == 0 {
+		return nil, nil
+	}
+
+	// Insert correction climbs into SQLite.
+	if err := tr.store.InsertClimbs(correctionClimbs); err != nil {
+		return nil, fmt.Errorf("inserting spotter correction climbs: %w", err)
+	}
+
+	// Remove old TOP.json files BEFORE adding correction climbs to the DAG,
+	// so we only clean up existing climbs, not the newly added ones.
+	for _, c := range tr.dag.ClimbsForRepo(repoName) {
+		os.Remove(filepath.Join(worktreePath, ".lead", c.ID, "TOP.json"))
+	}
+
+	// Add correction climbs to DAG so they can be tracked.
+	tr.dag.AddClimbs(correctionClimbs)
+
+	// Emit events for each correction climb.
+	for _, c := range correctionClimbs {
+		payload := fmt.Sprintf(`{"climb_id":"%s","repo":"%s","spotter_cycle":%d}`, c.ID, repoName, cycleNum)
+		if evtErr := tr.store.InsertEvent(tr.task.ID, c.ID, model.EventCorrectionClimbCreated, payload); evtErr != nil {
+			log.Printf("warning: failed to insert correction_climb_created event for %s: %v", c.ID, evtErr)
+		}
+	}
+
+	// Emit a spotter_correction_loop event summarising the cycle.
+	loopPayload := fmt.Sprintf(`{"repo":"%s","cycle":%d,"correction_climbs":%d}`, repoName, cycleNum, len(correctionClimbs))
+	if evtErr := tr.store.InsertEvent(tr.task.ID, "", model.EventSpotterCorrectionLoop, loopPayload); evtErr != nil {
+		log.Printf("warning: failed to insert spotter_correction_loop event: %v", evtErr)
+	}
+
+	log.Printf("belayer: created %d spotter correction climbs for repo %s (cycle %d)", len(correctionClimbs), repoName, cycleNum)
+	return queued, nil
 }
 
 // IsFlashed returns true if the repo was "flashed" — all climbs topped on first
@@ -585,11 +761,23 @@ func (tr *ProblemRunner) IsFullyFlashed() bool {
 
 // AllClimbsComplete returns true if all climbs in the DAG are complete and
 // no repo-level spotters are still active (waiting for SPOT.json).
+// This is the full completion check — use this to determine if a problem is done.
+// Contrast with AllLeadClimbsComplete, which only checks DAG completion and is
+// used to gate the transition from the running phase into the spotting phase.
 func (tr *ProblemRunner) AllClimbsComplete() bool {
-	if !tr.dag.AllComplete() {
-		return false
-	}
-	// Check that all activated spotters have resolved
+	return tr.dag.AllComplete() && tr.AllSpottersResolved()
+}
+
+// AllLeadClimbsComplete returns true if all lead climbs in the DAG are complete,
+// regardless of whether repo-level spotters have finished. Used to transition
+// from running to spotting state.
+func (tr *ProblemRunner) AllLeadClimbsComplete() bool {
+	return tr.dag.AllComplete()
+}
+
+// AllSpottersResolved returns true if no repo-level spotters are still active.
+// When combined with AllLeadClimbsComplete, indicates all spotting is done.
+func (tr *ProblemRunner) AllSpottersResolved() bool {
 	for _, activated := range tr.repoSpotterActivated {
 		if activated {
 			return false
@@ -849,8 +1037,10 @@ func (tr *ProblemRunner) ActivateSpotter(repoName string) error {
 		log.Printf("warning: set remain-on-exit for spotter %s failed: %v", windowName, err)
 	}
 
-	// Gather all TOP.json summaries for this repo
+	// Gather all TOP.json summaries for this repo, separating normal completions
+	// from review_incomplete leads (which need extra attention from the spotter).
 	var tops []climbctx.ClimbTopSummary
+	var reviewIncompleteTops []climbctx.ClimbTopSummary
 	for _, c := range tr.dag.ClimbsForRepo(repoName) {
 		topPath := filepath.Join(worktreePath, ".lead", c.ID, "TOP.json")
 		data, err := os.ReadFile(topPath)
@@ -863,14 +1053,22 @@ func (tr *ProblemRunner) ActivateSpotter(repoName string) error {
 			log.Printf("warning: invalid TOP.json for climb %s in spotter gather: %v", c.ID, err)
 			continue
 		}
-		tops = append(tops, climbctx.ClimbTopSummary{
+		summary := climbctx.ClimbTopSummary{
 			ClimbID:     c.ID,
 			Description: c.Description,
 			Status:      top.Status,
 			Summary:     top.Summary,
 			Notes:       top.Notes,
-		})
+		}
+		if top.Status == model.TopStatusReviewIncomplete {
+			reviewIncompleteTops = append(reviewIncompleteTops, summary)
+		} else {
+			tops = append(tops, summary)
+		}
 	}
+
+	// Extract test contract from the problem spec (the ## Test Contract section).
+	testContract := extractTestContract(tr.task.Spec)
 
 	// Write profiles
 	profiles, err := tr.writeProfiles(worktreePath, "spotter-"+repoName)
@@ -883,14 +1081,16 @@ func (tr *ProblemRunner) ActivateSpotter(repoName string) error {
 		return fmt.Errorf("reading spotter system prompt: %w", err)
 	}
 
-	// Write GOAL.json for spotter with per-repo context
+	// Write GOAL.json for spotter with per-repo context.
 	if err := climbctx.WriteClimbJSON(worktreePath, "spotter-"+repoName, climbctx.SpotterClimb{
-		Role:        "spotter",
-		RepoName:    repoName,
-		ProblemSpec: tr.task.Spec,
-		ClimbTops:   tops,
-		WorkDir:     worktreePath,
-		Profiles:    profiles,
+		Role:                  "spotter",
+		RepoName:              repoName,
+		ProblemSpec:           tr.task.Spec,
+		TestContract:          testContract,
+		ClimbTops:             tops,
+		ReviewIncompleteLeads: reviewIncompleteTops,
+		WorkDir:               worktreePath,
+		Profiles:              profiles,
 	}); err != nil {
 		return fmt.Errorf("writing spotter GOAL.json for %s: %w", repoName, err)
 	}
@@ -1189,4 +1389,21 @@ func looksLikeInputPrompt(content string) bool {
 	lastLine := strings.TrimSpace(lines[len(lines)-1])
 	// Claude Code shows ">" when waiting for input
 	return lastLine == ">" || strings.HasSuffix(lastLine, "> ")
+}
+
+// extractTestContract pulls the "## Test Contract" section from a spec string.
+// Returns the section content or empty string if not found.
+func extractTestContract(spec string) string {
+	const marker = "## Test Contract"
+	idx := strings.Index(spec, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := spec[idx+len(marker):]
+	// Find next ## heading to delimit the section
+	nextSection := strings.Index(rest, "\n## ")
+	if nextSection >= 0 {
+		return strings.TrimSpace(rest[:nextSection])
+	}
+	return strings.TrimSpace(rest)
 }

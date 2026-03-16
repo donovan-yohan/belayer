@@ -29,6 +29,7 @@ func NewRootCmd() *cobra.Command {
 		newPRCmd(),
 		newConfigCmd(),
 		newEnvCmd(),
+		newLearningsCmd(),
 	)
 
 	return cmd

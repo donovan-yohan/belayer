@@ -4,7 +4,7 @@ description: Use when implementation is done and code needs quality review, when
 
 # Review
 
-Code simplification and multi-perspective review on local changes. Run after `/harness:orchestrate`, before `/harness:reflect`.
+Multi-persona review loop on local changes. Runs review personas in parallel, fixes issues, and re-runs failing personas until all pass or max cycles reached. Run after `/harness:orchestrate`, before `/harness:complete`.
 
 ## Usage
 
@@ -34,75 +34,129 @@ Code simplification and multi-perspective review on local changes. Run after `/h
 
 3. **Apply `superpowers:verification-before-completion`** — run the project's verification commands (tests, build, lint, typecheck) BEFORE starting review. If verification fails, STOP and fix first. Do not review broken code.
 
-### Phase 3: Code Simplification
+### Phase 3: Persona Discovery
 
-4. Spawn a `code-simplifier:code-simplifier` agent (or invoke `/simplify` if available) scoped to the changed files. Let it make improvements directly.
+4. Look for `review-personas.toml` in the repo root. This file defines the review personas for this repo.
 
-5. If the simplifier made changes, commit them and re-run verification:
-   ```bash
-   git add {changed files}
-   git commit -m "refactor: simplify code from review"
-   ```
-   Verification must still pass after simplification.
+5. If `review-personas.toml` is missing:
+   - Detect repo type:
+     - `go.mod` present → backend
+     - `package.json` with React/Vue/Next/Svelte → frontend
+     - `package.json` with `bin` field → CLI
+     - `go.mod` with no `main` package → library
+     - Default → backend
+   - Read the matching template from `internal/defaults/personas/{type}.toml` (if in belayer repo) or use the built-in defaults below
+   - Generate `review-personas.toml` in the repo root and commit it:
+     ```bash
+     git add review-personas.toml
+     git commit -m "chore: add review personas config"
+     ```
 
-### Phase 4: Multi-Perspective Code Review
+6. Parse the personas file. Each persona has: `description`, `focus` (list of areas), `docs` (list of doc paths to read).
 
-6. Spawn all of the following agents **concurrently** via the Task tool, passing each the full diff and the list of changed files:
+### Phase 4: Multi-Persona Review Loop
 
-   | Agent | Focus |
-   |-------|-------|
-   | `pr-review-toolkit:code-reviewer` | Code quality, bugs, logic errors, style guide adherence |
-   | `pr-review-toolkit:silent-failure-hunter` | Silent failures, inadequate error handling, inappropriate fallbacks |
-   | `pr-review-toolkit:pr-test-analyzer` | Test coverage completeness, missing edge cases |
-   | `pr-review-toolkit:type-design-analyzer` | Type design quality, encapsulation, invariant expression |
-   | `pr-review-toolkit:comment-analyzer` | Comment accuracy, staleness, long-term maintainability |
-   | `pr-review-toolkit:code-simplifier` | Unnecessary complexity, DRY violations, code smells |
+7. Set `cycle = 1`, `max_cycles = 3` (or read from belayer.toml `[review_loop].max_review_cycles` if available), `failing_personas = all_personas`.
 
-   **Important:** These agents review the **local diff**, not a remote PR. Do not use `gh pr view` or PR numbers.
+8. **Review cycle loop** — repeat until all pass or `cycle > max_cycles`:
 
-   Wait for all agents to complete before proceeding.
+   a. For each persona in `failing_personas`, spawn a Claude Code subagent (via Agent tool) **in parallel**. Each subagent receives:
+      - The persona's description and focus areas
+      - The git diff (from Phase 1 scope)
+      - The contents of any docs listed in the persona's `docs` field
+      - The test contract from the active plan's design doc (if available)
+      - Instruction: "Review this diff from the perspective of {persona.description}. Focus on: {persona.focus}. Return JSON: `{ \"pass\": true/false, \"issues\": [{ \"file\": \"...\", \"line\": N, \"description\": \"...\", \"severity\": \"error|warning\" }] }`"
 
-7. Aggregate findings and present a consolidated review summary:
-   ```
-   ## Code Review Findings
+   b. Wait for all subagents to complete. Collect results.
 
-   **Agents run:** {completed}/{total} completed
-   **Total findings:** {total_findings}
+   c. Separate passing and failing personas.
 
-   ### [agent-name] ({agent_findings} findings)
-   - **file:line** — description
-   ...
-   ```
+   d. If all pass → exit loop.
 
-### Phase 5: Resolution
+   e. If any fail:
+      - Present findings grouped by persona
+      - Fix all reported issues inline (edit files directly)
+      - Re-run verification (tests/build must still pass after fixes)
+      - Commit fixes: `git commit -am "fix: address {persona} review findings (cycle {cycle})"`
+      - Set `failing_personas = only personas that failed`
+      - Increment `cycle`
 
-8. If findings need action, present options:
-   ```
-   ## Review found {N} issues
+9. After loop exits:
+   - If all passed: review is green
+   - If max cycles reached with failures remaining: note unresolved issues
 
-   Options:
-   1. Fix now — address findings inline (for minor issues)
-   2. `/harness:orchestrate` — create tasks for significant fixes
-   3. Defer — proceed to `/harness:reflect` with findings noted
+### Phase 5: Code Simplification
 
-   Which approach?
-   ```
+10. After the persona loop, spawn a `code-simplifier:code-simplifier` agent (or invoke `/simplify`) scoped to the changed files. Let it make improvements.
 
-9. If user chooses to fix now, apply fixes. **Re-run verification after fixes** — do not claim fixes are complete without fresh evidence.
+11. If the simplifier made changes, commit and re-run verification:
+    ```bash
+    git add {changed files}
+    git commit -m "refactor: simplify code from review"
+    ```
+
+### Phase 6: Resolution
+
+12. If unresolved persona issues remain after max cycles:
+    - Present options:
+      ```
+      ## Review: {N} unresolved issues after {max_cycles} cycles
+
+      Options:
+      1. Fix now — address remaining findings inline
+      2. `/harness:orchestrate` — create tasks for significant fixes
+      3. Defer — proceed with findings noted (TOP.json will be marked review_incomplete)
+
+      Which approach?
+      ```
+
+13. If user chooses to fix now, apply fixes and re-run verification.
 
 ### Report
 
-10. Output:
+14. Output:
     ```
     ## Review Complete
 
     **Scope:** {diff description}
     **Verification:** {passing — with evidence}
+    **Review cycles:** {N} of {max_cycles}
+    **Personas:** {passed}/{total} passed
     **Simplification:** {changes made | no changes needed}
-    **Review findings:** {N total across all agents}
-    **Resolved:** {N fixed | N deferred}
+
+    ### Per-Persona Results
+    | Persona | Status | Issues Found | Issues Resolved |
+    |---------|--------|-------------|-----------------|
+    | architect | pass | 2 | 2 |
+    | test-engineer | pass | 1 | 1 |
+    | domain-expert | pass | 0 | 0 |
+    | code-quality | fail | 3 | 1 |
+
+    ### Unresolved Issues
+    - {any remaining issues, or "None"}
 
     ## Next Step
 
-    Run `/harness:reflect` to capture learnings, update docs, and run the retrospective.
+    Run `/harness:complete` to archive the plan and commit all changes.
     ```
+
+## Built-in Default Personas
+
+If no template is available and the repo type cannot be determined, use these defaults:
+
+```toml
+[personas.test-engineer]
+description = "Reviews test coverage, test quality, and test contract compliance"
+focus = ["test coverage", "edge cases", "test contract satisfaction", "test isolation"]
+docs = []
+
+[personas.domain-expert]
+description = "Reviews business logic correctness and spec compliance"
+focus = ["acceptance criteria", "edge cases from spec", "domain invariants"]
+docs = []
+
+[personas.code-quality]
+description = "Reviews code style, performance, and maintainability"
+focus = ["naming", "complexity", "performance", "error handling"]
+docs = []
+```

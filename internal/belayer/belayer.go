@@ -139,10 +139,8 @@ func (s *Belayer) tick(ctx context.Context) error {
 
 	// 2. Process each active problem
 	for taskID, runner := range s.problems {
-		// Handle problem based on current status
-		taskStatus := runner.task.Status
-
-		if taskStatus == model.ProblemStatusRunning {
+		switch runner.task.Status {
+		case model.ProblemStatusRunning:
 			// Check for completed climbs (may transition to spotting if validation enabled)
 			newlyReady, completedCount, err := runner.CheckCompletions()
 			if err != nil {
@@ -156,8 +154,7 @@ func (s *Belayer) tick(ctx context.Context) error {
 			s.leadQueue = append(s.leadQueue, newlyReady...)
 
 			// Check repo-level spotter results for SPOT.json.
-			// Spotters do not occupy active lead slots, so resolvedCount is not
-			// subtracted from activeLeads.
+			// Spotters do not occupy active lead slots.
 			_, spotReady, spotRetry, spotErr := runner.CheckRepoSpotResults()
 			if spotErr != nil {
 				log.Printf("belayer: error checking spotting climbs for %s: %v", taskID, spotErr)
@@ -174,17 +171,16 @@ func (s *Belayer) tick(ctx context.Context) error {
 			}
 			s.leadQueue = append(s.leadQueue, retryClimbs...)
 
-			// Check if all climbs are complete -> transition to reviewing
-			if runner.AllClimbsComplete() {
+			// Check if all lead climbs are complete -> transition to spotting.
+			if runner.AllLeadClimbsComplete() {
 				if runner.IsFullyFlashed() {
 					log.Printf("belayer: problem %s was FULLY FLASHED! Every repo topped first try.", taskID)
 				}
-				log.Printf("belayer: all climbs complete for problem %s — transitioning to reviewing", taskID)
-				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusReviewing); err != nil {
+				log.Printf("belayer: all climbs complete for problem %s — transitioning to spotting", taskID)
+				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusSpotting); err != nil {
 					log.Printf("belayer: error updating problem status: %v", err)
 				}
-				runner.task.Status = model.ProblemStatusReviewing
-				// Anchor will be spawned on next tick when we handle reviewing
+				runner.task.Status = model.ProblemStatusSpotting
 				continue
 			}
 
@@ -198,14 +194,58 @@ func (s *Belayer) tick(ctx context.Context) error {
 				delete(s.problems, taskID)
 				continue
 			}
-		}
 
-		if taskStatus == model.ProblemStatusReviewing {
+		case model.ProblemStatusSpotting:
+			// Check repo-level spotter results for SPOT.json.
+			_, spotReady, spotRetry, spotErr := runner.CheckRepoSpotResults()
+			if spotErr != nil {
+				log.Printf("belayer: error checking spotter results for %s: %v", taskID, spotErr)
+				continue // Don't allow state transitions when spotter check failed
+			}
+			s.leadQueue = append(s.leadQueue, spotReady...)
+
+			// If CheckRepoSpotResults transitioned to needs_human internally,
+			// respect that — don't override with a different status.
+			if runner.task.Status == model.ProblemStatusNeedsHuman {
+				delete(s.problems, taskID)
+				continue
+			}
+
+			// If any spotter retry climbs were queued, go back to running state
+			if len(spotRetry) > 0 {
+				s.leadQueue = append(s.leadQueue, spotRetry...)
+				log.Printf("belayer: spotter rejected for problem %s — %d correction climbs queued, back to running", taskID, len(spotRetry))
+				if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusRunning); err != nil {
+					log.Printf("belayer: error updating problem status: %v", err)
+				}
+				runner.task.Status = model.ProblemStatusRunning
+				continue
+			}
+
+			// Check if all spotters have resolved (pass or no spotters active)
+			if !runner.AllSpottersResolved() {
+				continue
+			}
+
+			// All spotters passed — transition to reviewing
+			log.Printf("belayer: all spotters passed for problem %s — transitioning to reviewing", taskID)
+			if err := s.store.UpdateProblemStatus(taskID, model.ProblemStatusReviewing); err != nil {
+				log.Printf("belayer: error updating problem status: %v", err)
+			}
+			runner.task.Status = model.ProblemStatusReviewing
+			continue
+
+		case model.ProblemStatusReviewing:
 			// Skip anchor review for single-repo problems — no cross-repo alignment to check
 			if runner.IsSingleRepo() {
 				log.Printf("belayer: single-repo problem %s — skipping anchor, creating PR", taskID)
 				if err := runner.HandleApproval(ctx); err != nil {
 					log.Printf("belayer: error creating PRs for %s: %v", taskID, err)
+					if stErr := s.store.UpdateProblemStatus(taskID, model.ProblemStatusStuck); stErr != nil {
+						log.Printf("belayer: error updating status to stuck: %v", stErr)
+					}
+					runner.task.Status = model.ProblemStatusStuck
+					continue
 				}
 				runner.Cleanup()
 				delete(s.problems, taskID)
@@ -216,7 +256,6 @@ func (s *Belayer) tick(ctx context.Context) error {
 			if !runner.AnchorRunning() {
 				if err := runner.SpawnAnchor(); err != nil {
 					log.Printf("belayer: error spawning anchor for %s: %v", taskID, err)
-					continue
 				}
 				continue
 			}
@@ -232,9 +271,13 @@ func (s *Belayer) tick(ctx context.Context) error {
 			}
 
 			if verdict.Verdict == "approve" {
-				// Create PRs for all repos
 				if err := runner.HandleApproval(ctx); err != nil {
 					log.Printf("belayer: error creating PRs for %s: %v", taskID, err)
+					if stErr := s.store.UpdateProblemStatus(taskID, model.ProblemStatusStuck); stErr != nil {
+						log.Printf("belayer: error updating status to stuck: %v", stErr)
+					}
+					runner.task.Status = model.ProblemStatusStuck
+					continue
 				}
 				runner.Cleanup()
 				delete(s.problems, taskID)
@@ -265,6 +308,13 @@ func (s *Belayer) tick(ctx context.Context) error {
 			runner.task.Status = model.ProblemStatusRunning
 			s.leadQueue = append(s.leadQueue, correctionClimbs...)
 			log.Printf("belayer: problem %s back to running with %d correction climbs", taskID, len(correctionClimbs))
+
+		case model.ProblemStatusReflecting:
+			log.Printf("belayer: problem %s is reflecting (waiting for reflect node)", taskID)
+
+		case model.ProblemStatusNeedsHuman:
+			log.Printf("belayer: problem %s needs human intervention", taskID)
+			delete(s.problems, taskID)
 		}
 	}
 
@@ -288,6 +338,21 @@ func (s *Belayer) tick(ctx context.Context) error {
 	return nil
 }
 
+// newRunner creates a ProblemRunner with shared daemon configuration.
+func (s *Belayer) newRunner(task *model.Problem) *ProblemRunner {
+	var prCfg belayerconfig.PRConfig
+	var reviewLoopCfg belayerconfig.ReviewLoopConfig
+	var envClient *envprovider.Client
+	if s.belayerCfg != nil {
+		prCfg = s.belayerCfg.PR
+		reviewLoopCfg = s.belayerCfg.ReviewLoop
+		if s.belayerCfg.Environment.Command != "" {
+			envClient = envprovider.NewClient(s.belayerCfg.Environment.Command, s.belayerCfg.Environment.Subcommand, s.config.CragName)
+		}
+	}
+	return NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg, reviewLoopCfg, envClient)
+}
+
 // pollPendingProblems picks up new pending problems and initializes them.
 func (s *Belayer) pollPendingProblems(ctx context.Context) error {
 	pending, err := s.store.GetPendingProblems(s.config.CragName)
@@ -303,15 +368,7 @@ func (s *Belayer) pollPendingProblems(ctx context.Context) error {
 
 		log.Printf("belayer: initializing problem %s", task.ID)
 
-		var prCfg belayerconfig.PRConfig
-		var envClient *envprovider.Client
-		if s.belayerCfg != nil {
-			prCfg = s.belayerCfg.PR
-			if s.belayerCfg.Environment.Command != "" {
-				envClient = envprovider.NewClient(s.belayerCfg.Environment.Command, s.belayerCfg.Environment.Subcommand, s.config.CragName)
-			}
-		}
-		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg, envClient)
+		runner := s.newRunner(task)
 		readyClimbs, err := runner.Init(ctx)
 		if err != nil {
 			log.Printf("belayer: error initializing problem %s: %v", task.ID, err)
@@ -358,15 +415,7 @@ func (s *Belayer) recover() error {
 		task := &active[i]
 		log.Printf("belayer: recovering problem %s (status=%s)", task.ID, task.Status)
 
-		var prCfg belayerconfig.PRConfig
-		var envClient *envprovider.Client
-		if s.belayerCfg != nil {
-			prCfg = s.belayerCfg.PR
-			if s.belayerCfg.Environment.Command != "" {
-				envClient = envprovider.NewClient(s.belayerCfg.Environment.Command, s.belayerCfg.Environment.Subcommand, s.config.CragName)
-			}
-		}
-		runner := NewProblemRunner(task, s.config.CragDir, s.globalConfigDir, s.cragConfigDir, s.store, s.tmux, s.logMgr, s.spawners, s.scm, prCfg, envClient)
+		runner := s.newRunner(task)
 
 		// Load climbs and build DAG (skip worktree creation since they should exist)
 		climbs, err := s.store.GetClimbsForProblem(task.ID)
@@ -380,11 +429,7 @@ func (s *Belayer) recover() error {
 		runner.problemDir = filepath.Join(s.config.CragDir, "tasks", task.ID)
 
 		// Populate worktrees map
-		repos := make(map[string]bool)
-		for _, climb := range climbs {
-			repos[climb.RepoName] = true
-		}
-		for repoName := range repos {
+		for _, repoName := range runner.dag.UniqueRepos() {
 			runner.worktrees[repoName] = filepath.Join(s.config.CragDir, "tasks", task.ID, repoName)
 		}
 
@@ -419,16 +464,10 @@ func (s *Belayer) recover() error {
 			}
 			// If we have attempt records, a spotter was previously launched for this repo.
 			if runner.repoSpotterAttempts[repoName] > 0 {
-				// Check if SPOT.json already exists — if so, CheckRepoSpotResults will handle it.
-				worktreePath := runner.worktrees[repoName]
-				spotPath := filepath.Join(worktreePath, ".lead", "spotter-"+repoName, "SPOT.json")
-				if _, statErr := os.Stat(spotPath); statErr == nil {
-					// SPOT.json present: mark activated so CheckRepoSpotResults picks it up.
-					runner.repoSpotterActivated[repoName] = true
-				}
-				// If no SPOT.json, the spotter may have been running when we crashed.
-				// Re-activate it so the daemon waits for or retries the spotter.
-				// We mark activated so the poll loop doesn't re-spawn a duplicate.
+				// Mark activated regardless of whether SPOT.json exists:
+				// - If SPOT.json is present, CheckRepoSpotResults will handle it.
+				// - If not, the spotter may have been running when we crashed;
+				//   marking activated prevents the poll loop from re-spawning a duplicate.
 				runner.repoSpotterActivated[repoName] = true
 			}
 		}

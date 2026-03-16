@@ -31,13 +31,14 @@ Defined across `internal/db/migrations/`. Key tables:
 
 Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and foreign keys enabled.
 
-## Three-Layer Validation Pipeline
+## Validation Pipeline
 
-Validation flows through three layers after a lead completes a climb:
+Validation flows through four layers. See [review-loops-test-infra-design](design-docs/2026-03-16-review-loops-test-infra-design.md) for full design.
 
-1. **Lead** (self-check): Runs build + tests, writes `TOP.json` on completion
-2. **Spotter** (per-repo validation): Pre-created window activated when all climbs for a repo top. Validates the repo's complete body of work against the PRD. Writes `SPOT.json`. On failure, spotter feedback is injected into the lead prompt on retry.
-3. **Anchor** (cross-repo alignment): Reviews all repos for consistency after all leads/spotters pass. Writes `VERDICT.json`.
+1. **Lead** (multi-persona review loop): Runs implementation, then loops multi-persona review (max 3 cycles) until all personas pass. Personas configured per repo via `review-personas.toml`. Writes `TOP.json` on completion.
+2. **Spotter** (per-repo spec compliance): Activated when all climbs for a repo complete. Validates spec compliance, test contract fulfillment, and runtime correctness. Writes `SPOT.json`.
+3. **Anchor** (cross-repo alignment): Multi-repo problems only. Reviews all repos for cross-repo consistency with integration-focused personas after all spotters pass. Writes `VERDICT.json`.
+4. **Reflect** (learning capture): Classifies errors, extracts learnings to SQLite, surfaces system improvement recommendations. Runs after final validation, parallel with PR creation.
 
 ### Signal Files
 
@@ -114,9 +115,19 @@ Each agentic node:
 - Produces structured output (JSON to stdout, may be wrapped in markdown code fences)
 - `StripMarkdownJSON()` regex strips code fences before parsing
 - Process group isolation: `Setpgid: true` + custom `Cancel` kills entire process tree on context cancellation (prevents orphaned `claude` processes)
-- Results are parsed and stored in SQLite (`agentic_decisions` table)
+- Results are parsed and stored in SQLite
+- Implementation: `internal/agentic/` package provides `RunNode`, `RunNodeJSON`, `StripMarkdownJSON`
 
-Node types: sufficiency check, problem decomposition, **spotter** (per-repo runtime validation), **anchor** (cross-repo alignment), stuck analysis, **tracker spec assembly** (issue → problem spec), **PR body generation** (problem + climbs → PR title/body).
+Node types: sufficiency check, problem decomposition, **spotter** (per-repo spec compliance + runtime validation), **anchor** (cross-repo alignment), stuck analysis, **tracker spec assembly** (issue → problem spec), **PR body generation** (problem + climbs → PR title/body), **reflect** (error classification + learning capture), **learning retrieval** (surface relevant past learnings), **learning compaction** (consolidate learnings).
+
+## Persistent Learnings
+
+SQLite-backed system for capturing and retrieving insights across problems. See [review-loops-test-infra-design](design-docs/2026-03-16-review-loops-test-infra-design.md).
+
+- **Storage**: `learnings` table with category, severity, resolved flag, access count
+- **Retrieval**: Agentic node matches problem spec against active learnings; runs at CLI level during `belayer problem create`
+- **Compaction**: Agentic node merges duplicates and distills patterns; via `belayer learnings compact`
+- **CLI**: `belayer learnings list|show|add|compact`
 
 ## Problem Intake Pipeline
 

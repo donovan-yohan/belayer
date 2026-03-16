@@ -22,6 +22,8 @@ _None currently active._
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Review Deferred Items](exec-plans/completed/2026-03-16-review-deferred-items.md) | 2026-03-16 | Test coverage, typed enums, HandleApproval bug fix |
+| [Review Loops, Test Infra & Learnings](exec-plans/completed/2026-03-16-review-loops-test-infra.md) | 2026-03-16 | Multi-persona review loops, test contracts, spotter shift, persistent learnings |
 | [Belayer Marketplace](exec-plans/completed/2026-03-13-belayer-marketplace.md) | 2026-03-13 | Vendor harness + pr plugins, create marketplace, auto-install in init |
 | [Environment Provider](exec-plans/completed/2026-03-12-environment-provider.md) | 2026-03-13 | Single provider model with `belayer env` default + external provider support |
 | [Multi-Provider Spawner](exec-plans/completed/2026-03-11-multi-provider-spawner.md) | 2026-03-11 | CodexSpawner + factory function + config wiring |

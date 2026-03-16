@@ -17,6 +17,7 @@ type Config struct {
 	Anchor      AnchorConfig      `toml:"anchor"`
 	Tracker     TrackerConfig     `toml:"tracker"`
 	Review      ReviewConfig      `toml:"review"`
+	ReviewLoop  ReviewLoopConfig  `toml:"review_loop"`
 	PR          PRConfig          `toml:"pr"`
 	Environment EnvironmentConfig `toml:"environment"`
 }
@@ -82,6 +83,12 @@ type ReviewConfig struct {
 	PollInterval  string `toml:"poll_interval"`
 	CIFixAttempts int    `toml:"ci_fix_attempts"`
 	AutoMerge     bool   `toml:"auto_merge"`
+}
+
+// ReviewLoopConfig controls the iterative review loop behaviour.
+type ReviewLoopConfig struct {
+	MaxReviewCycles  int `toml:"max_review_cycles"`
+	MaxSpotterCycles int `toml:"max_spotter_cycles"`
 }
 
 // PRConfig controls pull request creation settings.

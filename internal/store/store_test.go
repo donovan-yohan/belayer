@@ -558,6 +558,256 @@ func TestLinkTrackerIssueToProblem(t *testing.T) {
 	assert.Equal(t, "prob-link", got.ProblemID)
 }
 
+// ── Learning store tests ──────────────────────────────────────────────────────
+
+func TestInsertAndGetLearning(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-learn-1")
+
+	l := model.Learning{
+		ID:             "learn-1",
+		CragID:         "test-crag",
+		ProblemID:      "prob-learn-1",
+		Category:       model.LearningCategoryTestGap,
+		Description:    "Missing unit tests for auth flow",
+		Recommendation: "Add table-driven tests for token validation",
+		Severity:       model.LearningSeverityHigh,
+		Resolved:       false,
+		AccessCount:    0,
+	}
+	err := s.InsertLearning(l)
+	require.NoError(t, err)
+
+	got, err := s.GetLearning("learn-1")
+	require.NoError(t, err)
+	assert.Equal(t, "learn-1", got.ID)
+	assert.Equal(t, "test-crag", got.CragID)
+	assert.Equal(t, "prob-learn-1", got.ProblemID)
+	assert.Equal(t, model.LearningCategoryTestGap, got.Category)
+	assert.Equal(t, "Missing unit tests for auth flow", got.Description)
+	assert.Equal(t, "Add table-driven tests for token validation", got.Recommendation)
+	assert.Equal(t, model.LearningSeverityHigh, got.Severity)
+	assert.False(t, got.Resolved)
+	assert.Equal(t, 0, got.AccessCount)
+	assert.False(t, got.CreatedAt.IsZero())
+}
+
+func TestInsertLearning_GeneratesUUID(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	l := model.Learning{
+		ID:          "", // empty — should generate UUID
+		CragID:      "test-crag",
+		Category:    model.LearningCategoryPattern,
+		Description: "Use context propagation consistently",
+		Severity:    model.LearningSeverityLow,
+	}
+	err := s.InsertLearning(l)
+	require.NoError(t, err)
+
+	learnings, err := s.ListLearnings("test-crag", false, "")
+	require.NoError(t, err)
+	require.Len(t, learnings, 1)
+	assert.NotEmpty(t, learnings[0].ID)
+	// A UUID is 36 chars: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	assert.Len(t, learnings[0].ID, 36)
+}
+
+func TestInsertLearning_NullProblemID(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	l := model.Learning{
+		ID:          "learn-null-prob",
+		CragID:      "test-crag",
+		ProblemID:   "", // should be stored as NULL
+		Category:    model.LearningCategoryInfraIssue,
+		Description: "CI flakiness in integration suite",
+		Severity:    model.LearningSeverityMedium,
+	}
+	err := s.InsertLearning(l)
+	require.NoError(t, err)
+
+	got, err := s.GetLearning("learn-null-prob")
+	require.NoError(t, err)
+	assert.Equal(t, "", got.ProblemID)
+}
+
+func TestListLearnings_ActiveOnly(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertLearning(model.Learning{
+		ID: "learn-active", CragID: "test-crag", Category: model.LearningCategoryPattern,
+		Description: "Active learning", Severity: model.LearningSeverityLow,
+	})
+	require.NoError(t, err)
+
+	err = s.InsertLearning(model.Learning{
+		ID: "learn-resolved", CragID: "test-crag", Category: model.LearningCategoryPattern,
+		Description: "Resolved learning", Severity: model.LearningSeverityLow,
+	})
+	require.NoError(t, err)
+	err = s.ResolveLearning("learn-resolved")
+	require.NoError(t, err)
+
+	all, err := s.ListLearnings("test-crag", false, "")
+	require.NoError(t, err)
+	assert.Len(t, all, 2)
+
+	active, err := s.ListLearnings("test-crag", true, "")
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, "learn-active", active[0].ID)
+}
+
+func TestListLearnings_CategoryFilter(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertLearning(model.Learning{
+		ID: "learn-cat-a", CragID: "test-crag", Category: model.LearningCategoryTestGap,
+		Description: "Test gap finding", Severity: model.LearningSeverityHigh,
+	})
+	require.NoError(t, err)
+
+	err = s.InsertLearning(model.Learning{
+		ID: "learn-cat-b", CragID: "test-crag", Category: model.LearningCategorySpecAmbiguity,
+		Description: "Spec was unclear", Severity: model.LearningSeverityMedium,
+	})
+	require.NoError(t, err)
+
+	testGap, err := s.ListLearnings("test-crag", false, "test_gap")
+	require.NoError(t, err)
+	require.Len(t, testGap, 1)
+	assert.Equal(t, "learn-cat-a", testGap[0].ID)
+
+	specAmb, err := s.ListLearnings("test-crag", false, "spec_ambiguity")
+	require.NoError(t, err)
+	require.Len(t, specAmb, 1)
+	assert.Equal(t, "learn-cat-b", specAmb[0].ID)
+}
+
+func TestResolveLearning(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertLearning(model.Learning{
+		ID: "learn-resolve-me", CragID: "test-crag", Category: model.LearningCategoryReviewMiss,
+		Description: "Review missed edge case", Severity: model.LearningSeverityMedium,
+	})
+	require.NoError(t, err)
+
+	got, err := s.GetLearning("learn-resolve-me")
+	require.NoError(t, err)
+	assert.False(t, got.Resolved)
+
+	err = s.ResolveLearning("learn-resolve-me")
+	require.NoError(t, err)
+
+	got, err = s.GetLearning("learn-resolve-me")
+	require.NoError(t, err)
+	assert.True(t, got.Resolved)
+}
+
+func TestIncrementLearningAccess(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertLearning(model.Learning{
+		ID: "learn-access", CragID: "test-crag", Category: model.LearningCategoryPattern,
+		Description: "Access counter test", Severity: model.LearningSeverityLow,
+	})
+	require.NoError(t, err)
+
+	err = s.IncrementLearningAccess("learn-access")
+	require.NoError(t, err)
+	err = s.IncrementLearningAccess("learn-access")
+	require.NoError(t, err)
+
+	got, err := s.GetLearning("learn-access")
+	require.NoError(t, err)
+	assert.Equal(t, 2, got.AccessCount)
+}
+
+func TestGetLearning_NotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	_, err := s.GetLearning("nonexistent-learning")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// ── GetActiveProblems recovery status tests ───────────────────────────────────
+
+func TestGetActiveProblems_IncludesSpotting(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertProblem(&model.Problem{
+		ID: "prob-spotting", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, nil)
+	require.NoError(t, err)
+	err = s.UpdateProblemStatus("prob-spotting", model.ProblemStatusSpotting)
+	require.NoError(t, err)
+
+	active, err := s.GetActiveProblems("test-crag")
+	require.NoError(t, err)
+
+	ids := make([]string, len(active))
+	for i, p := range active {
+		ids[i] = p.ID
+	}
+	assert.Contains(t, ids, "prob-spotting")
+}
+
+func TestGetActiveProblems_IncludesReflecting(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertProblem(&model.Problem{
+		ID: "prob-reflecting", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, nil)
+	require.NoError(t, err)
+	err = s.UpdateProblemStatus("prob-reflecting", model.ProblemStatusReflecting)
+	require.NoError(t, err)
+
+	active, err := s.GetActiveProblems("test-crag")
+	require.NoError(t, err)
+
+	ids := make([]string, len(active))
+	for i, p := range active {
+		ids[i] = p.ID
+	}
+	assert.Contains(t, ids, "prob-reflecting")
+}
+
+func TestGetActiveProblems_ExcludesNeedsHuman(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+
+	err := s.InsertProblem(&model.Problem{
+		ID: "prob-needs-human", CragID: "test-crag", Spec: "s", ClimbsJSON: "{}", Status: model.ProblemStatusPending,
+	}, nil)
+	require.NoError(t, err)
+	err = s.UpdateProblemStatus("prob-needs-human", model.ProblemStatusNeedsHuman)
+	require.NoError(t, err)
+
+	active, err := s.GetActiveProblems("test-crag")
+	require.NoError(t, err)
+
+	ids := make([]string, len(active))
+	for i, p := range active {
+		ids[i] = p.ID
+	}
+	assert.NotContains(t, ids, "prob-needs-human")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 func insertTestProblem(t *testing.T, s *Store, id string) {
 	t.Helper()
 	err := s.InsertProblem(&model.Problem{

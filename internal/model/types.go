@@ -19,6 +19,9 @@ const (
 	ProblemStatusReviewReacting ProblemStatus = "review_reacting"
 	ProblemStatusMerged         ProblemStatus = "merged"
 	ProblemStatusClosed         ProblemStatus = "closed"
+	ProblemStatusSpotting       ProblemStatus = "spotting"
+	ProblemStatusReflecting     ProblemStatus = "reflecting"
+	ProblemStatusNeedsHuman     ProblemStatus = "needs_human"
 )
 
 // ClimbStatus represents the lifecycle state of a climb.
@@ -59,7 +62,17 @@ const (
 	EventPRApproved               EventType = "pr_approved"
 	EventPRMerged                 EventType = "pr_merged"
 	EventPRClosed                 EventType = "pr_closed"
+	EventCorrectionClimbCreated   EventType = "correction_climb_created"
+	EventSpotterCorrectionLoop    EventType = "spotter_correction_loop"
+	EventReflectStarted           EventType = "reflect_started"
+	EventReflectCompleted         EventType = "reflect_completed"
+	EventLearningCaptured         EventType = "learning_captured"
+	EventNeedsHuman               EventType = "needs_human"
 )
+
+// TopStatusReviewIncomplete is used in TOP.json to indicate a lead completed
+// but the multi-persona review loop did not fully pass within the allowed cycles.
+const TopStatusReviewIncomplete = "review_incomplete"
 
 // Problem represents a work item submitted by the user.
 type Problem struct {
@@ -122,6 +135,40 @@ type ClimbSpec struct {
 	ID          string   `json:"id"`
 	Description string   `json:"description"`
 	DependsOn   []string `json:"depends_on"`
+}
+
+// LearningCategory classifies the type of a learning.
+type LearningCategory string
+
+const (
+	LearningCategoryTestGap       LearningCategory = "test_gap"
+	LearningCategorySpecAmbiguity LearningCategory = "spec_ambiguity"
+	LearningCategoryInfraIssue    LearningCategory = "infra_issue"
+	LearningCategoryReviewMiss    LearningCategory = "review_miss"
+	LearningCategoryPattern       LearningCategory = "pattern"
+)
+
+// LearningSeverity represents the impact level of a learning.
+type LearningSeverity string
+
+const (
+	LearningSeverityHigh   LearningSeverity = "high"
+	LearningSeverityMedium LearningSeverity = "medium"
+	LearningSeverityLow    LearningSeverity = "low"
+)
+
+// Learning records a captured insight from a review loop for a crag.
+type Learning struct {
+	ID             string
+	CragID         string
+	ProblemID      string
+	Category       LearningCategory
+	Description    string
+	Recommendation string
+	Severity       LearningSeverity
+	Resolved       bool
+	AccessCount    int
+	CreatedAt      time.Time
 }
 
 // Environment records the provider command and env vars for a problem.
