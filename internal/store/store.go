@@ -619,10 +619,13 @@ func (s *Store) ListPRReactions(prID int64) ([]model.PRReaction, error) {
 	return reactions, rows.Err()
 }
 
-// InsertEnvironment inserts an environment record for a problem.
+// InsertEnvironment inserts or replaces an environment record for a problem.
+// Uses INSERT OR REPLACE to be idempotent — safe to call multiple times for
+// the same problem_id (e.g., on retry after partial Init failure, or when
+// the envprovider subprocess already inserted the row).
 func (s *Store) InsertEnvironment(problemID, providerCommand, envName, envJSON string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO environments (problem_id, provider_command, env_name, env_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+		`INSERT OR REPLACE INTO environments (problem_id, provider_command, env_name, env_json, created_at) VALUES (?, ?, ?, ?, ?)`,
 		problemID, providerCommand, envName, envJSON, time.Now().UTC(),
 	)
 	if err != nil {

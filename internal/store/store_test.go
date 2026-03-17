@@ -996,6 +996,25 @@ func TestInsertGetDeleteEnvironment(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
+func TestInsertEnvironmentIdempotent(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	s := New(db)
+	insertTestProblem(t, s, "prob-env-idem")
+
+	// First insert succeeds
+	err := s.InsertEnvironment("prob-env-idem", "belayer env", "prob-env-idem", `{"v":1}`)
+	require.NoError(t, err)
+
+	// Second insert with same problem_id must also succeed (idempotent)
+	err = s.InsertEnvironment("prob-env-idem", "belayer env", "prob-env-idem", `{"v":2}`)
+	require.NoError(t, err, "InsertEnvironment must be idempotent — duplicate problem_id should not fail")
+
+	// The latest values should win
+	got, err := s.GetEnvironment("prob-env-idem")
+	require.NoError(t, err)
+	assert.Equal(t, `{"v":2}`, got.EnvJSON)
+}
+
 func TestGetEnvironmentNotFound(t *testing.T) {
 	db := testutil.SetupTestDB(t)
 	s := New(db)
