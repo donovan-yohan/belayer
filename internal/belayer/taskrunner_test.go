@@ -80,28 +80,38 @@ func TestLooksLikeTrustDialog(t *testing.T) {
 		want    bool
 	}{
 		{
-			name:    "claude trust dialog",
-			content: "Welcome to Claude Code!\n\nDo you trust the files in this folder?\n\n  /tmp/belayer/worktree\n\n(y/N)",
+			name:    "claude trust dialog with menu",
+			content: "Do you trust the files in this folder?\n\n  /tmp/belayer/worktree\n\n❯ 1. Yes, I trust this folder\n  2. No, I don't trust this folder",
 			want:    true,
 		},
 		{
-			name:    "trust this folder variant",
-			content: "Trust this folder?\nThis workspace has not been opened before.\n(y/N)",
+			name:    "codex trust dialog with menu",
+			content: "Do you trust the files in /some/path?\n❯ 1. Yes\n  2. No",
 			want:    true,
 		},
 		{
-			name:    "trust the files variant",
-			content: "Do you trust the files in /some/path?\n[y/N]",
+			name:    "trust this folder keyword",
+			content: "Trust this folder?\nThis workspace has not been opened before.",
 			want:    true,
 		},
 		{
-			name:    "allow access variant",
-			content: "Allow access to this directory?\n(Y/n)",
+			name:    "trust the files in keyword",
+			content: "Do you trust the files in /some/path?",
 			want:    true,
 		},
 		{
-			name:    "trust this project",
-			content: "Do you want to trust this project?\nYes, proceed / No",
+			name:    "allow access keyword",
+			content: "Allow access to this directory?",
+			want:    true,
+		},
+		{
+			name:    "trust this project keyword",
+			content: "Do you want to trust this project?",
+			want:    true,
+		},
+		{
+			name:    "menu option text i trust this folder",
+			content: "Some question\n❯ 1. Yes, I trust this folder\n  2. No",
 			want:    true,
 		},
 		{
@@ -110,13 +120,8 @@ func TestLooksLikeTrustDialog(t *testing.T) {
 			want:    false,
 		},
 		{
-			name:    "generic bracket y/n without trust keyword",
-			content: "Workspace setup required\n[Y/n]",
-			want:    false,
-		},
-		{
-			name:    "generic continue without trust keyword",
-			content: "First time in this directory.\nContinue?",
+			name:    "generic menu without trust keyword",
+			content: "Select an option:\n❯ 1. Continue\n  2. Cancel",
 			want:    false,
 		},
 		{
@@ -160,8 +165,8 @@ func TestLooksLikeTrustDialog(t *testing.T) {
 }
 
 func TestLooksLikeInputPrompt_NotTrustDialog(t *testing.T) {
-	// Trust dialogs should NOT be classified as input prompts
-	trustContent := "Do you trust the files in this folder?\n> "
+	// Trust dialog content should NOT be classified as input prompts
+	trustContent := "Do you trust the files in this folder?\n❯ 1. Yes, I trust this folder\n  2. No"
 	assert.True(t, looksLikeTrustDialog(trustContent), "should be detected as trust dialog")
 	assert.False(t, looksLikeInputPrompt(trustContent), "trust dialog should not match as input prompt")
 
@@ -233,15 +238,12 @@ func TestCheckAndResolveTrustDialog(t *testing.T) {
 		assert.False(t, resolved)
 	})
 
-	t.Run("trust dialog resolved with y + Enter", func(t *testing.T) {
-		tm.literalSent = nil
+	t.Run("trust dialog resolved with Enter", func(t *testing.T) {
 		tm.rawKeysSent = nil
-		tm.paneContent["test-sess:repo-climb1"] = "Do you trust the files in this folder?\n(y/N)"
+		tm.paneContent["test-sess:repo-climb1"] = "Do you trust the files in this folder?\n❯ 1. Yes, I trust this folder\n  2. No"
 		resolved, err := tr.checkAndResolveTrustDialog("repo-climb1")
 		require.NoError(t, err)
 		assert.True(t, resolved)
-		require.Len(t, tm.literalSent, 1)
-		assert.Equal(t, "test-sess:repo-climb1:y", tm.literalSent[0])
 		require.Len(t, tm.rawKeysSent, 1)
 		assert.Equal(t, "test-sess:repo-climb1:Enter", tm.rawKeysSent[0])
 	})
@@ -304,8 +306,8 @@ func TestCheckStaleClimbs_TrustDialogResolved(t *testing.T) {
 	oldTime := time.Now().Add(-3 * time.Minute)
 	require.NoError(t, os.Chtimes(logPath, oldTime, oldTime))
 
-	// Set pane content to trust dialog
-	tm.paneContent["test-sess:api-c1"] = "Do you trust the files in this folder?\n(y/N)"
+	// Set pane content to trust dialog (interactive menu format)
+	tm.paneContent["test-sess:api-c1"] = "Do you trust the files in this folder?\n❯ 1. Yes, I trust this folder\n  2. No"
 
 	// Started 3 minutes ago (past early detection window)
 	tr.startedAt["c1"] = time.Now().Add(-3 * time.Minute)
@@ -316,9 +318,7 @@ func TestCheckStaleClimbs_TrustDialogResolved(t *testing.T) {
 	// Trust dialog should be resolved — climb should NOT be retried
 	assert.Empty(t, retries, "climb should not be retried after trust dialog resolution")
 
-	// Verify y + Enter was sent
-	require.Len(t, tm.literalSent, 1)
-	assert.Equal(t, "test-sess:api-c1:y", tm.literalSent[0])
+	// Verify Enter was sent (selects pre-highlighted "Yes" option)
 	require.Len(t, tm.rawKeysSent, 1)
 	assert.Equal(t, "test-sess:api-c1:Enter", tm.rawKeysSent[0])
 
@@ -335,8 +335,8 @@ func TestCheckStaleClimbs_EarlyTrustDetection(t *testing.T) {
 	require.NoError(t, os.WriteFile(logPath, []byte("starting"), 0o644))
 	require.NoError(t, os.Chtimes(logPath, time.Now().Add(-15*time.Second), time.Now().Add(-15*time.Second)))
 
-	// Trust dialog in pane
-	tm.paneContent["test-sess:api-c2"] = "Trust this folder?\n(y/N)"
+	// Trust dialog in pane (interactive menu format)
+	tm.paneContent["test-sess:api-c2"] = "Trust this folder?\n❯ 1. Yes\n  2. No"
 
 	// Spawn was 20 seconds ago — within the 30s early detection window
 	tr.startedAt["c2"] = time.Now().Add(-20 * time.Second)
@@ -346,8 +346,6 @@ func TestCheckStaleClimbs_EarlyTrustDetection(t *testing.T) {
 
 	// Early detection should have caught and resolved the trust dialog
 	assert.Empty(t, retries, "early trust detection should resolve dialog without retry")
-	assert.Len(t, tm.literalSent, 1, "y should have been sent")
-	assert.Equal(t, "test-sess:api-c2:y", tm.literalSent[0])
 	assert.Len(t, tm.rawKeysSent, 1, "Enter should have been sent")
 	assert.Equal(t, "test-sess:api-c2:Enter", tm.rawKeysSent[0])
 }

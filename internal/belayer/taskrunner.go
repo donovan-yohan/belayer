@@ -1415,6 +1415,12 @@ func looksLikeInputPrompt(content string) bool {
 
 // looksLikeTrustDialog checks if captured pane content contains a workspace
 // trust confirmation dialog from Claude Code or Codex.
+//
+// Both tools present an interactive selection menu like:
+//
+//	Do you trust the files in this folder?
+//	❯ 1. Yes, I trust this folder
+//	  2. No, I don't trust this folder
 func looksLikeTrustDialog(content string) bool {
 	lower := strings.ToLower(content)
 	trustKeywords := []string{
@@ -1422,6 +1428,7 @@ func looksLikeTrustDialog(content string) bool {
 		"trust the files in",
 		"trust this folder",
 		"trust this project",
+		"i trust this folder",
 		"allow access",
 	}
 	for _, kw := range trustKeywords {
@@ -1433,9 +1440,11 @@ func looksLikeTrustDialog(content string) bool {
 }
 
 // checkAndResolveTrustDialog captures pane content and auto-accepts any trust
-// dialog by sending "y" + Enter. Returns true if a dialog was detected and resolved.
-// Sends "y" explicitly because trust prompts often default to No (e.g. "(y/N)"),
-// so bare Enter would decline trust.
+// dialog by sending Enter. Returns true if a dialog was detected and resolved.
+//
+// Both Claude Code and Codex present trust dialogs as interactive selection menus
+// (arrow-key navigable, e.g. "❯ 1. Yes, I trust this folder / 2. No, I don't"),
+// with the "Yes" option pre-selected. Enter confirms the current selection.
 func (tr *ProblemRunner) checkAndResolveTrustDialog(windowName string) (bool, error) {
 	content, err := tr.tmux.CapturePaneContent(tr.tmuxSession, windowName, 30)
 	if err != nil {
@@ -1445,9 +1454,6 @@ func (tr *ProblemRunner) checkAndResolveTrustDialog(windowName string) (bool, er
 		return false, nil
 	}
 	target := tr.tmuxSession + ":" + windowName
-	if err := tr.tmux.SendKeysLiteral(target, "y"); err != nil {
-		return false, fmt.Errorf("sending 'y' to resolve trust dialog: %w", err)
-	}
 	if err := tr.tmux.SendKeysRaw(target, "Enter"); err != nil {
 		return false, fmt.Errorf("sending Enter to resolve trust dialog: %w", err)
 	}
