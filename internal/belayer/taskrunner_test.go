@@ -349,3 +349,37 @@ func TestCheckStaleClimbs_EarlyTrustDetection(t *testing.T) {
 	assert.Len(t, tm.rawKeysSent, 1, "Enter should have been sent")
 	assert.Equal(t, "test-sess:api-c2:Enter", tm.rawKeysSent[0])
 }
+
+func TestCheckStaleClimbs_ActiveAgentNotTimedOut(t *testing.T) {
+	tr, _, logPath := setupTrustTestEnv(t, "task3", "c3", "api")
+
+	// Log file was updated just 30 seconds ago (agent is actively working)
+	require.NoError(t, os.WriteFile(logPath, []byte("still working..."), 0o644))
+	require.NoError(t, os.Chtimes(logPath, time.Now().Add(-30*time.Second), time.Now().Add(-30*time.Second)))
+
+	// Climb started 35 minutes ago — past the 30m timeout
+	tr.startedAt["c3"] = time.Now().Add(-35 * time.Minute)
+
+	retries, err := tr.CheckStaleClimbs(30 * time.Minute)
+	require.NoError(t, err)
+
+	// Agent is still active (log modified 30s ago) — should NOT be timed out
+	assert.Empty(t, retries, "active agent should not be timed out even past staleTimeout")
+}
+
+func TestCheckStaleClimbs_SilentAgentTimedOut(t *testing.T) {
+	tr, _, logPath := setupTrustTestEnv(t, "task4", "c4", "api")
+
+	// Log file not updated for 5 minutes (agent is silent)
+	require.NoError(t, os.WriteFile(logPath, []byte("last output"), 0o644))
+	require.NoError(t, os.Chtimes(logPath, time.Now().Add(-5*time.Minute), time.Now().Add(-5*time.Minute)))
+
+	// Climb started 35 minutes ago — past the 30m timeout
+	tr.startedAt["c4"] = time.Now().Add(-35 * time.Minute)
+
+	retries, err := tr.CheckStaleClimbs(30 * time.Minute)
+	require.NoError(t, err)
+
+	// Agent is silent (log not modified for 5min) AND past timeout — should be timed out
+	assert.Len(t, retries, 1, "silent agent past staleTimeout should be timed out and retried")
+}
