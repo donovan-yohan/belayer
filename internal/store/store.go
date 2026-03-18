@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/google/uuid"
 )
 
 // Store provides CRUD operations against the belayer SQLite database.
@@ -317,11 +318,11 @@ func (s *Store) GetPendingProblems(cragID string) ([]model.Problem, error) {
 }
 
 // GetActiveProblems returns problems with in-flight statuses for the given crag, ordered by created_at ASC.
-// In-flight statuses include: running, reviewing, imported, enriching, pr_creating, pr_monitoring, ci_fixing, review_reacting.
+// In-flight statuses include: running, reviewing, imported, enriching, spotting, reflecting, pr_creating, pr_monitoring, ci_fixing, review_reacting.
 func (s *Store) GetActiveProblems(cragID string) ([]model.Problem, error) {
 	rows, err := s.db.Query(
 		`SELECT id, crag_id, spec, climbs_json, jira_ref, tracker_issue_id, status, created_at, updated_at
-		 FROM problems WHERE crag_id = ? AND status IN ('running', 'reviewing', 'imported', 'enriching', 'pr_creating', 'pr_monitoring', 'ci_fixing', 'review_reacting') ORDER BY created_at ASC`, cragID,
+		 FROM problems WHERE crag_id = ? AND status IN ('running', 'reviewing', 'imported', 'enriching', 'spotting', 'reflecting', 'pr_creating', 'pr_monitoring', 'ci_fixing', 'review_reacting') ORDER BY created_at ASC`, cragID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("querying active problems: %w", err)
@@ -591,7 +592,7 @@ func (s *Store) InsertPRReaction(reaction *model.PRReaction) error {
 		reaction.PRID, reaction.TriggerType, reaction.TriggerPayload, reaction.ActionTaken, reaction.LeadID, time.Now().UTC(),
 	)
 	if err != nil {
-		return fmt.Errorf("inserting pr reaction: %w", err)
+		return fmt.Errorf("inserting PR reaction: %w", err)
 	}
 	return nil
 }
@@ -616,6 +617,190 @@ func (s *Store) ListPRReactions(prID int64) ([]model.PRReaction, error) {
 		reactions = append(reactions, r)
 	}
 	return reactions, rows.Err()
+}
+
+// InsertEnvironment inserts or replaces an environment record for a problem.
+// Uses INSERT OR REPLACE to be idempotent — safe to call multiple times for
+// the same problem_id (e.g., on retry after partial Init failure, or when
+// the envprovider subprocess already inserted the row).
+func (s *Store) InsertEnvironment(problemID, providerCommand, envName, envJSON string) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO environments (problem_id, provider_command, env_name, env_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+		problemID, providerCommand, envName, envJSON, time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("inserting environment: %w", err)
+	}
+	return nil
+}
+
+// GetEnvironment retrieves the environment record for a problem.
+func (s *Store) GetEnvironment(problemID string) (*model.Environment, error) {
+	row := s.db.QueryRow(
+		`SELECT problem_id, provider_command, env_name, env_json, created_at FROM environments WHERE problem_id = ?`,
+		problemID,
+	)
+	e := &model.Environment{}
+	err := row.Scan(&e.ProblemID, &e.ProviderCommand, &e.EnvName, &e.EnvJSON, &e.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("environment for problem %q not found", problemID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scanning environment: %w", err)
+	}
+	return e, nil
+}
+
+// DeleteEnvironment removes the environment record for a problem.
+func (s *Store) DeleteEnvironment(problemID string) error {
+	_, err := s.db.Exec(`DELETE FROM environments WHERE problem_id = ?`, problemID)
+	return err
+}
+
+// ListEnvironments returns all environment records ordered by created_at ASC.
+func (s *Store) ListEnvironments() ([]model.Environment, error) {
+	rows, err := s.db.Query(
+		`SELECT problem_id, provider_command, env_name, env_json, created_at FROM environments ORDER BY created_at ASC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying environments: %w", err)
+	}
+	defer rows.Close()
+
+	var envs []model.Environment
+	for rows.Next() {
+		var e model.Environment
+		if err := rows.Scan(&e.ProblemID, &e.ProviderCommand, &e.EnvName, &e.EnvJSON, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning environment: %w", err)
+		}
+		envs = append(envs, e)
+	}
+	return envs, rows.Err()
+}
+
+// UpdateClimbWorktreePath sets the worktree_path for a climb.
+func (s *Store) UpdateClimbWorktreePath(climbID, worktreePath string) error {
+	_, err := s.db.Exec(`UPDATE climbs SET worktree_path = ? WHERE id = ?`, worktreePath, climbID)
+	return err
+}
+
+// GetClimbWorktreePath returns the worktree_path for a climb.
+func (s *Store) GetClimbWorktreePath(climbID string) (string, error) {
+	var path string
+	err := s.db.QueryRow(`SELECT worktree_path FROM climbs WHERE id = ?`, climbID).Scan(&path)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("climb %q not found", climbID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("scanning worktree_path: %w", err)
+	}
+	return path, nil
+}
+
+// scanLearning scans a learning row using the provided scan function.
+func scanLearning(scan func(...any) error) (*model.Learning, error) {
+	l := &model.Learning{}
+	var problemID sql.NullString
+	var resolved int
+	var category, severity string
+	err := scan(
+		&l.ID, &l.CragID, &problemID,
+		&category, &l.Description, &l.Recommendation,
+		&severity, &resolved, &l.AccessCount, &l.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	l.ProblemID = problemID.String
+	l.Resolved = resolved != 0
+	l.Category = model.LearningCategory(category)
+	l.Severity = model.LearningSeverity(severity)
+	return l, nil
+}
+
+// InsertLearning inserts a new learning record. If l.ID is empty a UUID is generated.
+func (s *Store) InsertLearning(l model.Learning) error {
+	if l.ID == "" {
+		l.ID = uuid.New().String()
+	}
+	problemID := sql.NullString{String: l.ProblemID, Valid: l.ProblemID != ""}
+	resolved := 0
+	if l.Resolved {
+		resolved = 1
+	}
+	createdAt := l.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO learnings (id, crag_id, problem_id, category, description, recommendation, severity, resolved, access_count, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.ID, l.CragID, problemID, string(l.Category), l.Description, l.Recommendation,
+		string(l.Severity), resolved, l.AccessCount, createdAt,
+	)
+	return err
+}
+
+// ListLearnings returns learnings for a crag with optional filters.
+// If activeOnly is true, only unresolved learnings are returned.
+// If category is non-empty, only learnings with that category are returned.
+func (s *Store) ListLearnings(cragID string, activeOnly bool, category string) ([]model.Learning, error) {
+	query := `SELECT id, crag_id, problem_id, category, description, recommendation, severity, resolved, access_count, created_at
+	           FROM learnings WHERE crag_id = ?`
+	args := []any{cragID}
+
+	if activeOnly {
+		query += ` AND resolved = 0`
+	}
+	if category != "" {
+		query += ` AND category = ?`
+		args = append(args, category)
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying learnings: %w", err)
+	}
+	defer rows.Close()
+
+	var learnings []model.Learning
+	for rows.Next() {
+		l, err := scanLearning(rows.Scan)
+		if err != nil {
+			return nil, fmt.Errorf("scanning learning: %w", err)
+		}
+		learnings = append(learnings, *l)
+	}
+	return learnings, rows.Err()
+}
+
+// GetLearning retrieves a learning by ID.
+func (s *Store) GetLearning(id string) (*model.Learning, error) {
+	row := s.db.QueryRow(
+		`SELECT id, crag_id, problem_id, category, description, recommendation, severity, resolved, access_count, created_at
+		 FROM learnings WHERE id = ?`, id,
+	)
+	l, err := scanLearning(row.Scan)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("learning %q not found", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("scanning learning: %w", err)
+	}
+	return l, nil
+}
+
+// ResolveLearning marks a learning as resolved.
+func (s *Store) ResolveLearning(id string) error {
+	_, err := s.db.Exec(`UPDATE learnings SET resolved = 1 WHERE id = ?`, id)
+	return err
+}
+
+// IncrementLearningAccess increments the access_count for a learning.
+func (s *Store) IncrementLearningAccess(id string) error {
+	_, err := s.db.Exec(`UPDATE learnings SET access_count = access_count + 1 WHERE id = ?`, id)
+	return err
 }
 
 // InsertClimbs inserts multiple climbs in a single transaction.

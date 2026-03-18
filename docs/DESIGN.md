@@ -27,16 +27,18 @@ Defined across `internal/db/migrations/`. Key tables:
 | `leads` | Execution loop state per repo per problem |
 | `events` | Audit trail of all state changes |
 | `agentic_decisions` | Outputs from ephemeral Claude sessions |
+| `environments` | Provider-managed environments (per-problem, stores JSON response) |
 
 Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and foreign keys enabled.
 
-## Three-Layer Validation Pipeline
+## Validation Pipeline
 
-Validation flows through three layers after a lead completes a climb:
+Validation flows through four layers. See [review-loops-test-infra-design](design-docs/2026-03-16-review-loops-test-infra-design.md) for full design.
 
-1. **Lead** (self-check): Runs build + tests, writes `TOP.json` on completion
-2. **Spotter** (per-repo validation): Pre-created window activated when all climbs for a repo top. Validates the repo's complete body of work against the PRD. Writes `SPOT.json`. On failure, spotter feedback is injected into the lead prompt on retry.
-3. **Anchor** (cross-repo alignment): Reviews all repos for consistency after all leads/spotters pass. Writes `VERDICT.json`.
+1. **Lead** (multi-persona review loop): Runs implementation, then loops multi-persona review (max 3 cycles) until all personas pass. Personas configured per repo via `review-personas.toml`. Writes `TOP.json` on completion.
+2. **Spotter** (per-repo spec compliance): Activated when all climbs for a repo complete. Validates spec compliance, test contract fulfillment, and runtime correctness. Writes `SPOT.json`.
+3. **Anchor** (cross-repo alignment): Multi-repo problems only. Reviews all repos for cross-repo consistency with integration-focused personas after all spotters pass. Writes `VERDICT.json`.
+4. **Reflect** (learning capture): Classifies errors, extracts learnings to SQLite, surfaces system improvement recommendations. Runs after final validation, parallel with PR creation.
 
 ### Signal Files
 
@@ -85,6 +87,19 @@ Leads run as full interactive agent sessions (not single-shot) via the `AgentSpa
 - Tmux windows use `remain-on-exit on` for exit status inspection via `#{pane_dead}`
 - .lead/ directory maintained for crash recovery
 
+## Environment Provider
+
+The daemon uses a single provider model for all environment lifecycle operations (creating worktrees, provisioning infrastructure). Instead of separate code paths for builtin vs. external environments, the daemon always shells out to a configured command and parses JSON responses.
+
+- **Config**: `[environment]` section in `belayer.toml` specifies `command` (default: "belayer") and `subcommand` (default: "env")
+- **Default provider**: `belayer env` wraps existing bare-repo + worktree logic behind the JSON contract
+- **External providers**: e.g., `extend env` for fullstack projects with Docker, DB, port isolation
+- **Swapping is config-only**: Change `command = "extend"` in belayer.toml — no code changes
+- **Worktree paths as data**: Daemon stores paths returned by the provider, not computed from convention
+- **Per-problem environments**: Leads within a problem share infra; simultaneous problems get separate environments
+- **JSON contract**: `create`, `add-worktree`, `remove-worktree`, `reset`, `destroy`, `status`, `logs`, `list` — all with `--json` flag
+- **Cleanup on failure**: If CreateEnv succeeds but AddWorktree fails, environment is destroyed (no orphans)
+
 ## Repo Isolation
 
 Follows extend-cli pattern:
@@ -100,9 +115,19 @@ Each agentic node:
 - Produces structured output (JSON to stdout, may be wrapped in markdown code fences)
 - `StripMarkdownJSON()` regex strips code fences before parsing
 - Process group isolation: `Setpgid: true` + custom `Cancel` kills entire process tree on context cancellation (prevents orphaned `claude` processes)
-- Results are parsed and stored in SQLite (`agentic_decisions` table)
+- Results are parsed and stored in SQLite
+- Implementation: `internal/agentic/` package provides `RunNode`, `RunNodeJSON`, `StripMarkdownJSON`
 
-Node types: sufficiency check, problem decomposition, **spotter** (per-repo runtime validation), **anchor** (cross-repo alignment), stuck analysis, **tracker spec assembly** (issue → problem spec), **PR body generation** (problem + climbs → PR title/body).
+Node types: sufficiency check, problem decomposition, **spotter** (per-repo spec compliance + runtime validation), **anchor** (cross-repo alignment), stuck analysis, **tracker spec assembly** (issue → problem spec), **PR body generation** (problem + climbs → PR title/body), **reflect** (error classification + learning capture), **learning retrieval** (surface relevant past learnings), **learning compaction** (consolidate learnings).
+
+## Persistent Learnings
+
+SQLite-backed system for capturing and retrieving insights across problems. See [review-loops-test-infra-design](design-docs/2026-03-16-review-loops-test-infra-design.md).
+
+- **Storage**: `learnings` table with category, severity, resolved flag, access count
+- **Retrieval**: Agentic node matches problem spec against active learnings; runs at CLI level during `belayer problem create`
+- **Compaction**: Agentic node merges duplicates and distills patterns; via `belayer learnings compact`
+- **CLI**: `belayer learnings list|show|add|compact`
 
 ## Problem Intake Pipeline
 
@@ -157,6 +182,7 @@ The belayer daemon (`internal/belayer/`) is the central orchestration layer:
 | `belayer pr show <number>` | Detailed PR view with reaction history |
 | `belayer pr retry <number>` | Reset CI fix count for manual retry |
 | `belayer explorer` | Launch interactive Claude session for pre-crag research/decomposition in `~/.belayer/explorer/<workspace>/` |
+| `belayer env create/add-worktree/destroy/...` | Environment provider CLI (default provider wrapping bare-repo + worktree logic) |
 | `belayer setter` | Launch interactive Claude session with belayer context (.claude/ workspace) |
 
 ## Setter And Explorer Session Context
@@ -186,7 +212,7 @@ Resolution chain: crag config > global config > embedded defaults.
 - `belayerconfig.Load()` merges TOML configs following the chain
 - `belayerconfig.LoadProfile()` resolves validation profiles from config dirs
 - Embedded defaults via Go `embed.FS` in `internal/defaults/`
-- `belayer.toml` schema: `[agents]`, `[execution]`, `[validation]`, `[anchor]` sections
+- `belayer.toml` schema: `[agents]`, `[execution]`, `[validation]`, `[anchor]`, `[environment]` sections
 - **Validation profiles**: Human-readable TOML checklists the LLM interprets
 
 ## Environment Preparation
@@ -214,6 +240,15 @@ Climbing metaphors throughout:
 | **Anchor** | Cross-repo alignment reviewer |
 
 > The **setter** defines **problems** at the **crag**. The **belayer** sends **leads** up their **climbs**. When they **top** out, the **spotter** validates. If no retries were needed, it was **flashed**.
+
+## Plugin Marketplace
+
+The belayer repo doubles as a Claude Code marketplace. A `.claude-plugin/marketplace.json` at the repo root lists bundled plugins, and `plugins/` contains their source (markdown commands, agents, skills).
+
+- **Bundled plugins**: `harness` (documentation + execution workflow) and `pr` (PR lifecycle management)
+- **Auto-install**: `belayer init` registers the belayer GitHub repo as a marketplace in Claude Code's `~/.claude/plugins/` registry
+- **Canonical source**: Belayer owns these plugins. Changes flow from here back to llm-agents, not the reverse.
+- **Atomic writes**: Registry file updates use temp-file + rename to avoid corrupting Claude Code's plugin state on interrupt
 
 ## See Also
 

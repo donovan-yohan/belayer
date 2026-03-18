@@ -8,7 +8,7 @@ A Go CLI that orchestrates autonomous coding agents across multiple repositories
 Problem Input (text or Jira ticket)
         |
         v
-  Brainstorm + Decompose (interactive Claude session)
+  Brainstorm + Test Contract (interactive setter session)
         |
         v
   Climbs DAG (per-repo, with dependencies)
@@ -16,21 +16,44 @@ Problem Input (text or Jira ticket)
   +-----+------+------+
   v     v      v      v
 Lead  Lead   Lead   Lead     (parallel, isolated worktrees)
-  |     |      |      |
+  |     |      |      |      each runs multi-persona review loop
   +-----+------+------+
         |
         v
-  Alignment Review (cross-repo spotter)
+  Spotter (per-repo spec compliance)
      |          |
-   PASS       FAIL
+   PASS       FAIL → correction climbs → re-spot
+     |
+     v
+  Anchor (cross-repo alignment, multi-repo only)
      |          |
-  Create PRs  Re-dispatch with corrections
+   PASS       FAIL → re-dispatch
+     |
+  Create PRs + Reflect (capture learnings)
 ```
 
 **Three layers:**
 - **User** — CLI commands
 - **Belayer** — Deterministic Go daemon; polls SQLite, manages DAG execution, enforces concurrency limits
 - **Lead** — Ephemeral agent session per climb (Claude Code or Codex CLI); runs in an isolated git worktree
+
+## Claude Code Marketplace
+
+This repository is a valid [Claude Code marketplace](https://github.com/anthropics/claude-code-plugins) plugin repository. It vendors two plugins that are automatically available when you work in this project:
+
+- **harness** (`plugins/harness/`) — 3-tier documentation system with living execution plans: brainstorm, bug, refactor, plan, orchestrate, complete, and the strangler-fig refactoring skill
+- **pr** (`plugins/pr/`) — Pull request lifecycle management: authoring, reviewing, resolving, and updating PRs
+
+### Installing the plugins
+
+These plugins are vendored in the `plugins/` directory and are picked up automatically by Claude Code when working in this repo. No additional installation is needed for contributors.
+
+If you want to use these plugins in **other projects**, install them from the marketplace:
+
+```bash
+claude plugin add donovan-yohan/belayer --path plugins/harness
+claude plugin add donovan-yohan/belayer --path plugins/pr
+```
 
 ## Prerequisites
 
@@ -153,8 +176,10 @@ This will:
 - Create isolated git worktrees per climb
 - Spawn agent sessions (Claude Code or Codex) in tmux windows
 - Monitor for completion (via mail messages)
-- Run a cross-repo spotter review when all climbs finish
-- Create PRs on approval, or re-dispatch corrections on rejection
+- Run per-repo spotter validation when all climbs for a repo finish
+- Create correction climbs if the spotter finds issues, and re-validate
+- Run cross-repo anchor review for multi-repo problems
+- Create PRs on approval, capture learnings for future problems
 
 ### 5. Monitor progress
 
@@ -185,6 +210,10 @@ belayer logs -c my-project
 | `belayer mail inbox` | List unread messages without marking read |
 | `belayer mail ack <id>` | Mark a specific message as read |
 | `belayer logs` | View and manage lead session logs |
+| `belayer learnings list` | List persistent learnings for a crag |
+| `belayer learnings show <id>` | Show detail view of a learning |
+| `belayer learnings add` | Add a manual learning |
+| `belayer learnings compact` | Consolidate and deduplicate learnings |
 
 ## Agent Provider
 

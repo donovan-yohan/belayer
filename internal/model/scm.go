@@ -6,6 +6,7 @@ type PROptions struct {
 	Title      string `json:"title"`
 	Body       string `json:"body"`
 	BaseBranch string `json:"base_branch"`
+	HeadBranch string `json:"head_branch"`
 	Draft      bool   `json:"draft"`
 }
 

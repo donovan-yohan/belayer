@@ -29,6 +29,10 @@ Execution plans for active and completed work.
 | [Explorer Session Bootstrap](exec-plans/completed/2026-03-17-explorer-session-bootstrap.md) | 2026-03-17 | Add `belayer explorer`, explorer workspace prep, shared session launcher cleanup, and explorer template/test coverage |
 | [Setter BLR Command Rename](exec-plans/completed/2026-03-17-setter-blr-command-rename.md) | 2026-03-17 | Rename embedded setter commands to the `blr-` namespace, align setter guidance, and tighten command-content tests |
 | [Crag Create Local Paths](exec-plans/completed/2026-03-17-crag-local-paths.md) | 2026-03-17 | `belayer crag create --local-paths` support, validation, and tracker guardrails |
+| [Review Deferred Items](exec-plans/completed/2026-03-16-review-deferred-items.md) | 2026-03-16 | Test coverage, typed enums, HandleApproval bug fix |
+| [Review Loops, Test Infra & Learnings](exec-plans/completed/2026-03-16-review-loops-test-infra.md) | 2026-03-16 | Multi-persona review loops, test contracts, spotter shift, persistent learnings |
+| [Belayer Marketplace](exec-plans/completed/2026-03-13-belayer-marketplace.md) | 2026-03-13 | Vendor harness + pr plugins, create marketplace, auto-install in init |
+| [Environment Provider](exec-plans/completed/2026-03-12-environment-provider.md) | 2026-03-13 | Single provider model with `belayer env` default + external provider support |
 | [Multi-Provider Spawner](exec-plans/completed/2026-03-11-multi-provider-spawner.md) | 2026-03-11 | CodexSpawner + factory function + config wiring |
 | [Planning & Review Hats](exec-plans/completed/2026-03-11-planning-review-hats.md) | 2026-03-11 | Tracker intake, SCM provider, PR monitoring & reaction engine |
 | [Complete Instance-to-Crag Rename](exec-plans/completed/2026-03-11-instance-to-crag-complete-rename.md) | 2026-03-11 | Package rename, config file rename, internal var renames, doc prune |

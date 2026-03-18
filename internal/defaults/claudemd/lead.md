@@ -17,14 +17,31 @@ You MUST follow the harness pipeline for all work. This ensures structured plann
 | Step | Command | Purpose |
 |------|---------|---------|
 | 1 | `/harness:init` | Initialize docs structure (skip if already present) |
-| 2 | `/harness:plan` | Create implementation plan from your GOAL.json spec |
-| 3 | `/harness:orchestrate` | Execute the plan with worker agents |
-| 4 | `/harness:review` | Run multi-agent code review, fix findings |
-| 5 | `/harness:reflect` | Update docs, capture learnings and retrospective |
+| 2 | Check `review-personas.toml` | If missing, detect repo type and generate (see below) |
+| 3 | `/harness:plan` | Create implementation plan from your GOAL.json spec |
+| 4 | `/harness:orchestrate` | Execute the plan with worker agents |
+| 5 | `/harness:review` | Multi-persona review loop until green (max 3 cycles) |
 | 6 | `/harness:complete` | Archive plan, commit all changes |
 | 7 | Write TOP.json | Signal completion (see below) |
 
 After `/harness:complete` finishes, write TOP.json (see below).
+
+## Review Personas
+
+Before running `/harness:review`, check for `review-personas.toml` in the repo root. If missing:
+1. Analyze the repo type:
+   - `go.mod` present → backend
+   - `package.json` with React/Vue/Next/Svelte → frontend
+   - `package.json` with `bin` field → CLI
+   - `go.mod` with no `main` package → library
+   - Default → backend
+2. Generate a `review-personas.toml` with appropriate personas for the repo type. At minimum include:
+   - `test-engineer` — test coverage, test quality, test contract compliance
+   - `domain-expert` — business logic correctness, spec compliance
+   - `code-quality` — code style, performance, maintainability
+3. Commit the file: `git add review-personas.toml && git commit -m "chore: add review personas config"`
+
+The review command reads this file to configure its multi-persona review loop.
 
 ### Decision Making & Drift
 
@@ -47,6 +64,22 @@ When finished, write TOP.json in the same directory as your GOAL.json:
 ```
 
 If you cannot complete the climb, write TOP.json with "status": "failed" and explain what blocked you.
+
+If the review loop exhausted max cycles without all personas passing, write TOP.json with "status": "review_incomplete":
+
+```json
+{
+  "status": "review_incomplete",
+  "summary": "Brief description of what was done",
+  "files_changed": ["list", "of", "files"],
+  "notes": "Any context for reviewers, including deviations from spec",
+  "review_state": {
+    "cycles_completed": 3,
+    "failing_personas": ["test-engineer"],
+    "unresolved_issues": ["Missing integration tests for OAuth token refresh"]
+  }
+}
+```
 
 IMPORTANT: You MUST commit and write TOP.json before your session ends.
 

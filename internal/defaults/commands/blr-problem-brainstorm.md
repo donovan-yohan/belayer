@@ -14,6 +14,12 @@ Route to the appropriate harness design skill based on the type of request:
 
 If the request type is ambiguous, ask the user before routing.
 
+After the design phase completes and before handing off to `/blr-problem-create`, verify the following checklist:
+
+1. **Test Contract** — spec.md includes a `## Test Contract` section with an acceptance test table (T-1, T-2, etc.). If it's missing, go back and complete it with the user before proceeding.
+2. **Prerequisite climbs** — if the user mentioned missing test infrastructure (no test framework, no CI, no test helpers), climbs.json includes prerequisite climbs with `id: <repo>-0` and `depends_on: []` that set up the infrastructure before feature climbs run.
+3. **Learnings** — if `belayer learnings list` returns active learnings relevant to this work, incorporate the recommendations into the spec or climbs before publishing.
+
 After the design phase completes and a design doc is saved, override the default next steps. Do NOT suggest `/harness:plan`, `/harness:orchestrate`, or the standard harness workflow. Instead:
 
 ## Next Steps (say this exactly)

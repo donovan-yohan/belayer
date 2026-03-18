@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/anchor"
+	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/climbctx"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
@@ -686,6 +687,101 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	assert.True(t, foundApi2)
 }
 
+func TestSetter_CrashRecovery_RecreatesTmuxSession(t *testing.T) {
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-tmux", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	insertTestTask(t, s, "task-tmux", goals)
+	require.NoError(t, s.UpdateProblemStatus("task-tmux", model.ProblemStatusRunning))
+
+	// Create worktree dir
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-tmux", "api")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	// Do NOT create a tmux session — simulates the session being killed during stop
+
+	setter := &Belayer{
+		config: Config{
+			CragName: "test-crag",
+			CragDir:  tmpDir,
+			MaxLeads: 8,
+		},
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems: make(map[string]*ProblemRunner),
+	}
+
+	err := setter.recover()
+	require.NoError(t, err)
+
+	// Tmux session should have been recreated
+	sessionName := "belayer-problem-task-tmux"
+	assert.True(t, tm.HasSession(sessionName), "tmux session should be recreated during recovery")
+
+	// Spotter window should be pre-created
+	windows, _ := tm.ListWindows(sessionName)
+	found := false
+	for _, w := range windows {
+		if w == "spot-api" {
+			found = true
+		}
+	}
+	assert.True(t, found, "spotter window should be pre-created during recovery")
+}
+
+func TestSetter_CrashRecovery_DetectsFailedClimbWithTOP(t *testing.T) {
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-failed", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	insertTestTask(t, s, "task-failed", goals)
+
+	// Simulate: climb was marked failed by stale timeout, but actually completed
+	require.NoError(t, s.UpdateProblemStatus("task-failed", model.ProblemStatusRunning))
+	require.NoError(t, s.UpdateClimbStatus("api-1", model.ClimbStatusFailed))
+
+	// Create worktree with TOP.json (climb actually completed)
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-failed", "api")
+	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	require.NoError(t, os.MkdirAll(goalDir, 0o755))
+	doneJSON := TopJSON{Status: "complete", Summary: "completed after timeout"}
+	data, _ := json.Marshal(doneJSON)
+	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "TOP.json"), data, 0o644))
+
+	setter := &Belayer{
+		config: Config{
+			CragName: "test-crag",
+			CragDir:  tmpDir,
+			MaxLeads: 8,
+		},
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems: make(map[string]*ProblemRunner),
+	}
+
+	err := setter.recover()
+	require.NoError(t, err)
+
+	require.Contains(t, setter.problems, "task-failed")
+	runner := setter.problems["task-failed"]
+
+	// The failed climb should now be marked complete (recovery detected TOP.json)
+	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status,
+		"failed climb with TOP.json should be marked complete during recovery")
+
+	// It should NOT be in the lead queue (since it's complete)
+	for _, q := range setter.leadQueue {
+		assert.NotEqual(t, "api-1", q.Climb.ID, "completed climb should not be queued for respawn")
+	}
+}
+
 func TestSetter_RunTickCycle(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 
@@ -1002,12 +1098,17 @@ func TestSetter_SingleRepoSkipsAnchor(t *testing.T) {
 	os.MkdirAll(goalDoneDir, 0o755)
 	os.WriteFile(filepath.Join(goalDoneDir, "TOP.json"), doneData, 0o644)
 
-	// First tick: detect completion, transition to reviewing
+	// First tick: detect completion, transition to spotting
 	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ := s.GetProblem("task-s5a")
+	assert.Equal(t, model.ProblemStatusSpotting, updatedTask.Status)
+
+	// Second tick: no active spotters (validation disabled) -> transition to reviewing
+	require.NoError(t, sett.tick(context.Background()))
+	updatedTask, _ = s.GetProblem("task-s5a")
 	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
 
-	// Second tick: single-repo should skip anchor and go straight to pr_monitoring
+	// Third tick: single-repo should skip anchor and go straight to pr_monitoring
 	require.NoError(t, sett.tick(context.Background()))
 	assert.False(t, runner.AnchorRunning(), "anchor should not be spawned for single-repo task")
 	updatedTask, _ = s.GetProblem("task-s5a")
@@ -1084,13 +1185,18 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	os.MkdirAll(webDoneDir, 0o755)
 	os.WriteFile(filepath.Join(webDoneDir, "TOP.json"), doneData, 0o644)
 
-	// First tick: detect completion, transition to reviewing
+	// First tick: detect completion, transition to spotting
 	require.NoError(t, setter.tick(context.Background()))
 	updatedTask, _ := s.GetProblem("task-s5")
-	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
+	assert.Equal(t, model.ProblemStatusSpotting, updatedTask.Status)
 	assert.Equal(t, 0, setter.activeLeads)
 
-	// Second tick: spawn anchor (multi-repo requires anchor)
+	// Second tick: no active spotters (validation disabled) -> transition to reviewing
+	require.NoError(t, setter.tick(context.Background()))
+	updatedTask, _ = s.GetProblem("task-s5")
+	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
+
+	// Third tick: spawn anchor (multi-repo requires anchor)
 	require.NoError(t, setter.tick(context.Background()))
 	assert.True(t, runner.AnchorRunning())
 
@@ -1105,7 +1211,7 @@ func TestSetter_AnchorApproveFlow(t *testing.T) {
 	verdictData, _ := json.Marshal(verdict)
 	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), verdictData, 0o644)
 
-	// Third tick: read verdict, create PRs, transition to pr_monitoring
+	// Fourth tick: read verdict, create PRs, transition to pr_monitoring
 	require.NoError(t, setter.tick(context.Background()))
 	updatedTask, _ = s.GetProblem("task-s5")
 	assert.Equal(t, model.ProblemStatusPRMonitoring, updatedTask.Status)
@@ -1180,10 +1286,13 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	os.MkdirAll(webDoneDir, 0o755)
 	os.WriteFile(filepath.Join(webDoneDir, "TOP.json"), doneData, 0o644)
 
-	// Tick 1: detect completion -> reviewing
+	// Tick 1: detect completion -> spotting
 	require.NoError(t, sett.tick(context.Background()))
 
-	// Tick 2: spawn anchor (multi-repo)
+	// Tick 2: no active spotters (validation disabled) -> reviewing
+	require.NoError(t, sett.tick(context.Background()))
+
+	// Tick 3: spawn anchor (multi-repo)
 	require.NoError(t, sett.tick(context.Background()))
 
 	// Write reject verdict
@@ -1197,7 +1306,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	rejectData, _ := json.Marshal(rejectVerdict)
 	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), rejectData, 0o644)
 
-	// Tick 3: read reject verdict -> back to running with correction goals
+	// Tick 4: read reject verdict -> back to running with correction goals
 	// tick() also calls processLeadQueue(), so correction goal is spawned immediately
 	spawnedBefore := len(sp.spawned)
 	require.NoError(t, sett.tick(context.Background()))
@@ -1215,12 +1324,17 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	doneData2, _ := json.Marshal(TopJSON{Status: "complete", Summary: "fixed schema"})
 	os.WriteFile(filepath.Join(corrDoneDir, "TOP.json"), doneData2, 0o644)
 
-	// Tick 4: detect correction goal completion -> reviewing again
+	// Tick 5: detect correction goal completion -> spotting
+	require.NoError(t, sett.tick(context.Background()))
+	updatedTask, _ = s.GetProblem("task-s6")
+	assert.Equal(t, model.ProblemStatusSpotting, updatedTask.Status)
+
+	// Tick 6: no active spotters (validation disabled) -> reviewing again
 	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ = s.GetProblem("task-s6")
 	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
 
-	// Tick 5: spawn anchor again
+	// Tick 7: spawn anchor again
 	require.NoError(t, sett.tick(context.Background()))
 	assert.Equal(t, 2, runner.AnchorAttempt())
 
@@ -1235,7 +1349,7 @@ func TestSetter_AnchorRejectThenApprove(t *testing.T) {
 	approveData, _ := json.Marshal(approveVerdict)
 	os.WriteFile(filepath.Join(taskDir, "VERDICT.json"), approveData, 0o644)
 
-	// Tick 6: read approve -> complete
+	// Tick 8: read approve -> complete
 	require.NoError(t, sett.tick(context.Background()))
 	updatedTask, _ = s.GetProblem("task-s6")
 	assert.Equal(t, model.ProblemStatusPRMonitoring, updatedTask.Status)
@@ -2135,4 +2249,553 @@ func TestProblemRunner_NotFlashed_SpotterRetry(t *testing.T) {
 
 	_ = tmpDir
 	assert.False(t, runner.IsFlashed("api"))
+}
+
+// TestSetter_SpottingState_TransitionsToReviewing verifies that the spotting state
+// handler transitions to reviewing once all spotters have resolved.
+func TestSetter_SpottingState_TransitionsToReviewing(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-sp-trans", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-sp-trans", goals)
+
+	task, _ := s.GetProblem("task-sp-trans")
+	require.NoError(t, s.UpdateProblemStatus("task-sp-trans", model.ProblemStatusSpotting))
+	task.Status = model.ProblemStatusSpotting
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-sp-trans", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-sp-trans")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetClimbsForProblem("task-sp-trans")
+	dag := BuildDAG(goalsFromDB)
+	dag.MarkComplete("api-1")
+
+	runner := &ProblemRunner{
+		task:                 task,
+		dag:                  dag,
+		worktrees:            map[string]string{"api": worktreeDir},
+		cragDir:              tmpDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawners:             &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		git:                  mg,
+		tmuxSession:          "belayer-problem-task-sp-trans",
+		problemDir:           taskDir,
+		startedAt:            make(map[string]time.Time),
+		validationEnabled:    true,
+		repoSpotterActivated: make(map[string]bool), // no active spotters
+		repoSpotterAttempts:  make(map[string]int),
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-sp-trans"))
+
+	sett := &Belayer{
+		config: Config{
+			CragName:     "test-crag",
+			CragDir:      tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems: map[string]*ProblemRunner{"task-sp-trans": runner},
+	}
+
+	// Single tick: in spotting state with no active spotters -> transition to reviewing
+	require.NoError(t, sett.tick(context.Background()))
+	updatedTask, _ := s.GetProblem("task-sp-trans")
+	assert.Equal(t, model.ProblemStatusReviewing, updatedTask.Status)
+}
+
+// TestSetter_SpottingState_WaitsForSpotters verifies that the spotting state
+// handler waits (does not advance) while spotters are still active.
+func TestSetter_SpottingState_WaitsForSpotters(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-sp-wait", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-sp-wait", goals)
+
+	task, _ := s.GetProblem("task-sp-wait")
+	require.NoError(t, s.UpdateProblemStatus("task-sp-wait", model.ProblemStatusSpotting))
+	task.Status = model.ProblemStatusSpotting
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-sp-wait", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-sp-wait")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetClimbsForProblem("task-sp-wait")
+	dag := BuildDAG(goalsFromDB)
+	dag.MarkComplete("api-1")
+
+	runner := &ProblemRunner{
+		task: task,
+		dag:  dag,
+		worktrees: map[string]string{"api": worktreeDir},
+		cragDir:   tmpDir,
+		store:     s,
+		tmux:      tm,
+		logMgr:    lm,
+		spawners:  &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		git:       mg,
+		tmuxSession: "belayer-problem-task-sp-wait",
+		problemDir:  taskDir,
+		startedAt:   make(map[string]time.Time),
+		validationEnabled:    true,
+		repoSpotterActivated: map[string]bool{"api": true}, // spotter still active
+		repoSpotterAttempts:  map[string]int{"api": 1},
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-sp-wait"))
+
+	sett := &Belayer{
+		config: Config{
+			CragName:     "test-crag",
+			CragDir:      tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems: map[string]*ProblemRunner{"task-sp-wait": runner},
+	}
+
+	// Tick: spotter still active, no SPOT.json yet -> stay in spotting
+	require.NoError(t, sett.tick(context.Background()))
+	updatedTask, _ := s.GetProblem("task-sp-wait")
+	assert.Equal(t, model.ProblemStatusSpotting, updatedTask.Status)
+}
+
+// TestSetter_NeedsHumanState_Terminal verifies that needs_human is a terminal state
+// that removes the problem from the in-memory map and emits an event.
+func TestSetter_NeedsHumanState_Terminal(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-nh", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	insertTestTask(t, s, "task-nh", goals)
+
+	task, _ := s.GetProblem("task-nh")
+	require.NoError(t, s.UpdateProblemStatus("task-nh", model.ProblemStatusNeedsHuman))
+	task.Status = model.ProblemStatusNeedsHuman
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-nh", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-nh")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetClimbsForProblem("task-nh")
+	runner := &ProblemRunner{
+		task:                 task,
+		dag:                  BuildDAG(goalsFromDB),
+		worktrees:            map[string]string{"api": worktreeDir},
+		cragDir:              tmpDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawners:             &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		tmuxSession:          "belayer-problem-task-nh",
+		problemDir:           taskDir,
+		startedAt:            make(map[string]time.Time),
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  make(map[string]int),
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-nh"))
+
+	sett := &Belayer{
+		config: Config{
+			CragName:     "test-crag",
+			CragDir:      tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems: map[string]*ProblemRunner{"task-nh": runner},
+	}
+
+	// Tick: needs_human is terminal -> removed from in-memory problems map
+	require.NoError(t, sett.tick(context.Background()))
+	assert.NotContains(t, sett.problems, "task-nh", "needs_human problem should be removed from in-memory map")
+
+	// The needs_human event is emitted by CheckRepoSpotResults when max spotter cycles
+	// are reached, not by the tick handler. The tick handler for needs_human is a
+	// terminal cleanup that just removes the runner from the in-memory map.
+	// Problem status in DB should remain needs_human (not cleaned up)
+	updatedTask, _ := s.GetProblem("task-nh")
+	assert.Equal(t, model.ProblemStatusNeedsHuman, updatedTask.Status)
+}
+
+// TestSetter_ReflectingState_NoOp verifies that the reflecting state handler
+// is a no-op and does not advance or clean up the problem.
+func TestSetter_ReflectingState_NoOp(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-refl", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	insertTestTask(t, s, "task-refl", goals)
+
+	task, _ := s.GetProblem("task-refl")
+	require.NoError(t, s.UpdateProblemStatus("task-refl", model.ProblemStatusReflecting))
+	task.Status = model.ProblemStatusReflecting
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-refl", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-refl")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetClimbsForProblem("task-refl")
+	runner := &ProblemRunner{
+		task:                 task,
+		dag:                  BuildDAG(goalsFromDB),
+		worktrees:            map[string]string{"api": worktreeDir},
+		cragDir:              tmpDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawners:             &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		tmuxSession:          "belayer-problem-task-refl",
+		problemDir:           taskDir,
+		startedAt:            make(map[string]time.Time),
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  make(map[string]int),
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-refl"))
+
+	sett := &Belayer{
+		config: Config{
+			CragName:     "test-crag",
+			CragDir:      tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems: map[string]*ProblemRunner{"task-refl": runner},
+	}
+
+	// Tick: reflecting is a no-op for now — stays in reflecting
+	require.NoError(t, sett.tick(context.Background()))
+	assert.Contains(t, sett.problems, "task-refl", "reflecting problem should remain in in-memory map")
+	updatedTask, _ := s.GetProblem("task-refl")
+	assert.Equal(t, model.ProblemStatusReflecting, updatedTask.Status)
+}
+
+// TestSetter_RunningToSpotting verifies that when all lead climbs complete,
+// the problem transitions to spotting (not directly to reviewing).
+func TestSetter_RunningToSpotting(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-rts", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+	mg := newMockGitRunner()
+	insertTestTask(t, s, "task-rts", goals)
+
+	task, _ := s.GetProblem("task-rts")
+	require.NoError(t, s.UpdateProblemStatus("task-rts", model.ProblemStatusRunning))
+	task.Status = model.ProblemStatusRunning
+
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-rts", "api")
+	taskDir := filepath.Join(tmpDir, "tasks", "task-rts")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	goalsFromDB, _ := s.GetClimbsForProblem("task-rts")
+	runner := &ProblemRunner{
+		task:                 task,
+		dag:                  BuildDAG(goalsFromDB),
+		worktrees:            map[string]string{"api": worktreeDir},
+		cragDir:              tmpDir,
+		store:                s,
+		tmux:                 tm,
+		logMgr:               lm,
+		spawners:             &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		git:                  mg,
+		tmuxSession:          "belayer-problem-task-rts",
+		problemDir:           taskDir,
+		startedAt:            make(map[string]time.Time),
+		validationEnabled:    false, // disable spotter to isolate this transition
+		repoSpotterActivated: make(map[string]bool),
+		repoSpotterAttempts:  make(map[string]int),
+	}
+	require.NoError(t, tm.NewSession(runner.tmuxSession))
+	require.NoError(t, lm.EnsureDir("task-rts"))
+
+	// Spawn and complete the climb
+	require.NoError(t, runner.SpawnClimb(QueuedClimb{Climb: goals[0], TaskID: "task-rts"}))
+	sett := &Belayer{
+		config: Config{
+			CragName:     "test-crag",
+			CragDir:      tmpDir,
+			MaxLeads:     8,
+			StaleTimeout: 30 * time.Minute,
+		},
+		store:       s,
+		tmux:        tm,
+		logMgr:      lm,
+		spawners:    &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems:    map[string]*ProblemRunner{"task-rts": runner},
+		activeLeads: 1,
+	}
+
+	// Write TOP.json for the climb
+	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	os.MkdirAll(goalDir, 0o755)
+	doneData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
+	os.WriteFile(filepath.Join(goalDir, "TOP.json"), doneData, 0o644)
+
+	// First tick: all lead climbs complete -> transition to spotting (not reviewing)
+	require.NoError(t, sett.tick(context.Background()))
+	updatedTask, _ := s.GetProblem("task-rts")
+	assert.Equal(t, model.ProblemStatusSpotting, updatedTask.Status,
+		"should transition to spotting when all lead climbs complete")
+}
+
+// ─── Task 3: createSpotterCorrectionClimbs tests ───────────────────────────
+
+func TestCreateSpotterCorrectionClimbs_CreatesClimbs(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-cc1", RepoName: "api", Description: "initial climb", DependsOn: []string{}, Status: model.ClimbStatusComplete},
+	}
+	runner, s, _, _, _, tmpDir := newTestRunner(t, "task-cc1", goals)
+
+	// Set cycle count so IDs are deterministic
+	runner.repoSpotterAttempts["api"] = 1
+
+	spot := &spotter.SpotJSON{
+		Pass: false,
+		CorrectionClimbs: []spotter.CorrectionClimb{
+			{
+				Description:     "Fix response schema",
+				IssuesAddressed: []string{"response missing required field"},
+				Context:         "The API spec requires a name field",
+			},
+			{
+				Description:     "Add error handling",
+				IssuesAddressed: []string{"unhandled nil pointer dereference"},
+				Context:         "Wrap with proper error returns",
+			},
+		},
+	}
+
+	worktreePath := runner.worktrees["api"]
+	queued, err := runner.createSpotterCorrectionClimbs("api", worktreePath, spot)
+	require.NoError(t, err)
+
+	// Two QueuedClimbs returned with spotter feedback populated
+	require.Len(t, queued, 2)
+	assert.Equal(t, "api-spot-corr-1-1", queued[0].Climb.ID)
+	assert.Equal(t, "api-spot-corr-1-2", queued[1].Climb.ID)
+	assert.Equal(t, "task-cc1", queued[0].TaskID)
+	assert.Equal(t, "task-cc1", queued[1].TaskID)
+	assert.Contains(t, queued[0].SpotterFeedback, "response missing required field")
+	assert.Contains(t, queued[0].SpotterFeedback, "The API spec requires a name field")
+	assert.Contains(t, queued[1].SpotterFeedback, "unhandled nil pointer dereference")
+
+	// Climbs should be in the DAG
+	assert.NotNil(t, runner.dag.Get("api-spot-corr-1-1"))
+	assert.NotNil(t, runner.dag.Get("api-spot-corr-1-2"))
+
+	// Climbs should be in SQLite
+	dbClimbs, err := s.GetClimbsForProblem("task-cc1")
+	require.NoError(t, err)
+	climbIDs := make(map[string]bool)
+	for _, c := range dbClimbs {
+		climbIDs[c.ID] = true
+	}
+	assert.True(t, climbIDs["api-spot-corr-1-1"])
+	assert.True(t, climbIDs["api-spot-corr-1-2"])
+
+	// EventCorrectionClimbCreated events should be emitted for each climb
+	events, err := s.GetEventsForProblem("task-cc1")
+	require.NoError(t, err)
+	corrEventsCount := 0
+	for _, e := range events {
+		if e.Type == model.EventCorrectionClimbCreated {
+			corrEventsCount++
+		}
+	}
+	assert.Equal(t, 2, corrEventsCount, "expected 2 correction_climb_created events")
+
+	// EventSpotterCorrectionLoop should also be emitted
+	loopEventFound := false
+	for _, e := range events {
+		if e.Type == model.EventSpotterCorrectionLoop {
+			loopEventFound = true
+		}
+	}
+	assert.True(t, loopEventFound, "expected spotter_correction_loop event")
+
+	// Verify descriptions match
+	apiCorr1 := runner.dag.Get("api-spot-corr-1-1")
+	assert.Equal(t, "Fix response schema", apiCorr1.Description)
+
+	_ = tmpDir // used indirectly through runner.worktrees
+}
+
+func TestCreateSpotterCorrectionClimbs_EmptyList(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-cc2", RepoName: "api", Description: "initial climb", DependsOn: []string{}, Status: model.ClimbStatusComplete},
+	}
+	runner, _, _, _, _, _ := newTestRunner(t, "task-cc2", goals)
+
+	spot := &spotter.SpotJSON{
+		Pass:             false,
+		CorrectionClimbs: []spotter.CorrectionClimb{}, // empty
+	}
+
+	worktreePath := runner.worktrees["api"]
+	queued, err := runner.createSpotterCorrectionClimbs("api", worktreePath, spot)
+	require.NoError(t, err)
+	assert.Nil(t, queued, "empty correction_climbs should return nil")
+}
+
+func TestCreateSpotterCorrectionClimbs_TOPJsonCleanup(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-cc3", RepoName: "api", Description: "initial climb", DependsOn: []string{}, Status: model.ClimbStatusComplete},
+		{ID: "api-2", ProblemID: "task-cc3", RepoName: "api", Description: "second climb", DependsOn: []string{}, Status: model.ClimbStatusComplete},
+	}
+	runner, _, _, _, _, _ := newTestRunner(t, "task-cc3", goals)
+	runner.repoSpotterAttempts["api"] = 0
+
+	worktreePath := runner.worktrees["api"]
+
+	// Create existing TOP.json files for both climbs
+	for _, climbID := range []string{"api-1", "api-2"} {
+		topDir := filepath.Join(worktreePath, ".lead", climbID)
+		require.NoError(t, os.MkdirAll(topDir, 0o755))
+		topData, _ := json.Marshal(TopJSON{Status: "complete", Summary: "done"})
+		require.NoError(t, os.WriteFile(filepath.Join(topDir, "TOP.json"), topData, 0o644))
+	}
+
+	// Verify they exist before the call
+	_, err1 := os.Stat(filepath.Join(worktreePath, ".lead", "api-1", "TOP.json"))
+	require.NoError(t, err1, "TOP.json for api-1 should exist before call")
+	_, err2 := os.Stat(filepath.Join(worktreePath, ".lead", "api-2", "TOP.json"))
+	require.NoError(t, err2, "TOP.json for api-2 should exist before call")
+
+	spot := &spotter.SpotJSON{
+		Pass: false,
+		CorrectionClimbs: []spotter.CorrectionClimb{
+			{Description: "Fix something", IssuesAddressed: []string{"issue 1"}, Context: "ctx"},
+		},
+	}
+
+	queued, err := runner.createSpotterCorrectionClimbs("api", worktreePath, spot)
+	require.NoError(t, err)
+	require.Len(t, queued, 1)
+
+	// Old TOP.json files should be removed after the call
+	_, statErr1 := os.Stat(filepath.Join(worktreePath, ".lead", "api-1", "TOP.json"))
+	assert.True(t, os.IsNotExist(statErr1), "TOP.json for api-1 should be removed")
+	_, statErr2 := os.Stat(filepath.Join(worktreePath, ".lead", "api-2", "TOP.json"))
+	assert.True(t, os.IsNotExist(statErr2), "TOP.json for api-2 should be removed")
+
+	// The new correction climb should NOT have a TOP.json (it was just created)
+	corrClimbID := "api-spot-corr-0-1"
+	_, corrStatErr := os.Stat(filepath.Join(worktreePath, ".lead", corrClimbID, "TOP.json"))
+	assert.True(t, os.IsNotExist(corrStatErr), "new correction climb should not have a TOP.json")
+}
+
+// ─── Task 4: CheckRepoSpotResults needs_human escalation tests ─────────────
+
+func TestCheckRepoSpotResults_MaxCyclesNeedsHuman(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-nh1", RepoName: "api", Description: "initial climb", DependsOn: []string{}, Status: model.ClimbStatusComplete},
+	}
+	runner, s, tm, _, _, _ := newTestRunner(t, "task-nh1", goals)
+
+	// Pre-create spotter window (Init does this in real usage)
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
+
+	// Set up: already at max cycles
+	runner.repoSpotterAttempts["api"] = 2
+	runner.reviewLoop = belayerconfig.ReviewLoopConfig{MaxSpotterCycles: 2}
+	runner.repoSpotterActivated["api"] = true
+
+	// Write a failing SPOT.json to the expected path
+	worktreePath := runner.worktrees["api"]
+	spotDir := filepath.Join(worktreePath, ".lead", "spotter-api")
+	require.NoError(t, os.MkdirAll(spotDir, 0o755))
+	spotData, _ := json.Marshal(spotter.SpotJSON{
+		Pass:   false,
+		Issues: []spotter.Issue{{Check: "build", Description: "does not compile", Severity: "error"}},
+	})
+	require.NoError(t, os.WriteFile(filepath.Join(spotDir, "SPOT.json"), spotData, 0o644))
+
+	resolvedCount, newlyReady, retryClimbs, err := runner.CheckRepoSpotResults()
+	require.NoError(t, err)
+
+	// Problem should be escalated to needs_human
+	assert.Equal(t, model.ProblemStatusNeedsHuman, runner.task.Status)
+
+	// Status should be persisted in the store
+	updatedTask, err := s.GetProblem("task-nh1")
+	require.NoError(t, err)
+	assert.Equal(t, model.ProblemStatusNeedsHuman, updatedTask.Status)
+
+	// EventNeedsHuman should be emitted
+	events, err := s.GetEventsForProblem("task-nh1")
+	require.NoError(t, err)
+	needsHumanFound := false
+	for _, e := range events {
+		if e.Type == model.EventNeedsHuman {
+			needsHumanFound = true
+		}
+	}
+	assert.True(t, needsHumanFound, "expected needs_human event to be emitted")
+
+	// repoSpotterActivated should be false (deactivated)
+	assert.False(t, runner.repoSpotterActivated["api"])
+
+	// Function returns resolved=1, no newly ready, no retry climbs
+	assert.Equal(t, 1, resolvedCount)
+	assert.Empty(t, newlyReady)
+	assert.Empty(t, retryClimbs)
+}
+
+func TestCheckRepoSpotResults_DefaultMaxCycles(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-nh2", RepoName: "api", Description: "initial climb", DependsOn: []string{}, Status: model.ClimbStatusComplete},
+	}
+	runner, s, tm, _, _, _ := newTestRunner(t, "task-nh2", goals)
+
+	// Pre-create spotter window
+	require.NoError(t, tm.NewWindow(runner.tmuxSession, "spot-api"))
+
+	// MaxSpotterCycles = 0 should fall back to 2
+	runner.repoSpotterAttempts["api"] = 2
+	runner.reviewLoop = belayerconfig.ReviewLoopConfig{MaxSpotterCycles: 0} // triggers default fallback
+	runner.repoSpotterActivated["api"] = true
+
+	worktreePath := runner.worktrees["api"]
+	spotDir := filepath.Join(worktreePath, ".lead", "spotter-api")
+	require.NoError(t, os.MkdirAll(spotDir, 0o755))
+	spotData, _ := json.Marshal(spotter.SpotJSON{
+		Pass:   false,
+		Issues: []spotter.Issue{{Check: "tests", Description: "tests fail", Severity: "error"}},
+	})
+	require.NoError(t, os.WriteFile(filepath.Join(spotDir, "SPOT.json"), spotData, 0o644))
+
+	_, _, _, err := runner.CheckRepoSpotResults()
+	require.NoError(t, err)
+
+	// With MaxSpotterCycles=0 defaulting to 2, and attempts=2, should still escalate
+	assert.Equal(t, model.ProblemStatusNeedsHuman, runner.task.Status)
+
+	updatedTask, err := s.GetProblem("task-nh2")
+	require.NoError(t, err)
+	assert.Equal(t, model.ProblemStatusNeedsHuman, updatedTask.Status)
 }

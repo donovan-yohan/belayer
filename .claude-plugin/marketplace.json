@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "belayer",
+  "owner": { "name": "donovanyohan" },
+  "metadata": {
+    "description": "Belayer marketplace — plugins shipped with the multi-repo coding agent orchestrator",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "harness",
+      "source": "./plugins/harness",
+      "description": "3-tier documentation system with living execution plans"
+    },
+    {
+      "name": "pr",
+      "source": "./plugins/pr",
+      "description": "PR lifecycle management — author, review, resolve, update"
+    }
+  ]
+}

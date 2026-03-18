@@ -175,6 +175,9 @@ func runInDir(ctx context.Context, dir string, name string, args ...string) ([]b
 
 func (p *Provider) CreatePR(ctx context.Context, repoDir string, opts model.PROptions) (*model.PRStatus, error) {
 	args := []string{"pr", "create", "--title", opts.Title, "--body", opts.Body}
+	if opts.HeadBranch != "" {
+		args = append(args, "--head", opts.HeadBranch)
+	}
 	if opts.BaseBranch != "" {
 		args = append(args, "--base", opts.BaseBranch)
 	}

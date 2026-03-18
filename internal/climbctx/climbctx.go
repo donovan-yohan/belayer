@@ -7,15 +7,23 @@ import (
 	"path/filepath"
 )
 
+// LeadLearning is a past learning relevant to the current climb.
+type LeadLearning struct {
+	Description    string `json:"description"`
+	Recommendation string `json:"recommendation"`
+	Relevance      string `json:"relevance"`
+}
+
 // LeadClimb is the GOAL.json context for a lead agent.
 type LeadClimb struct {
-	Role            string `json:"role"`
-	ProblemSpec     string `json:"problem_spec"`
-	ClimbID         string `json:"climb_id"`
-	RepoName        string `json:"repo_name"`
-	Description     string `json:"description"`
-	Attempt         int    `json:"attempt"`
-	SpotterFeedback string `json:"spotter_feedback,omitempty"`
+	Role               string         `json:"role"`
+	ProblemSpec        string         `json:"problem_spec"`
+	ClimbID            string         `json:"climb_id"`
+	RepoName           string         `json:"repo_name"`
+	Description        string         `json:"description"`
+	Attempt            int            `json:"attempt"`
+	SpotterFeedback    string         `json:"spotter_feedback,omitempty"`
+	RelevantLearnings  []LeadLearning `json:"relevant_learnings,omitempty"`
 }
 
 // ClimbTopSummary contains the TOP.json data for a completed climb.
@@ -29,12 +37,14 @@ type ClimbTopSummary struct {
 
 // SpotterClimb is the GOAL.json context for a spotter agent.
 type SpotterClimb struct {
-	Role        string            `json:"role"`
-	RepoName    string            `json:"repo_name"`
-	ProblemSpec string            `json:"problem_spec"`
-	ClimbTops   []ClimbTopSummary `json:"climb_tops"`
-	WorkDir     string            `json:"work_dir"`
-	Profiles    map[string]string `json:"profiles"`
+	Role                  string            `json:"role"`
+	RepoName              string            `json:"repo_name"`
+	ProblemSpec           string            `json:"problem_spec"`
+	ClimbTops             []ClimbTopSummary `json:"climb_tops"`
+	WorkDir               string            `json:"work_dir"`
+	Profiles              map[string]string `json:"profiles"`
+	TestContract          string            `json:"test_contract"`
+	ReviewIncompleteLeads []ClimbTopSummary `json:"review_incomplete_leads"`
 }
 
 // AnchorClimb is the GOAL.json context for an anchor agent.

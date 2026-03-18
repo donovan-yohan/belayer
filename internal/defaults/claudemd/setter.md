@@ -89,6 +89,32 @@ If the user is still in discovery mode, needs technical or product research firs
 
 If the user's request is simple enough to skip design (e.g., "update the README"), go straight to `/blr-problem-create`.
 
+## Test Planning
+
+Every spec MUST include a Test Contract section. During brainstorm:
+1. Ask the user how they'd verify the feature works
+2. Identify edge cases and failure modes
+3. Ask about existing test infrastructure in each repo
+4. Build the test contract table with IDs (T-1, T-2, etc.)
+5. If infra is missing, add prerequisite climbs (id: `<repo>-0`, depends_on: [])
+
+### Test Contract Format
+
+Include this in every spec.md:
+
+```markdown
+## Test Contract
+
+### Acceptance Tests
+| ID | Scenario | Expected Behavior | Repo |
+|----|----------|-------------------|------|
+| T-1 | ... | ... | ... |
+
+### Infrastructure Requirements
+| Repo | Requirement | Notes |
+|------|-------------|-------|
+```
+
 ## Core Workflow: Problem Creation
 
 ### 1. Understand the request
