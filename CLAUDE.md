@@ -30,7 +30,7 @@ Standalone Go CLI tool that orchestrates autonomous coding agents across multipl
 - **Agentic nodes**: Ephemeral Claude sessions for: sufficiency checks, problem decomposition, alignment reviews, stuck analysis
 - **Long-lived crags with problem isolation**: Crag (repos, config) persists; each problem gets isolated worktrees
 - **Idempotent store operations**: All DB writes that can be retried (Init, env create, worktree setup) use `INSERT OR REPLACE`. See `docs/QUALITY.md` for the full idempotency requirement.
-- **Setter session context**: `internal/defaults/claudemd/setter.md` and `internal/defaults/commands/*.md` are deployed into `belayer setter` sessions. When CLI commands change, update these files. Verify during code review.
+- **Interactive session context**: `internal/defaults/claudemd/setter.md`, `internal/defaults/claudemd/explorer.md`, and the relevant `internal/defaults/commands/blr-*.md` assets are deployed into `belayer setter` and `belayer explorer` sessions. When these CLI surfaces change, update the templates/commands together and verify them during code review.
 
 ## Workflow
 

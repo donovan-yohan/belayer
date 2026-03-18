@@ -22,6 +22,14 @@ _None currently active._
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Explorer Session Resume Flow](exec-plans/archive/2026-03-17-explorer-session-resume.md) | 2026-03-17 | Interrupted-session detection and resume-or-start-fresh for named explorer workspaces |
+| [Setter Research And Draft Guidance](exec-plans/completed/2026-03-17-setter-research-draft-guidance.md) | 2026-03-17 | Close the remaining setter-session gaps for shared research workflows, draft consumption guidance, and deterministic command publication |
+| [Research Toolkit Commands](exec-plans/completed/2026-03-17-research-command-toolkit.md) | 2026-03-17 | Add shared `/blr-research*` command assets, session-root guidance, review fixes, and verified alignment with the coupled explorer/draft workflow surfaces |
+| [Explorer Template Guidance](exec-plans/completed/2026-03-17-explorer-template-guidance.md) | 2026-03-17 | Refine `internal/defaults/claudemd/explorer.md` so explorer sessions teach the five-phase workflow and belayer problem/climb drafting model clearly |
+| [Draft Workflow Commands](exec-plans/completed/2026-03-17-draft-workflow-commands.md) | 2026-03-17 | Add `/blr-phase-plan`, `/blr-draft-create`, `/blr-draft-list`, and `/blr-draft-review` command assets with draft-workflow guidance and regression coverage |
+| [Explorer Session Bootstrap](exec-plans/completed/2026-03-17-explorer-session-bootstrap.md) | 2026-03-17 | Add `belayer explorer`, explorer workspace prep, shared session launcher cleanup, and explorer template/test coverage |
+| [Setter BLR Command Rename](exec-plans/completed/2026-03-17-setter-blr-command-rename.md) | 2026-03-17 | Rename embedded setter commands to the `blr-` namespace, align setter guidance, and tighten command-content tests |
+| [Crag Create Local Paths](exec-plans/completed/2026-03-17-crag-local-paths.md) | 2026-03-17 | `belayer crag create --local-paths` support, validation, and tracker guardrails |
 | [Review Deferred Items](exec-plans/completed/2026-03-16-review-deferred-items.md) | 2026-03-16 | Test coverage, typed enums, HandleApproval bug fix |
 | [Review Loops, Test Infra & Learnings](exec-plans/completed/2026-03-16-review-loops-test-infra.md) | 2026-03-16 | Multi-persona review loops, test contracts, spotter shift, persistent learnings |
 | [Belayer Marketplace](exec-plans/completed/2026-03-13-belayer-marketplace.md) | 2026-03-13 | Vendor harness + pr plugins, create marketplace, auto-install in init |

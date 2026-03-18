@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,10 @@ import (
 )
 
 func TestRepoNameFromURL(t *testing.T) {
+	absoluteLocalPath := filepath.Join(t.TempDir(), "abs-repo")
+	localBarePath := filepath.Join(t.TempDir(), "local-bare.git")
+	relativeLocalPath := filepath.Join("repos", "relative-repo")
+
 	tests := []struct {
 		url      string
 		expected string
@@ -19,6 +24,9 @@ func TestRepoNameFromURL(t *testing.T) {
 		{"git@github.com:org/my-repo", "my-repo", false},
 		{"https://github.com/org/repo.git/", "repo", false},
 		{"https://gitlab.com/group/subgroup/project.git", "project", false},
+		{absoluteLocalPath, "abs-repo", false},
+		{localBarePath, "local-bare", false},
+		{relativeLocalPath, "relative-repo", false},
 		{"", "", true},
 	}
 
@@ -39,6 +47,73 @@ func TestRepoNameFromURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateRepoSource(t *testing.T) {
+	localRepo := filepath.Join(t.TempDir(), "local-repo")
+	if err := os.MkdirAll(localRepo, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	tests := []struct {
+		name            string
+		repoSource      string
+		allowLocalPaths bool
+		wantErr         bool
+	}{
+		{name: "https url", repoSource: "https://github.com/org/my-repo.git"},
+		{name: "ssh url", repoSource: "git@github.com:org/my-repo.git"},
+		{name: "file url", repoSource: (&url.URL{Scheme: "file", Path: localRepo}).String()},
+		{name: "local path with flag", repoSource: localRepo, allowLocalPaths: true},
+		{name: "local path without flag", repoSource: localRepo, wantErr: true},
+		{name: "missing local path", repoSource: filepath.Join(t.TempDir(), "missing-repo"), allowLocalPaths: true, wantErr: true},
+		{name: "local file path", repoSource: createLocalFile(t), allowLocalPaths: true, wantErr: true},
+		{name: "empty source", repoSource: "", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateRepoSource(tt.repoSource, tt.allowLocalPaths)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ValidateRepoSource(%q, %t) succeeded, want error", tt.repoSource, tt.allowLocalPaths)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateRepoSource(%q, %t) error = %v", tt.repoSource, tt.allowLocalPaths, err)
+			}
+		})
+	}
+}
+
+func TestValidateRepoSourceColonPath(t *testing.T) {
+	repoPath := filepath.Join(t.TempDir(), "local:repo")
+	if err := os.MkdirAll(repoPath, 0755); err != nil {
+		t.Skipf("filesystem does not allow colon in paths: %v", err)
+	}
+
+	if err := ValidateRepoSource(repoPath, true); err != nil {
+		t.Fatalf("ValidateRepoSource(%q, true) error = %v", repoPath, err)
+	}
+
+	name, err := RepoNameFromURL(repoPath)
+	if err != nil {
+		t.Fatalf("RepoNameFromURL(%q) error = %v", repoPath, err)
+	}
+	if name != "local:repo" {
+		t.Fatalf("RepoNameFromURL(%q) = %q, want %q", repoPath, name, "local:repo")
+	}
+}
+
+func createLocalFile(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "not-a-repo.txt")
+	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
 }
 
 // initBareRepo creates a bare git repo for testing and returns its path.

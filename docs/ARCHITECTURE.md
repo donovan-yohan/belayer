@@ -52,11 +52,11 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Module | Path | Purpose |
 |--------|------|---------|
 | CLI entry | `cmd/belayer/main.go` | Binary entry point |
-| CLI commands | `internal/cli/` | Cobra command definitions (root, init, crag, problem, status, belayer, setter, message, mail, tracker, pr, env) |
+| CLI commands | `internal/cli/` | Cobra command definitions (root, init, crag, explorer, problem, status, belayer, setter, message, mail, tracker, pr, env) |
 | Belayer Config | `internal/belayerconfig/` | Config loader with resolution chain (crag > global > embedded defaults) |
 | Config | `internal/config/` | Global config loading/saving (`~/.belayer/config.json`) |
-| Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles, setter session commands) via `embed.FS` |
-| Manage | `internal/manage/` | Setter session workspace preparation (PrepareManageDir: renders CLAUDE.md template, copies slash commands) |
+| Defaults | `internal/defaults/` | Embedded default config files (belayer.toml, CLAUDE.md templates, validation profiles, session command markdown) via `embed.FS` |
+| Manage | `internal/manage/` | Interactive session workspace preparation (`PrepareManageDir` for setter, `PrepareExplorerDir` for explorer; both render templates, deploy the appropriate `.claude/commands` set, and prune stale generated command files when workspaces are reused) |
 | Climb Context | `internal/climbctx/` | GOAL.json types (LeadClimb, SpotterClimb, AnchorClimb) and writer |
 | Database | `internal/db/` | SQLite connection, migration runner, embedded SQL |
 | Migrations | `internal/db/migrations/` | SQL migration files (001_initial.sql through 005_environments.sql) |

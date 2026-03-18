@@ -18,8 +18,8 @@ func newSetterSessionCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "setter",
-		Short: "Start an interactive setter session for problem creation",
-		Long:  "Launches a Claude Code session with belayer context. The session has slash commands for problem creation, status, messaging, and more.",
+		Short: "Start an interactive setter session for research and problem creation",
+		Long:  "Launches a Claude Code session with belayer context. The session has slash commands for discovery research, problem planning, status, messaging, and more.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, err := resolveCragName(cragName)
 			if err != nil {
@@ -56,23 +56,35 @@ func newSetterSessionCmd() *cobra.Command {
 // execClaudeInDir replaces the current process with a claude session in the given directory.
 // Sets BELAYER_CRAG env var so all belayer commands auto-resolve the crag.
 var execClaudeInDir = func(dir string, cragName string, skipPermissions bool) error {
+	return execClaudeSession(dir, map[string]string{"BELAYER_CRAG": cragName}, skipPermissions)
+}
+
+func buildClaudeEnv(baseEnv []string, envOverrides map[string]string) []string {
+	cleaned := make([]string, 0, len(baseEnv)+len(envOverrides))
+	for _, e := range baseEnv {
+		if !strings.HasPrefix(e, "BELAYER_CRAG=") && !strings.HasPrefix(e, "BELAYER_INSTANCE=") {
+			cleaned = append(cleaned, e)
+		}
+	}
+	for key, value := range envOverrides {
+		cleaned = append(cleaned, key+"="+value)
+	}
+	return cleaned
+}
+
+// execClaudeSession replaces the current process with a claude session in the given directory.
+// It always clears stale BELAYER_CRAG/BELAYER_INSTANCE values before applying any overrides.
+var execClaudeSession = func(dir string, envOverrides map[string]string, skipPermissions bool) error {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		return fmt.Errorf("claude not found in PATH: %w", err)
 	}
 
-	// Deduplicate BELAYER_CRAG and BELAYER_INSTANCE to avoid POSIX ambiguity with duplicate keys
-	base := make([]string, 0, len(os.Environ()))
-	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "BELAYER_CRAG=") && !strings.HasPrefix(e, "BELAYER_INSTANCE=") {
-			base = append(base, e)
-		}
-	}
-	env := append(base, "BELAYER_CRAG="+cragName)
+	env := buildClaudeEnv(os.Environ(), envOverrides)
 
-	// Change to the crag dir so claude picks up .claude/ files
+	// Change to the workspace dir so claude picks up .claude/ files.
 	if err := os.Chdir(dir); err != nil {
-		return fmt.Errorf("changing to setter dir: %w", err)
+		return fmt.Errorf("changing to workspace dir: %w", err)
 	}
 
 	args := []string{"claude"}

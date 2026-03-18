@@ -18,6 +18,7 @@ func NewRootCmd() *cobra.Command {
 	cmd.AddCommand(
 		newInitCmd(),
 		newCragCmd(),
+		newExplorerSessionCmd(),
 		newProblemCmd(),
 		newStatusCmd(),
 		newBelayerDaemonCmd(),

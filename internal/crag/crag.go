@@ -20,6 +20,7 @@ const (
 )
 
 // RepoEntry describes a repository within a crag.
+// URL stores the original git clone source, which may be a remote URL or local path.
 type RepoEntry struct {
 	Name     string `json:"name"`
 	URL      string `json:"url"`
@@ -34,7 +35,7 @@ type CragConfig struct {
 }
 
 // Create creates a new belayer crag: directory structure, bare clones, DB, and config.
-func Create(name string, repoURLs []string) (string, error) {
+func Create(name string, repoSources []string) (string, error) {
 	if name == "" {
 		return "", fmt.Errorf("crag name cannot be empty")
 	}
@@ -65,24 +66,24 @@ func Create(name string, repoURLs []string) (string, error) {
 	}
 
 	var repos []RepoEntry
-	for _, repoURL := range repoURLs {
-		repoName, err := repo.RepoNameFromURL(repoURL)
+	for _, repoSource := range repoSources {
+		repoName, err := repo.RepoNameFromURL(repoSource)
 		if err != nil {
 			cleanup(cragDir)
-			return "", fmt.Errorf("extracting repo name from %q: %w", repoURL, err)
+			return "", fmt.Errorf("extracting repo name from %q: %w", repoSource, err)
 		}
 
 		barePath := filepath.Join(reposDir, repoName+".git")
 		fullBarePath := filepath.Join(cragDir, barePath)
 
-		if err := repo.CloneBare(repoURL, fullBarePath); err != nil {
+		if err := repo.CloneBare(repoSource, fullBarePath); err != nil {
 			cleanup(cragDir)
-			return "", fmt.Errorf("cloning %s: %w", repoURL, err)
+			return "", fmt.Errorf("cloning %s: %w", repoSource, err)
 		}
 
 		repos = append(repos, RepoEntry{
 			Name:     repoName,
-			URL:      repoURL,
+			URL:      repoSource,
 			BarePath: barePath,
 		})
 	}

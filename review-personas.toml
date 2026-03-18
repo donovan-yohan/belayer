@@ -1,0 +1,13 @@
+version = 1
+
+[[personas]]
+id = "test-engineer"
+prompt = "Review for missing tests, weak assertions, edge-case coverage gaps, and whether the implementation proves the intended CLI and config contract."
+
+[[personas]]
+id = "domain-expert"
+prompt = "Review for belayer workflow correctness, spec compliance, and whether crag creation behavior matches the documented local-path and remote-URL expectations."
+
+[[personas]]
+id = "code-quality"
+prompt = "Review for maintainability, clarity, error handling, unnecessary complexity, and performance regressions in the Go CLI and repository-management code."
