@@ -484,7 +484,9 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 						resolved, resolveErr := tr.checkAndResolveTrustDialog(windowName)
 						if resolveErr == nil && resolved {
 							// Trust dialog resolved — touch the log file to reset silence tracking
-							_ = os.Chtimes(logPath, now, now)
+							if chtErr := os.Chtimes(logPath, now, now); chtErr != nil {
+								log.Printf("warning: failed to touch log file after trust dialog resolution for %s: %v", climb.ID, chtErr)
+							}
 							continue // skip this climb, let it proceed
 						}
 						// Not a trust dialog — check for generic input prompt (only after full threshold)
@@ -1415,28 +1417,15 @@ func looksLikeInputPrompt(content string) bool {
 // trust confirmation dialog from Claude Code or Codex.
 func looksLikeTrustDialog(content string) bool {
 	lower := strings.ToLower(content)
-	trustPatterns := []string{
+	trustKeywords := []string{
 		"do you trust",
 		"trust the files in",
 		"trust this folder",
 		"trust this project",
 		"allow access",
 	}
-	for _, pattern := range trustPatterns {
-		if strings.Contains(lower, pattern) {
-			return true
-		}
-	}
-	// Check for confirmation prompt patterns on the last non-empty line
-	lines := strings.Split(strings.TrimSpace(content), "\n")
-	if len(lines) == 0 {
-		return false
-	}
-	lastLine := strings.TrimSpace(lines[len(lines)-1])
-	lowerLast := strings.ToLower(lastLine)
-	confirmPatterns := []string{"(y/n)", "[y/n]", "yes, proceed", "continue?"}
-	for _, pattern := range confirmPatterns {
-		if strings.Contains(lowerLast, pattern) {
+	for _, kw := range trustKeywords {
+		if strings.Contains(lower, kw) {
 			return true
 		}
 	}
@@ -1444,7 +1433,9 @@ func looksLikeTrustDialog(content string) bool {
 }
 
 // checkAndResolveTrustDialog captures pane content and auto-accepts any trust
-// dialog by sending Enter. Returns true if a dialog was detected and resolved.
+// dialog by sending "y" + Enter. Returns true if a dialog was detected and resolved.
+// Sends "y" explicitly because trust prompts often default to No (e.g. "(y/N)"),
+// so bare Enter would decline trust.
 func (tr *ProblemRunner) checkAndResolveTrustDialog(windowName string) (bool, error) {
 	content, err := tr.tmux.CapturePaneContent(tr.tmuxSession, windowName, 30)
 	if err != nil {
@@ -1454,6 +1445,9 @@ func (tr *ProblemRunner) checkAndResolveTrustDialog(windowName string) (bool, er
 		return false, nil
 	}
 	target := tr.tmuxSession + ":" + windowName
+	if err := tr.tmux.SendKeysLiteral(target, "y"); err != nil {
+		return false, fmt.Errorf("sending 'y' to resolve trust dialog: %w", err)
+	}
 	if err := tr.tmux.SendKeysRaw(target, "Enter"); err != nil {
 		return false, fmt.Errorf("sending Enter to resolve trust dialog: %w", err)
 	}

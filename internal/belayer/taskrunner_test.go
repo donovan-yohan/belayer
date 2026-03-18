@@ -105,19 +105,19 @@ func TestLooksLikeTrustDialog(t *testing.T) {
 			want:    true,
 		},
 		{
-			name:    "confirmation prompt y/n",
+			name:    "generic y/n without trust keyword",
 			content: "Some prompt text\n(y/N)",
-			want:    true,
+			want:    false,
 		},
 		{
-			name:    "confirmation prompt Y/n",
+			name:    "generic bracket y/n without trust keyword",
 			content: "Workspace setup required\n[Y/n]",
-			want:    true,
+			want:    false,
 		},
 		{
-			name:    "continue prompt",
+			name:    "generic continue without trust keyword",
 			content: "First time in this directory.\nContinue?",
-			want:    true,
+			want:    false,
 		},
 		{
 			name:    "normal claude working output",
@@ -171,12 +171,13 @@ func TestLooksLikeInputPrompt_NotTrustDialog(t *testing.T) {
 	assert.True(t, looksLikeInputPrompt(normalPrompt))
 }
 
-// trustMockTmux extends mockTmux with configurable pane content and raw key tracking.
+// trustMockTmux extends mockTmux with configurable pane content and key tracking.
 type trustMockTmux struct {
 	mockTmux
 	paneContent    map[string]string // target -> content
 	paneDead       map[string]bool   // target -> dead
-	rawKeysSent    []string          // track SendKeysRaw calls
+	literalSent    []string          // track SendKeysLiteral calls ("target:text")
+	rawKeysSent    []string          // track SendKeysRaw calls ("target:key")
 }
 
 func newTrustMockTmux() *trustMockTmux {
@@ -205,6 +206,11 @@ func (m *trustMockTmux) IsPaneDead(session, windowName string) (bool, error) {
 	return m.paneDead[target], nil
 }
 
+func (m *trustMockTmux) SendKeysLiteral(target, text string) error {
+	m.literalSent = append(m.literalSent, target+":"+text)
+	return nil
+}
+
 func (m *trustMockTmux) SendKeysRaw(target, key string) error {
 	m.rawKeysSent = append(m.rawKeysSent, target+":"+key)
 	return nil
@@ -227,12 +233,15 @@ func TestCheckAndResolveTrustDialog(t *testing.T) {
 		assert.False(t, resolved)
 	})
 
-	t.Run("trust dialog resolved with Enter", func(t *testing.T) {
+	t.Run("trust dialog resolved with y + Enter", func(t *testing.T) {
+		tm.literalSent = nil
 		tm.rawKeysSent = nil
 		tm.paneContent["test-sess:repo-climb1"] = "Do you trust the files in this folder?\n(y/N)"
 		resolved, err := tr.checkAndResolveTrustDialog("repo-climb1")
 		require.NoError(t, err)
 		assert.True(t, resolved)
+		require.Len(t, tm.literalSent, 1)
+		assert.Equal(t, "test-sess:repo-climb1:y", tm.literalSent[0])
 		require.Len(t, tm.rawKeysSent, 1)
 		assert.Equal(t, "test-sess:repo-climb1:Enter", tm.rawKeysSent[0])
 	})
@@ -251,13 +260,13 @@ func setupTrustTestEnv(t *testing.T, taskID, climbID, repoName string) (*Problem
 
 	tmpDir := t.TempDir()
 	logDir := filepath.Join(tmpDir, "logs")
-	os.MkdirAll(logDir, 0o755)
+	require.NoError(t, os.MkdirAll(logDir, 0o755))
 	lm := logmgr.New(logDir)
-	lm.EnsureDir(taskID)
+	require.NoError(t, lm.EnsureDir(taskID))
 
 	// Create worktree dir with .lead/<climbID>/ (no TOP.json)
 	worktreeDir := filepath.Join(tmpDir, "worktree")
-	os.MkdirAll(filepath.Join(worktreeDir, ".lead", climbID), 0o755)
+	require.NoError(t, os.MkdirAll(filepath.Join(worktreeDir, ".lead", climbID), 0o755))
 
 	// Insert problem and climb in store
 	climbsJSON, _ := json.Marshal(model.ClimbsFile{})
@@ -291,9 +300,9 @@ func TestCheckStaleClimbs_TrustDialogResolved(t *testing.T) {
 	tr, tm, logPath := setupTrustTestEnv(t, "task1", "c1", "api")
 
 	// Create a log file that's been silent for 3 minutes
-	os.WriteFile(logPath, []byte("initial output"), 0o644)
+	require.NoError(t, os.WriteFile(logPath, []byte("initial output"), 0o644))
 	oldTime := time.Now().Add(-3 * time.Minute)
-	os.Chtimes(logPath, oldTime, oldTime)
+	require.NoError(t, os.Chtimes(logPath, oldTime, oldTime))
 
 	// Set pane content to trust dialog
 	tm.paneContent["test-sess:api-c1"] = "Do you trust the files in this folder?\n(y/N)"
@@ -307,7 +316,9 @@ func TestCheckStaleClimbs_TrustDialogResolved(t *testing.T) {
 	// Trust dialog should be resolved — climb should NOT be retried
 	assert.Empty(t, retries, "climb should not be retried after trust dialog resolution")
 
-	// Verify Enter was sent
+	// Verify y + Enter was sent
+	require.Len(t, tm.literalSent, 1)
+	assert.Equal(t, "test-sess:api-c1:y", tm.literalSent[0])
 	require.Len(t, tm.rawKeysSent, 1)
 	assert.Equal(t, "test-sess:api-c1:Enter", tm.rawKeysSent[0])
 
@@ -321,8 +332,8 @@ func TestCheckStaleClimbs_EarlyTrustDetection(t *testing.T) {
 	tr, tm, logPath := setupTrustTestEnv(t, "task2", "c2", "api")
 
 	// Create a log file that's been silent for only 15 seconds (under 2min threshold)
-	os.WriteFile(logPath, []byte("starting"), 0o644)
-	os.Chtimes(logPath, time.Now().Add(-15*time.Second), time.Now().Add(-15*time.Second))
+	require.NoError(t, os.WriteFile(logPath, []byte("starting"), 0o644))
+	require.NoError(t, os.Chtimes(logPath, time.Now().Add(-15*time.Second), time.Now().Add(-15*time.Second)))
 
 	// Trust dialog in pane
 	tm.paneContent["test-sess:api-c2"] = "Trust this folder?\n(y/N)"
@@ -335,6 +346,8 @@ func TestCheckStaleClimbs_EarlyTrustDetection(t *testing.T) {
 
 	// Early detection should have caught and resolved the trust dialog
 	assert.Empty(t, retries, "early trust detection should resolve dialog without retry")
+	assert.Len(t, tm.literalSent, 1, "y should have been sent")
+	assert.Equal(t, "test-sess:api-c2:y", tm.literalSent[0])
 	assert.Len(t, tm.rawKeysSent, 1, "Enter should have been sent")
 	assert.Equal(t, "test-sess:api-c2:Enter", tm.rawKeysSent[0])
 }
