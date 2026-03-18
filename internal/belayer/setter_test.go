@@ -136,8 +136,14 @@ func (m *mockSpawner) Spawn(_ context.Context, opts lead.SpawnOpts) error {
 }
 
 // mockGitRunner returns canned git output for tests.
+type gitCall struct {
+	workdir string
+	args    []string
+}
+
 type mockGitRunner struct {
-	responses map[string]string // key "<workdir>:<args>" -> output
+	responses map[string]string // key "<workdir>:<args[0]>" -> output
+	calls     []gitCall
 }
 
 func newMockGitRunner() *mockGitRunner {
@@ -145,6 +151,7 @@ func newMockGitRunner() *mockGitRunner {
 }
 
 func (m *mockGitRunner) Run(workdir string, args ...string) (string, error) {
+	m.calls = append(m.calls, gitCall{workdir: workdir, args: append([]string{}, args...)})
 	key := workdir + ":" + args[0]
 	if resp, ok := m.responses[key]; ok {
 		return resp, nil

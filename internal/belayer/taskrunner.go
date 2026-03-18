@@ -439,6 +439,14 @@ func (tr *ProblemRunner) CheckCompletions() (newlyReady []QueuedClimb, completed
 		delete(tr.startedAt, climb.ID)
 		completedCount++
 
+		// Push branch to remote as a safety net — if the daemon crashes or
+		// cleanup runs before HandleApproval, the work is preserved on origin.
+		if tr.git != nil {
+			if _, pushErr := tr.git.Run(worktreePath, "push", "-u", "origin", "HEAD"); pushErr != nil {
+				log.Printf("warning: failed to push branch for completed climb %s: %v", climb.ID, pushErr)
+			}
+		}
+
 		windowName := fmt.Sprintf("%s-%s", climb.RepoName, climb.ID)
 		tr.killPaneProcessTree(windowName)
 		tr.tmux.KillWindow(tr.tmuxSession, windowName)

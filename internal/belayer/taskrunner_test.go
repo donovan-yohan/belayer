@@ -383,3 +383,38 @@ func TestCheckStaleClimbs_SilentAgentTimedOut(t *testing.T) {
 	// Agent is silent (log not modified for 5min) AND past timeout — should be timed out
 	assert.Len(t, retries, 1, "silent agent past staleTimeout should be timed out and retried")
 }
+
+func TestCheckCompletions_PushesBranch(t *testing.T) {
+	goals := []model.Climb{
+		{ID: "climb-1", ProblemID: "push-test", RepoName: "repo-a", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusRunning},
+	}
+	runner, _, _, _, mg, _ := newTestRunner(t, "push-test", goals)
+
+	// Create TOP.json for the running climb
+	worktreeDir := runner.worktrees["repo-a"]
+	leadDir := filepath.Join(worktreeDir, ".lead", "climb-1")
+	require.NoError(t, os.MkdirAll(leadDir, 0o755))
+	topJSON := `{"status":"complete","summary":"done","files_changed":["a.go"],"notes":""}`
+	require.NoError(t, os.WriteFile(filepath.Join(leadDir, "TOP.json"), []byte(topJSON), 0o644))
+
+	// Mark climb as running in the DAG (newTestRunner inserts as pending, we need running)
+	runner.dag.MarkRunning("climb-1")
+	runner.startedAt["climb-1"] = time.Now().Add(-5 * time.Minute)
+	require.NoError(t, runner.store.UpdateClimbStatus("climb-1", model.ClimbStatusRunning))
+	runner.dag.Get("climb-1").Status = model.ClimbStatusRunning
+
+	_, completed, err := runner.CheckCompletions()
+	require.NoError(t, err)
+	assert.Equal(t, 1, completed)
+
+	// Verify push was called
+	var pushCalls []gitCall
+	for _, c := range mg.calls {
+		if len(c.args) > 0 && c.args[0] == "push" {
+			pushCalls = append(pushCalls, c)
+		}
+	}
+	require.Len(t, pushCalls, 1, "expected one git push call")
+	assert.Equal(t, worktreeDir, pushCalls[0].workdir)
+	assert.Equal(t, []string{"push", "-u", "origin", "HEAD"}, pushCalls[0].args)
+}
