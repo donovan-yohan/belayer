@@ -22,6 +22,7 @@ _None currently active._
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Work Loss Prevention & PR Stderr Capture](exec-plans/completed/2026-03-17-work-loss-and-stderr-fixes.md) | 2026-03-17 | Push branches on climb completion, capture gh stderr, warn on cleanup of unpushed work |
 | [Explorer Session Resume Flow](exec-plans/archive/2026-03-17-explorer-session-resume.md) | 2026-03-17 | Interrupted-session detection and resume-or-start-fresh for named explorer workspaces |
 | [Setter Research And Draft Guidance](exec-plans/completed/2026-03-17-setter-research-draft-guidance.md) | 2026-03-17 | Close the remaining setter-session gaps for shared research workflows, draft consumption guidance, and deterministic command publication |
 | [Research Toolkit Commands](exec-plans/completed/2026-03-17-research-command-toolkit.md) | 2026-03-17 | Add shared `/blr-research*` command assets, session-root guidance, review fixes, and verified alignment with the coupled explorer/draft workflow surfaces |
