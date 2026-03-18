@@ -13,12 +13,13 @@ import (
 	"syscall"
 	"time"
 
+	belayerassets "github.com/donovan-yohan/belayer"
 	"github.com/donovan-yohan/belayer/internal/agentic"
 	"github.com/donovan-yohan/belayer/internal/anchor"
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/climbctx"
-	"github.com/donovan-yohan/belayer/internal/defaults"
 	"github.com/donovan-yohan/belayer/internal/crag"
+	"github.com/donovan-yohan/belayer/internal/defaults"
 	"github.com/donovan-yohan/belayer/internal/envprovider"
 	"github.com/donovan-yohan/belayer/internal/lead"
 	"github.com/donovan-yohan/belayer/internal/logmgr"
@@ -74,7 +75,7 @@ type ProblemRunner struct {
 	scm         scm.SCMProvider
 	prConfig    belayerconfig.PRConfig
 	reviewLoop  belayerconfig.ReviewLoopConfig
-	envClient   *envprovider.Client // nil = legacy direct worktree creation
+	envClient   *envprovider.Client  // nil = legacy direct worktree creation
 	startedAt   map[string]time.Time // climbID -> when it started running
 
 	// Config directories for prompt/profile resolution.
@@ -90,35 +91,35 @@ type ProblemRunner struct {
 	validationEnabled bool // when true, TOP.json triggers spotting instead of direct completion
 
 	// Repo-level spotter tracking
-	repoSpotterActivated     map[string]bool     // repo -> whether spotter has been activated
-	repoSpotterAttempts      map[string]int      // repo -> spotter attempt count
-	reviewIncompleteClimbIDs map[string]bool     // climbID -> true if TOP.json status was review_incomplete
+	repoSpotterActivated     map[string]bool // repo -> whether spotter has been activated
+	repoSpotterAttempts      map[string]int  // repo -> spotter attempt count
+	reviewIncompleteClimbIDs map[string]bool // climbID -> true if TOP.json status was review_incomplete
 	// Populated during CheckCompletions; ActivateSpotter uses TOP.json directly instead.
 
 	// Cached learning retrieval — run once per problem, shared across all leads.
-	cachedLearnings     []climbctx.LeadLearning
-	learningsRetrieved  bool
+	cachedLearnings    []climbctx.LeadLearning
+	learningsRetrieved bool
 }
 
 // NewProblemRunner creates a ProblemRunner for the given problem.
 // envClient may be nil, in which case Init falls back to direct crag worktree creation.
 func NewProblemRunner(task *model.Problem, cragDir, globalCfgDir, cragCfgDir string, s *store.Store, tm tmux.TmuxManager, lm *logmgr.LogManager, sp *lead.SpawnerSet, scmProvider scm.SCMProvider, prCfg belayerconfig.PRConfig, reviewLoopCfg belayerconfig.ReviewLoopConfig, envClient *envprovider.Client) *ProblemRunner {
 	return &ProblemRunner{
-		task:                 task,
-		worktrees:            make(map[string]string),
-		cragDir:              cragDir,
-		globalConfigDir:      globalCfgDir,
-		cragConfigDir:        cragCfgDir,
-		store:                s,
-		tmux:                 tm,
-		logMgr:               lm,
-		spawners:             sp,
-		git:                  &RealGitRunner{},
-		scm:                  scmProvider,
-		prConfig:             prCfg,
-		reviewLoop:           reviewLoopCfg,
-		envClient:            envClient,
-		startedAt:            make(map[string]time.Time),
+		task:                     task,
+		worktrees:                make(map[string]string),
+		cragDir:                  cragDir,
+		globalConfigDir:          globalCfgDir,
+		cragConfigDir:            cragCfgDir,
+		store:                    s,
+		tmux:                     tm,
+		logMgr:                   lm,
+		spawners:                 sp,
+		git:                      &RealGitRunner{},
+		scm:                      scmProvider,
+		prConfig:                 prCfg,
+		reviewLoop:               reviewLoopCfg,
+		envClient:                envClient,
+		startedAt:                make(map[string]time.Time),
 		validationEnabled:        true,
 		repoSpotterActivated:     make(map[string]bool),
 		repoSpotterAttempts:      make(map[string]int),
@@ -289,18 +290,29 @@ func (tr *ProblemRunner) SpawnClimb(queued QueuedClimb) error {
 	mailAddr := fmt.Sprintf("problem/%s/lead/%s/%s", tr.task.ID, climb.RepoName, climb.ID)
 
 	goalJSONPath := fmt.Sprintf(".lead/%s/GOAL.json", climb.ID)
+	provider := spawnerProvider(tr.spawners.Lead)
 	initialPrompt := fmt.Sprintf(`Read %s and begin working on your assignment. Follow the harness pipeline:
 
 1. Read %s to understand your goal and task spec
-2. If this repo does not have harness docs yet, run /harness:init
-3. Run /harness:plan to create an implementation plan from your goal spec
-4. Run /harness:orchestrate to execute the plan with worker agents
-5. Run /harness:review to run multi-agent code review and fix any findings
-6. Run /harness:reflect to update docs, capture learnings and retrospective
-7. Run /harness:complete to archive the plan and commit
+2. If this repo does not have harness docs yet, run %s
+3. Run %s to create an implementation plan from your goal spec
+4. Run %s to execute the plan with worker agents
+5. Run %s to run multi-agent code review and fix any findings
+6. Run %s to update docs, capture learnings and retrospective
+7. Run %s to archive the plan and commit
 8. Write TOP.json in .lead/%s/ when complete
 
-You are fully autonomous. Make decisions, document drift, and keep moving.`, goalJSONPath, goalJSONPath, climb.ID)
+You are fully autonomous. Make decisions, document drift, and keep moving.`,
+		goalJSONPath,
+		goalJSONPath,
+		belayerassets.Invocation(provider, "harness", "init"),
+		belayerassets.Invocation(provider, "harness", "plan"),
+		belayerassets.Invocation(provider, "harness", "orchestrate"),
+		belayerassets.Invocation(provider, "harness", "review"),
+		belayerassets.Invocation(provider, "harness", "reflect"),
+		belayerassets.Invocation(provider, "harness", "complete"),
+		climb.ID,
+	)
 
 	if err := tr.spawners.Lead.Spawn(context.Background(), lead.SpawnOpts{
 		TmuxSession:        tr.tmuxSession,
@@ -328,6 +340,15 @@ You are fully autonomous. Make decisions, document drift, and keep moving.`, goa
 	return nil
 }
 
+func spawnerProvider(sp lead.AgentSpawner) string {
+	switch sp.(type) {
+	case *lead.CodexSpawner:
+		return "codex"
+	default:
+		return "claude"
+	}
+}
+
 // retrieveLearnings returns cached relevant learnings for this problem.
 // Runs the learning retrieval agentic node on first call, caches the result
 // for all subsequent leads in the same problem.
@@ -351,7 +372,7 @@ func (tr *ProblemRunner) retrieveLearnings() []climbctx.LeadLearning {
 
 	result, err := agentic.RunRetrieval(ctx, "sonnet", agentic.RetrievalInput{
 		ProblemSpec: tr.task.Spec,
-		Learnings:  learnings,
+		Learnings:   learnings,
 	})
 	if err != nil {
 		log.Printf("warning: learning retrieval failed for problem %s, leads will not receive past learnings: %v", tr.task.ID, err)
@@ -460,7 +481,19 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 		reason := "window died"
 
 		startedAt, tracked := tr.startedAt[climb.ID]
-		timedOut := tracked && now.Sub(startedAt) > staleTimeout
+		elapsedPastTimeout := tracked && now.Sub(startedAt) > staleTimeout
+
+		// Activity-aware timeout: only time out if the agent is also silent.
+		// An agent still producing log output is working, not stale.
+		timedOut := false
+		if elapsedPastTimeout {
+			logPath := tr.logMgr.LogPath(tr.task.ID, climb.ID)
+			if info, statErr := os.Stat(logPath); statErr == nil {
+				timedOut = now.Sub(info.ModTime()) > 2*time.Minute
+			} else {
+				timedOut = true // no log file at all — definitely stale
+			}
+		}
 
 		// Check for silence — no log output for silenceThreshold
 		if !windowDead && !timedOut {

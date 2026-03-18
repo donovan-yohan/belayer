@@ -687,6 +687,101 @@ func TestSetter_CrashRecovery(t *testing.T) {
 	assert.True(t, foundApi2)
 }
 
+func TestSetter_CrashRecovery_RecreatesTmuxSession(t *testing.T) {
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-tmux", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	insertTestTask(t, s, "task-tmux", goals)
+	require.NoError(t, s.UpdateProblemStatus("task-tmux", model.ProblemStatusRunning))
+
+	// Create worktree dir
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-tmux", "api")
+	require.NoError(t, os.MkdirAll(worktreeDir, 0o755))
+
+	// Do NOT create a tmux session — simulates the session being killed during stop
+
+	setter := &Belayer{
+		config: Config{
+			CragName: "test-crag",
+			CragDir:  tmpDir,
+			MaxLeads: 8,
+		},
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems: make(map[string]*ProblemRunner),
+	}
+
+	err := setter.recover()
+	require.NoError(t, err)
+
+	// Tmux session should have been recreated
+	sessionName := "belayer-problem-task-tmux"
+	assert.True(t, tm.HasSession(sessionName), "tmux session should be recreated during recovery")
+
+	// Spotter window should be pre-created
+	windows, _ := tm.ListWindows(sessionName)
+	found := false
+	for _, w := range windows {
+		if w == "spot-api" {
+			found = true
+		}
+	}
+	assert.True(t, found, "spotter window should be pre-created during recovery")
+}
+
+func TestSetter_CrashRecovery_DetectsFailedClimbWithTOP(t *testing.T) {
+	s, tm, lm, sp, tmpDir := setupTestEnv(t)
+
+	goals := []model.Climb{
+		{ID: "api-1", ProblemID: "task-failed", RepoName: "api", Description: "test", DependsOn: []string{}, Status: model.ClimbStatusPending},
+	}
+	insertTestTask(t, s, "task-failed", goals)
+
+	// Simulate: climb was marked failed by stale timeout, but actually completed
+	require.NoError(t, s.UpdateProblemStatus("task-failed", model.ProblemStatusRunning))
+	require.NoError(t, s.UpdateClimbStatus("api-1", model.ClimbStatusFailed))
+
+	// Create worktree with TOP.json (climb actually completed)
+	worktreeDir := filepath.Join(tmpDir, "tasks", "task-failed", "api")
+	goalDir := filepath.Join(worktreeDir, ".lead", "api-1")
+	require.NoError(t, os.MkdirAll(goalDir, 0o755))
+	doneJSON := TopJSON{Status: "complete", Summary: "completed after timeout"}
+	data, _ := json.Marshal(doneJSON)
+	require.NoError(t, os.WriteFile(filepath.Join(goalDir, "TOP.json"), data, 0o644))
+
+	setter := &Belayer{
+		config: Config{
+			CragName: "test-crag",
+			CragDir:  tmpDir,
+			MaxLeads: 8,
+		},
+		store:    s,
+		tmux:     tm,
+		logMgr:   lm,
+		spawners: &lead.SpawnerSet{Lead: sp, Spotter: sp, Anchor: sp},
+		problems: make(map[string]*ProblemRunner),
+	}
+
+	err := setter.recover()
+	require.NoError(t, err)
+
+	require.Contains(t, setter.problems, "task-failed")
+	runner := setter.problems["task-failed"]
+
+	// The failed climb should now be marked complete (recovery detected TOP.json)
+	assert.Equal(t, model.ClimbStatusComplete, runner.dag.Get("api-1").Status,
+		"failed climb with TOP.json should be marked complete during recovery")
+
+	// It should NOT be in the lead queue (since it's complete)
+	for _, q := range setter.leadQueue {
+		assert.NotEqual(t, "api-1", q.Climb.ID, "completed climb should not be queued for respawn")
+	}
+}
+
 func TestSetter_RunTickCycle(t *testing.T) {
 	s, tm, lm, sp, tmpDir := setupTestEnv(t)
 

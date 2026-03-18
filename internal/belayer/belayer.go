@@ -428,12 +428,53 @@ func (s *Belayer) recover() error {
 		runner.tmuxSession = fmt.Sprintf("belayer-problem-%s", task.ID)
 		runner.problemDir = filepath.Join(s.config.CragDir, "tasks", task.ID)
 
+		// Ensure tmux session exists (may have been killed during previous stop)
+		if !s.tmux.HasSession(runner.tmuxSession) {
+			if err := s.tmux.NewSession(runner.tmuxSession); err != nil {
+				log.Printf("belayer: error recreating tmux session for %s: %v", task.ID, err)
+				continue
+			}
+			log.Printf("belayer: recreated tmux session %s during recovery", runner.tmuxSession)
+
+			// Pre-create spotter and anchor windows (same as Init)
+			repos := runner.dag.UniqueRepos()
+			for _, repo := range repos {
+				spotWindow := fmt.Sprintf("spot-%s", repo)
+				if err := s.tmux.NewWindow(runner.tmuxSession, spotWindow); err != nil {
+					log.Printf("warning: failed to pre-create spotter window %s during recovery: %v", spotWindow, err)
+				}
+			}
+			if len(repos) > 1 {
+				if err := s.tmux.NewWindow(runner.tmuxSession, "anchor"); err != nil {
+					log.Printf("warning: failed to pre-create anchor window during recovery: %v", err)
+				}
+			}
+		}
+
 		// Populate worktrees map
 		for _, repoName := range runner.dag.UniqueRepos() {
 			runner.worktrees[repoName] = filepath.Join(s.config.CragDir, "tasks", task.ID, repoName)
 		}
 
-		// Check for TOP.json files that completed while we were down
+		// Check for TOP.json on any non-complete climb (handles climbs that
+		// completed after being marked failed/pending by a stale timeout).
+		for _, climb := range climbs {
+			if climb.Status == model.ClimbStatusComplete {
+				continue
+			}
+			worktreePath := runner.worktrees[climb.RepoName]
+			topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
+			if _, statErr := os.Stat(topPath); statErr == nil {
+				runner.dag.MarkComplete(climb.ID)
+				if storeErr := s.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); storeErr != nil {
+					log.Printf("belayer: error marking recovered climb %s as complete: %v", climb.ID, storeErr)
+				} else {
+					log.Printf("belayer: recovery found TOP.json for climb %s — marking complete", climb.ID)
+				}
+			}
+		}
+
+		// Also run standard CheckCompletions for Running climbs
 		if _, _, err := runner.CheckCompletions(); err != nil {
 			log.Printf("belayer: error checking completions during recovery for %s: %v", task.ID, err)
 		}
