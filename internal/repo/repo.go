@@ -201,6 +201,18 @@ func detectBaseBranch(worktreePath string) string {
 	return "main"
 }
 
+// HasUnpushedCommits returns true if the worktree has commits not yet pushed to origin.
+func HasUnpushedCommits(worktreePath string) (bool, error) {
+	baseBranch := detectBaseBranch(worktreePath)
+	cmd := exec.Command("git", "-C", worktreePath, "rev-list", "--count", baseBranch+"..HEAD")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return true, nil // assume work exists if check fails
+	}
+	count := strings.TrimSpace(string(output))
+	return count != "0", nil
+}
+
 // PushBranch pushes the current branch to the origin remote.
 func PushBranch(worktreePath string) error {
 	cmd := exec.Command("git", "-C", worktreePath, "push", "-u", "origin", "HEAD")

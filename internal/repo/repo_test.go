@@ -193,6 +193,44 @@ func TestWorktreeAddAndRemove(t *testing.T) {
 	}
 }
 
+func TestHasUnpushedCommits(t *testing.T) {
+	bareDir := initBareRepo(t)
+	worktreePath := filepath.Join(t.TempDir(), "wt")
+	if err := WorktreeAdd(bareDir, worktreePath, "test-branch"); err != nil {
+		t.Fatalf("WorktreeAdd: %v", err)
+	}
+	// Fresh worktree — no new commits
+	has, err := HasUnpushedCommits(worktreePath)
+	if err != nil {
+		t.Fatalf("HasUnpushedCommits: %v", err)
+	}
+	if has {
+		t.Error("fresh worktree should have no unpushed commits")
+	}
+	// Make a commit
+	newFile := filepath.Join(worktreePath, "new.txt")
+	os.WriteFile(newFile, []byte("content"), 0644)
+	for _, args := range [][]string{
+		{"-C", worktreePath, "add", "new.txt"},
+		{"-C", worktreePath, "commit", "-m", "test commit"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@test.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+	// Now should have unpushed commits
+	has, err = HasUnpushedCommits(worktreePath)
+	if err != nil {
+		t.Fatalf("HasUnpushedCommits after commit: %v", err)
+	}
+	if !has {
+		t.Error("worktree with commits ahead should have unpushed commits")
+	}
+}
+
 func TestCloneBare(t *testing.T) {
 	// Create a source repo
 	srcDir := filepath.Join(t.TempDir(), "src")

@@ -3,6 +3,7 @@ package crag
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -254,6 +255,9 @@ func CleanupProblemWorktrees(cragDir, problemID string) error {
 			continue
 		}
 		bareRepoDir := filepath.Join(cragDir, entry.BarePath)
+		if has, checkErr := repo.HasUnpushedCommits(worktreePath); checkErr == nil && has {
+			log.Printf("warning: worktree %s has unpushed commits — work may be lost", worktreePath)
+		}
 		if err := repo.WorktreeRemove(bareRepoDir, worktreePath); err != nil {
 			errs = append(errs, fmt.Errorf("removing worktree for %s: %w", entry.Name, err))
 		}
