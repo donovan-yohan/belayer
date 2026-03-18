@@ -490,9 +490,11 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 			logPath := tr.logMgr.LogPath(tr.task.ID, climb.ID)
 			if info, statErr := os.Stat(logPath); statErr == nil {
 				timedOut = now.Sub(info.ModTime()) > 2*time.Minute
-			} else {
+			} else if os.IsNotExist(statErr) {
 				timedOut = true // no log file at all — definitely stale
 			}
+			// For other stat errors (permissions, transient), fall back to
+			// elapsed-time-only: timedOut remains false, avoiding false kills.
 		}
 
 		// Check for silence — no log output for silenceThreshold
