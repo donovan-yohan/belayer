@@ -55,19 +55,6 @@ func ValidateRepoSource(repoSource string, allowLocalPaths bool) error {
 		return fmt.Errorf("empty repository source")
 	}
 
-	if allowLocalPaths {
-		info, err := os.Stat(repoSource)
-		if err == nil {
-			if !info.IsDir() {
-				return fmt.Errorf("local repository path %q is not a directory", repoSource)
-			}
-			return nil
-		}
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("checking local repository path %q: %w", repoSource, err)
-		}
-	}
-
 	if isRemoteRepoSource(repoSource) {
 		return nil
 	}

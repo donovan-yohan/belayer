@@ -1,6 +1,6 @@
 # Explorer Session Resume Flow
 
-> **Status**: Active | **Created**: 2026-03-17 | **Last Updated**: 2026-03-17
+> **Status**: Complete | **Created**: 2026-03-17 | **Completed**: 2026-03-17
 > **Context**: `.lead/belayer-5/GOAL.json`
 > **For Codex:** Use the harness-orchestrate workflow to execute this plan.
 

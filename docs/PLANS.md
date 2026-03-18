@@ -6,7 +6,7 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-| [Explorer Session Resume Flow](exec-plans/active/2026-03-17-explorer-session-resume.md) | 2026-03-17 | Add interrupted-session detection and resume-or-start-fresh handling for named `belayer explorer` workspaces |
+_None currently active._
 
 ## Tech Debt
 
@@ -22,6 +22,7 @@ Execution plans for active and completed work.
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Explorer Session Resume Flow](exec-plans/archive/2026-03-17-explorer-session-resume.md) | 2026-03-17 | Interrupted-session detection and resume-or-start-fresh for named explorer workspaces |
 | [Setter Research And Draft Guidance](exec-plans/completed/2026-03-17-setter-research-draft-guidance.md) | 2026-03-17 | Close the remaining setter-session gaps for shared research workflows, draft consumption guidance, and deterministic command publication |
 | [Research Toolkit Commands](exec-plans/completed/2026-03-17-research-command-toolkit.md) | 2026-03-17 | Add shared `/blr-research*` command assets, session-root guidance, review fixes, and verified alignment with the coupled explorer/draft workflow surfaces |
 | [Explorer Template Guidance](exec-plans/completed/2026-03-17-explorer-template-guidance.md) | 2026-03-17 | Refine `internal/defaults/claudemd/explorer.md` so explorer sessions teach the five-phase workflow and belayer problem/climb drafting model clearly |
