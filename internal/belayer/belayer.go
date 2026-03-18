@@ -463,12 +463,16 @@ func (s *Belayer) recover() error {
 				continue
 			}
 			worktreePath := runner.worktrees[climb.RepoName]
+			if _, wtErr := os.Stat(worktreePath); wtErr != nil {
+				continue // worktree missing (init may have been incomplete)
+			}
 			topPath := filepath.Join(worktreePath, ".lead", climb.ID, "TOP.json")
 			if _, statErr := os.Stat(topPath); statErr == nil {
-				runner.dag.MarkComplete(climb.ID)
+				// Store write first — only mutate in-memory DAG on success
 				if storeErr := s.store.UpdateClimbStatus(climb.ID, model.ClimbStatusComplete); storeErr != nil {
 					log.Printf("belayer: error marking recovered climb %s as complete: %v", climb.ID, storeErr)
 				} else {
+					runner.dag.MarkComplete(climb.ID)
 					log.Printf("belayer: recovery found TOP.json for climb %s — marking complete", climb.ID)
 				}
 			}
