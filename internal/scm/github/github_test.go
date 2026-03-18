@@ -1,9 +1,21 @@
 package github
 
 import (
+	"context"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestRunInDir_CapturesStderr(t *testing.T) {
+	out, err := runInDir(context.Background(), t.TempDir(), "sh", "-c", "echo 'stderr msg' >&2; exit 1")
+	if err == nil {
+		t.Fatal("expected error from failing command")
+	}
+	if !strings.Contains(string(out), "stderr msg") {
+		t.Errorf("expected output to contain stderr, got: %q", string(out))
+	}
+}
 
 func TestParseGHPRStatusJSON(t *testing.T) {
 	t.Run("failing check dominates", func(t *testing.T) {
