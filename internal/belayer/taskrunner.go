@@ -466,18 +466,34 @@ func (tr *ProblemRunner) CheckStaleClimbs(staleTimeout time.Duration) ([]QueuedC
 		if !windowDead && !timedOut {
 			logPath := tr.logMgr.LogPath(tr.task.ID, climb.ID)
 			if info, statErr := os.Stat(logPath); statErr == nil {
+				silenceDuration := now.Sub(info.ModTime())
 				silenceThreshold := 2 * time.Minute
-				if now.Sub(info.ModTime()) > silenceThreshold {
+
+				// Early trust dialog detection: check within 30s of spawn
+				startedAt, hasStart := tr.startedAt[climb.ID]
+				earlyWindow := hasStart && now.Sub(startedAt) < 30*time.Second
+				earlyTrustThreshold := 10 * time.Second
+
+				if silenceDuration > silenceThreshold || (earlyWindow && silenceDuration > earlyTrustThreshold) {
 					// Check if process has exited first (most definitive signal)
 					if dead, deadErr := tr.tmux.IsPaneDead(tr.tmuxSession, windowName); deadErr == nil && dead {
 						windowDead = true
 						reason = "process exited without signal file"
 					} else {
-						// Capture pane to check if waiting for input
-						paneContent, captureErr := tr.tmux.CapturePaneContent(tr.tmuxSession, windowName, 30)
-						if captureErr == nil && looksLikeInputPrompt(paneContent) {
-							windowDead = true
-							reason = "waiting for input"
+						// Try to resolve trust dialog before treating as input prompt
+						resolved, resolveErr := tr.checkAndResolveTrustDialog(windowName)
+						if resolveErr == nil && resolved {
+							// Trust dialog resolved — touch the log file to reset silence tracking
+							_ = os.Chtimes(logPath, now, now)
+							continue // skip this climb, let it proceed
+						}
+						// Not a trust dialog — check for generic input prompt (only after full threshold)
+						if silenceDuration > silenceThreshold {
+							paneContent, captureErr := tr.tmux.CapturePaneContent(tr.tmuxSession, windowName, 30)
+							if captureErr == nil && looksLikeInputPrompt(paneContent) {
+								windowDead = true
+								reason = "waiting for input"
+							}
 						}
 					}
 				}
@@ -1381,7 +1397,11 @@ func SpotterFeedbackForGoal(spot *spotter.SpotJSON) string {
 
 // looksLikeInputPrompt checks if captured pane content suggests the session
 // is waiting for user input rather than actively working.
+// Returns false if the content looks like a trust dialog (handled separately).
 func looksLikeInputPrompt(content string) bool {
+	if looksLikeTrustDialog(content) {
+		return false
+	}
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	if len(lines) == 0 {
 		return false
@@ -1389,6 +1409,56 @@ func looksLikeInputPrompt(content string) bool {
 	lastLine := strings.TrimSpace(lines[len(lines)-1])
 	// Claude Code shows ">" when waiting for input
 	return lastLine == ">" || strings.HasSuffix(lastLine, "> ")
+}
+
+// looksLikeTrustDialog checks if captured pane content contains a workspace
+// trust confirmation dialog from Claude Code or Codex.
+func looksLikeTrustDialog(content string) bool {
+	lower := strings.ToLower(content)
+	trustPatterns := []string{
+		"do you trust",
+		"trust the files in",
+		"trust this folder",
+		"trust this project",
+		"allow access",
+	}
+	for _, pattern := range trustPatterns {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	// Check for confirmation prompt patterns on the last non-empty line
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	lastLine := strings.TrimSpace(lines[len(lines)-1])
+	lowerLast := strings.ToLower(lastLine)
+	confirmPatterns := []string{"(y/n)", "[y/n]", "yes, proceed", "continue?"}
+	for _, pattern := range confirmPatterns {
+		if strings.Contains(lowerLast, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkAndResolveTrustDialog captures pane content and auto-accepts any trust
+// dialog by sending Enter. Returns true if a dialog was detected and resolved.
+func (tr *ProblemRunner) checkAndResolveTrustDialog(windowName string) (bool, error) {
+	content, err := tr.tmux.CapturePaneContent(tr.tmuxSession, windowName, 30)
+	if err != nil {
+		return false, err
+	}
+	if !looksLikeTrustDialog(content) {
+		return false, nil
+	}
+	target := tr.tmuxSession + ":" + windowName
+	if err := tr.tmux.SendKeysRaw(target, "Enter"); err != nil {
+		return false, fmt.Errorf("sending Enter to resolve trust dialog: %w", err)
+	}
+	log.Printf("trust dialog auto-resolved for window %s", windowName)
+	return true, nil
 }
 
 // extractTestContract pulls the "## Test Contract" section from a spec string.
