@@ -156,16 +156,24 @@ The belayer daemon (`internal/belayer/`) is the central orchestration layer:
 | `belayer pr list` | List monitored PRs |
 | `belayer pr show <number>` | Detailed PR view with reaction history |
 | `belayer pr retry <number>` | Reset CI fix count for manual retry |
+| `belayer explorer` | Launch interactive Claude session for pre-crag research/decomposition in `~/.belayer/explorer/<workspace>/` |
 | `belayer setter` | Launch interactive Claude session with belayer context (.claude/ workspace) |
 
-## Setter Session Context
+## Setter And Explorer Session Context
 
-`belayer setter` creates a temp workspace with a full `.claude/` directory:
-- **CLAUDE.md** (templated): Rendered from `internal/defaults/claudemd/setter.md` with crag name and repo names. Establishes the setter as the session identity — all user requests are routed through belayer commands.
-- **Commands** (static): 13 slash commands (`/blr-config`, `/blr-logs`, `/blr-mail`, `/blr-message`, `/blr-pr`, `/blr-problem-brainstorm`, `/blr-problem-create`, `/blr-problem-list`, `/blr-prs`, `/blr-status`, `/blr-sync`, `/blr-ticket`, `/blr-ticket-list`) copied from `internal/defaults/commands/`.
+`belayer setter` refreshes the crag's `.claude/` directory on each launch:
+- **CLAUDE.md** (templated): Rendered from `internal/defaults/claudemd/setter.md` with crag name and repo names. Establishes the setter as the session identity and operating-principles boundary, so user requests stay inside belayer research, drafting, and problem-creation workflows by default.
+- **Commands** (static): 20 slash commands (`/blr-config`, `/blr-draft-create`, `/blr-draft-list`, `/blr-draft-review`, `/blr-logs`, `/blr-mail`, `/blr-message`, `/blr-phase-plan`, `/blr-pr`, `/blr-problem-brainstorm`, `/blr-problem-create`, `/blr-problem-list`, `/blr-prs`, `/blr-research`, `/blr-research-url`, `/blr-research-summarize`, `/blr-status`, `/blr-sync`, `/blr-ticket`, `/blr-ticket-list`) copied from `internal/defaults/commands/`, with stale generated legacy command files pruned on reuse.
+- **Research + draft artifacts**: setter sessions treat `~/.belayer/crags/<crag>/docs/` as the research root for `research-notes.md`, `research.md`, and `phases.md`, then stage draft problems under `~/.belayer/drafts/<crag>/problems/<nnn>/` before publication. `/blr-draft-review` publishes through `belayer problem create` and removes the draft directory only after success.
 - **BELAYER_CRAG env var**: Set in the exec environment so all belayer CLI commands auto-resolve the crag without `--crag` flags.
 
-This is distinct from the repo's own `.claude/CLAUDE.md` which is for developing belayer itself. The setter context is runtime — deployed into sessions belayer spawns.
+`belayer explorer` creates a persistent workspace under `~/.belayer/explorer/<project-name>/` or `~/.belayer/explorer/_unnamed-<timestamp>/`:
+- **CLAUDE.md** (templated): Rendered from `internal/defaults/claudemd/explorer.md` with the project name and absolute PRD path, if one was supplied. The template teaches the five-phase workflow and the belayer problem/climb drafting model, including the `spec.md` + `climbs.json` quality bar.
+- **Commands** (selective): Copies only explorer-safe shared slash commands from `internal/defaults/commands/` when those assets exist, avoiding setter-only commands before a crag is chosen.
+- **Interrupted-session handling**: Unnamed explorer sessions always generate a fresh timestamped workspace. Named explorer relaunches detect an existing workspace and prompt for `resume` versus `start fresh` before Claude starts.
+- **No crag env leakage**: The shared Claude launcher clears inherited `BELAYER_CRAG` / `BELAYER_INSTANCE` values so explorer sessions start without stale crag context.
+
+This is distinct from the repo's own `.claude/CLAUDE.md` which is for developing belayer itself. The runtime session contexts are generated on demand into the workspaces belayer spawns.
 
 ## Process Lifecycle
 

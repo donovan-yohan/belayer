@@ -88,13 +88,21 @@ belayer crag create my-project \
 
 GitHub tracker integration still requires a remote repository URL in the crag config for `owner/repo` resolution.
 
-### 3. Brainstorm and create a problem
+### 3. Research, brainstorm, and create a problem
 
-Launch an interactive Claude session that knows your crag's repos and can generate problem specs:
+Launch an interactive Claude session that knows your crag's repos and supports discovery before problem creation:
 
 ```bash
 belayer setter -c my-project
 ```
+
+Inside the setter session, use the shared research workflow when the request is still fuzzy:
+
+- `/blr-research` to explore the space and append to `research-notes.md`
+- `/blr-research-url <url>` to analyze a source and append it to the same notes
+- `/blr-research-summarize` to compile `research.md`
+
+Once the scope is clear, continue with `/blr-problem-brainstorm` and `belayer problem create`.
 
 Or create a problem directly from a spec and climbs file:
 
@@ -166,7 +174,8 @@ belayer logs -c my-project
 | `belayer crag create` | Create a new crag from remote URLs or local repo paths |
 | `belayer crag list` | List all crags |
 | `belayer crag delete` | Delete a crag |
-| `belayer setter` | Interactive agent session for problem creation |
+| `belayer explorer` | Interactive agent session for pre-crag research, decomposition, and scaffold planning |
+| `belayer setter` | Interactive agent session for research, planning, and problem creation |
 | `belayer problem create` | Create a problem from spec + climbs files |
 | `belayer problem list` | List problems for a crag |
 | `belayer belayer start` | Start the daemon that executes problems |

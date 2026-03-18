@@ -198,12 +198,16 @@ The reaction engine is a new phase in the daemon tick loop. For each problem in 
 | `/blr-problem-create` | Create problem (existing, renamed) |
 | `/blr-problem-list` | List problems (existing, renamed) |
 | `/blr-prs` | List all monitored PRs — status, CI state, pending reviews |
+| `/blr-research` | Run guided discovery research and append to `research-notes.md` |
+| `/blr-research-url` | Pull source material into `research-notes.md` |
+| `/blr-research-summarize` | Compile `research.md` from accumulated research notes |
 | `/blr-status` | Full lifecycle view — problems, climbs, PRs, CI, reviews |
 | `/blr-sync` | Trigger immediate tracker sync |
 | `/blr-ticket` | Fetch ticket from tracker, create problem |
 | `/blr-ticket-list` | Preview issues matching label filter |
 
 **Updated setter CLAUDE.md template** (`internal/defaults/claudemd/setter.md`):
+- Shared research workflow with `research-notes.md` / `research.md` in the crag docs directory
 - Awareness of tracker plugin and ticket commands
 - Awareness of PR monitoring state and how to interpret it
 - Conversational intake: user can say "implement ENG-1234" or "pick up the next ready ticket"
