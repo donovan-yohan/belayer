@@ -3,32 +3,35 @@ package repo
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-// RepoNameFromURL extracts a repository name from a git URL.
-// Handles HTTPS (https://github.com/org/repo.git) and SSH (git@github.com:org/repo.git) formats.
+// RepoNameFromURL extracts a repository name from a git clone source.
+// Handles remote URLs, SSH clone strings, and local filesystem paths.
 func RepoNameFromURL(rawURL string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
-		return "", fmt.Errorf("empty URL")
+		return "", fmt.Errorf("empty repository source")
 	}
 
 	var path string
 
-	// SSH format: git@host:org/repo.git
-	if strings.Contains(rawURL, ":") && !strings.Contains(rawURL, "://") {
+	if info, err := os.Stat(rawURL); err == nil && info.IsDir() {
+		path = rawURL
+	} else if isRemoteRepoSource(rawURL) && !strings.Contains(rawURL, "://") {
+		// SSH format: git@host:org/repo.git
 		parts := strings.SplitN(rawURL, ":", 2)
 		if len(parts) != 2 {
-			return "", fmt.Errorf("invalid SSH URL: %s", rawURL)
+			return "", fmt.Errorf("invalid SSH repository source: %s", rawURL)
 		}
 		path = parts[1]
 	} else {
 		u, err := url.Parse(rawURL)
 		if err != nil {
-			return "", fmt.Errorf("parsing URL %q: %w", rawURL, err)
+			return "", fmt.Errorf("parsing repository source %q: %w", rawURL, err)
 		}
 		path = u.Path
 	}
@@ -42,6 +45,46 @@ func RepoNameFromURL(rawURL string) (string, error) {
 	}
 
 	return name, nil
+}
+
+// ValidateRepoSource verifies a source passed to `git clone --bare`.
+// Remote URLs are always allowed; local filesystem paths require allowLocalPaths.
+func ValidateRepoSource(repoSource string, allowLocalPaths bool) error {
+	repoSource = strings.TrimSpace(repoSource)
+	if repoSource == "" {
+		return fmt.Errorf("empty repository source")
+	}
+
+	if allowLocalPaths {
+		info, err := os.Stat(repoSource)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("local repository path %q is not a directory", repoSource)
+			}
+			return nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("checking local repository path %q: %w", repoSource, err)
+		}
+	}
+
+	if isRemoteRepoSource(repoSource) {
+		return nil
+	}
+
+	if !allowLocalPaths {
+		return fmt.Errorf("local repository paths require --local-paths: %s", repoSource)
+	}
+
+	info, err := os.Stat(repoSource)
+	if err != nil {
+		return fmt.Errorf("checking local repository path %q: %w", repoSource, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("local repository path %q is not a directory", repoSource)
+	}
+
+	return nil
 }
 
 // OwnerRepoFromURL extracts "owner/repo" from a git URL.
@@ -81,7 +124,8 @@ func OwnerRepoFromURL(rawURL string) (string, error) {
 	return parts[len(parts)-2] + "/" + parts[len(parts)-1], nil
 }
 
-// CloneBare clones a git repository as a bare repo into the target directory.
+// CloneBare clones a git repository source as a bare repo into the target directory.
+// repoURL may be a remote URL or a local filesystem path.
 // targetDir should end in .git by convention (e.g., repos/my-repo.git).
 func CloneBare(repoURL, targetDir string) error {
 	cmd := exec.Command("git", "clone", "--bare", repoURL, targetDir)
@@ -206,4 +250,21 @@ func WorktreeList(bareRepoDir string) ([]string, error) {
 		}
 	}
 	return paths, nil
+}
+
+func isRemoteRepoSource(repoSource string) bool {
+	if strings.Contains(repoSource, "://") || strings.HasPrefix(repoSource, "git@") {
+		return true
+	}
+
+	if filepath.VolumeName(repoSource) != "" {
+		return false
+	}
+
+	prefix, _, ok := strings.Cut(repoSource, ":")
+	if !ok || prefix == "" {
+		return false
+	}
+
+	return !strings.Contains(prefix, string(filepath.Separator))
 }

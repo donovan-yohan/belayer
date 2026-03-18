@@ -6,7 +6,7 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-_None currently active._
+| [Setter BLR Command Rename](exec-plans/active/2026-03-17-setter-blr-command-rename.md) | 2026-03-17 | Rename embedded setter commands to the `blr-` namespace and update manage/session references |
 
 ## Tech Debt
 
@@ -22,6 +22,7 @@ _None currently active._
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Crag Create Local Paths](exec-plans/completed/2026-03-17-crag-local-paths.md) | 2026-03-17 | `belayer crag create --local-paths` support, validation, and tracker guardrails |
 | [Multi-Provider Spawner](exec-plans/completed/2026-03-11-multi-provider-spawner.md) | 2026-03-11 | CodexSpawner + factory function + config wiring |
 | [Planning & Review Hats](exec-plans/completed/2026-03-11-planning-review-hats.md) | 2026-03-11 | Tracker intake, SCM provider, PR monitoring & reaction engine |
 | [Complete Instance-to-Crag Rename](exec-plans/completed/2026-03-11-instance-to-crag-complete-rename.md) | 2026-03-11 | Package rename, config file rename, internal var renames, doc prune |

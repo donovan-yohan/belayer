@@ -71,11 +71,22 @@ A crag is a long-lived workspace tied to one or more repos.
 
 ```bash
 belayer crag create my-project \
-  --repo https://github.com/you/frontend.git \
-  --repo https://github.com/you/backend.git
+  --repos https://github.com/you/frontend.git \
+  --repos https://github.com/you/backend.git
 ```
 
 This bare-clones the repos into `~/.belayer/crags/my-project/repos/`.
+
+For local repos, opt in explicitly:
+
+```bash
+belayer crag create my-project \
+  --repos ./frontend \
+  --repos ./backend \
+  --local-paths
+```
+
+GitHub tracker integration still requires a remote repository URL in the crag config for `owner/repo` resolution.
 
 ### 3. Brainstorm and create a problem
 
@@ -152,7 +163,7 @@ belayer logs -c my-project
 | Command | Description |
 |---------|-------------|
 | `belayer init` | Initialize global config |
-| `belayer crag create` | Create a new crag with repos |
+| `belayer crag create` | Create a new crag from remote URLs or local repo paths |
 | `belayer crag list` | List all crags |
 | `belayer crag delete` | Delete a crag |
 | `belayer setter` | Interactive agent session for problem creation |

@@ -482,7 +482,7 @@ func (s *Belayer) initTracker() error {
 		}
 		ownerRepo, err := repo.OwnerRepoFromURL(cragConfig.Repos[0].URL)
 		if err != nil {
-			return fmt.Errorf("extracting owner/repo for tracker: %w", err)
+			return fmt.Errorf("github tracker requires a remote repository URL in crag config; got %q: %w", cragConfig.Repos[0].URL, err)
 		}
 		s.tracker = ghtracker.New(ownerRepo)
 	case "jira":

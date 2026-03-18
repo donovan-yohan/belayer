@@ -140,7 +140,7 @@ The belayer daemon (`internal/belayer/`) is the central orchestration layer:
 | Command | Purpose |
 |---------|---------|
 | `belayer init` | Initialize global config |
-| `belayer crag create <name> --repo <url>` | Create a new crag with repos |
+| `belayer crag create <name> --repos <source>` | Create a new crag from remote URLs or local repo paths (`--local-paths`) |
 | `belayer belayer start` | Start the belayer daemon (DAG executor) |
 | `belayer problem create [desc]` | Create problem with intake pipeline |
 | `belayer problem retry [problem-id]` | Retry a failed problem (reuses enriched description) |
@@ -162,7 +162,7 @@ The belayer daemon (`internal/belayer/`) is the central orchestration layer:
 
 `belayer setter` creates a temp workspace with a full `.claude/` directory:
 - **CLAUDE.md** (templated): Rendered from `internal/defaults/claudemd/setter.md` with crag name and repo names. Establishes the setter as the session identity — all user requests are routed through belayer commands.
-- **Commands** (static): 11 slash commands (`/status`, `/problem-create`, `/problem-list`, `/logs`, `/message`, `/mail`, `/ticket`, `/ticket-list`, `/sync`, `/prs`, `/pr`) copied from `internal/defaults/commands/`.
+- **Commands** (static): 13 slash commands (`/blr-config`, `/blr-logs`, `/blr-mail`, `/blr-message`, `/blr-pr`, `/blr-problem-brainstorm`, `/blr-problem-create`, `/blr-problem-list`, `/blr-prs`, `/blr-status`, `/blr-sync`, `/blr-ticket`, `/blr-ticket-list`) copied from `internal/defaults/commands/`.
 - **BELAYER_CRAG env var**: Set in the exec environment so all belayer CLI commands auto-resolve the crag without `--crag` flags.
 
 This is distinct from the repo's own `.claude/CLAUDE.md` which is for developing belayer itself. The setter context is runtime — deployed into sessions belayer spawns.

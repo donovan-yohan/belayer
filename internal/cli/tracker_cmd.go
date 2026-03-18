@@ -11,8 +11,8 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/belayerconfig"
 	"github.com/donovan-yohan/belayer/internal/config"
-	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/crag"
+	"github.com/donovan-yohan/belayer/internal/db"
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/repo"
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -42,7 +42,7 @@ func createTracker(cfg *belayerconfig.Config, cragConfig *crag.CragConfig, cragD
 		}
 		ownerRepo, err := repo.OwnerRepoFromURL(cragConfig.Repos[0].URL)
 		if err != nil {
-			return nil, fmt.Errorf("extracting owner/repo for tracker: %w", err)
+			return nil, fmt.Errorf("github tracker requires a remote repository URL in crag config; got %q: %w", cragConfig.Repos[0].URL, err)
 		}
 		return ghtracker.New(ownerRepo), nil
 	case "jira":
