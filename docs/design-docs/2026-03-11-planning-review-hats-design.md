@@ -100,7 +100,7 @@ type IssueFilter struct {
 
 - **Automatic sync**: Daily (configurable via `sync_interval`), filtered by required label/tag
 - **On-demand**: `belayer tracker sync` CLI command for immediate refresh
-- **Direct intake**: `belayer problem create --ticket ENG-1234` or setter's `/belayer:ticket ENG-1234`
+- **Direct intake**: `belayer problem create --ticket ENG-1234` or setter's `/blr-ticket ENG-1234`
 
 ## SCM Provider Interface & PR Stacking
 
@@ -185,21 +185,23 @@ The reaction engine is a new phase in the daemon tick loop. For each problem in 
 
 ## Setter Session Extensions
 
-**New slash commands (all `/belayer:` prefixed):**
+**New slash commands (all `/blr-` prefixed):**
 
 | Command | Purpose |
 |---------|---------|
-| `/belayer:status` | Full lifecycle view — problems, climbs, PRs, CI, reviews |
-| `/belayer:problem-create` | Create problem (existing, renamed) |
-| `/belayer:problem-list` | List problems (existing, renamed) |
-| `/belayer:ticket <ID>` | Fetch ticket from tracker, create problem |
-| `/belayer:ticket-list` | Preview issues matching label filter |
-| `/belayer:sync` | Trigger immediate tracker sync |
-| `/belayer:prs` | List all monitored PRs — status, CI state, pending reviews |
-| `/belayer:pr <number>` | Deep view of specific PR — checks, comments, reaction history |
-| `/belayer:logs` | View lead session logs (existing, renamed) |
-| `/belayer:message` | Send mail to agent (existing, renamed) |
-| `/belayer:mail` | Read inbox (existing, renamed) |
+| `/blr-config` | View or modify belayer configuration |
+| `/blr-logs` | View lead session logs |
+| `/blr-mail` | Read inbox |
+| `/blr-message` | Send mail to agent |
+| `/blr-pr` | Deep view of specific PR — checks, comments, reaction history |
+| `/blr-problem-brainstorm` | Route a new request into the brainstorm workflow |
+| `/blr-problem-create` | Create problem (existing, renamed) |
+| `/blr-problem-list` | List problems (existing, renamed) |
+| `/blr-prs` | List all monitored PRs — status, CI state, pending reviews |
+| `/blr-status` | Full lifecycle view — problems, climbs, PRs, CI, reviews |
+| `/blr-sync` | Trigger immediate tracker sync |
+| `/blr-ticket` | Fetch ticket from tracker, create problem |
+| `/blr-ticket-list` | Preview issues matching label filter |
 
 **Updated setter CLAUDE.md template** (`internal/defaults/claudemd/setter.md`):
 - Awareness of tracker plugin and ticket commands
@@ -360,7 +362,7 @@ Tracker and PR polling run within the existing daemon tick loop on their own tim
 | Polling first, webhook-ready model | Matches existing daemon pattern. Event model supports webhook acceleration later. |
 | Stacked PRs by climb boundary | Climbs are already logical units. Agentic decomposition as fallback for large single climbs. |
 | One CI fix loop, human-driven review loop | Prevents autonomous spiraling. Human stays in control of review cycle. |
-| `/belayer:` prefix for all setter commands | Clean namespace, avoids collisions with other plugins. Old command names are not aliased — setter restart required on upgrade. |
+| `/blr-` prefix for all setter commands | Clean namespace, avoids collisions with other plugins. Old command names are not aliased — setter restart required on upgrade. |
 | Crag-level tracker config | Different crags may use different trackers (open-source vs enterprise). |
 | `jira_ref` deprecated, not backfilled | New `tracker_issue_id` FK supersedes it. Existing data left in place; column removed in future migration. |
 | CI fix cap is per-PR | Each PR independently tracks its fix attempts. Relevant for stacked PRs where individual PRs can fail CI independently. |

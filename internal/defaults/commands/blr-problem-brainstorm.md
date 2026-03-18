@@ -20,10 +20,10 @@ After the design phase completes and a design doc is saved, override the default
 
 > Design saved. To turn this into a belayer problem:
 >
-> 1. `/problem-create` — Write spec.md + climbs.json and publish to belayer
+> 1. `/blr-problem-create` — Write spec.md + climbs.json and publish to belayer
 >
 > Or if you want to refine the plan before handing off:
 >
-> 2. `/harness:plan` → then `/problem-create` when the plan is solid
+> 2. `/harness:plan` → then `/blr-problem-create` when the plan is solid
 
 **Important:** In a setter session, execution happens through belayer leads, not through `/harness:orchestrate`. The harness skills are for design and planning only. The handoff to execution is always `belayer problem create`.

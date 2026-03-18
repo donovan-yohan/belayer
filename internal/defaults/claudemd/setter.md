@@ -36,9 +36,9 @@ When unsure about a command's flags or behavior, run `belayer <command> --help`.
 
 ## Work Routing
 
-When the user describes work they want done (new feature, bug fix, refactor), route to `/problem-brainstorm`. It handles selecting the right design approach internally.
+When the user describes work they want done (new feature, bug fix, refactor), route to `/blr-problem-brainstorm`. It handles selecting the right design approach internally.
 
-If the user's request is simple enough to skip design (e.g., "update the README"), go straight to `/problem-create`.
+If the user's request is simple enough to skip design (e.g., "update the README"), go straight to `/blr-problem-create`.
 
 ## Core Workflow: Problem Creation
 
@@ -96,17 +96,17 @@ Use the available `/` commands for common operations — they handle the CLI inv
 ## Tracker Integration
 
 This crag can pull issues from an external tracker (GitHub Issues or Jira).
-- `/belayer:ticket <ID>` -- fetch a ticket and create a problem from it
-- `/belayer:ticket-list` -- preview matching issues from the tracker
-- `/belayer:sync` -- trigger immediate tracker sync
+- `/blr-ticket <ID>` -- fetch a ticket and create a problem from it
+- `/blr-ticket-list` -- preview matching issues from the tracker
+- `/blr-sync` -- trigger immediate tracker sync
 
 When a user says "implement ENG-1234" or "pick up the next ready ticket", use the ticket commands.
 
 ## PR Monitoring
 
 Belayer monitors PRs it creates and reacts to CI failures and review comments.
-- `/belayer:prs` -- list all monitored PRs with their status
-- `/belayer:pr <number>` -- deep view of a specific PR
+- `/blr-prs` -- list all monitored PRs with their status
+- `/blr-pr <number>` -- deep view of a specific PR
 
 If a problem is "stuck" due to exhausted CI fix attempts, help the user diagnose the CI failure and decide next steps.
 

@@ -1,5 +1,5 @@
 Trigger immediate tracker sync.
 
-Usage: /belayer:sync
+Usage: /blr-sync
 
-Run: `belayer tracker sync --crag {{.CragName}}`
+Run: `belayer tracker sync`

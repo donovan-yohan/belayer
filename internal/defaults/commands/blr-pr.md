@@ -1,5 +1,5 @@
 Show detailed view of a specific PR.
 
-Usage: /belayer:pr <NUMBER>
+Usage: /blr-pr <NUMBER>
 
-Run: `belayer pr show <NUMBER> --crag {{.CragName}}`
+Run: `belayer pr show <NUMBER>`

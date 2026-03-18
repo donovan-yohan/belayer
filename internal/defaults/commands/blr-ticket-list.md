@@ -1,5 +1,5 @@
 Preview issues matching the tracker label filter without importing.
 
-Usage: /belayer:ticket-list
+Usage: /blr-ticket-list
 
-Run: `belayer tracker list --crag {{.CragName}}`
+Run: `belayer tracker list`

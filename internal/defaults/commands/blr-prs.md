@@ -1,5 +1,5 @@
 List all monitored PRs for this crag.
 
-Usage: /belayer:prs
+Usage: /blr-prs
 
-Run: `belayer pr list --crag {{.CragName}}`
+Run: `belayer pr list`
