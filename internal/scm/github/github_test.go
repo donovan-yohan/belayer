@@ -7,13 +7,29 @@ import (
 	"time"
 )
 
-func TestRunInDir_CapturesStderr(t *testing.T) {
-	out, err := runInDir(context.Background(), t.TempDir(), "sh", "-c", "echo 'stderr msg' >&2; exit 1")
+func TestRunInDir_StderrInExitError(t *testing.T) {
+	_, err := runInDir(context.Background(), t.TempDir(), "sh", "-c", "echo 'stderr msg' >&2; exit 1")
 	if err == nil {
 		t.Fatal("expected error from failing command")
 	}
-	if !strings.Contains(string(out), "stderr msg") {
-		t.Errorf("expected output to contain stderr, got: %q", string(out))
+	// stderr should be extractable via stderrFromError
+	stderr := stderrFromError(err)
+	if !strings.Contains(stderr, "stderr msg") {
+		t.Errorf("expected stderr to contain 'stderr msg', got: %q", stderr)
+	}
+}
+
+func TestRunInDir_StdoutCleanOnSuccess(t *testing.T) {
+	out, err := runInDir(context.Background(), t.TempDir(), "sh", "-c", "echo 'stdout only'; echo 'warn' >&2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// stdout should not contain stderr
+	if strings.Contains(string(out), "warn") {
+		t.Errorf("stdout should not contain stderr, got: %q", string(out))
+	}
+	if !strings.Contains(string(out), "stdout only") {
+		t.Errorf("stdout should contain 'stdout only', got: %q", string(out))
 	}
 }
 

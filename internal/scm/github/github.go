@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -170,7 +171,16 @@ func parseGHPRActivityJSON(commentsData, reviewsData []byte, since time.Time) (*
 func runInDir(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	return cmd.CombinedOutput()
+	return cmd.Output()
+}
+
+// stderrFromError extracts stderr from an exec.ExitError, if available.
+func stderrFromError(err error) string {
+	var exitErr *exec.ExitError
+	if err != nil && errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+		return strings.TrimSpace(string(exitErr.Stderr))
+	}
+	return ""
 }
 
 func (p *Provider) CreatePR(ctx context.Context, repoDir string, opts model.PROptions) (*model.PRStatus, error) {
@@ -187,7 +197,10 @@ func (p *Provider) CreatePR(ctx context.Context, repoDir string, opts model.PROp
 
 	out, err := runInDir(ctx, repoDir, "gh", args...)
 	if err != nil {
-		return nil, fmt.Errorf("gh pr create: %s: %w", strings.TrimSpace(string(out)), err)
+		if stderr := stderrFromError(err); stderr != "" {
+			return nil, fmt.Errorf("gh pr create: %s: %w", stderr, err)
+		}
+		return nil, fmt.Errorf("gh pr create: %w", err)
 	}
 
 	// Output is the PR URL; extract the PR number from it.
