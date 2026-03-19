@@ -1,9 +1,9 @@
 ---
-status: current
+status: implemented
 created: 2026-03-19
 branch: master
 supersedes:
-implemented-by:
+implemented-by: docs/exec-plans/completed/2026-03-19-harness-audit.md
 ---
 
 # Design: Harness Plugin Audit & Workflow Fix
