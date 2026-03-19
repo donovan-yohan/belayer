@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-07
+branch: master
+supersedes: docs/design-docs/2026-03-06-cross-repo-integration-design.md
+implemented-by:
+---
 # Spotter: Cross-Repo Review with Redistribution
 
 **Date**: 2026-03-07

@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-07
+branch: master
+supersedes:
+implemented-by:
+---
 # PRD: Belayer Agent-Friendly Architecture Redesign
 
 ## Objective

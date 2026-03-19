@@ -1,3 +1,10 @@
+---
+status: stale
+created: 2026-03-06
+branch: master
+supersedes:
+implemented-by:
+---
 # TUI Dashboard Design
 
 **Goal**: 7 — TUI dashboard

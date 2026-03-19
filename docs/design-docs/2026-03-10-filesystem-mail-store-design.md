@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-10
+branch: master
+supersedes: 2026-03-09-mail-system-design.md
+implemented-by:
+---
 # Filesystem Mail Store
 
 > **Status**: Approved | **Created**: 2026-03-10

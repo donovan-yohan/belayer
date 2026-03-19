@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-08
+branch: master
+supersedes: 2026-03-07-lead-spawning-design.md
+implemented-by:
+---
 # Interactive Lead Sessions
 
 **Date:** 2026-03-08

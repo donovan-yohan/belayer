@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-07
+branch: master
+supersedes: docs/design-docs/2026-03-06-lead-execution-loop-design.md
+implemented-by:
+---
 # Lead Spawning: AgentSpawner Interface and Per-Goal Sessions
 
 **Date**: 2026-03-07

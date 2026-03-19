@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-10
+branch: master
+supersedes: 2026-03-07-setter-daemon-design.md
+implemented-by:
+---
 # Crag Architecture: Naming Overhaul + Per-Role Window Layout
 
 ## Problem Statement

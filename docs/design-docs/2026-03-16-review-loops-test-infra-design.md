@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-16
+branch: master
+supersedes:
+implemented-by:
+---
 # Review Loops, Test Infrastructure & Persistent Learnings
 
 **Date:** 2026-03-16

@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-06
+branch: master
+supersedes:
+implemented-by:
+---
 # Design: Cross-Repo Integration & Alignment (Goal 6)
 
 ## Overview

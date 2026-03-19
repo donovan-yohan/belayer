@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-12
+branch: master
+supersedes:
+implemented-by:
+---
 # Environment Provider Design
 
 **Date:** 2026-03-12

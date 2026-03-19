@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-17
+branch: master
+supersedes:
+implemented-by:
+---
 # Unified Agent Plugin Source Design
 
 ## Problem or Goal

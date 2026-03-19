@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-07
+branch: master
+supersedes: 2026-03-07-spotter-review-design.md
+implemented-by:
+---
 # Context-Aware Validation Pipeline
 
 **Date:** 2026-03-07

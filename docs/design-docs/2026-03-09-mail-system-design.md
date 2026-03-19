@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-09
+branch: master
+supersedes:
+implemented-by:
+---
 # Mail System Design
 
 Beads-backed inter-agent messaging for belayer. Enables the setter, leads, spotters, and anchors to communicate through a unified mail system, replacing signal files (DONE.json, SPOT.json, VERDICT.json) with typed messages.

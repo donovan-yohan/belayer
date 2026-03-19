@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-07
+branch: master
+supersedes: docs/design-docs/2026-03-06-task-intake-decomposition-design.md
+implemented-by:
+---
 # Belayer Manage: Interactive Agent Session for Task Creation
 
 **Date**: 2026-03-07

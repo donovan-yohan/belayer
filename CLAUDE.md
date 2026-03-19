@@ -18,6 +18,7 @@ Standalone Go CLI tool that orchestrates autonomous coding agents across multipl
 | Design | `docs/DESIGN.md` | Patterns, SQLite schema, agentic node contracts |
 | Quality | `docs/QUALITY.md` | Test runner, test files, isolation patterns |
 | Plans | `docs/PLANS.md` | Active work, completed plans, tech debt |
+| Learnings | `docs/LEARNINGS.md` | Past learnings, corrections, patterns discovered across sessions |
 | Design Docs | `docs/design-docs/` | Feature brainstorm outputs and design decisions |
 | ADRs | `docs/adrs/` | Architecture decision records |
 

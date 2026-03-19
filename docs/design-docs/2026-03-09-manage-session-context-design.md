@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-09
+branch: master
+supersedes: 2026-03-07-belayer-manage-design.md
+implemented-by:
+---
 # Manage Session Runtime Context
 
 ## Problem

@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-07
+branch: master
+supersedes:
+implemented-by:
+---
 # Agent-Friendly Architecture: Setter, Spotter, and Lead Redesign
 
 **Date**: 2026-03-07

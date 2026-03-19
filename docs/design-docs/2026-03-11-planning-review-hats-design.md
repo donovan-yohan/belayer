@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-11
+branch: master
+supersedes:
+implemented-by:
+---
 # Planning & Review Hats Design
 
 **Date:** 2026-03-11

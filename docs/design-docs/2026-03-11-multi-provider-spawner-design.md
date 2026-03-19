@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-11
+branch: master
+supersedes:
+implemented-by:
+---
 # Multi-Provider Agent Spawner
 
 > Wire the existing `AgentSpawner` interface to support Codex CLI alongside Claude Code, controlled by the `agents.provider` config field.

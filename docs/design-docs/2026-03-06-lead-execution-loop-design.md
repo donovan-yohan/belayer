@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-06
+branch: master
+supersedes:
+implemented-by:
+---
 # Design: Bundled Lead Execution Loop (Goal 3)
 
 **Date**: 2026-03-06

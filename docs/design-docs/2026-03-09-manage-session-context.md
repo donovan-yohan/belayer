@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-09
+branch: master
+supersedes:
+implemented-by:
+---
 # Manage Session Runtime Context Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.

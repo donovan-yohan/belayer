@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-06
+branch: master
+supersedes:
+implemented-by:
+---
 # Design: Project Scaffolding & Core Architecture
 
 **Goal**: 1 — Project scaffolding & core architecture

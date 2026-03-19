@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-11
+branch: master
+supersedes:
+implemented-by:
+---
 # Complete Instance-to-Crag Rename
 
 > **Status**: Proposed | **Created**: 2026-03-11

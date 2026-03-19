@@ -1,3 +1,10 @@
+---
+status: implemented
+created: 2026-03-13
+branch: master
+supersedes:
+implemented-by:
+---
 # Belayer Marketplace Design
 
 ## Problem

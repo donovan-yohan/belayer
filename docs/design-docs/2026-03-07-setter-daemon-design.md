@@ -1,3 +1,10 @@
+---
+status: superseded
+created: 2026-03-07
+branch: master
+supersedes: docs/design-docs/2026-03-06-coordinator-engine-design.md
+implemented-by:
+---
 # Setter Daemon Design
 
 **Date**: 2026-03-07
