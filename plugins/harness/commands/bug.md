@@ -51,6 +51,35 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
     {high-level approach — detailed plan comes from /harness:plan}
     ```
 
+4.5. **Write learning from root cause:**
+   - Extract the key actionable insight from the confirmed root cause and recommended fix direction
+   - Check if `docs/LEARNINGS.md` exists. If not, create it with the scaffold:
+     ```markdown
+     # Learnings
+
+     Persistent learnings captured across sessions. Append-only, merge-friendly.
+
+     Status: `active` | `superseded`
+     Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance`
+
+     ---
+     ```
+   - Determine the next learning ID by scanning existing `### L-NNN` headers in the file. If none exist, start at L-001.
+   - Append a new learning entry to the end of the file:
+     ```markdown
+
+     ### L-{NNN}: {one-line root cause summary — actionable, not just "X was broken"}
+     - status: active
+     - category: debugging
+     - source: /harness:bug {YYYY-MM-DD}
+     - branch: {current git branch via `git branch --show-current`}
+
+     {Root cause description rewritten as a forward-looking recommendation. Example: "When modifying X, always verify Y because Z." Not just "X was broken because of Y."}
+
+     ---
+     ```
+   - The learning must be actionable — it should help a future agent avoid the same mistake
+
 5. Update `docs/bug-analyses/index.md` — add a row for the new analysis:
     ```markdown
     | [{name}-bug-analysis.md]({date}-{name}-bug-analysis.md) | {one-line summary} | {date} |

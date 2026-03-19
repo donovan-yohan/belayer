@@ -86,6 +86,19 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
    mkdir -p docs/design-docs docs/bug-analyses docs/refactor-scopes docs/exec-plans/active docs/exec-plans/completed docs/references
    ```
 
+8.5. Generate `docs/LEARNINGS.md`:
+
+    ```markdown
+    # Learnings
+
+    Persistent learnings captured across sessions. Append-only, merge-friendly.
+
+    Status: `active` | `superseded`
+    Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance`
+
+    ---
+    ```
+
 9. Generate `docs/ARCHITECTURE.md` using the matklad format. Analyze the project's directory structure, key modules, and build system to produce:
 
    ```markdown
@@ -186,9 +199,15 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     ```markdown
     # Design Documents
 
-    | Document | Purpose | Last Updated |
-    |----------|---------|--------------|
-    | [core-beliefs.md](core-beliefs.md) | Agent-first operating principles | {date} |
+    ## Current Designs
+
+    | Document | Purpose | Status | Created |
+    |----------|---------|--------|---------|
+
+    ## Archived
+
+    | Document | Purpose | Status | Created |
+    |----------|---------|--------|---------|
     ```
 
 12a. Generate `docs/bug-analyses/index.md`:
@@ -311,6 +330,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     | Architecture | `docs/ARCHITECTURE.md` | Understanding module boundaries, package layering, where code lives |
     | Design | `docs/DESIGN.md` | Design principles, core beliefs, pattern decisions |
     | Plans | `docs/PLANS.md` | Active work, completed plans, tech debt tracking |
+    | Learnings | `docs/LEARNINGS.md` | Past learnings, corrections, patterns discovered across sessions |
     | Bug Analyses | `docs/bug-analyses/` | When investigating bugs, understanding past root causes |
     | Refactor Scopes | `docs/refactor-scopes/` | When planning refactoring, reviewing past extraction patterns |
     | References | `docs/references/` | External library docs, API specs, llms.txt files |
@@ -394,6 +414,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     - docs/ARCHITECTURE.md
     - docs/DESIGN.md
     - docs/PLANS.md
+    - docs/LEARNINGS.md
     - docs/design-docs/index.md
     - docs/design-docs/core-beliefs.md
     - {any discovered Tier 2 files}

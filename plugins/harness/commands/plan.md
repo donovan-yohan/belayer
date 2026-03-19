@@ -25,7 +25,8 @@ Create a living execution plan from a design document, saved as a versioned arti
      - `docs/design-docs/*-design.md`
      - `docs/bug-analyses/*-bug-analysis.md`
      - `docs/refactor-scopes/*-refactor-scope.md`
-   - If no context document found, suggest running `/harness:brainstorm`, `/harness:bug`, or `/harness:refactor` first
+   - **Frontmatter filtering:** For each candidate, check if it has YAML frontmatter with a `status` field. Skip documents with `status: implemented`, `status: superseded`, or `status: stale`. Only consider documents with `status: current` or no frontmatter (legacy/unknown).
+   - If no eligible context document found, suggest running `/harness:brainstorm`, `/harness:bug`, or `/harness:refactor` first
 
 3. Read the design document fully. Extract:
    - The design title and goal

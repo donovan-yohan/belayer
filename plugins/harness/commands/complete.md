@@ -46,6 +46,21 @@ Plan archival, prune health check, and PR creation. Run after `/harness:review` 
    mv docs/exec-plans/active/{file} docs/exec-plans/completed/{file}
    ```
 
+7.5. **Archive the source design doc:**
+   - Read the plan's header to find the `Design Doc:` path (or `Bug Analysis:` or `Refactor Scope:`)
+   - If a source design doc is found, update its YAML frontmatter:
+     - Change `status:` to `implemented`
+     - Set `implemented-by: docs/exec-plans/completed/{file}`
+   - If the design doc has no YAML frontmatter (legacy), add one:
+     ```yaml
+     ---
+     status: implemented
+     created: {infer from filename date prefix, or use file creation date}
+     branch: {current branch}
+     implemented-by: docs/exec-plans/completed/{file}
+     ---
+     ```
+
 ### Phase 4: Deleted-Code Audit
 
 8. Check if any modules/directories were deleted during this plan's lifetime:
@@ -63,6 +78,19 @@ Plan archival, prune health check, and PR creation. Run after `/harness:review` 
 10. Update `docs/DESIGN.md` if any new patterns or key decisions were established.
 
 11. Update `docs/ARCHITECTURE.md` if any new modules were created or boundaries changed.
+
+11.5. **Update design-docs index with archival:**
+   - Read `docs/design-docs/index.md`
+   - If the index does NOT have `## Current Designs` and `## Archived` sections:
+     - Restructure the index: add `## Current Designs` header above the existing table
+     - Add a `Status` column to the table
+     - Add `## Archived` section below with its own table (same columns)
+     - Move all design docs with frontmatter `status: implemented` or `status: superseded` to the Archived table
+     - Keep docs with `status: current` or no frontmatter in the Current Designs table
+   - If the index already has Current/Archived sections:
+     - Move the just-archived design doc from Current to Archived
+     - Update its Status column to "Implemented"
+   - Status badge vocabulary for the index: `Current` | `Implemented` | `Superseded` | `Stale`
 
 ### Phase 6: Prune Health Check
 

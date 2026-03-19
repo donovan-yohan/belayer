@@ -6,7 +6,7 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-_None currently active._
+| [Harness Plugin Audit & Workflow Fix](exec-plans/active/2026-03-19-harness-audit.md) | 2026-03-19 | Learning persistence, frontmatter lifecycle, health score, auto-archive |
 
 ## Tech Debt
 

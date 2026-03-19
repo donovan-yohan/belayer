@@ -33,6 +33,23 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 2. Read the design document. Verify it has a **goal**, **approach**, and **key decisions** section. If any are missing, STOP and tell the user the design doc appears incomplete.
 
+2.3. **Run lightweight health check:**
+   - Scan `docs/design-docs/index.md` (if it exists):
+     - Count entries with Status "Current" vs total entries
+     - Check if index has Current/Archived sections
+   - Check if `docs/LEARNINGS.md` exists
+   - Check CLAUDE.md line count (should be under 120)
+   - Calculate health score: start at 10, subtract 1 for each:
+     - CLAUDE.md over 120 lines
+     - No LEARNINGS.md file
+     - Index missing Current/Archived sections
+     - More than 5 design docs without any status badge
+     - Any design doc with `status: current` older than 30 days
+   - Output one-line health summary: `Harness health: {N}/10 ({brief details})`
+   - If score < 5, note: "Consider running `/harness:prune` after this loop completes"
+   - **This check is advisory only — never block the loop based on health score**
+   - Append health check result to the Loop Decision Log
+
 2.5. **Detect multi-goal mode:** If the located document contains a `## Goals` section with a dependency table, it is a refactor scope doc. Switch to multi-goal mode:
    - Extract the goal dependency graph from the Goals table
    - Read each individual goal design doc from the scope's sub-directory (`docs/refactor-scopes/{scope-name}/`)

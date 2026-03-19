@@ -99,6 +99,35 @@ Full documentation reconciliation, conversation mining, and retrospective. Run a
     - For each **adr-candidate**: if `docs/adrs/` exists, create a new ADR with status Proposed. If not, inform user and suggest `/adr:init`.
     - If ADRs were created, execute `/adr:update` inline.
 
+14.5. **Write learnings** from conversation mining:
+   - For each **doc-update** finding that represents a reusable, forward-looking insight (not just a one-off correction), also write it as a learning entry to `docs/LEARNINGS.md`
+   - If `docs/LEARNINGS.md` doesn't exist, create it with the scaffold:
+     ```markdown
+     # Learnings
+
+     Persistent learnings captured across sessions. Append-only, merge-friendly.
+
+     Status: `active` | `superseded`
+     Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance`
+
+     ---
+     ```
+   - Determine the next learning ID by scanning existing `### L-NNN` headers. Start at L-001 if none exist.
+   - Append each learning:
+     ```markdown
+
+     ### L-{NNN}: {one-line insight}
+     - status: active
+     - category: {matching domain: architecture|testing|patterns|workflow|debugging|performance}
+     - source: /harness:reflect {YYYY-MM-DD}
+     - branch: {current git branch}
+
+     {Actionable recommendation for future sessions.}
+
+     ---
+     ```
+   - The learning must be actionable — "when doing X, check Y" not "X was broken"
+
 ### Phase 6: Outcomes & Retrospective
 
 15. Ask user for their perspective:
@@ -119,6 +148,18 @@ Full documentation reconciliation, conversation mining, and retrospective. Run a
     - If a newer design doc covers the same topic as an older one, add a `Superseded by` column or marker to the older entry
     - Separate the index into **Current Designs** and **Archived** sections if not already structured that way
     - Archived entries should note which doc superseded them
+
+### Phase 7.5: Frontmatter Status Update
+
+17.5. Update frontmatter status on design docs touched by this work:
+   - If an active plan exists and its `Design Doc:` header references a design doc:
+     - If the plan is being completed (all tasks done), update the design doc's YAML frontmatter `status` from `current` to `implemented`
+     - Add `implemented-by: {plan path}` to the frontmatter
+   - Scan `docs/design-docs/` for topic overlaps:
+     - If a newer design doc covers the same topic as an older one, update the older doc's frontmatter `status` to `superseded` and add `supersedes: {path to newer doc}`
+   - When scanning for staleness (Phase 3), respect frontmatter status:
+     - Docs with `status: implemented` or `status: superseded` are correctly archived — do NOT flag as stale
+     - Only docs with `status: current` that reference deleted code are genuinely stale
 
 ### Phase 8: Tier 2 Summary Updates
 
@@ -152,6 +193,10 @@ Full documentation reconciliation, conversation mining, and retrospective. Run a
     - Doc updates: {N}
     - ADR candidates: {N}
     - No-action: {N}
+
+    ### Learnings Written
+    - {N} new learnings added to docs/LEARNINGS.md
+    - {list of learning IDs and one-line summaries}
 
     ### Retrospective
     - Captured in plan's Outcomes & Retrospective section

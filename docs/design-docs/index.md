@@ -31,3 +31,5 @@
 | [2026-03-13-belayer-marketplace-design](2026-03-13-belayer-marketplace-design.md) | Belayer marketplace: vendor harness + pr plugins, auto-install via `belayer init` | 2026-03-13 |
 | [2026-03-16-review-loops-test-infra-design](2026-03-16-review-loops-test-infra-design.md) | Multi-persona review loops, test contracts, spotter shift, persistent learnings | 2026-03-16 |
 | [2026-03-16-review-deferred-items-design](2026-03-16-review-deferred-items-design.md) | Test coverage, typed enums, HandleApproval bug fix | 2026-03-16 |
+| [2026-03-17-unified-agent-plugin-source-design](2026-03-17-unified-agent-plugin-source-design.md) | Unified agent plugin source design | 2026-03-17 |
+| [2026-03-19-harness-audit-design](2026-03-19-harness-audit-design.md) | Harness plugin audit: workflow fix for stale docs, learning persistence, doc lifecycle | 2026-03-19 |

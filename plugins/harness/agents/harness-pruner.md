@@ -21,7 +21,7 @@ Harness transforms monolithic CLAUDE.md files into a 3-tier progressive disclosu
 
 The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md earns its place in the context window. Detailed content lives in Tier 2 summaries and Tier 3 deep docs.
 
-## Fifteen Audit Checks
+## Eighteen Audit Checks
 
 | Check | What to Look For | Severity |
 |-------|-----------------|----------|
@@ -40,6 +40,9 @@ The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md ear
 | **Design Doc Supersession** | Design docs index lacks Current/Archived separation when older docs are superseded | warn |
 | **Superseded Without Marker** | Older design docs covering same topic as newer ones lack "superseded by" link | warn |
 | **PLANS.md Ghost Features** | PLANS.md references completed work for modules that have since been deleted | warn |
+| **Missing Frontmatter** | Design docs in `docs/design-docs/` without YAML frontmatter | warn |
+| **Frontmatter Status Consistency** | Docs with `status: current` that have been superseded by newer docs on the same topic, or docs with `status: implemented` that have no `implemented-by` reference | warn |
+| **Index Status Badges** | `docs/design-docs/index.md` Status column doesn't match frontmatter `status` on corresponding docs, or index lacks Status column entirely | warn |
 
 ## Audit Process
 
@@ -147,6 +150,23 @@ Read `docs/design-docs/index.md` (if it exists). Group entries by topic/feature.
 
 Read `docs/PLANS.md`. Scan for references to completed work (especially in "Completed Plans" or retrospective sections). Cross-reference against the actual codebase — if PLANS.md describes completing work on a module that no longer exists, flag as **warn**.
 
+### Step 16: Missing Frontmatter
+
+For each file in `docs/design-docs/` (excluding `index.md`), check if it starts with YAML frontmatter (a `---` line within the first 3 lines). Flag files without frontmatter as **warn**.
+
+### Step 17: Frontmatter Status Consistency
+
+For each design doc with YAML frontmatter:
+- If `status: current` but a newer design doc exists on the same topic (check by filename keyword overlap and index.md descriptions), flag as **warn** — likely should be `superseded`
+- If `status: implemented` but `implemented-by` is empty or points to a nonexistent plan file, flag as **warn**
+- If `status: superseded` but `supersedes` is empty, flag as **warn**
+
+### Step 18: Index Status Badges
+
+Read `docs/design-docs/index.md`. Check:
+- Does the index have a `Status` column? If not, flag as **warn**
+- If it has a Status column, for each entry: read the corresponding design doc's frontmatter `status` field and compare to the index badge. Flag mismatches as **warn**.
+
 ## Output Format
 
 ```markdown
@@ -155,6 +175,7 @@ Read `docs/PLANS.md`. Scan for references to completed work (especially in "Comp
 **Date:** {timestamp}
 **Project:** {project name from CLAUDE.md H1}
 **CLAUDE.md:** {N} lines
+**Health Score:** {N}/10
 
 ### Issues Found: {total}
 
@@ -187,6 +208,8 @@ Read `docs/PLANS.md`. Scan for references to completed work (especially in "Comp
 3. ...
 ```
 
+Health score: Start at 10, subtract 1 per error, 0.5 per warning. Minimum 0, maximum 10. Round to nearest integer.
+
 Health classification:
 - **HEALTHY**: 0 errors, 0-2 warnings
 - **NEEDS ATTENTION**: 0 errors but 3+ warnings, or 1 error
@@ -207,14 +230,17 @@ When the user approves fixes, apply them in this order:
 9. **Orphaned Tier 3 files** — Ask user: add to docs/design-docs/index.md or delete?
 10. **CLAUDE.md bloat** — Identify extractable sections and offer to extract to Tier 2 summary files
 11. **Documentation Map format** — Offer to run /harness:init to migrate v1 map to 3-tier format
-12. **Stale plans** — Offer to run /harness:complete for each stale plan
+12. **Missing frontmatter** — Read the design doc; infer status from context (if listed in index Archived section → `implemented`; if newer doc on same topic exists → `superseded`; otherwise → `current`). Infer `created` from filename date prefix. Add frontmatter block at file top.
+13. **Frontmatter status consistency** — Update `status` field and fill in `supersedes` or `implemented-by` references as needed.
+14. **Index status badges** — If index lacks Status column, add it. Read each design doc's frontmatter and set the index Status column to match: `Current`, `Implemented`, `Superseded`, or `Stale`.
+15. **Stale plans** — Offer to run /harness:complete for each stale plan
 
 For each fix applied, report what was changed.
 
 ## Behavioral Rules
 
 **You MUST:**
-- Run ALL fifteen checks before producing the report
+- Run ALL eighteen checks before producing the report
 - Include file paths in every finding
 - Provide a specific suggested fix for every issue
 - Calculate and report the health classification

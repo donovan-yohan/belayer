@@ -47,7 +47,7 @@ prompt: |
   ## Instructions
 
   1. Read CLAUDE.md and verify it has a "Documentation Map" section
-  2. Run ALL fifteen audit checks (see your agent instructions)
+  2. Run ALL eighteen audit checks (see your agent instructions)
   3. Produce the full prune report with severity, location, and suggested fix for every issue
   4. Calculate health classification (HEALTHY / NEEDS ATTENTION / UNHEALTHY)
   5. Present the report to the user
@@ -62,3 +62,26 @@ prompt: |
   - Present the report and ask: "Would you like me to fix the errors and warnings automatically?"
   - Apply fixes only if user approves
 ```
+
+## Quick Health Mode
+
+When invoked from a health-check context (e.g., from `/harness:loop` at session start), prune can run in quick mode:
+
+```
+/harness:prune --quick
+```
+
+In quick mode, the pruner runs only these fast checks:
+- Check 1: CLAUDE.md Size
+- Check 4: Broken Map Links
+- Check 9: Missing Index Entries
+- Check 13: Code Map Ghost Paths
+- Check 16: Missing Frontmatter
+- Check 17: Frontmatter Status Consistency
+
+Output is a single health score line only:
+```
+Harness health: {N}/10 ({error count} errors, {warning count} warnings)
+```
+
+No full report is generated in quick mode. This keeps session-start latency low.

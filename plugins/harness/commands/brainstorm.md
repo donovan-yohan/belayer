@@ -21,6 +21,23 @@ Design through collaborative dialogue, saved as a versioned design document in t
 
 2. Read `docs/DESIGN.md` and `docs/design-docs/index.md` to understand existing design context. This grounds the brainstorming in what already exists.
 
+2.5. **Surface past learnings** (if available):
+   - Check if `docs/LEARNINGS.md` exists
+   - If it exists, read it and extract entries with `status: active`
+   - Match learnings against the brainstorm topic by checking category and keyword overlap between the learning titles/bodies and the user's brainstorm arguments
+   - Surface the top 3 most relevant learnings before starting the brainstorm dialogue:
+     ```
+     ## Relevant Past Learnings
+
+     Based on past work in this project:
+     - **{ID}**: {description} — {recommendation}
+     - **{ID}**: {description} — {recommendation}
+
+     These learnings will inform the design and be recorded in the design doc's `consulted-learnings` field.
+     ```
+   - Record the IDs of consulted learnings for inclusion in the design doc frontmatter (step 3's HARNESS_OVERRIDES `consulted-learnings` field)
+   - If LEARNINGS.md doesn't exist or has no active learnings, skip silently
+
 3. **Invoke `superpowers:brainstorming`** with the user's arguments. Follow the brainstorming skill's full process (explore context, clarify questions, propose approaches, present design).
 
    <HARNESS_OVERRIDES>
@@ -31,6 +48,18 @@ Design through collaborative dialogue, saved as a versioned design document in t
    - **Handoff:** Do NOT invoke `writing-plans` or any other skill at the end. Do NOT treat "invoke writing-plans" as a terminal state. Instead, after writing the design doc, proceed to step 4 below.
    - **Spec Review Loop:** When the brainstorming skill dispatches its spec-document-reviewer subagent, the reviewer's `[SPEC_FILE_PATH]` must point to `docs/design-docs/`, not `docs/superpowers/specs/`.
    - **Visual Companion:** Skip the visual companion offer — harness does not ship the brainstorm server.
+   - **Frontmatter:** Every design doc written to `docs/design-docs/` MUST start with YAML frontmatter:
+     ```yaml
+     ---
+     status: current
+     created: {YYYY-MM-DD}
+     branch: {result of `git branch --show-current`}
+     supersedes:
+     implemented-by:
+     consulted-learnings: [{learning IDs from step 2.5, or empty}]
+     ---
+     ```
+     Insert this frontmatter block at the very top of the file, before the H1 title. The `branch` field must be the actual current git branch, not a placeholder.
    </HARNESS_OVERRIDES>
 
 4. After the design doc is written, update `docs/design-docs/index.md` — add a row:
