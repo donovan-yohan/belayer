@@ -7,6 +7,8 @@
 
 _No current designs. All designs have been implemented or superseded._
 
+**See also:** [Belayer v2 Temporal Orchestrator](../designs/temporal-orchestrator-reimagining.md) — implemented 2026-03-19
+
 ## Archived
 
 | Document | Purpose | Status | Created |

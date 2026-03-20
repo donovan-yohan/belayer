@@ -17,3 +17,5 @@ coverage.out
 
 # Lead state (runtime artifacts)
 .lead/
+
+.worktrees/

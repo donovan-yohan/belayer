@@ -22,6 +22,7 @@ _None currently active._
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Belayer v2: Temporal Orchestrator Platform](exec-plans/completed/2026-03-19-temporal-orchestrator-v2.md) | 2026-03-19 | v2 clean break: Temporal backbone, two provider contracts (Type A pitch / Type B ascent), three pipeline phases (Approach/Ascent/Send), CLI-callback for interactive sessions |
 | [Harness Plugin Audit & Workflow Fix](exec-plans/completed/2026-03-19-harness-audit.md) | 2026-03-19 | Learning persistence, frontmatter lifecycle, health score, auto-archive |
 | [Work Loss Prevention & PR Stderr Capture](exec-plans/completed/2026-03-17-work-loss-and-stderr-fixes.md) | 2026-03-17 | Push branches on climb completion, capture gh stderr, warn on cleanup of unpushed work |
 | [Explorer Session Resume Flow](exec-plans/archive/2026-03-17-explorer-session-resume.md) | 2026-03-17 | Interrupted-session detection and resume-or-start-fresh for named explorer workspaces |

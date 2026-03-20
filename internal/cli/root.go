@@ -2,6 +2,8 @@ package cli
 
 import (
 	"github.com/spf13/cobra"
+
+	v2cli "github.com/donovan-yohan/belayer/internal/v2/cli"
 )
 
 var version = "dev"
@@ -31,6 +33,7 @@ func NewRootCmd() *cobra.Command {
 		newConfigCmd(),
 		newEnvCmd(),
 		newLearningsCmd(),
+		v2cli.NewV2Cmd(),
 	)
 
 	return cmd

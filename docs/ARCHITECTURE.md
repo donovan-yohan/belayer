@@ -163,6 +163,28 @@ Problem created (status: pending)
 
 Config resolution: crag config > global config > embedded defaults (via `internal/defaults/`)
 
+## v2: Temporal-Backed Orchestrator (internal/v2/)
+
+Belayer v2 replaces the monolithic daemon with a Temporal-backed pipeline platform. See `docs/designs/temporal-orchestrator-reimagining.md` for the full design.
+
+| Module | Path | Purpose |
+|--------|------|---------|
+| Pipeline | `internal/v2/pipeline/` | DSL parser, topology validator, visualization, embedded templates |
+| Temporal | `internal/v2/temporal/` | Route workflow, Type A/B activities, CLI-callback signals, safety controls |
+| Role | `internal/v2/role/` | Contract types (Type A pitch / Type B ascent), phase definitions, safety config |
+| Provider | `internal/v2/provider/` | Session spawner (Claude/Codex via tmux), exec shell-out (JSON in/out) |
+| Risk Gate | `internal/v2/riskgate/` | Risk evaluation at role transitions, auto-pass / human-review decisions |
+| Eval | `internal/v2/eval/` | Fixture recording, loading, comparison for role testing |
+| Model | `internal/v2/model/` | Domain types: RoleSignal, RouteInput/Output, RunStatus |
+| CLI | `internal/v2/cli/` | v2 commands: run, status, pipeline, temporal, role signals |
+
+### Key Concepts
+
+- **Two provider contracts**: Type A (pitch — JSON in/out) for judgment calls, Type B (ascent — CLI-callback) for interactive sessions
+- **Three pipeline phases**: Approach (intake), Ascent (execution with loops), Send (output)
+- **CLI-callback**: Interactive sessions signal completion via `belayer v2 <role> finish --task-id <id>`
+- **Temporal Signal**: CLI callback → Temporal Signal → workflow advances to next role
+
 ## Architecture Decision Records
 
 > Normative constraints documented in `docs/adrs/`.
