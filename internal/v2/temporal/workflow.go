@@ -34,7 +34,9 @@ func RouteWorkflow(ctx workflow.Context, input model.RouteInput) (*model.RouteOu
 	}
 
 	roleOutputs := make(map[string]json.RawMessage)
-	var lastOutput json.RawMessage
+	// Seed the first role's input with the pipeline description.
+	initialInput, _ := json.Marshal(map[string]string{"description": input.Description})
+	lastOutput := json.RawMessage(initialInput)
 
 	// Sequence through phases and roles.
 	for _, phase := range route.Phases {
