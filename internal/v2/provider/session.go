@@ -24,13 +24,17 @@ type SessionSpawner interface {
 
 // SessionOpts contains everything needed to spawn an interactive session.
 type SessionOpts struct {
-	RoleName    string
-	RepoName    string // For multi-repo: which repo this session is for
-	TaskID      string
-	WorkDir     string
-	InputJSON   json.RawMessage
-	Provider    string // "claude", "codex", or custom command
-	ExtraPrompt string // Additional context prepended to the initial prompt
+	RoleName     string
+	RepoName     string // For multi-repo: which repo this session is for
+	TaskID       string
+	WorkDir      string
+	InputJSON    json.RawMessage
+	Provider     string // "claude", "codex", or custom command
+	ExtraPrompt  string // Additional context prepended to the initial prompt
+	ChannelPort  int    // HTTP port for this session's belayer channel (0 = no channel)
+	ObserverPort int    // HTTP port of the observer session's channel (0 = no observer)
+	HooksDir     string // Absolute path to channel/hooks/ directory
+	ChannelScript string // Absolute path to channel/channel.ts
 }
 
 // SessionInfo is returned after a session is spawned.
@@ -71,10 +75,38 @@ func (c *ClaudeSessionSpawner) Spawn(ctx context.Context, opts SessionOpts) (*Se
 	}
 
 	// Write input JSON to a file the session can read.
+	belayerDir := filepath.Join(opts.WorkDir, ".belayer")
 	if opts.InputJSON != nil && opts.WorkDir != "" {
-		inputPath := filepath.Join(opts.WorkDir, ".belayer", "input.json")
+		inputPath := filepath.Join(belayerDir, "input.json")
 		if err := os.MkdirAll(filepath.Dir(inputPath), 0o755); err == nil {
 			_ = os.WriteFile(inputPath, opts.InputJSON, 0o644)
+		}
+	}
+
+	// Write per-session channel config if channel is enabled.
+	channelFlag := ""
+	if opts.ChannelPort > 0 && opts.ChannelScript != "" {
+		if err := writeSessionMCPConfig(opts); err != nil {
+			// Non-fatal: channel is best-effort.
+			fmt.Fprintf(os.Stderr, "belayer: warning: could not write channel config: %v\n", err)
+		}
+		if err := writeSessionHooksConfig(opts); err != nil {
+			fmt.Fprintf(os.Stderr, "belayer: warning: could not write hooks config: %v\n", err)
+		}
+		channelFlag = " --dangerously-load-development-channels server:belayer-channel"
+	}
+
+	// Build env exports for belayer context.
+	var envExports string
+	if opts.ChannelPort > 0 {
+		envExports += fmt.Sprintf("export BELAYER_TASK_ID=%s && ", shellQuote(opts.TaskID))
+		envExports += fmt.Sprintf("export BELAYER_ROLE=%s && ", shellQuote(opts.RoleName))
+		envExports += fmt.Sprintf("export BELAYER_CHANNEL_PORT=%d && ", opts.ChannelPort)
+		if opts.RepoName != "" {
+			envExports += fmt.Sprintf("export BELAYER_REPO=%s && ", shellQuote(opts.RepoName))
+		}
+		if opts.ObserverPort > 0 {
+			envExports += fmt.Sprintf("export BELAYER_OBSERVER_PORT=%d && ", opts.ObserverPort)
 		}
 	}
 
@@ -88,8 +120,10 @@ func (c *ClaudeSessionSpawner) Spawn(ctx context.Context, opts SessionOpts) (*Se
 	}
 
 	// Build the command.
-	cmd := fmt.Sprintf("cd %s && claude --dangerously-skip-permissions --append-system-prompt %s %s 2>&1; echo 'Session exited'",
+	cmd := fmt.Sprintf("%scd %s && claude --dangerously-skip-permissions%s --append-system-prompt %s %s 2>&1; echo 'Session exited'",
+		envExports,
 		shellQuote(opts.WorkDir),
+		channelFlag,
 		shellQuote(systemPrompt),
 		shellQuote(initialPrompt))
 
@@ -183,6 +217,79 @@ These commands are how the pipeline knows you are done. Do not skip them.`,
 		roleName, taskID, repoFlag,
 		roleName, taskID, repoFlag,
 		roleName, taskID, repoFlag)
+}
+
+// writeSessionMCPConfig writes a per-session .mcp.json so Claude Code finds the channel server.
+func writeSessionMCPConfig(opts SessionOpts) error {
+	mcpDir := filepath.Join(opts.WorkDir, ".belayer")
+	if err := os.MkdirAll(mcpDir, 0o755); err != nil {
+		return err
+	}
+
+	mcpConfig := fmt.Sprintf(`{
+  "mcpServers": {
+    "belayer-channel": {
+      "command": "bun",
+      "args": [%q],
+      "env": {
+        "BELAYER_CHANNEL_PORT": "%d"
+      }
+    }
+  }
+}`, opts.ChannelScript, opts.ChannelPort)
+
+	// Write to the WorkDir so Claude Code picks it up.
+	return os.WriteFile(filepath.Join(opts.WorkDir, ".mcp.json"), []byte(mcpConfig), 0o644)
+}
+
+// writeSessionHooksConfig writes a .claude/settings.local.json with belayer hooks.
+func writeSessionHooksConfig(opts SessionOpts) error {
+	if opts.HooksDir == "" {
+		return nil
+	}
+
+	claudeDir := filepath.Join(opts.WorkDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
+		return err
+	}
+
+	hooksConfig := fmt.Sprintf(`{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "%s/stop-insurance.sh"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "%s/notification-router.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "%s/session-start.sh"
+          }
+        ]
+      }
+    ]
+  }
+}`, opts.HooksDir, opts.HooksDir, opts.HooksDir)
+
+	return os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte(hooksConfig), 0o644)
 }
 
 // shellQuote wraps a string in single quotes, escaping embedded single quotes.
