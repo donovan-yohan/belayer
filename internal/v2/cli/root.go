@@ -20,6 +20,7 @@ func NewV2Cmd() *cobra.Command {
 		newPipelineCmd(),
 		newTemporalCmd(),
 		newWorkerCmd(),
+		newAttachCmd(),
 	)
 
 	// Add role signal commands for known roles.
