@@ -21,8 +21,8 @@ via Temporal workflows.
 Getting started:
   belayer temporal start     Start the Temporal dev server
   belayer worker             Start the pipeline worker
-  belayer run "description"  Start a pipeline run
-  belayer attach             Attach to an active session
+  belayer start              Open a belayer session (brainstorm + observe)
+  belayer attach             Attach to an active worker session
   belayer status             Check pipeline progress`,
 	}
 

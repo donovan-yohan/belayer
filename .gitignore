@@ -21,3 +21,4 @@ coverage.out
 .worktrees/
 .belayer/
 channel/node_modules/
+.mcp.json

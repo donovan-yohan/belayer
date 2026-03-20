@@ -8,6 +8,7 @@ import (
 // RegisterCommands adds all belayer commands directly to the given root command.
 func RegisterCommands(root *cobra.Command) {
 	root.AddCommand(
+		newStartCmd(),
 		newRunCmd(),
 		newStatusCmd(),
 		newPipelineCmd(),
