@@ -27,9 +27,11 @@ func RouteWorkflow(ctx workflow.Context, input model.RouteInput) (*model.RouteOu
 	logger := workflow.GetLogger(ctx)
 	logger.Info("Route workflow started", "description", input.Description)
 
-	// Parse the pipeline definition.
-	// For MVP, use the embedded default route.
-	route := defaultMVPRoute()
+	// Parse the pipeline definition from input, or use default.
+	route, err := resolveRoute(input)
+	if err != nil {
+		return nil, fmt.Errorf("resolve pipeline route: %w", err)
+	}
 
 	roleOutputs := make(map[string]json.RawMessage)
 	var lastOutput json.RawMessage
@@ -216,6 +218,18 @@ func executeTypeB(ctx workflow.Context, roleDef role.RoleDef, description string
 	}
 
 	return result, nil
+}
+
+// resolveRoute extracts the Route from workflow input, falling back to the default.
+func resolveRoute(input model.RouteInput) (*pipeline.Route, error) {
+	if len(input.RouteJSON) > 0 {
+		var route pipeline.Route
+		if err := json.Unmarshal(input.RouteJSON, &route); err != nil {
+			return nil, fmt.Errorf("unmarshal route: %w", err)
+		}
+		return &route, nil
+	}
+	return defaultMVPRoute(), nil
 }
 
 // defaultMVPRoute returns the hardcoded MVP pipeline: setter → lead.

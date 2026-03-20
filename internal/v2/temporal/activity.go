@@ -42,6 +42,8 @@ type Activities struct {
 	SessionSpawner SessionSpawner
 	// ExecProvider runs Type A roles by shelling out.
 	ExecProvider ExecProvider
+	// WorkDir is the default working directory for sessions.
+	WorkDir string
 }
 
 // SessionSpawner is the interface for launching interactive sessions (Type B).
@@ -66,7 +68,11 @@ func (a *Activities) TypeAPitchActivity(ctx context.Context, input TypeAInput) (
 // TypeBSpawnActivity spawns an interactive session for a Type B role.
 // It does NOT wait for completion — the Route workflow waits for a Signal.
 func (a *Activities) TypeBSpawnActivity(ctx context.Context, input TypeBSpawnInput) (*TypeBSpawnOutput, error) {
-	sessionID, err := a.SessionSpawner.Spawn(ctx, input.Role.Name, input.TaskID, input.WorkDir, input.Input)
+	workDir := input.WorkDir
+	if workDir == "" {
+		workDir = a.WorkDir
+	}
+	sessionID, err := a.SessionSpawner.Spawn(ctx, input.Role.Name, input.TaskID, workDir, input.Input)
 	if err != nil {
 		return &TypeBSpawnOutput{Spawned: false}, err
 	}

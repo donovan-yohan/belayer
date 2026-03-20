@@ -22,6 +22,7 @@ _None currently active._
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [v2 Wiring Gaps](exec-plans/completed/2026-03-19-v2-wiring-gaps.md) | 2026-03-19 | Worker command, DSL wiring, pipeline CLI, WorkDir resolution |
 | [Belayer v2: Temporal Orchestrator Platform](exec-plans/completed/2026-03-19-temporal-orchestrator-v2.md) | 2026-03-19 | v2 clean break: Temporal backbone, two provider contracts (Type A pitch / Type B ascent), three pipeline phases (Approach/Ascent/Send), CLI-callback for interactive sessions |
 | [Harness Plugin Audit & Workflow Fix](exec-plans/completed/2026-03-19-harness-audit.md) | 2026-03-19 | Learning persistence, frontmatter lifecycle, health score, auto-archive |
 | [Work Loss Prevention & PR Stderr Capture](exec-plans/completed/2026-03-17-work-loss-and-stderr-fixes.md) | 2026-03-17 | Push branches on climb completion, capture gh stderr, warn on cleanup of unpushed work |

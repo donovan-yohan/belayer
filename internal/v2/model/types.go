@@ -37,11 +37,12 @@ type RoleSignal struct {
 
 // RouteInput is the input to the Route workflow (a pipeline run / ascent).
 type RouteInput struct {
-	Description string `json:"description"`
-	PipelineFile string `json:"pipeline_file,omitempty"`
-	FromRole    string `json:"from_role,omitempty"`
-	ToRole      string `json:"to_role,omitempty"`
-	InputJSON   json.RawMessage `json:"input_json,omitempty"`
+	Description  string          `json:"description"`
+	PipelineFile string          `json:"pipeline_file,omitempty"`
+	RouteJSON    json.RawMessage `json:"route_json,omitempty"` // Serialized pipeline.Route — if empty, uses default
+	FromRole     string          `json:"from_role,omitempty"`
+	ToRole       string          `json:"to_role,omitempty"`
+	InputJSON    json.RawMessage `json:"input_json,omitempty"`
 }
 
 // RouteOutput is the output of a completed Route workflow.
