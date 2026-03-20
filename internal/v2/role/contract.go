@@ -40,6 +40,10 @@ type RoleDef struct {
 	InputSchema  string         `yaml:"input_schema,omitempty" json:"input_schema,omitempty"`
 	OutputSchema string         `yaml:"output_schema,omitempty" json:"output_schema,omitempty"`
 	Provider     ProviderConfig `yaml:"provider" json:"provider"`
+	// Multi-repo annotations (fan-out / fan-in).
+	FanOut string `yaml:"fan_out,omitempty" json:"fan_out,omitempty"` // e.g., "repos" — output creates per-repo tasks
+	Per    string `yaml:"per,omitempty" json:"per,omitempty"`         // e.g., "repo" — runs once per repo
+	FanIn  string `yaml:"fan_in,omitempty" json:"fan_in,omitempty"`   // e.g., "repos" — receives all per-repo results
 }
 
 // ProviderConfig specifies how a role is executed.

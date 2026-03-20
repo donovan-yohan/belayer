@@ -7,9 +7,16 @@ import "github.com/donovan-yohan/belayer/internal/v2/role"
 
 // Route is the top-level pipeline definition — a climbing route.
 type Route struct {
-	Name   string        `yaml:"name" json:"name"`
-	Phases []PhaseConfig `yaml:"phases" json:"phases"`
-	Safety role.SafetyConfig `yaml:"safety" json:"safety"`
+	Name    string            `yaml:"name" json:"name"`
+	Extends string            `yaml:"extends,omitempty" json:"extends,omitempty"` // Parent pipeline to inherit from
+	Repos   []string          `yaml:"repos,omitempty" json:"repos,omitempty"`     // Registered repo names for multi-repo
+	Phases  []PhaseConfig     `yaml:"phases" json:"phases"`
+	Safety  role.SafetyConfig `yaml:"safety" json:"safety"`
+}
+
+// IsMultiRepo returns true if the pipeline targets multiple repos.
+func (r *Route) IsMultiRepo() bool {
+	return len(r.Repos) > 1
 }
 
 // PhaseConfig defines one pipeline phase (approach / ascent / send).

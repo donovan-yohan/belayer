@@ -25,6 +25,7 @@ type SessionSpawner interface {
 // SessionOpts contains everything needed to spawn an interactive session.
 type SessionOpts struct {
 	RoleName    string
+	RepoName    string // For multi-repo: which repo this session is for
 	TaskID      string
 	WorkDir     string
 	InputJSON   json.RawMessage
@@ -52,7 +53,12 @@ func NewClaudeSessionSpawner(tm tmux.TmuxManager) *ClaudeSessionSpawner {
 // the belayer CLI callback instructions.
 func (c *ClaudeSessionSpawner) Spawn(ctx context.Context, opts SessionOpts) (*SessionInfo, error) {
 	tmuxSession := "belayer"
-	windowName := fmt.Sprintf("%s-%s", opts.RoleName, opts.TaskID[:8])
+	var windowName string
+	if opts.RepoName != "" {
+		windowName = fmt.Sprintf("%s-%s-%s", opts.RoleName, opts.RepoName, opts.TaskID[:8])
+	} else {
+		windowName = fmt.Sprintf("%s-%s", opts.RoleName, opts.TaskID[:8])
+	}
 
 	// Ensure tmux session exists.
 	if !c.tmux.HasSession(tmuxSession) {
@@ -73,7 +79,7 @@ func (c *ClaudeSessionSpawner) Spawn(ctx context.Context, opts SessionOpts) (*Se
 	}
 
 	// Build the system prompt with CLI callback instructions.
-	systemPrompt := buildSystemPrompt(opts.RoleName, opts.TaskID)
+	systemPrompt := buildSystemPrompt(opts.RoleName, opts.TaskID, opts.RepoName)
 
 	// Build the initial prompt with context.
 	initialPrompt := opts.ExtraPrompt
@@ -111,7 +117,12 @@ func NewCodexSessionSpawner(tm tmux.TmuxManager) *CodexSessionSpawner {
 // so callback instructions are prepended to the prompt.
 func (c *CodexSessionSpawner) Spawn(ctx context.Context, opts SessionOpts) (*SessionInfo, error) {
 	tmuxSession := "belayer"
-	windowName := fmt.Sprintf("%s-%s", opts.RoleName, opts.TaskID[:8])
+	var windowName string
+	if opts.RepoName != "" {
+		windowName = fmt.Sprintf("%s-%s-%s", opts.RoleName, opts.RepoName, opts.TaskID[:8])
+	} else {
+		windowName = fmt.Sprintf("%s-%s", opts.RoleName, opts.TaskID[:8])
+	}
 
 	if !c.tmux.HasSession(tmuxSession) {
 		if err := c.tmux.NewSession(tmuxSession); err != nil {
@@ -131,7 +142,7 @@ func (c *CodexSessionSpawner) Spawn(ctx context.Context, opts SessionOpts) (*Ses
 	}
 
 	// Codex: prepend callback instructions to the prompt.
-	systemPrompt := buildSystemPrompt(opts.RoleName, opts.TaskID)
+	systemPrompt := buildSystemPrompt(opts.RoleName, opts.TaskID, opts.RepoName)
 	prompt := systemPrompt + "\n\n" + opts.ExtraPrompt
 
 	cmd := fmt.Sprintf("cd %s && codex --dangerously-bypass-approvals-and-sandbox %s 2>&1; echo 'Session exited'",
@@ -149,23 +160,29 @@ func (c *CodexSessionSpawner) Spawn(ctx context.Context, opts SessionOpts) (*Ses
 }
 
 // buildSystemPrompt creates the CLI callback instructions for a role.
-func buildSystemPrompt(roleName, taskID string) string {
+// If repoName is non-empty, includes --repo flag in the instructions.
+func buildSystemPrompt(roleName, taskID, repoName string) string {
+	repoFlag := ""
+	if repoName != "" {
+		repoFlag = fmt.Sprintf(" --repo %s", repoName)
+	}
+
 	return fmt.Sprintf(`You are the %s in a belayer pipeline.
 
 IMPORTANT: When you have completed your work, you MUST signal completion by running:
-  belayer %s finish --task-id %s
+  belayer %s finish --task-id %s%s
 
 If you need help or are stuck, run:
-  belayer %s flare --task-id %s --message "describe the problem"
+  belayer %s flare --task-id %s%s --message "describe the problem"
 
 If you cannot complete the task, run:
-  belayer %s fail --task-id %s --message "describe why"
+  belayer %s fail --task-id %s%s --message "describe why"
 
 These commands are how the pipeline knows you are done. Do not skip them.`,
 		roleName,
-		roleName, taskID,
-		roleName, taskID,
-		roleName, taskID)
+		roleName, taskID, repoFlag,
+		roleName, taskID, repoFlag,
+		roleName, taskID, repoFlag)
 }
 
 // shellQuote wraps a string in single quotes, escaping embedded single quotes.

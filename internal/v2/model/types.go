@@ -30,6 +30,7 @@ const (
 type RoleSignal struct {
 	TaskID  string          `json:"task_id"`
 	Role    string          `json:"role"`
+	Repo    string          `json:"repo,omitempty"` // For multi-repo: which repo this signal is for
 	Action  SignalAction    `json:"action"`
 	Output  json.RawMessage `json:"output,omitempty"`
 	Message string          `json:"message,omitempty"`

@@ -14,6 +14,9 @@ func RegisterCommands(root *cobra.Command) {
 		newTemporalCmd(),
 		newWorkerCmd(),
 		newAttachCmd(),
+		newRepoCmd(),
+		newCragCmd(),
+		newCdCmd(),
 	)
 
 	// Add role signal commands for known roles.

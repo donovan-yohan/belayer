@@ -31,18 +31,19 @@ func newRoleCmd(roleName string) *cobra.Command {
 }
 
 func newSignalCmd(roleName string, action model.SignalAction) *cobra.Command {
-	var taskID, message, outputFile string
+	var taskID, message, outputFile, repo string
 
 	cmd := &cobra.Command{
 		Use:   string(action),
 		Short: fmt.Sprintf("Signal %s for the %s role", action, roleName),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return sendRoleSignal(cmd.Context(), roleName, action, taskID, message, outputFile)
+			return sendRoleSignal(cmd.Context(), roleName, action, taskID, message, outputFile, repo)
 		},
 	}
 
 	cmd.Flags().StringVar(&taskID, "task-id", "", "Task ID (workflow ID)")
 	cmd.Flags().StringVar(&message, "message", "", "Human-readable context")
+	cmd.Flags().StringVar(&repo, "repo", "", "Repo name (for multi-repo pipelines)")
 	_ = cmd.MarkFlagRequired("task-id")
 
 	if action == model.SignalFinish {
@@ -52,7 +53,7 @@ func newSignalCmd(roleName string, action model.SignalAction) *cobra.Command {
 	return cmd
 }
 
-func sendRoleSignal(ctx context.Context, roleName string, action model.SignalAction, taskID, message, outputFile string) error {
+func sendRoleSignal(ctx context.Context, roleName string, action model.SignalAction, taskID, message, outputFile, repo string) error {
 	c, err := client.Dial(client.Options{})
 	if err != nil {
 		return fmt.Errorf("cannot connect to Temporal: %w", err)
@@ -62,6 +63,7 @@ func sendRoleSignal(ctx context.Context, roleName string, action model.SignalAct
 	signal := model.RoleSignal{
 		TaskID:  taskID,
 		Role:    roleName,
+		Repo:    repo,
 		Action:  action,
 		Message: message,
 	}

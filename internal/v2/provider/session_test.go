@@ -120,11 +120,17 @@ func TestCodexSessionSpawner_PrependsInstructions(t *testing.T) {
 }
 
 func TestBuildSystemPrompt(t *testing.T) {
-	prompt := buildSystemPrompt("setter", "run-123")
+	prompt := buildSystemPrompt("setter", "run-123", "")
 	assert.Contains(t, prompt, "You are the setter")
 	assert.Contains(t, prompt, "belayer setter finish --task-id run-123")
-	assert.Contains(t, prompt, "belayer setter flare --task-id run-123")
-	assert.Contains(t, prompt, "belayer setter fail --task-id run-123")
+	assert.NotContains(t, prompt, "--repo")
+}
+
+func TestBuildSystemPrompt_WithRepo(t *testing.T) {
+	prompt := buildSystemPrompt("lead", "run-123", "extend-api")
+	assert.Contains(t, prompt, "You are the lead")
+	assert.Contains(t, prompt, "belayer lead finish --task-id run-123 --repo extend-api")
+	assert.Contains(t, prompt, "belayer lead flare --task-id run-123 --repo extend-api")
 }
 
 func TestClaudeSessionSpawner_WritesInputJSON(t *testing.T) {
