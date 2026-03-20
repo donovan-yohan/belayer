@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/donovan-yohan/belayer/internal/tmux"
 )
@@ -129,6 +130,16 @@ func (c *ClaudeSessionSpawner) Spawn(ctx context.Context, opts SessionOpts) (*Se
 
 	if err := c.tmux.SendKeys(tmuxSession, windowName, cmd); err != nil {
 		return nil, fmt.Errorf("send keys: %w", err)
+	}
+
+	// Auto-confirm the development channels trust prompt.
+	// --dangerously-load-development-channels shows an interactive confirmation.
+	// Send Enter after a delay to accept it automatically.
+	if opts.ChannelPort > 0 {
+		go func() {
+			time.Sleep(3 * time.Second)
+			_ = c.tmux.SendKeysRaw(tmuxSession+":"+windowName, "Enter")
+		}()
 	}
 
 	return &SessionInfo{

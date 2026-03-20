@@ -82,7 +82,7 @@ func parseGHPRStatusJSON(data []byte) (*model.PRStatus, error) {
 	for i, r := range gh.Reviews {
 		reviews[i] = model.Review{
 			Author: r.Author.Login,
-			State:  strings.ToLower(r.State),
+			State:  model.ReviewState(strings.ToLower(r.State)),
 			Body:   r.Body,
 		}
 	}
@@ -91,8 +91,8 @@ func parseGHPRStatusJSON(data []byte) (*model.PRStatus, error) {
 
 	return &model.PRStatus{
 		Number:    gh.Number,
-		State:     strings.ToLower(gh.State),
-		CIStatus:  ciStatus,
+		State:     model.PRState(strings.ToLower(gh.State)),
+		CIStatus:  model.CIStatus(ciStatus),
 		CIDetails: checks,
 		Reviews:   reviews,
 		Mergeable: strings.ToUpper(gh.Mergeable) == "MERGEABLE",
@@ -100,15 +100,15 @@ func parseGHPRStatusJSON(data []byte) (*model.PRStatus, error) {
 	}, nil
 }
 
-func determineCIStatus(checks []ghCheck) string {
+func determineCIStatus(checks []ghCheck) model.CIStatus {
 	if len(checks) == 0 {
-		return "pending"
+		return model.CIStatusPending
 	}
 	allPassed := true
 	for _, c := range checks {
 		conclusion := strings.ToUpper(c.Conclusion)
 		if conclusion == "FAILURE" || conclusion == "FAILED" {
-			return "failing"
+			return model.CIStatusFailing
 		}
 		status := strings.ToUpper(c.Status)
 		if status != "COMPLETED" || (conclusion != "SUCCESS" && conclusion != "NEUTRAL" && conclusion != "SKIPPED") {
@@ -116,9 +116,9 @@ func determineCIStatus(checks []ghCheck) string {
 		}
 	}
 	if allPassed {
-		return "passing"
+		return model.CIStatusPassing
 	}
-	return "pending"
+	return model.CIStatusPending
 }
 
 type ghActivityComments struct {
@@ -157,7 +157,7 @@ func parseGHPRActivityJSON(commentsData, reviewsData []byte, since time.Time) (*
 	for i, r := range ghReviews {
 		reviews[i] = model.Review{
 			Author: r.Author.Login,
-			State:  strings.ToLower(r.State),
+			State:  model.ReviewState(strings.ToLower(r.State)),
 			Body:   r.Body,
 		}
 	}
