@@ -41,7 +41,7 @@ func newRunCmd() *cobra.Command {
 func runPipeline(ctx context.Context, description, pipelineFile, fromRole, toRole, inputFile string) error {
 	c, err := client.Dial(client.Options{})
 	if err != nil {
-		return fmt.Errorf("cannot connect to Temporal server. Run 'belayer v2 temporal start' first.\n\nError: %w", err)
+		return fmt.Errorf("cannot connect to Temporal server. Run 'belayer temporal start' first.\n\nError: %w", err)
 	}
 	defer c.Close()
 
@@ -81,7 +81,7 @@ func runPipeline(ctx context.Context, description, pipelineFile, fromRole, toRol
 	fmt.Printf("  Web UI:    http://localhost:8233/namespaces/default/workflows/%s/%s\n",
 		run.GetID(), run.GetRunID())
 	fmt.Printf("\nThe pipeline is running. Interactive sessions will prompt you when ready.\n")
-	fmt.Printf("Use 'belayer v2 status' to check progress.\n")
+	fmt.Printf("Use 'belayer status' to check progress.\n")
 
 	return nil
 }

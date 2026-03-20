@@ -159,7 +159,7 @@ func temporalStatus() error {
 		fmt.Printf("  Web:  http://localhost:%s\n", temporalWebPort)
 	} else {
 		fmt.Println("Temporal dev server: not running")
-		fmt.Println("Start with: belayer v2 temporal start")
+		fmt.Println("Start with: belayer temporal start")
 	}
 	return nil
 }

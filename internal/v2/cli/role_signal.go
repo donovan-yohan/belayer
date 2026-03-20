@@ -14,7 +14,7 @@ import (
 )
 
 // newRoleCmd creates a command group for a role with finish/flare/fail subcommands.
-// Example: belayer v2 setter finish --task-id abc123
+// Example: belayer setter finish --task-id abc123
 func newRoleCmd(roleName string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   roleName,

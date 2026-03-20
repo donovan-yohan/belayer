@@ -25,7 +25,7 @@ func newWorkerCmd() *cobra.Command {
 The worker registers the Route workflow and all activity implementations.
 It runs until interrupted (Ctrl+C).
 
-Start this BEFORE running 'belayer v2 run'.`,
+Start this BEFORE running 'belayer run'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return startWorker(workDir)
 		},
@@ -47,7 +47,7 @@ func startWorker(workDir string) error {
 
 	c, err := client.Dial(client.Options{})
 	if err != nil {
-		return fmt.Errorf("cannot connect to Temporal. Run 'belayer v2 temporal start' first.\n\nError: %w", err)
+		return fmt.Errorf("cannot connect to Temporal. Run 'belayer temporal start' first.\n\nError: %w", err)
 	}
 	defer c.Close()
 

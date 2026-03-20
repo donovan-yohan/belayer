@@ -24,7 +24,7 @@ func newStatusCmd() *cobra.Command {
 func showStatus(ctx context.Context) error {
 	c, err := client.Dial(client.Options{})
 	if err != nil {
-		return fmt.Errorf("cannot connect to Temporal. Run 'belayer v2 temporal start' first.\n\nError: %w", err)
+		return fmt.Errorf("cannot connect to Temporal. Run 'belayer temporal start' first.\n\nError: %w", err)
 	}
 	defer c.Close()
 
@@ -38,7 +38,7 @@ func showStatus(ctx context.Context) error {
 
 	if len(resp.Executions) == 0 {
 		fmt.Println("No active pipeline runs.")
-		fmt.Println("Start one with: belayer v2 run \"your description\"")
+		fmt.Println("Start one with: belayer run \"your description\"")
 		return nil
 	}
 

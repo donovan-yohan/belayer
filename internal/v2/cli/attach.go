@@ -19,8 +19,8 @@ Without arguments, lists all active sessions. With a role name,
 attaches to that role's window directly.
 
 Examples:
-  belayer v2 attach          # List active sessions
-  belayer v2 attach setter   # Attach to the setter session`,
+  belayer attach          # List active sessions
+  belayer attach setter   # Attach to the setter session`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return listSessions()
@@ -35,7 +35,7 @@ func listSessions() error {
 	windows, err := getTmuxWindows("belayer")
 	if err != nil {
 		fmt.Println("No active belayer sessions.")
-		fmt.Println("Start a pipeline with: belayer v2 run \"your description\"")
+		fmt.Println("Start a pipeline with: belayer run \"your description\"")
 		return nil
 	}
 
@@ -48,7 +48,7 @@ func listSessions() error {
 	for _, w := range windows {
 		fmt.Printf("  %s\n", w)
 	}
-	fmt.Println("\nAttach with: belayer v2 attach <role>")
+	fmt.Println("\nAttach with: belayer attach <role>")
 	fmt.Println("Or directly: tmux attach -t belayer")
 	return nil
 }

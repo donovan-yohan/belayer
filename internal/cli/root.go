@@ -11,30 +11,24 @@ var version = "dev"
 func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "belayer",
-		Short: "Multi-repo coding agent orchestrator",
-		Long:  "Belayer orchestrates autonomous coding agents across multiple repositories, decomposing work items into per-repo tasks and validating cross-repo alignment.",
+		Short: "Temporal-backed pipeline orchestrator for autonomous coding agents",
+		Long: `Belayer orchestrates autonomous coding agents through a declarative pipeline.
+
+Define your pipeline topology in YAML, plug in role implementations
+(Claude Code, Codex, or your own tools), and belayer handles execution
+via Temporal workflows.
+
+Getting started:
+  belayer temporal start     Start the Temporal dev server
+  belayer worker             Start the pipeline worker
+  belayer run "description"  Start a pipeline run
+  belayer attach             Attach to an active session
+  belayer status             Check pipeline progress`,
 	}
 
 	cmd.Version = version
 
-	cmd.AddCommand(
-		newInitCmd(),
-		newCragCmd(),
-		newExplorerSessionCmd(),
-		newProblemCmd(),
-		newStatusCmd(),
-		newBelayerDaemonCmd(),
-		newLogsCmd(),
-		newSetterSessionCmd(),
-		newMailCmd(),
-		newMessageCmd(),
-		newTrackerCmd(),
-		newPRCmd(),
-		newConfigCmd(),
-		newEnvCmd(),
-		newLearningsCmd(),
-		v2cli.NewV2Cmd(),
-	)
+	v2cli.RegisterCommands(cmd)
 
 	return cmd
 }
