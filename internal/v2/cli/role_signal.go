@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.temporal.io/sdk/client"
@@ -82,6 +83,12 @@ func sendRoleSignal(ctx context.Context, roleName string, action model.SignalAct
 
 	err = c.SignalWorkflow(ctx, taskID, "", beltemporal.SignalChannelName, signal)
 	if err != nil {
+		// Idempotency: if the workflow is already completed/terminated, this is a no-op.
+		errStr := err.Error()
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "completed") || strings.Contains(errStr, "terminated") {
+			fmt.Printf("%s %s: workflow already completed (idempotent no-op)\n", roleName, action)
+			return nil
+		}
 		return fmt.Errorf("failed to send %s signal: %w", action, err)
 	}
 
