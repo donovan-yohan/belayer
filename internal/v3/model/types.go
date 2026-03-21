@@ -24,6 +24,8 @@ type CompletionResult struct {
 	TargetNode string      `json:"target_node,omitempty"`
 	Feedback   string      `json:"feedback,omitempty"`
 	Attempt    int         `json:"attempt"`
+	CommitSHA  string      `json:"commit_sha,omitempty"`
+	BaseRef    string      `json:"base_ref,omitempty"`
 }
 
 // ClimbStatus tracks the state of a pipeline run.
@@ -45,14 +47,16 @@ func (s ClimbStatus) IsValid() bool {
 
 // ClimbInput is the input to the Climb workflow.
 type ClimbInput struct {
-	Description  string `json:"description"`
-	DesignFile   string `json:"design_file,omitempty"`
-	PipelineFile string `json:"pipeline_file,omitempty"`
-	PipelineYAML []byte `json:"pipeline_yaml,omitempty"`
-	FromNode     string `json:"from_node,omitempty"`
-	InputPath    string `json:"input_path,omitempty"`
-	WorkDir      string `json:"work_dir"`
-	Branch       string `json:"branch"`
+	Description  string   `json:"description"`
+	DesignFile   string   `json:"design_file,omitempty"`
+	PipelineFile string   `json:"pipeline_file,omitempty"`
+	PipelineYAML []byte   `json:"pipeline_yaml,omitempty"`
+	FromNode     string   `json:"from_node,omitempty"`
+	InputPath    string   `json:"input_path,omitempty"`
+	WorkDir      string   `json:"work_dir"`
+	Branch       string   `json:"branch"`
+	Repos        []string `json:"repos,omitempty"`
+	BaseRef      string   `json:"base_ref,omitempty"`
 }
 
 // ClimbOutput is the output of a completed Climb workflow.

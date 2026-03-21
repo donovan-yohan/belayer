@@ -7,5 +7,7 @@ func RegisterV3Commands(root *cobra.Command) {
 		NewClimbCmd(),
 		NewNodeCompleteCmd(),
 		newStatusCmd(),
+		newWorkerCmd(),
+		newStartCmd(),
 	)
 }

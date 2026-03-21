@@ -3,7 +3,6 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	v2cli "github.com/donovan-yohan/belayer/internal/v2/cli"
 	v3cli "github.com/donovan-yohan/belayer/internal/v3/cli"
 )
 
@@ -29,7 +28,6 @@ Getting started:
 
 	cmd.Version = version
 
-	v2cli.RegisterCommands(cmd)
 	v3cli.RegisterV3Commands(cmd)
 
 	return cmd

@@ -66,3 +66,33 @@ When adding a new node type (e.g., gates) that changes the default pipeline, int
 When adding quality evaluation gates to a pipeline, the evaluation session should NOT decide the routing outcome. Instead: (1) session produces structured scores per dimension, (2) deterministic Go code computes the weighted average, (3) YAML-declared thresholds determine PASS/RETRY/FAIL. This prevents the session from being "nice" and always passing. The rationale.md is mandatory as an additional anti-gaming measure — no score without explanation.
 
 ---
+
+### L-007: Resolve model conflicts before planning implementation
+- status: active
+- category: workflow
+- source: /harness:loop 2026-03-21
+- branch: clarify-gstack-implementation-philosophy
+
+When a design doc targets one model (v2 phases/roles) but the codebase has a better model (v3 flat nodes with gates), resolve the model question BEFORE creating the implementation plan. The first plan had to be scrapped and rewritten after the eng review discovered the v2/v3 mismatch. CEO review, eng review, and codex review all flagged the same issue from different angles.
+
+---
+
+### L-008: Temporal workflow code must be deterministic — no file I/O
+- status: active
+- category: architecture
+- source: /harness:loop 2026-03-21
+- branch: clarify-gstack-implementation-philosophy
+
+`os.WriteFile`, `os.MkdirAll`, and any file system operations in Temporal workflow code break deterministic replay. Move all side effects to activities. The ClimbWorkflow had inline feedback file writing that was caught by Codex review. The fix is a dedicated `WriteFeedbackActivity` called via `workflow.ExecuteActivity`.
+
+---
+
+### L-009: Use Temporal workflow ID uniqueness for dedup
+- status: active
+- category: architecture
+- source: /harness:loop 2026-03-21
+- branch: clarify-gstack-implementation-philosophy
+
+Instead of building a separate dedup table (SQLite or otherwise), use deterministic Temporal workflow IDs. Formula: `{pipeline_name}/{intake_name}/{external_id}`. Temporal rejects duplicate workflow IDs natively. Use `WorkflowIDReusePolicy: AllowDuplicate` to allow resubmission after completion. For branch/worktree naming, use the Temporal run ID (unique per execution) instead of the workflow ID to prevent git collisions on resubmission.
+
+---

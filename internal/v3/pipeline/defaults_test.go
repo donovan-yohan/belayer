@@ -13,6 +13,18 @@ func TestDefaultPipelineParses(t *testing.T) {
 	if len(cfg.Nodes) != 3 {
 		t.Errorf("Nodes: got %d, want 3", len(cfg.Nodes))
 	}
+	if len(cfg.Intake) != 1 {
+		t.Errorf("Intake: got %d, want 1", len(cfg.Intake))
+	} else if cfg.Intake[0].Type != "interactive" {
+		t.Errorf("Intake[0].Type: got %q, want %q", cfg.Intake[0].Type, "interactive")
+	}
+	lead := cfg.FindNode("lead")
+	if lead == nil {
+		t.Fatal("lead node not found")
+	}
+	if lead.Output.Type != "commit" {
+		t.Errorf("lead output type: got %q, want %q", lead.Output.Type, "commit")
+	}
 }
 
 func TestDefaultPipelineValidates(t *testing.T) {

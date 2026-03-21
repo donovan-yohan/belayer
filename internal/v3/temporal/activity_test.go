@@ -75,9 +75,7 @@ func TestNodeActivity_CleansStaleCompletionFiles(t *testing.T) {
 	// Also write attempt 2 file so we can confirm it's untouched
 	writeCompletionFile(t, workDir, taskID, nodeName, 2, model.CompletionResult{Outcome: model.OutcomePass, Attempt: 2})
 
-	if err := cleanStaleCompletionFiles(workDir, taskID, nodeName, 2); err != nil {
-		t.Fatalf("cleanStaleCompletionFiles: %v", err)
-	}
+	cleanStaleCompletionFiles(workDir, taskID, nodeName, 2)
 
 	// Attempt 1 should be gone.
 	staleFile := filepath.Join(workDir, ".belayer", "completion", taskID+"-"+nodeName+"-attempt-1.json")
@@ -104,7 +102,7 @@ func TestPrepareNodeInputs_DesignDocInput(t *testing.T) {
 		"design": "/tmp/design.md",
 	}
 
-	prompt := buildInputPrompt(node, artifacts, "/tmp/work")
+	prompt := buildInputPrompt(node, artifacts)
 	if !strings.Contains(prompt, "/tmp/design.md") {
 		t.Errorf("expected artifact path in prompt, got: %s", prompt)
 	}
@@ -118,7 +116,7 @@ func TestPrepareNodeInputs_CodeInput(t *testing.T) {
 		},
 	}
 
-	prompt := buildInputPrompt(node, nil, "/tmp/work")
+	prompt := buildInputPrompt(node, nil)
 	if !strings.Contains(strings.ToLower(prompt), "diff") {
 		t.Errorf("expected 'diff' in code input prompt, got: %s", prompt)
 	}
@@ -152,7 +150,7 @@ func TestBuildInputPrompt_GateNode(t *testing.T) {
 		},
 	}
 
-	prompt := buildInputPrompt(node, nil, "/tmp/work")
+	prompt := buildInputPrompt(node, nil)
 	if !strings.Contains(prompt, "correctness") {
 		t.Error("gate prompt should include dimension names")
 	}

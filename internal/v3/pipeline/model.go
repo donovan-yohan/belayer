@@ -22,10 +22,24 @@ type ThresholdConfig struct {
 	Retry float64 `yaml:"retry" json:"retry"`
 }
 
+// IntakeConfig defines an intake source in the pipeline.
+type IntakeConfig struct {
+	Name   string            `yaml:"name" json:"name"`
+	Type   string            `yaml:"type" json:"type"`
+	Config map[string]string `yaml:"config,omitempty" json:"config,omitempty"`
+}
+
+// SafetyConfig holds pipeline-wide safety limits.
+type SafetyConfig struct {
+	MaxConcurrentRuns int `yaml:"max_concurrent_runs,omitempty" json:"max_concurrent_runs,omitempty"`
+}
+
 // PipelineConfig is the top-level pipeline definition.
 type PipelineConfig struct {
-	Name  string       `yaml:"name" json:"name"`
-	Nodes []NodeConfig `yaml:"nodes" json:"nodes"`
+	Name   string         `yaml:"name" json:"name"`
+	Nodes  []NodeConfig   `yaml:"nodes" json:"nodes"`
+	Intake []IntakeConfig `yaml:"intake,omitempty" json:"intake,omitempty"`
+	Safety SafetyConfig   `yaml:"safety,omitempty" json:"safety,omitempty"`
 }
 
 // NodeConfig defines a single pipeline node.
@@ -41,6 +55,9 @@ type NodeConfig struct {
 	OnRetry     string            `yaml:"on_retry" json:"on_retry"`
 	OnFail      string            `yaml:"on_fail" json:"on_fail"`
 	MaxRetries  int               `yaml:"max_retries" json:"max_retries"`
+	FanOut      string            `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
+	Per         string            `yaml:"per,omitempty" json:"per,omitempty"`
+	FanIn       string            `yaml:"fan_in,omitempty" json:"fan_in,omitempty"`
 }
 
 // InputConfig specifies what a node receives.
@@ -50,6 +67,7 @@ type InputConfig struct {
 }
 
 // OutputConfig specifies what a node produces.
+// Type is one of: file | commit | code | gate_result
 type OutputConfig struct {
 	Type          string `yaml:"type" json:"type"`
 	Path          string `yaml:"path,omitempty" json:"path,omitempty"`

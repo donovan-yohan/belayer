@@ -2,8 +2,6 @@ package temporal
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"go.temporal.io/sdk/workflow"
@@ -11,6 +9,16 @@ import (
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
 )
+
+// findNodeIndex returns the index of the node with the given name, or -1 if not found.
+func findNodeIndex(nodes []pipeline.NodeConfig, name string) int {
+	for i, n := range nodes {
+		if n.Name == name {
+			return i
+		}
+	}
+	return -1
+}
 
 // ClimbWorkflow is the core Temporal workflow that sequences pipeline nodes.
 func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOutput, error) {
@@ -40,15 +48,8 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 	// 4. Find start index.
 	startIdx := 0
 	if input.FromNode != "" {
-		found := false
-		for i, n := range cfg.Nodes {
-			if n.Name == input.FromNode {
-				startIdx = i
-				found = true
-				break
-			}
-		}
-		if !found {
+		startIdx = findNodeIndex(cfg.Nodes, input.FromNode)
+		if startIdx == -1 {
 			return nil, fmt.Errorf("from-node %q not found in pipeline %q", input.FromNode, cfg.Name)
 		}
 	}
@@ -119,11 +120,18 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 
 			// Write feedback to disk so the target session can read it.
 			if result.Feedback != "" {
-				feedbackPath := filepath.Join(input.WorkDir, ".belayer", "input", "feedback.md")
-				if err := os.MkdirAll(filepath.Dir(feedbackPath), 0o755); err == nil {
-					if err := os.WriteFile(feedbackPath, []byte(result.Feedback), 0o644); err == nil {
-						artifacts["feedback"] = ".belayer/input/feedback.md"
-					}
+				fbao := workflow.ActivityOptions{
+					StartToCloseTimeout: 30 * time.Second,
+				}
+				fbactx := workflow.WithActivityOptions(ctx, fbao)
+				var feedbackRelPath string
+				if err := workflow.ExecuteActivity(fbactx, a.WriteFeedbackActivity, WriteFeedbackInput{
+					WorkDir:      input.WorkDir,
+					FeedbackText: result.Feedback,
+				}).Get(ctx, &feedbackRelPath); err != nil {
+					workflow.GetLogger(ctx).Warn("Failed to write feedback file", "error", err)
+				} else {
+					artifacts["feedback"] = feedbackRelPath
 				}
 			}
 
@@ -136,18 +144,9 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 				targetName = node.Name
 			}
 
-			// Find target node index.
-			found := false
-			for i, n := range cfg.Nodes {
-				if n.Name == targetName {
-					nodeIdx = i
-					found = true
-					break
-				}
-			}
-			if !found {
-				// Target not found, retry self.
-				// nodeIdx stays the same.
+			// Find target node index; stay on current node if not found.
+			if i := findNodeIndex(cfg.Nodes, targetName); i != -1 {
+				nodeIdx = i
 			}
 
 		case model.OutcomeFail:
@@ -161,12 +160,8 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 						Branch:      input.Branch,
 					}, nil
 				}
-				// Jump to named node.
-				for i, n := range cfg.Nodes {
-					if n.Name == node.OnFail {
-						nodeIdx = i
-						break
-					}
+				if i := findNodeIndex(cfg.Nodes, node.OnFail); i != -1 {
+					nodeIdx = i
 				}
 			} else {
 				return &model.ClimbOutput{

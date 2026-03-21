@@ -6,16 +6,16 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-_None currently active._
+| [Intake Plugin Model](exec-plans/active/2026-03-21-intake-plugin-model.md) | 2026-03-21 | Intake plugin model, pipeline templates, v2→v3 migration, worker daemon |
 
 ## Tech Debt
 
 | Issue | Severity | Notes |
 |-------|----------|-------|
-| Flaky `TestProcessPendingProblem_Decomposition` | Low | TempDir cleanup race condition; passes ~2/3 runs |
-| Empty `repoDir` in `monitorPRs` SCM calls | Medium | All SCM polling passes "" as repoDir; works incidentally for single-repo crags but fails for multi-repo |
-| `HandleApproval` partial failure orphans PRs | Medium | Successful PR inserts not cleaned up when later repos fail; problem stays in `reviewing` |
-| Missing integration tests for daemon PR lifecycle | Medium | `executeReaction`, `monitorPRs`, `checkAllPRsMerged`, `HandleApproval` SCM path all untested |
+| Schedule reconciliation is a stub | Medium | `internal/v3/intake/schedule.go` logs intent but does not create Temporal schedules. Phase 2 |
+| Worker `/status` endpoint is a stub | Low | Returns health only — full workflow listing deferred to Phase 2 |
+| `StartSHA` in `NodeActivityInput` never populated | Low | Code-output commit verification guard never fires |
+| Flaky `TestProcessPendingProblem_Decomposition` | Low | v1 daemon — TempDir cleanup race. Reassess when v1 code is removed |
 
 
 ## Completed Plans

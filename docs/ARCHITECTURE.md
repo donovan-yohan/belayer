@@ -163,29 +163,7 @@ Problem created (status: pending)
 
 Config resolution: crag config > global config > embedded defaults (via `internal/defaults/`)
 
-## v2: Temporal-Backed Orchestrator (internal/v2/)
-
-Belayer v2 replaces the monolithic daemon with a Temporal-backed pipeline platform. See `docs/designs/temporal-orchestrator-reimagining.md` for the full design.
-
-| Module | Path | Purpose |
-|--------|------|---------|
-| Pipeline | `internal/v2/pipeline/` | DSL parser, topology validator, visualization, embedded templates |
-| Temporal | `internal/v2/temporal/` | Route workflow, Type A/B activities, CLI-callback signals, safety controls |
-| Role | `internal/v2/role/` | Contract types (Type A pitch / Type B ascent), phase definitions, safety config |
-| Provider | `internal/v2/provider/` | Session spawner (Claude/Codex via tmux), exec shell-out (JSON in/out) |
-| Risk Gate | `internal/v2/riskgate/` | Risk evaluation at role transitions, auto-pass / human-review decisions |
-| Eval | `internal/v2/eval/` | Fixture recording, loading, comparison for role testing |
-| Model | `internal/v2/model/` | Domain types: RoleSignal, RouteInput/Output, RunStatus |
-| CLI | `internal/v2/cli/` | v2 commands: run, status, pipeline, temporal, role signals |
-
-### Key Concepts
-
-- **Two provider contracts**: Type A (pitch — JSON in/out) for judgment calls, Type B (ascent — CLI-callback) for interactive sessions
-- **Three pipeline phases**: Approach (intake), Ascent (execution with loops), Send (output)
-- **CLI-callback**: Interactive sessions signal completion via `belayer v2 <role> finish --task-id <id>`
-- **Temporal Signal**: CLI callback → Temporal Signal → workflow advances to next role
-
-## v3: Activity-Per-Node Pipeline (internal/v3/)
+## Pipeline Engine (internal/v3/)
 
 Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is a Temporal Activity that spawns an interactive Claude Code session. File-based rendezvous (completion files) replaces Temporal Signals. YAML pipeline config with natural language node descriptions.
 
@@ -198,7 +176,8 @@ Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is 
 | Outcome | `internal/v3/outcome/` | Outcome detection: verdict.txt > output file first line > type default |
 | Session | `internal/v3/session/` | Hooks config generator, tmux-backed Claude session spawner |
 | Temporal | `internal/v3/temporal/` | ClimbWorkflow, NodeActivity (spawn + heartbeat + poll completion) |
-| CLI | `internal/v3/cli/` | v3 commands: climb, node-complete, status |
+| Intake | `internal/v3/intake/` | Intake adapter interface, SubmitSpec, bridge function, Jira adapter, schedule reconciliation |
+| CLI | `internal/v3/cli/` | Commands: climb, node-complete, status, worker, start |
 
 ### Key Concepts
 
@@ -209,6 +188,9 @@ Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is 
 - **Natural language roles**: Node descriptions are prompts passed via `--append-system-prompt`
 - **Attempt-scoped**: Completion files, output paths, and verdict files include attempt number to prevent stale reads
 - **CLI entry point**: `belayer climb --file design.md` → Temporal workflow → setter → lead → spotter(gate) → branch
+- **Intake plugins**: `intake:` section in pipeline YAML defines where work comes from (interactive, jira). Each intake produces a `SubmitSpec` → bridge creates worktree → starts `ClimbWorkflow`
+- **Worker daemon**: `belayer worker` runs Temporal worker + HTTP API for submit/status. `belayer start` opens interactive session connected via MCP channel
+- **Belayer is plumbing**: Routes typed references (commit SHAs, file paths) between nodes. Nodes are black boxes.
 
 ## Architecture Decision Records
 

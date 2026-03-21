@@ -38,13 +38,29 @@ type Activities struct {
 	Spawner session.Spawner
 }
 
+// WriteFeedbackInput is the input to WriteFeedbackActivity.
+type WriteFeedbackInput struct {
+	WorkDir      string
+	FeedbackText string
+}
+
+// WriteFeedbackActivity writes feedback text to disk so the target session can read it on retry.
+func (a *Activities) WriteFeedbackActivity(ctx context.Context, input WriteFeedbackInput) (string, error) {
+	feedbackPath := filepath.Join(input.WorkDir, ".belayer", "input", "feedback.md")
+	if err := os.MkdirAll(filepath.Dir(feedbackPath), 0o755); err != nil {
+		return "", fmt.Errorf("create feedback dir: %w", err)
+	}
+	if err := os.WriteFile(feedbackPath, []byte(input.FeedbackText), 0o644); err != nil {
+		return "", fmt.Errorf("write feedback: %w", err)
+	}
+	return ".belayer/input/feedback.md", nil
+}
+
 // NodeActivity is the core Temporal activity that spawns a Claude session for a pipeline node,
 // polls for its completion file, and returns the result.
 func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) (*NodeActivityOutput, error) {
 	// 1. Clean stale completion files from previous attempts.
-	if err := cleanStaleCompletionFiles(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt); err != nil {
-		return nil, fmt.Errorf("clean stale completion files: %w", err)
-	}
+	cleanStaleCompletionFiles(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt)
 
 	// 2. Write hooks config.
 	if err := session.WriteHooksConfig(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt); err != nil {
@@ -52,7 +68,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	}
 
 	// 3. Build input prompt.
-	inputPrompt := buildInputPrompt(input.Node, input.Artifacts, input.WorkDir)
+	inputPrompt := buildInputPrompt(input.Node, input.Artifacts)
 
 	// 4. For code-type inputs, materialize diff files.
 	if input.Node.Input.Type == "code" {
@@ -237,20 +253,19 @@ func readCompletionFile(workDir, taskID, nodeName string, attempt int) (model.Co
 }
 
 // cleanStaleCompletionFiles removes completion files from attempts < currentAttempt.
-func cleanStaleCompletionFiles(workDir, taskID, nodeName string, currentAttempt int) error {
+func cleanStaleCompletionFiles(workDir, taskID, nodeName string, currentAttempt int) {
 	dir := filepath.Join(workDir, ".belayer", "completion")
 	for i := 0; i < currentAttempt; i++ {
 		filename := fmt.Sprintf("%s-%s-attempt-%d.json", taskID, nodeName, i)
-		path := filepath.Join(dir, filename)
-		_ = os.Remove(path) // ignore not-found errors
+		_ = os.Remove(filepath.Join(dir, filename)) // ignore not-found errors
 	}
-	return nil
 }
 
 // buildInputPrompt constructs the input prompt for a node based on its input type and artifacts.
-func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string, workDir string) string {
+func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) string {
+	var sb strings.Builder
+
 	if node.IsGate() {
-		var sb strings.Builder
 		sb.WriteString(gate.BuildGatePrompt(node))
 		sb.WriteString("\n")
 		switch node.Input.Type {
@@ -265,27 +280,21 @@ func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string, wor
 				sb.WriteString(fmt.Sprintf("\nInput artifact at: %s\n", path))
 			}
 		}
-		if feedback, ok := artifacts["feedback"]; ok && feedback != "" {
-			sb.WriteString(fmt.Sprintf("\nFeedback from previous attempt: %s\n", feedback))
+	} else {
+		switch node.Input.Type {
+		case "file":
+			key := node.Input.Key
+			if key == "" {
+				key = node.Name
+			}
+			if path, ok := artifacts[key]; ok {
+				sb.WriteString(fmt.Sprintf("Your input artifact is at: %s", path))
+			}
+		case "code":
+			sb.WriteString("Review the changes. Full diff at .belayer/input/diff.txt")
+		default:
+			sb.WriteString(node.Description)
 		}
-		return sb.String()
-	}
-
-	var sb strings.Builder
-
-	switch node.Input.Type {
-	case "file":
-		key := node.Input.Key
-		if key == "" {
-			key = node.Name
-		}
-		if path, ok := artifacts[key]; ok {
-			sb.WriteString(fmt.Sprintf("Your input artifact is at: %s", path))
-		}
-	case "code":
-		sb.WriteString("Review the changes. Full diff at .belayer/input/diff.txt")
-	default:
-		sb.WriteString(node.Description)
 	}
 
 	if feedback, ok := artifacts["feedback"]; ok && feedback != "" {

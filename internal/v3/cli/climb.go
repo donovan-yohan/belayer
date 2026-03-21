@@ -1,11 +1,9 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,8 +14,8 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/donovan-yohan/belayer/internal/v3/events"
+	"github.com/donovan-yohan/belayer/internal/v3/intake"
 	"github.com/donovan-yohan/belayer/internal/v3/model"
-	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
 	"github.com/donovan-yohan/belayer/internal/v3/session"
 	beltemporal "github.com/donovan-yohan/belayer/internal/v3/temporal"
 )
@@ -43,7 +41,7 @@ func NewClimbCmd() *cobra.Command {
 			}
 
 			// 2. Resolve pipeline YAML.
-			pipelineYAML, pipelineName, err := resolvePipelineYAML(cwd)
+			pipelineYAML, pipelineName, err := intake.ResolvePipelineYAML(cwd)
 			if err != nil {
 				return fmt.Errorf("resolve pipeline: %w", err)
 			}
@@ -57,10 +55,10 @@ func NewClimbCmd() *cobra.Command {
 
 			// 4. Generate workflow ID and create git worktree.
 			workflowID := fmt.Sprintf("climb-%d", time.Now().UnixMilli())
-			branchSlug := generateBranchSlug(description)
+			branchSlug := intake.GenerateBranchSlug(description)
 			branch := fmt.Sprintf("belayer/%s-%s", branchSlug, workflowID)
 			worktreeDir := filepath.Join(cwd, ".belayer", "worktrees", workflowID)
-			if err := createGitWorktree(cwd, worktreeDir, branch); err != nil {
+			if err := intake.CreateGitWorktree(cwd, worktreeDir, branch); err != nil {
 				return fmt.Errorf("create git worktree: %w", err)
 			}
 			defer func() {
@@ -193,92 +191,3 @@ func resolveClimbInput(fileFlag, promptFlag string, args []string) (designFile, 
 	return "", "", fmt.Errorf("no input provided: use --file, --prompt, positional args, or stdin")
 }
 
-// resolvePipelineYAML returns pipeline YAML bytes and a name by checking known locations,
-// falling back to the built-in default.
-func resolvePipelineYAML(cwd string) ([]byte, string, error) {
-	candidates := []string{
-		filepath.Join(cwd, "belayer-pipeline.yaml"),
-		filepath.Join(cwd, ".belayer", "pipeline.yaml"),
-	}
-
-	for _, path := range candidates {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		cfg, err := pipeline.ParsePipeline(data)
-		if err != nil {
-			return nil, "", fmt.Errorf("parse pipeline %q: %w", path, err)
-		}
-		return data, cfg.Name, nil
-	}
-
-	// Built-in default.
-	cfg, err := pipeline.ParsePipeline([]byte(pipeline.DefaultPipelineYAML))
-	if err != nil {
-		return nil, "", fmt.Errorf("parse default pipeline: %w", err)
-	}
-	return []byte(pipeline.DefaultPipelineYAML), cfg.Name, nil
-}
-
-// generateBranchSlug uses claude -p haiku to create a short branch-friendly slug
-// from the description. Falls back to "impl" if claude is unavailable or slow.
-func generateBranchSlug(description string) string {
-	// Truncate input to keep the prompt small.
-	input := description
-	if len(input) > 500 {
-		input = input[:500]
-	}
-
-	prompt := fmt.Sprintf(`Generate a short git branch name slug (2-4 words, kebab-case, lowercase, no special characters) that summarizes this work. Output ONLY the slug, nothing else.
-
-%s`, input)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", "haiku", prompt)
-	out, err := cmd.Output()
-	if err != nil {
-		return "impl"
-	}
-
-	slug := strings.TrimSpace(string(out))
-	// Sanitize: only allow lowercase alphanumeric and hyphens.
-	var sanitized strings.Builder
-	for _, r := range slug {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
-			sanitized.WriteRune(r)
-		} else if r >= 'A' && r <= 'Z' {
-			sanitized.WriteRune(r + 32) // lowercase
-		} else if r == ' ' || r == '_' {
-			sanitized.WriteRune('-')
-		}
-	}
-	result := sanitized.String()
-	result = strings.Trim(result, "-")
-	if result == "" {
-		return "impl"
-	}
-	// Cap length.
-	if len(result) > 40 {
-		result = result[:40]
-		result = strings.TrimRight(result, "-")
-	}
-	return result
-}
-
-// createGitWorktree creates a new git worktree at worktreeDir on a new branch.
-// The main repo stays on its current branch — all pipeline work happens in the worktree.
-func createGitWorktree(repoDir, worktreeDir, branch string) error {
-	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
-		return fmt.Errorf("create worktree parent dir: %w", err)
-	}
-	cmd := exec.Command("git", "worktree", "add", worktreeDir, "-b", branch)
-	cmd.Dir = repoDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	return nil
-}
