@@ -38,6 +38,7 @@ func (f *fakeSpawner) Spawn(_ context.Context, opts session.SpawnOpts) error {
 }
 
 // retryThenPassSpawner returns RETRY on the first spotter call, PASS on subsequent calls.
+// For gate nodes, it also writes gate output files with appropriate scores.
 type retryThenPassSpawner struct {
 	workDir      string
 	spotterCalls *int
@@ -48,14 +49,33 @@ func (r *retryThenPassSpawner) Spawn(_ context.Context, opts session.SpawnOpts) 
 
 	if opts.NodeName == "spotter" {
 		*r.spotterCalls++
+		outputDir := filepath.Join(r.workDir, ".belayer", "output")
+		os.MkdirAll(outputDir, 0o755)
 		if *r.spotterCalls == 1 {
-			result = model.CompletionResult{
-				Outcome:    model.OutcomeRetry,
-				TargetNode: "lead",
-				Feedback:   "needs more work",
-				Attempt:    opts.Attempt,
-			}
+			// Write gate files that score in RETRY range (5.0, between retry=4.0 and pass=7.0).
+			os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(`{
+				"gate": "spotter", "attempt": 0,
+				"dimensions": {
+					"spec_compliance": {"score": 5, "rationale": "issues", "issues": ["gap"]},
+					"test_contracts": {"score": 5, "rationale": "minimal", "issues": []},
+					"runtime_correctness": {"score": 5, "rationale": "concerns", "issues": []}
+				},
+				"weighted_score": 5.0, "outcome": "RETRY", "summary": "Needs work"
+			}`), 0o644)
+			os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nFix bugs."), 0o644)
+			result = model.CompletionResult{Outcome: model.OutcomeRetry, Attempt: opts.Attempt}
 		} else {
+			// Write gate files that score in PASS range (8.0 >= pass=7.0).
+			os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(`{
+				"gate": "spotter", "attempt": 0,
+				"dimensions": {
+					"spec_compliance": {"score": 8, "rationale": "ok", "issues": []},
+					"test_contracts": {"score": 8, "rationale": "ok", "issues": []},
+					"runtime_correctness": {"score": 8, "rationale": "ok", "issues": []}
+				},
+				"weighted_score": 8.0, "outcome": "PASS", "summary": "Good"
+			}`), 0o644)
+			os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nLooks good."), 0o644)
 			result = model.CompletionResult{Outcome: model.OutcomePass, Attempt: opts.Attempt}
 		}
 	} else {
@@ -112,6 +132,17 @@ func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 	// Pre-seed output files that the workflow checks for file-type nodes.
 	writeFileAtPath(s.T(), workDir, ".belayer/output/plan.md", "PASS\nHere is the plan.")
 	writeFileAtPath(s.T(), workDir, ".belayer/output/review.md", "PASS\nLooks good.")
+	// Pre-seed gate output files for the spotter gate node.
+	writeFileAtPath(s.T(), workDir, ".belayer/output/gate-result.json", `{
+		"gate": "spotter", "attempt": 0,
+		"dimensions": {
+			"spec_compliance": {"score": 8, "rationale": "ok", "issues": []},
+			"test_contracts": {"score": 8, "rationale": "ok", "issues": []},
+			"runtime_correctness": {"score": 8, "rationale": "ok", "issues": []}
+		},
+		"weighted_score": 8.0, "outcome": "PASS", "summary": "Good"
+	}`)
+	writeFileAtPath(s.T(), workDir, ".belayer/output/rationale.md", "# Review\nLooks good.")
 
 	spawner := &fakeSpawner{
 		workDir: workDir,

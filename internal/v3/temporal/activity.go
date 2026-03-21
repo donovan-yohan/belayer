@@ -12,6 +12,7 @@ import (
 
 	"go.temporal.io/sdk/activity"
 
+	"github.com/donovan-yohan/belayer/internal/v3/gate"
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
 	"github.com/donovan-yohan/belayer/internal/v3/session"
@@ -89,7 +90,94 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		}
 	}
 
+	// For gate nodes, post-process: read gate-result.json, score, apply thresholds.
+	if input.Node.IsGate() {
+		gateResult, err := processGateResult(input.WorkDir, input.Node)
+		if err != nil {
+			return &NodeActivityOutput{
+				Result: model.CompletionResult{
+					Outcome:  model.OutcomeFail,
+					Feedback: fmt.Sprintf("gate processing failed: %v", err),
+					Attempt:  input.Attempt,
+				},
+			}, nil
+		}
+		gateResult.Attempt = input.Attempt
+		return &NodeActivityOutput{Result: gateResult}, nil
+	}
+
 	return &NodeActivityOutput{Result: result}, nil
+}
+
+// processGateResult reads gate-result.json, validates, computes weighted score,
+// and applies thresholds to determine the gate outcome. This is the score-then-route
+// pattern: the activity decides outcome, not the Claude session.
+func processGateResult(workDir string, node pipeline.NodeConfig) (model.CompletionResult, error) {
+	// Resolve gate-result.json path
+	resultPath := node.Output.Path
+	if resultPath == "" {
+		resultPath = ".belayer/output/gate-result.json"
+	}
+	absResultPath := filepath.Join(workDir, resultPath)
+
+	// Read gate-result.json
+	data, err := os.ReadFile(absResultPath)
+	if err != nil {
+		return model.CompletionResult{}, fmt.Errorf("read gate result: %w", err)
+	}
+
+	// Parse
+	gateResult, err := gate.ParseGateResult(data)
+	if err != nil {
+		return model.CompletionResult{}, fmt.Errorf("parse gate result: %w", err)
+	}
+
+	// Validate all expected dimensions are present
+	expectedDims := make([]string, len(node.Dimensions))
+	for i, d := range node.Dimensions {
+		expectedDims[i] = d.Name
+	}
+	if err := gate.ValidateGateResult(gateResult, expectedDims); err != nil {
+		return model.CompletionResult{
+			Outcome:  model.OutcomeFail,
+			Feedback: fmt.Sprintf("gate produced incomplete output: %v", err),
+		}, nil
+	}
+
+	// Check rationale exists (anti-gaming: rationale is mandatory)
+	rationalePath := node.Output.RationalePath
+	if rationalePath == "" {
+		rationalePath = ".belayer/output/rationale.md"
+	}
+	absRationalePath := filepath.Join(workDir, rationalePath)
+	if _, err := os.Stat(absRationalePath); os.IsNotExist(err) {
+		return model.CompletionResult{
+			Outcome:  model.OutcomeFail,
+			Feedback: "gate failed: rationale.md is mandatory but was not produced",
+		}, nil
+	}
+
+	// Compute weighted score (score-then-route: we compute, not the session)
+	weightedScore := gate.ComputeWeightedScore(gateResult, node.Dimensions)
+
+	// Apply thresholds
+	outcome := gate.ApplyThresholds(weightedScore, node.Thresholds)
+
+	result := model.CompletionResult{
+		Outcome:    outcome,
+		OutputPath: resultPath,
+	}
+
+	// On RETRY, read rationale as feedback
+	if outcome == model.OutcomeRetry {
+		rationaleData, err := os.ReadFile(absRationalePath)
+		if err == nil {
+			result.Feedback = string(rationaleData)
+		}
+		result.TargetNode = node.OnRetry
+	}
+
+	return result, nil
 }
 
 // pollForCompletion checks immediately, then ticks at interval, sends heartbeats, and reads
@@ -153,6 +241,28 @@ func cleanStaleCompletionFiles(workDir, taskID, nodeName string, currentAttempt 
 
 // buildInputPrompt constructs the input prompt for a node based on its input type and artifacts.
 func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string, workDir string) string {
+	if node.IsGate() {
+		var sb strings.Builder
+		sb.WriteString(gate.BuildGatePrompt(node))
+		sb.WriteString("\n")
+		switch node.Input.Type {
+		case "code":
+			sb.WriteString("\nInput: Review the changes. Full diff at .belayer/input/diff.txt\n")
+		case "file":
+			key := node.Input.Key
+			if key == "" {
+				key = node.Name
+			}
+			if path, ok := artifacts[key]; ok {
+				sb.WriteString(fmt.Sprintf("\nInput artifact at: %s\n", path))
+			}
+		}
+		if feedback, ok := artifacts["feedback"]; ok && feedback != "" {
+			sb.WriteString(fmt.Sprintf("\nFeedback from previous attempt: %s\n", feedback))
+		}
+		return sb.String()
+	}
+
 	var sb strings.Builder
 
 	switch node.Input.Type {

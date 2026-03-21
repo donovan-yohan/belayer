@@ -138,3 +138,218 @@ func TestPollForCompletion_Timeout(t *testing.T) {
 		t.Fatal("expected context to be done")
 	}
 }
+
+func TestBuildInputPrompt_GateNode(t *testing.T) {
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Input: pipeline.InputConfig{
+			Type: "code",
+		},
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Description: "works?", Weight: 0.6},
+			{Name: "quality", Description: "clean?", Weight: 0.4},
+		},
+	}
+
+	prompt := buildInputPrompt(node, nil, "/tmp/work")
+	if !strings.Contains(prompt, "correctness") {
+		t.Error("gate prompt should include dimension names")
+	}
+	if !strings.Contains(prompt, "gate-result.json") {
+		t.Error("gate prompt should mention gate-result.json")
+	}
+}
+
+func TestProcessGateResult_Pass(t *testing.T) {
+	workDir := t.TempDir()
+	outputDir := filepath.Join(workDir, ".belayer", "output")
+	os.MkdirAll(outputDir, 0o755)
+
+	gateJSON := `{
+		"gate": "review",
+		"attempt": 0,
+		"dimensions": {
+			"correctness": {"score": 8, "rationale": "solid", "issues": []},
+			"quality": {"score": 7, "rationale": "clean", "issues": []}
+		},
+		"weighted_score": 7.6,
+		"outcome": "PASS",
+		"summary": "Good"
+	}`
+	os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(gateJSON), 0o644)
+	os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nLooks good."), 0o644)
+
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 0.6},
+			{Name: "quality", Weight: 0.4},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	result, err := processGateResult(workDir, node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Outcome != model.OutcomePass {
+		t.Errorf("outcome: got %q, want PASS", result.Outcome)
+	}
+}
+
+func TestProcessGateResult_Retry(t *testing.T) {
+	workDir := t.TempDir()
+	outputDir := filepath.Join(workDir, ".belayer", "output")
+	os.MkdirAll(outputDir, 0o755)
+
+	gateJSON := `{
+		"gate": "review",
+		"attempt": 0,
+		"dimensions": {
+			"correctness": {"score": 5, "rationale": "issues", "issues": ["bug"]},
+			"quality": {"score": 5, "rationale": "messy", "issues": ["style"]}
+		},
+		"weighted_score": 5.0,
+		"outcome": "RETRY",
+		"summary": "Needs work"
+	}`
+	os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(gateJSON), 0o644)
+	os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nFix bugs."), 0o644)
+
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 0.6},
+			{Name: "quality", Weight: 0.4},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	result, err := processGateResult(workDir, node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Outcome != model.OutcomeRetry {
+		t.Errorf("outcome: got %q, want RETRY", result.Outcome)
+	}
+	if result.Feedback == "" {
+		t.Error("expected feedback to contain rationale")
+	}
+}
+
+func TestProcessGateResult_Fail(t *testing.T) {
+	workDir := t.TempDir()
+	outputDir := filepath.Join(workDir, ".belayer", "output")
+	os.MkdirAll(outputDir, 0o755)
+
+	gateJSON := `{
+		"gate": "review",
+		"attempt": 0,
+		"dimensions": {
+			"correctness": {"score": 2, "rationale": "broken", "issues": ["crash"]},
+			"quality": {"score": 3, "rationale": "unreadable", "issues": []}
+		},
+		"weighted_score": 2.4,
+		"outcome": "FAIL",
+		"summary": "Fundamentally broken"
+	}`
+	os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(gateJSON), 0o644)
+	os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nBroken."), 0o644)
+
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 0.6},
+			{Name: "quality", Weight: 0.4},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	result, err := processGateResult(workDir, node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Outcome != model.OutcomeFail {
+		t.Errorf("outcome: got %q, want FAIL", result.Outcome)
+	}
+}
+
+func TestProcessGateResult_MissingRationale(t *testing.T) {
+	workDir := t.TempDir()
+	outputDir := filepath.Join(workDir, ".belayer", "output")
+	os.MkdirAll(outputDir, 0o755)
+
+	gateJSON := `{
+		"gate": "review",
+		"attempt": 0,
+		"dimensions": {"correctness": {"score": 8, "rationale": "ok", "issues": []}},
+		"weighted_score": 8,
+		"outcome": "PASS",
+		"summary": "ok"
+	}`
+	os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(gateJSON), 0o644)
+
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 1.0},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	result, err := processGateResult(workDir, node)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Outcome != model.OutcomeFail {
+		t.Errorf("outcome: got %q, want FAIL (missing rationale)", result.Outcome)
+	}
+}
+
+func TestProcessGateResult_MissingGateResultJSON(t *testing.T) {
+	workDir := t.TempDir()
+
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 1.0},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	_, err := processGateResult(workDir, node)
+	if err == nil {
+		t.Fatal("expected error for missing gate-result.json")
+	}
+}
