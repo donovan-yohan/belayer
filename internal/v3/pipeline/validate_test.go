@@ -185,6 +185,30 @@ func TestValidateGateRetryAbovePass(t *testing.T) {
 	}
 }
 
+func TestValidateGatePassThresholdOutOfRange(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Thresholds.Pass = 11.0 // > 10
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for pass threshold > 10")
+	}
+	if !strings.Contains(err.Error(), "pass") {
+		t.Errorf("error should mention pass, got: %v", err)
+	}
+}
+
+func TestValidateGateRetryThresholdNegative(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Thresholds.Retry = -1.0
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for negative retry threshold")
+	}
+	if !strings.Contains(err.Error(), "retry") {
+		t.Errorf("error should mention retry, got: %v", err)
+	}
+}
+
 func TestValidateGateResultOutputType(t *testing.T) {
 	cfg := validGatePipeline()
 	cfg.Nodes[1].Output.Type = "gate_result"

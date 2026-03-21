@@ -83,8 +83,11 @@ func Validate(cfg *PipelineConfig) error {
 			if math.Abs(totalWeight-1.0) > 0.001 {
 				return fmt.Errorf("gate %q: dimension weights sum to %.3f, must sum to 1.0", n.Name, totalWeight)
 			}
-			if n.Thresholds.Pass <= 0 {
-				return fmt.Errorf("gate %q: thresholds.pass must be positive", n.Name)
+			if n.Thresholds.Pass <= 0 || n.Thresholds.Pass > 10 {
+				return fmt.Errorf("gate %q: thresholds.pass must be in (0, 10], got %.1f", n.Name, n.Thresholds.Pass)
+			}
+			if n.Thresholds.Retry < 0 || n.Thresholds.Retry > 10 {
+				return fmt.Errorf("gate %q: thresholds.retry must be in [0, 10], got %.1f", n.Name, n.Thresholds.Retry)
 			}
 			if n.Thresholds.Retry >= n.Thresholds.Pass {
 				return fmt.Errorf("gate %q: thresholds.retry (%.1f) must be less than thresholds.pass (%.1f)", n.Name, n.Thresholds.Retry, n.Thresholds.Pass)
