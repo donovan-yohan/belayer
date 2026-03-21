@@ -3,6 +3,7 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"math"
 )
 
 // Validate checks a PipelineConfig for structural correctness.
@@ -33,8 +34,9 @@ func Validate(cfg *PipelineConfig) error {
 		if n.Output.Type == "" {
 			return fmt.Errorf("node %q: output.type is required", n.Name)
 		}
-		if n.Output.Type != "file" && n.Output.Type != "code" {
-			return fmt.Errorf("node %q: output.type must be \"file\" or \"code\", got %q", n.Name, n.Output.Type)
+		validOutputTypes := map[string]bool{"file": true, "code": true, "gate_result": true}
+		if !validOutputTypes[n.Output.Type] {
+			return fmt.Errorf("node %q: output.type must be \"file\", \"code\", or \"gate_result\", got %q", n.Name, n.Output.Type)
 		}
 		for _, ref := range []struct {
 			field string
@@ -50,6 +52,38 @@ func Validate(cfg *PipelineConfig) error {
 			if !validTransitions[ref.value] && !seen[ref.value] {
 				return fmt.Errorf("node %q: %s references unknown node or keyword %q", n.Name, ref.field, ref.value)
 			}
+		}
+		// Gate-specific validation
+		if n.IsGate() {
+			if len(n.Dimensions) == 0 {
+				return fmt.Errorf("gate %q: must have at least one dimension", n.Name)
+			}
+			var totalWeight float64
+			dimNames := make(map[string]bool)
+			for _, d := range n.Dimensions {
+				if d.Name == "" {
+					return fmt.Errorf("gate %q: dimension name is required", n.Name)
+				}
+				if dimNames[d.Name] {
+					return fmt.Errorf("gate %q: duplicate dimension name %q", n.Name, d.Name)
+				}
+				dimNames[d.Name] = true
+				if d.Weight <= 0 {
+					return fmt.Errorf("gate %q: dimension %q weight must be positive", n.Name, d.Name)
+				}
+				totalWeight += d.Weight
+			}
+			if math.Abs(totalWeight-1.0) > 0.001 {
+				return fmt.Errorf("gate %q: dimension weights sum to %.3f, must sum to 1.0", n.Name, totalWeight)
+			}
+			if n.Thresholds.Pass <= 0 {
+				return fmt.Errorf("gate %q: thresholds.pass must be positive", n.Name)
+			}
+			if n.Thresholds.Retry >= n.Thresholds.Pass {
+				return fmt.Errorf("gate %q: thresholds.retry (%.1f) must be less than thresholds.pass (%.1f)", n.Name, n.Thresholds.Retry, n.Thresholds.Pass)
+			}
+		} else if len(n.Dimensions) > 0 {
+			return fmt.Errorf("node %q: dimensions are only valid on gate nodes", n.Name)
 		}
 	}
 	return nil
