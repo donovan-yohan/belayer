@@ -93,8 +93,14 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	return &NodeActivityOutput{Result: result}, nil
 }
 
-// pollForCompletion ticks at interval, sends heartbeats, and reads the completion file when it appears.
+// pollForCompletion checks immediately, then ticks at interval, sends heartbeats, and reads
+// the completion file when it appears.
 func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, attempt int, interval time.Duration) (model.CompletionResult, error) {
+	// Check immediately before the first tick (handles fast/fake spawners in tests).
+	if result, err := readCompletionFile(workDir, taskID, nodeName, attempt); err == nil {
+		return result, nil
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
