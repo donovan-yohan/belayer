@@ -22,6 +22,7 @@ _None currently active._
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Gate Nodes — Quality Scoring](exec-plans/completed/2026-03-20-gate-nodes.md) | 2026-03-21 | Gate nodes as second pipeline primitive: multi-dimensional scoring, threshold routing, anti-gaming |
 | [Belayer v3: Temporal Activity Pipeline](exec-plans/completed/2026-03-20-v3-temporal-pipeline.md) | 2026-03-20 | v3 clean break: Activity-per-node, file-based completion, YAML pipeline config, `belayer climb` CLI |
 | [v2 Wiring Gaps](exec-plans/completed/2026-03-19-v2-wiring-gaps.md) | 2026-03-19 | Worker command, DSL wiring, pipeline CLI, WorkDir resolution |
 | [Belayer v2: Temporal Orchestrator Platform](exec-plans/completed/2026-03-19-temporal-orchestrator-v2.md) | 2026-03-19 | v2 clean break: Temporal backbone, two provider contracts (Type A pitch / Type B ascent), three pipeline phases (Approach/Ascent/Send), CLI-callback for interactive sessions |

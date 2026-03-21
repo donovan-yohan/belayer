@@ -46,3 +46,23 @@ When using file-based rendezvous (activity polls for a completion file written b
 When building JSON config files (like hooks.json) that contain shell commands with user-provided values, use `json.Marshal` on the command string to get safe JSON escaping. Plain `fmt.Sprintf` with `%s` can corrupt JSON or allow injection if values contain quotes or metacharacters.
 
 ---
+
+### L-005: Extending a pipeline primitive requires updating integration test spawners
+- status: active
+- category: testing
+- source: /harness:reflect 2026-03-21
+- branch: research-desloppify-scoping
+
+When adding a new node type (e.g., gates) that changes the default pipeline, integration test spawners (`fakeSpawner`, `retryThenPassSpawner`) must produce the new output format. The default pipeline is used by integration tests — changing `type: node` to `type: gate` means fake spawners need to write gate-result.json + rationale.md, not just completion files.
+
+---
+
+### L-006: Score-then-route prevents adversarial session gaming
+- status: active
+- category: architecture
+- source: /harness:reflect 2026-03-21
+- branch: research-desloppify-scoping
+
+When adding quality evaluation gates to a pipeline, the evaluation session should NOT decide the routing outcome. Instead: (1) session produces structured scores per dimension, (2) deterministic Go code computes the weighted average, (3) YAML-declared thresholds determine PASS/RETRY/FAIL. This prevents the session from being "nice" and always passing. The rationale.md is mandatory as an additional anti-gaming measure — no score without explanation.
+
+---
