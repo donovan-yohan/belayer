@@ -185,6 +185,28 @@ Belayer v2 replaces the monolithic daemon with a Temporal-backed pipeline platfo
 - **CLI-callback**: Interactive sessions signal completion via `belayer v2 <role> finish --task-id <id>`
 - **Temporal Signal**: CLI callback → Temporal Signal → workflow advances to next role
 
+## v3: Activity-Per-Node Pipeline (internal/v3/)
+
+Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is a Temporal Activity that spawns an interactive Claude Code session. File-based rendezvous (completion files) replaces Temporal Signals. YAML pipeline config with natural language node descriptions.
+
+| Module | Path | Purpose |
+|--------|------|---------|
+| Model | `internal/v3/model/` | Domain types: NodeOutcome, CompletionResult, ClimbInput/Output |
+| Pipeline | `internal/v3/pipeline/` | YAML parser, validator, default setter→lead→spotter config |
+| Events | `internal/v3/events/` | JSONL event logger for pipeline observability |
+| Outcome | `internal/v3/outcome/` | Outcome detection: verdict.txt > output file first line > type default |
+| Session | `internal/v3/session/` | Hooks config generator, tmux-backed Claude session spawner |
+| Temporal | `internal/v3/temporal/` | ClimbWorkflow, NodeActivity (spawn + heartbeat + poll completion) |
+| CLI | `internal/v3/cli/` | v3 commands: climb, node-complete, status |
+
+### Key Concepts
+
+- **Activity Per Node**: Each pipeline node = one Temporal Activity. Simplest model.
+- **File-based completion**: Stop hook calls `belayer node-complete` which writes `.belayer/completion/<id>-<node>-attempt-<N>.json`
+- **Natural language roles**: Node descriptions are prompts passed via `--append-system-prompt`
+- **Attempt-scoped**: Completion files, output paths, and verdict files include attempt number to prevent stale reads
+- **CLI entry point**: `belayer climb --file design.md` → Temporal workflow → setter → lead → spotter → branch
+
 ## Architecture Decision Records
 
 > Normative constraints documented in `docs/adrs/`.

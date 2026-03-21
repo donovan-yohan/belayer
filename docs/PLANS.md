@@ -6,7 +6,7 @@ Execution plans for active and completed work.
 
 | Plan | Created | Topic |
 |------|---------|-------|
-_None currently active._
+| [Belayer v3: Temporal Activity Pipeline](exec-plans/active/2026-03-20-v3-temporal-pipeline.md) | 2026-03-20 | v3 clean break: Activity-per-node, file-based completion, YAML pipeline config, `belayer climb` CLI |
 
 ## Tech Debt
 
@@ -16,7 +16,7 @@ _None currently active._
 | Empty `repoDir` in `monitorPRs` SCM calls | Medium | All SCM polling passes "" as repoDir; works incidentally for single-repo crags but fails for multi-repo |
 | `HandleApproval` partial failure orphans PRs | Medium | Successful PR inserts not cleaned up when later repos fail; problem stays in `reviewing` |
 | Missing integration tests for daemon PR lifecycle | Medium | `executeReaction`, `monitorPRs`, `checkAllPRsMerged`, `HandleApproval` SCM path all untested |
-| Bare string types for PR status fields | Low | `CIStatus`, `ReviewStatus`, `State` should be typed constants like `ProblemStatus` |
+
 
 ## Completed Plans
 
