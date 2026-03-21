@@ -558,7 +558,7 @@ func (s *Store) ListMonitoredPullRequests(cragID string) ([]model.PullRequest, e
 }
 
 // UpdatePullRequestCI updates ci_status and ci_fix_count for a pull request.
-func (s *Store) UpdatePullRequestCI(id int64, ciStatus string, ciFixCount int) error {
+func (s *Store) UpdatePullRequestCI(id int64, ciStatus model.CIStatus, ciFixCount int) error {
 	_, err := s.db.Exec(
 		`UPDATE pull_requests SET ci_status = ?, ci_fix_count = ?, last_polled_at = ? WHERE id = ?`,
 		ciStatus, ciFixCount, time.Now().UTC(), id,
@@ -576,7 +576,7 @@ func (s *Store) UpdatePullRequestReview(id int64, reviewStatus string) error {
 }
 
 // UpdatePullRequestState updates the state of a pull request.
-func (s *Store) UpdatePullRequestState(id int64, state string) error {
+func (s *Store) UpdatePullRequestState(id int64, state model.PRState) error {
 	_, err := s.db.Exec(
 		`UPDATE pull_requests SET state = ?, last_polled_at = ? WHERE id = ?`,
 		state, time.Now().UTC(), id,

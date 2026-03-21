@@ -23,28 +23,28 @@ func ClassifyActivity(prev, curr *model.PRStatus, activity *model.PRActivity) []
 	var events []ReactionEvent
 
 	// CI transitions
-	if prev.CIStatus == "passing" && curr.CIStatus == "failing" {
+	if prev.CIStatus == model.CIStatusPassing && curr.CIStatus == model.CIStatusFailing {
 		events = append(events, ReactionEvent{Type: EventCIFailed})
 	}
-	if prev.CIStatus == "failing" && curr.CIStatus == "passing" {
+	if prev.CIStatus == model.CIStatusFailing && curr.CIStatus == model.CIStatusPassing {
 		events = append(events, ReactionEvent{Type: EventCIPassed})
 	}
 
 	// State transitions
-	if curr.State == "merged" && prev.State != "merged" {
+	if curr.State == model.PRStateMerged && prev.State != model.PRStateMerged {
 		events = append(events, ReactionEvent{Type: EventMerged})
 	}
-	if curr.State == "closed" && prev.State != "closed" {
+	if curr.State == model.PRStateClosed && prev.State != model.PRStateClosed {
 		events = append(events, ReactionEvent{Type: EventClosed})
 	}
 
 	// Review state changes
 	prevReviewState := HighestReviewState(prev.Reviews)
 	currReviewState := HighestReviewState(curr.Reviews)
-	if currReviewState == "approved" && prevReviewState != "approved" {
+	if currReviewState == model.ReviewStateApproved && prevReviewState != model.ReviewStateApproved {
 		events = append(events, ReactionEvent{Type: EventApproved})
 	}
-	if currReviewState == "changes_requested" && prevReviewState != "changes_requested" {
+	if currReviewState == model.ReviewStateChangesRequested && prevReviewState != model.ReviewStateChangesRequested {
 		events = append(events, ReactionEvent{Type: EventChangesRequested})
 	}
 
@@ -93,17 +93,17 @@ func DecideReaction(event ReactionEvent, pr *model.PullRequest, maxFixAttempts i
 
 // HighestReviewState returns the most significant review state.
 // Priority: changes_requested > approved > commented > ""
-func HighestReviewState(reviews []model.Review) string {
-	state := ""
+func HighestReviewState(reviews []model.Review) model.ReviewState {
+	var state model.ReviewState
 	for _, r := range reviews {
 		switch r.State {
-		case "changes_requested":
-			return "changes_requested"
-		case "approved":
-			state = "approved"
-		case "commented":
+		case model.ReviewStateChangesRequested:
+			return model.ReviewStateChangesRequested
+		case model.ReviewStateApproved:
+			state = model.ReviewStateApproved
+		case model.ReviewStateCommented:
 			if state == "" {
-				state = "commented"
+				state = model.ReviewStateCommented
 			}
 		}
 	}

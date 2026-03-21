@@ -828,10 +828,10 @@ func TestInsertAndGetPullRequest(t *testing.T) {
 		URL:          "https://github.com/org/api/pull/42",
 		StackPosition: 1,
 		StackSize:    1,
-		CIStatus:     "pending",
+		CIStatus:     model.CIStatusPending,
 		CIFixCount:   0,
 		ReviewStatus: "pending",
-		State:        "open",
+		State:        model.PRStateOpen,
 	}
 
 	id, err := s.InsertPullRequest(pr)
@@ -845,8 +845,8 @@ func TestInsertAndGetPullRequest(t *testing.T) {
 	assert.Equal(t, "api", got.RepoName)
 	assert.Equal(t, 42, got.PRNumber)
 	assert.Equal(t, "https://github.com/org/api/pull/42", got.URL)
-	assert.Equal(t, "open", got.State)
-	assert.Equal(t, "pending", got.CIStatus)
+	assert.Equal(t, model.PRStateOpen, got.State)
+	assert.Equal(t, model.CIStatusPending, got.CIStatus)
 	assert.Nil(t, got.LastPolledAt)
 	assert.False(t, got.CreatedAt.IsZero())
 }
@@ -860,7 +860,7 @@ func TestListPullRequestsForProblem(t *testing.T) {
 		_, err := s.InsertPullRequest(&model.PullRequest{
 			ProblemID: "prob-pr-list", RepoName: "api", PRNumber: i,
 			URL: "https://github.com/org/api/pull/" + fmt.Sprintf("%d", i),
-			StackPosition: i, StackSize: 3, CIStatus: "pending", ReviewStatus: "pending", State: "open",
+			StackPosition: i, StackSize: 3, CIStatus: model.CIStatusPending, ReviewStatus: "pending", State: model.PRStateOpen,
 		})
 		require.NoError(t, err)
 	}
@@ -878,16 +878,16 @@ func TestUpdatePullRequestCI(t *testing.T) {
 	id, err := s.InsertPullRequest(&model.PullRequest{
 		ProblemID: "prob-pr-ci", RepoName: "api", PRNumber: 1,
 		URL: "https://github.com/org/api/pull/1",
-		CIStatus: "pending", ReviewStatus: "pending", State: "open",
+		CIStatus: model.CIStatusPending, ReviewStatus: "pending", State: model.PRStateOpen,
 	})
 	require.NoError(t, err)
 
-	err = s.UpdatePullRequestCI(id, "failed", 2)
+	err = s.UpdatePullRequestCI(id, model.CIStatus("failed"), 2)
 	require.NoError(t, err)
 
 	got, err := s.GetPullRequest(id)
 	require.NoError(t, err)
-	assert.Equal(t, "failed", got.CIStatus)
+	assert.Equal(t, model.CIStatus("failed"), got.CIStatus)
 	assert.Equal(t, 2, got.CIFixCount)
 	assert.NotNil(t, got.LastPolledAt)
 }
@@ -900,16 +900,16 @@ func TestUpdatePullRequestState(t *testing.T) {
 	id, err := s.InsertPullRequest(&model.PullRequest{
 		ProblemID: "prob-pr-state", RepoName: "api", PRNumber: 5,
 		URL: "https://github.com/org/api/pull/5",
-		CIStatus: "pending", ReviewStatus: "pending", State: "open",
+		CIStatus: model.CIStatusPending, ReviewStatus: "pending", State: model.PRStateOpen,
 	})
 	require.NoError(t, err)
 
-	err = s.UpdatePullRequestState(id, "merged")
+	err = s.UpdatePullRequestState(id, model.PRStateMerged)
 	require.NoError(t, err)
 
 	got, err := s.GetPullRequest(id)
 	require.NoError(t, err)
-	assert.Equal(t, "merged", got.State)
+	assert.Equal(t, model.PRStateMerged, got.State)
 	assert.NotNil(t, got.LastPolledAt)
 }
 
@@ -921,14 +921,14 @@ func TestListMonitoredPullRequests(t *testing.T) {
 	openID, err := s.InsertPullRequest(&model.PullRequest{
 		ProblemID: "prob-monitored", RepoName: "api", PRNumber: 10,
 		URL: "https://github.com/org/api/pull/10",
-		CIStatus: "pending", ReviewStatus: "pending", State: "open",
+		CIStatus: model.CIStatusPending, ReviewStatus: "pending", State: model.PRStateOpen,
 	})
 	require.NoError(t, err)
 
 	closedID, err := s.InsertPullRequest(&model.PullRequest{
 		ProblemID: "prob-monitored", RepoName: "api", PRNumber: 11,
 		URL: "https://github.com/org/api/pull/11",
-		CIStatus: "success", ReviewStatus: "approved", State: "merged",
+		CIStatus: model.CIStatus("success"), ReviewStatus: "approved", State: model.PRStateMerged,
 	})
 	require.NoError(t, err)
 	_ = closedID
@@ -947,7 +947,7 @@ func TestInsertAndListPRReactions(t *testing.T) {
 	prID, err := s.InsertPullRequest(&model.PullRequest{
 		ProblemID: "prob-reaction", RepoName: "api", PRNumber: 20,
 		URL: "https://github.com/org/api/pull/20",
-		CIStatus: "pending", ReviewStatus: "pending", State: "open",
+		CIStatus: model.CIStatusPending, ReviewStatus: "pending", State: model.PRStateOpen,
 	})
 	require.NoError(t, err)
 

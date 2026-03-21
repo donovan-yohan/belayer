@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/donovan-yohan/belayer/internal/model"
 )
 
 func TestRunInDir_StderrInExitError(t *testing.T) {
@@ -56,11 +58,11 @@ func TestParseGHPRStatusJSON(t *testing.T) {
 		if got.Number != 42 {
 			t.Errorf("Number: got %d, want 42", got.Number)
 		}
-		if got.State != "open" {
-			t.Errorf("State: got %q, want %q", got.State, "open")
+		if got.State != model.PRStateOpen {
+			t.Errorf("State: got %q, want %q", got.State, model.PRStateOpen)
 		}
-		if got.CIStatus != "failing" {
-			t.Errorf("CIStatus: got %q, want %q", got.CIStatus, "failing")
+		if got.CIStatus != model.CIStatusFailing {
+			t.Errorf("CIStatus: got %q, want %q", got.CIStatus, model.CIStatusFailing)
 		}
 		if !got.Mergeable {
 			t.Error("expected Mergeable=true")
@@ -87,8 +89,8 @@ func TestParseGHPRStatusJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got.CIStatus != "passing" {
-			t.Errorf("CIStatus: got %q, want %q", got.CIStatus, "passing")
+		if got.CIStatus != model.CIStatusPassing {
+			t.Errorf("CIStatus: got %q, want %q", got.CIStatus, model.CIStatusPassing)
 		}
 	})
 
@@ -108,8 +110,8 @@ func TestParseGHPRStatusJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got.CIStatus != "pending" {
-			t.Errorf("CIStatus: got %q, want %q", got.CIStatus, "pending")
+		if got.CIStatus != model.CIStatusPending {
+			t.Errorf("CIStatus: got %q, want %q", got.CIStatus, model.CIStatusPending)
 		}
 		if got.Mergeable {
 			t.Error("expected Mergeable=false for CONFLICTING")
@@ -130,8 +132,8 @@ func TestParseGHPRStatusJSON(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got.CIStatus != "pending" {
-			t.Errorf("CIStatus: got %q, want %q", got.CIStatus, "pending")
+		if got.CIStatus != model.CIStatusPending {
+			t.Errorf("CIStatus: got %q, want %q", got.CIStatus, model.CIStatusPending)
 		}
 	})
 }
@@ -161,7 +163,7 @@ func TestParseGHPRActivityJSON(t *testing.T) {
 		}
 		if len(got.Reviews) != 1 {
 			t.Errorf("Reviews: got %d, want 1", len(got.Reviews))
-		} else if got.Reviews[0].State != "changes_requested" {
+		} else if got.Reviews[0].State != model.ReviewStateChangesRequested {
 			t.Errorf("Review state: got %q", got.Reviews[0].State)
 		}
 	})

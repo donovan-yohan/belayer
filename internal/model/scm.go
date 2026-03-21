@@ -2,6 +2,35 @@ package model
 
 import "time"
 
+// PRState represents the state of a pull request.
+type PRState string
+
+const (
+	PRStateOpen   PRState = "open"
+	PRStateClosed PRState = "closed"
+	PRStateMerged PRState = "merged"
+)
+
+// CIStatus represents the CI check rollup status.
+type CIStatus string
+
+const (
+	CIStatusPassing CIStatus = "passing"
+	CIStatusFailing CIStatus = "failing"
+	CIStatusPending CIStatus = "pending"
+	CIStatusUnknown CIStatus = "unknown"
+)
+
+// ReviewState represents the state of a code review.
+type ReviewState string
+
+const (
+	ReviewStateApproved         ReviewState = "approved"
+	ReviewStateChangesRequested ReviewState = "changes_requested"
+	ReviewStateCommented        ReviewState = "commented"
+	ReviewStateDismissed        ReviewState = "dismissed"
+)
+
 type PROptions struct {
 	Title      string `json:"title"`
 	Body       string `json:"body"`
@@ -18,13 +47,13 @@ type PRSplit struct {
 }
 
 type PRStatus struct {
-	Number    int      `json:"number"`
-	State     string   `json:"state"`
-	CIStatus  string   `json:"ci_status"`
-	CIDetails []Check  `json:"ci_details"`
-	Reviews   []Review `json:"reviews"`
-	Mergeable bool     `json:"mergeable"`
-	URL       string   `json:"url"`
+	Number    int        `json:"number"`
+	State     PRState    `json:"state"`
+	CIStatus  CIStatus   `json:"ci_status"`
+	CIDetails []Check    `json:"ci_details"`
+	Reviews   []Review   `json:"reviews"`
+	Mergeable bool       `json:"mergeable"`
+	URL       string     `json:"url"`
 }
 
 type Check struct {
@@ -33,9 +62,9 @@ type Check struct {
 }
 
 type Review struct {
-	Author string `json:"author"`
-	State  string `json:"state"`
-	Body   string `json:"body"`
+	Author string      `json:"author"`
+	State  ReviewState `json:"state"`
+	Body   string      `json:"body"`
 }
 
 type PRActivity struct {

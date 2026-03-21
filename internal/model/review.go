@@ -10,10 +10,10 @@ type PullRequest struct {
 	URL           string     `json:"url"`
 	StackPosition int        `json:"stack_position"`
 	StackSize     int        `json:"stack_size"`
-	CIStatus      string     `json:"ci_status"`
+	CIStatus      CIStatus   `json:"ci_status"`
 	CIFixCount    int        `json:"ci_fix_count"`
 	ReviewStatus  string     `json:"review_status"`
-	State         string     `json:"state"`
+	State         PRState    `json:"state"`
 	LastPolledAt  *time.Time `json:"last_polled_at"`
 	CreatedAt     time.Time  `json:"created_at"`
 }

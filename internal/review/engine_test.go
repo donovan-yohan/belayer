@@ -6,13 +6,13 @@ import (
 	"github.com/donovan-yohan/belayer/internal/model"
 )
 
-func prStatus(state, ciStatus string, reviews []model.Review) *model.PRStatus {
+func prStatus(state model.PRState, ciStatus model.CIStatus, reviews []model.Review) *model.PRStatus {
 	return &model.PRStatus{State: state, CIStatus: ciStatus, Reviews: reviews}
 }
 
 func TestClassifyActivity_CIFailure(t *testing.T) {
-	prev := prStatus("open", "passing", nil)
-	curr := prStatus("open", "failing", nil)
+	prev := prStatus(model.PRStateOpen, model.CIStatusPassing, nil)
+	curr := prStatus(model.PRStateOpen, model.CIStatusFailing, nil)
 	events := ClassifyActivity(prev, curr, nil)
 	if len(events) != 1 || events[0].Type != EventCIFailed {
 		t.Errorf("expected EventCIFailed, got %v", events)
@@ -20,8 +20,8 @@ func TestClassifyActivity_CIFailure(t *testing.T) {
 }
 
 func TestClassifyActivity_CIPassed(t *testing.T) {
-	prev := prStatus("open", "failing", nil)
-	curr := prStatus("open", "passing", nil)
+	prev := prStatus(model.PRStateOpen, model.CIStatusFailing, nil)
+	curr := prStatus(model.PRStateOpen, model.CIStatusPassing, nil)
 	events := ClassifyActivity(prev, curr, nil)
 	if len(events) != 1 || events[0].Type != EventCIPassed {
 		t.Errorf("expected EventCIPassed, got %v", events)
@@ -29,8 +29,8 @@ func TestClassifyActivity_CIPassed(t *testing.T) {
 }
 
 func TestClassifyActivity_Approved(t *testing.T) {
-	prev := prStatus("open", "passing", nil)
-	curr := prStatus("open", "passing", []model.Review{{Author: "alice", State: "approved"}})
+	prev := prStatus(model.PRStateOpen, model.CIStatusPassing, nil)
+	curr := prStatus(model.PRStateOpen, model.CIStatusPassing, []model.Review{{Author: "alice", State: model.ReviewStateApproved}})
 	events := ClassifyActivity(prev, curr, nil)
 	if len(events) != 1 || events[0].Type != EventApproved {
 		t.Errorf("expected EventApproved, got %v", events)
@@ -38,8 +38,8 @@ func TestClassifyActivity_Approved(t *testing.T) {
 }
 
 func TestClassifyActivity_ChangesRequested(t *testing.T) {
-	prev := prStatus("open", "passing", nil)
-	curr := prStatus("open", "passing", []model.Review{{Author: "bob", State: "changes_requested"}})
+	prev := prStatus(model.PRStateOpen, model.CIStatusPassing, nil)
+	curr := prStatus(model.PRStateOpen, model.CIStatusPassing, []model.Review{{Author: "bob", State: model.ReviewStateChangesRequested}})
 	events := ClassifyActivity(prev, curr, nil)
 	if len(events) != 1 || events[0].Type != EventChangesRequested {
 		t.Errorf("expected EventChangesRequested, got %v", events)
@@ -47,8 +47,8 @@ func TestClassifyActivity_ChangesRequested(t *testing.T) {
 }
 
 func TestClassifyActivity_Merged(t *testing.T) {
-	prev := prStatus("open", "passing", nil)
-	curr := prStatus("merged", "passing", nil)
+	prev := prStatus(model.PRStateOpen, model.CIStatusPassing, nil)
+	curr := prStatus(model.PRStateMerged, model.CIStatusPassing, nil)
 	events := ClassifyActivity(prev, curr, nil)
 	if len(events) != 1 || events[0].Type != EventMerged {
 		t.Errorf("expected EventMerged, got %v", events)
@@ -56,8 +56,8 @@ func TestClassifyActivity_Merged(t *testing.T) {
 }
 
 func TestClassifyActivity_Closed(t *testing.T) {
-	prev := prStatus("open", "passing", nil)
-	curr := prStatus("closed", "passing", nil)
+	prev := prStatus(model.PRStateOpen, model.CIStatusPassing, nil)
+	curr := prStatus(model.PRStateClosed, model.CIStatusPassing, nil)
 	events := ClassifyActivity(prev, curr, nil)
 	if len(events) != 1 || events[0].Type != EventClosed {
 		t.Errorf("expected EventClosed, got %v", events)
@@ -65,8 +65,8 @@ func TestClassifyActivity_Closed(t *testing.T) {
 }
 
 func TestClassifyActivity_NewComments(t *testing.T) {
-	prev := prStatus("open", "passing", nil)
-	curr := prStatus("open", "passing", nil)
+	prev := prStatus(model.PRStateOpen, model.CIStatusPassing, nil)
+	curr := prStatus(model.PRStateOpen, model.CIStatusPassing, nil)
 	activity := &model.PRActivity{
 		Comments: []model.ReviewComment{
 			{ID: 1, Author: "carol", Body: "looks good"},
@@ -85,9 +85,9 @@ func TestClassifyActivity_NewComments(t *testing.T) {
 }
 
 func TestClassifyActivity_NoChanges(t *testing.T) {
-	reviews := []model.Review{{Author: "alice", State: "approved"}}
-	prev := prStatus("open", "passing", reviews)
-	curr := prStatus("open", "passing", reviews)
+	reviews := []model.Review{{Author: "alice", State: model.ReviewStateApproved}}
+	prev := prStatus(model.PRStateOpen, model.CIStatusPassing, reviews)
+	curr := prStatus(model.PRStateOpen, model.CIStatusPassing, reviews)
 	events := ClassifyActivity(prev, curr, nil)
 	if len(events) != 0 {
 		t.Errorf("expected no events, got %v", events)
@@ -152,15 +152,15 @@ func TestDecideReaction(t *testing.T) {
 func TestHighestReviewState(t *testing.T) {
 	tests := []struct {
 		reviews []model.Review
-		want    string
+		want    model.ReviewState
 	}{
 		{nil, ""},
-		{[]model.Review{{State: "commented"}}, "commented"},
-		{[]model.Review{{State: "approved"}}, "approved"},
-		{[]model.Review{{State: "changes_requested"}}, "changes_requested"},
-		{[]model.Review{{State: "approved"}, {State: "commented"}}, "approved"},
-		{[]model.Review{{State: "approved"}, {State: "changes_requested"}}, "changes_requested"},
-		{[]model.Review{{State: "commented"}, {State: "approved"}}, "approved"},
+		{[]model.Review{{State: model.ReviewStateCommented}}, model.ReviewStateCommented},
+		{[]model.Review{{State: model.ReviewStateApproved}}, model.ReviewStateApproved},
+		{[]model.Review{{State: model.ReviewStateChangesRequested}}, model.ReviewStateChangesRequested},
+		{[]model.Review{{State: model.ReviewStateApproved}, {State: model.ReviewStateCommented}}, model.ReviewStateApproved},
+		{[]model.Review{{State: model.ReviewStateApproved}, {State: model.ReviewStateChangesRequested}}, model.ReviewStateChangesRequested},
+		{[]model.Review{{State: model.ReviewStateCommented}, {State: model.ReviewStateApproved}}, model.ReviewStateApproved},
 	}
 	for _, tt := range tests {
 		got := HighestReviewState(tt.reviews)

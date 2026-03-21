@@ -717,8 +717,8 @@ func (s *Belayer) monitorPRs(ctx context.Context) {
 			log.Printf("belayer: error updating PR CI status for PR #%d: %v", pr.PRNumber, err)
 		}
 		currReviewState := review.HighestReviewState(curr.Reviews)
-		if currReviewState != pr.ReviewStatus {
-			if err := s.store.UpdatePullRequestReview(pr.ID, currReviewState); err != nil {
+		if string(currReviewState) != pr.ReviewStatus {
+			if err := s.store.UpdatePullRequestReview(pr.ID, string(currReviewState)); err != nil {
 				log.Printf("belayer: error updating PR review status for PR #%d: %v", pr.PRNumber, err)
 			}
 		}
@@ -780,7 +780,7 @@ func (s *Belayer) executeReaction(ctx context.Context, pr *model.PullRequest, ev
 		if err := s.scm.Merge(ctx, "", pr.PRNumber); err != nil {
 			log.Printf("belayer: error merging PR #%d: %v", pr.PRNumber, err)
 		} else {
-			if err := s.store.UpdatePullRequestState(pr.ID, "merged"); err != nil {
+			if err := s.store.UpdatePullRequestState(pr.ID, model.PRStateMerged); err != nil {
 				log.Printf("belayer: error updating PR state to merged: %v", err)
 			}
 			if err := s.store.InsertEvent(pr.ProblemID, "", model.EventPRMerged, fmt.Sprintf(`{"pr_number":%d}`, pr.PRNumber)); err != nil {
@@ -790,7 +790,7 @@ func (s *Belayer) executeReaction(ctx context.Context, pr *model.PullRequest, ev
 		}
 
 	case "status_merged":
-		if err := s.store.UpdatePullRequestState(pr.ID, "merged"); err != nil {
+		if err := s.store.UpdatePullRequestState(pr.ID, model.PRStateMerged); err != nil {
 			log.Printf("belayer: error updating PR state to merged: %v", err)
 		}
 		if err := s.store.InsertEvent(pr.ProblemID, "", model.EventPRMerged, fmt.Sprintf(`{"pr_number":%d}`, pr.PRNumber)); err != nil {
@@ -800,7 +800,7 @@ func (s *Belayer) executeReaction(ctx context.Context, pr *model.PullRequest, ev
 		log.Printf("belayer: PR #%d detected as merged", pr.PRNumber)
 
 	case "status_closed":
-		if err := s.store.UpdatePullRequestState(pr.ID, "closed"); err != nil {
+		if err := s.store.UpdatePullRequestState(pr.ID, model.PRStateClosed); err != nil {
 			log.Printf("belayer: error updating PR state to closed: %v", err)
 		}
 		if err := s.store.UpdateProblemStatus(pr.ProblemID, model.ProblemStatusClosed); err != nil {
@@ -826,7 +826,7 @@ func (s *Belayer) checkAllPRsMerged(problemID string) {
 		return
 	}
 	for _, pr := range prs {
-		if pr.State != "merged" {
+		if pr.State != model.PRStateMerged {
 			return
 		}
 	}
