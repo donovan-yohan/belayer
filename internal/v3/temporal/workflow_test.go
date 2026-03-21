@@ -134,6 +134,145 @@ func (s *ClimbWorkflowTestSuite) TestClimb_NodeFails() {
 	s.Contains(result.Message, "setter")
 }
 
+func gatePipelineYAML() []byte {
+	return []byte(`
+name: gate-test
+nodes:
+  - name: lead
+    type: node
+    description: Write code
+    output:
+      type: code
+    on_pass: review
+    on_fail: stop
+    max_retries: 3
+  - name: review
+    type: gate
+    description: Review the code
+    input:
+      type: code
+    dimensions:
+      - name: correctness
+        description: "Does it work?"
+        weight: 0.6
+      - name: quality
+        description: "Is it clean?"
+        weight: 0.4
+    thresholds:
+      pass: 7.0
+      retry: 4.0
+    output:
+      type: gate_result
+      path: .belayer/output/gate-result.json
+      rationale_path: .belayer/output/rationale.md
+    on_pass: next
+    on_retry: lead
+    on_fail: stop
+    max_retries: 2
+`)
+}
+
+func gateInput() model.ClimbInput {
+	return model.ClimbInput{
+		PipelineYAML: gatePipelineYAML(),
+		WorkDir:      "/tmp/test-gate",
+		Branch:       "feature/gate-test",
+	}
+}
+
+// TestClimb_GatePass: lead PASS → gate PASS → ClimbCompleted.
+func (s *ClimbWorkflowTestSuite) TestClimb_GatePass() {
+	a := &Activities{}
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "lead"
+	})).Return(passOutput("lead"), nil)
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "review"
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome:    model.OutcomePass,
+			OutputPath: ".belayer/output/gate-result.json",
+		},
+	}, nil)
+
+	s.env.ExecuteWorkflow(ClimbWorkflow, gateInput())
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	var result model.ClimbOutput
+	s.NoError(s.env.GetWorkflowResult(&result))
+	s.Equal(model.ClimbCompleted, result.Status)
+}
+
+// TestClimb_GateRetryThenPass: gate RETRY → lead retries → gate PASS.
+func (s *ClimbWorkflowTestSuite) TestClimb_GateRetryThenPass() {
+	a := &Activities{}
+
+	// Lead called twice: initial + after gate retry.
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "lead"
+	})).Return(passOutput("lead"), nil).Times(2)
+
+	// Gate: first call RETRY, second call PASS.
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "review" && in.Attempt == 0
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome:    model.OutcomeRetry,
+			TargetNode: "lead",
+			Feedback:   "Fix the bugs in auth module",
+		},
+	}, nil).Once()
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "review" && in.Attempt == 1
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome:    model.OutcomePass,
+			OutputPath: ".belayer/output/gate-result.json",
+		},
+	}, nil).Once()
+
+	s.env.ExecuteWorkflow(ClimbWorkflow, gateInput())
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	var result model.ClimbOutput
+	s.NoError(s.env.GetWorkflowResult(&result))
+	s.Equal(model.ClimbCompleted, result.Status)
+}
+
+// TestClimb_GateFail: gate FAIL → ClimbFailed.
+func (s *ClimbWorkflowTestSuite) TestClimb_GateFail() {
+	a := &Activities{}
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "lead"
+	})).Return(passOutput("lead"), nil)
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "review"
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome:  model.OutcomeFail,
+			Feedback: "Fundamentally broken",
+		},
+	}, nil)
+
+	s.env.ExecuteWorkflow(ClimbWorkflow, gateInput())
+
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	var result model.ClimbOutput
+	s.NoError(s.env.GetWorkflowResult(&result))
+	s.Equal(model.ClimbFailed, result.Status)
+}
+
 // TestClimb_MaxRetriesExhausted: spotter always RETRY → eventually ClimbFailed with "max retries".
 func (s *ClimbWorkflowTestSuite) TestClimb_MaxRetriesExhausted() {
 	a := &Activities{}
