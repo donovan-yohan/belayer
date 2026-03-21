@@ -54,12 +54,18 @@ func NewClimbCmd() *cobra.Command {
 			}
 			defer tc.Close()
 
-			// 4. Generate workflow ID and create git branch.
+			// 4. Generate workflow ID and create git worktree.
 			workflowID := fmt.Sprintf("climb-%d", time.Now().UnixMilli())
 			branch := fmt.Sprintf("belayer/%s", workflowID)
-			if err := createGitBranch(cwd, branch); err != nil {
-				return fmt.Errorf("create git branch: %w", err)
+			worktreeDir := filepath.Join(cwd, ".belayer", "worktrees", workflowID)
+			if err := createGitWorktree(cwd, worktreeDir, branch); err != nil {
+				return fmt.Errorf("create git worktree: %w", err)
 			}
+			defer func() {
+				// On failure, preserve the worktree for inspection.
+				// On success, user can clean up manually or via `belayer cleanup`.
+				fmt.Printf("worktree at: %s\n", worktreeDir)
+			}()
 
 			// 5. Start in-process worker.
 			tm := tmux.NewRealTmux()
@@ -91,13 +97,14 @@ func NewClimbCmd() *cobra.Command {
 			}
 
 			// 7. Build and start workflow.
+			// Sessions run in the worktree (isolated), not the main repo.
 			climbInput := model.ClimbInput{
 				Description:  description,
 				DesignFile:   designFile,
 				PipelineYAML: pipelineYAML,
 				FromNode:     nodeFlag,
 				InputPath:    inputFlag,
-				WorkDir:      cwd,
+				WorkDir:      worktreeDir,
 				Branch:       branch,
 			}
 
@@ -212,13 +219,17 @@ func resolvePipelineYAML(cwd string) ([]byte, string, error) {
 	return []byte(pipeline.DefaultPipelineYAML), cfg.Name, nil
 }
 
-// createGitBranch creates and checks out a new git branch in workDir.
-func createGitBranch(workDir, branch string) error {
-	cmd := exec.Command("git", "checkout", "-b", branch)
-	cmd.Dir = workDir
+// createGitWorktree creates a new git worktree at worktreeDir on a new branch.
+// The main repo stays on its current branch — all pipeline work happens in the worktree.
+func createGitWorktree(repoDir, worktreeDir, branch string) error {
+	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
+		return fmt.Errorf("create worktree parent dir: %w", err)
+	}
+	cmd := exec.Command("git", "worktree", "add", worktreeDir, "-b", branch)
+	cmd.Dir = repoDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("git checkout -b %s: %s: %w", branch, strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

@@ -41,7 +41,7 @@ func Detect(node *pipeline.NodeConfig, workDir string, attempt int) model.Comple
 				return model.CompletionResult{
 					Outcome:    outcome,
 					TargetNode: target,
-					OutputPath: opath,
+					OutputPath: node.Output.Path, // relative, not absolute
 					Attempt:    attempt,
 				}
 			}
@@ -83,7 +83,7 @@ func typeDefault(node *pipeline.NodeConfig, workDir string, attempt int) model.C
 		if node.Output.Path != "" {
 			opath := filepath.Join(workDir, node.Output.Path)
 			if _, err := os.Stat(opath); err == nil {
-				return model.CompletionResult{Outcome: model.OutcomePass, OutputPath: opath, Attempt: attempt}
+				return model.CompletionResult{Outcome: model.OutcomePass, OutputPath: node.Output.Path, Attempt: attempt}
 			}
 		}
 		return model.CompletionResult{Outcome: model.OutcomeFail, Attempt: attempt}
