@@ -1,5 +1,27 @@
 package pipeline
 
+// NodeType discriminates between constructive nodes and adversarial gates.
+type NodeType string
+
+const (
+	NodeTypeNode NodeType = "node"
+	NodeTypeGate NodeType = "gate"
+)
+
+// DimensionConfig defines a scoring dimension for a gate node.
+type DimensionConfig struct {
+	Name        string  `yaml:"name" json:"name"`
+	Description string  `yaml:"description" json:"description"`
+	Weight      float64 `yaml:"weight" json:"weight"`
+	Rubric      string  `yaml:"rubric,omitempty" json:"rubric,omitempty"`
+}
+
+// ThresholdConfig defines score-based routing for a gate node.
+type ThresholdConfig struct {
+	Pass  float64 `yaml:"pass" json:"pass"`
+	Retry float64 `yaml:"retry" json:"retry"`
+}
+
 // PipelineConfig is the top-level pipeline definition.
 type PipelineConfig struct {
 	Name  string       `yaml:"name" json:"name"`
@@ -8,14 +30,17 @@ type PipelineConfig struct {
 
 // NodeConfig defines a single pipeline node.
 type NodeConfig struct {
-	Name        string       `yaml:"name" json:"name"`
-	Description string       `yaml:"description" json:"description"`
-	Input       InputConfig  `yaml:"input" json:"input"`
-	Output      OutputConfig `yaml:"output" json:"output"`
-	OnPass      string       `yaml:"on_pass" json:"on_pass"`
-	OnRetry     string       `yaml:"on_retry" json:"on_retry"`
-	OnFail      string       `yaml:"on_fail" json:"on_fail"`
-	MaxRetries  int          `yaml:"max_retries" json:"max_retries"`
+	Name        string            `yaml:"name" json:"name"`
+	Type        NodeType          `yaml:"type,omitempty" json:"type,omitempty"`
+	Description string            `yaml:"description" json:"description"`
+	Input       InputConfig       `yaml:"input" json:"input"`
+	Output      OutputConfig      `yaml:"output" json:"output"`
+	Dimensions  []DimensionConfig `yaml:"dimensions,omitempty" json:"dimensions,omitempty"`
+	Thresholds  ThresholdConfig   `yaml:"thresholds,omitempty" json:"thresholds,omitempty"`
+	OnPass      string            `yaml:"on_pass" json:"on_pass"`
+	OnRetry     string            `yaml:"on_retry" json:"on_retry"`
+	OnFail      string            `yaml:"on_fail" json:"on_fail"`
+	MaxRetries  int               `yaml:"max_retries" json:"max_retries"`
 }
 
 // InputConfig specifies what a node receives.
@@ -26,9 +51,23 @@ type InputConfig struct {
 
 // OutputConfig specifies what a node produces.
 type OutputConfig struct {
-	Type string `yaml:"type" json:"type"`
-	Path string `yaml:"path,omitempty" json:"path,omitempty"`
-	Key  string `yaml:"key,omitempty" json:"key,omitempty"`
+	Type          string `yaml:"type" json:"type"`
+	Path          string `yaml:"path,omitempty" json:"path,omitempty"`
+	Key           string `yaml:"key,omitempty" json:"key,omitempty"`
+	RationalePath string `yaml:"rationale_path,omitempty" json:"rationale_path,omitempty"`
+}
+
+// IsGate returns true if this node is a gate type.
+func (n *NodeConfig) IsGate() bool {
+	return n.Type == NodeTypeGate
+}
+
+// EffectiveType returns the node's type, defaulting to "node".
+func (n *NodeConfig) EffectiveType() NodeType {
+	if n.Type == "" {
+		return NodeTypeNode
+	}
+	return n.Type
 }
 
 // OutputKey returns the artifact key for this node's output.
