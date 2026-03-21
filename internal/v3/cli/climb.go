@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -56,7 +57,8 @@ func NewClimbCmd() *cobra.Command {
 
 			// 4. Generate workflow ID and create git worktree.
 			workflowID := fmt.Sprintf("climb-%d", time.Now().UnixMilli())
-			branch := fmt.Sprintf("belayer/%s", workflowID)
+			branchSlug := generateBranchSlug(description)
+			branch := fmt.Sprintf("belayer/%s-%s", branchSlug, workflowID)
 			worktreeDir := filepath.Join(cwd, ".belayer", "worktrees", workflowID)
 			if err := createGitWorktree(cwd, worktreeDir, branch); err != nil {
 				return fmt.Errorf("create git worktree: %w", err)
@@ -217,6 +219,53 @@ func resolvePipelineYAML(cwd string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("parse default pipeline: %w", err)
 	}
 	return []byte(pipeline.DefaultPipelineYAML), cfg.Name, nil
+}
+
+// generateBranchSlug uses claude -p haiku to create a short branch-friendly slug
+// from the description. Falls back to "impl" if claude is unavailable or slow.
+func generateBranchSlug(description string) string {
+	// Truncate input to keep the prompt small.
+	input := description
+	if len(input) > 500 {
+		input = input[:500]
+	}
+
+	prompt := fmt.Sprintf(`Generate a short git branch name slug (2-4 words, kebab-case, lowercase, no special characters) that summarizes this work. Output ONLY the slug, nothing else.
+
+%s`, input)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", "haiku", prompt)
+	out, err := cmd.Output()
+	if err != nil {
+		return "impl"
+	}
+
+	slug := strings.TrimSpace(string(out))
+	// Sanitize: only allow lowercase alphanumeric and hyphens.
+	var sanitized strings.Builder
+	for _, r := range slug {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			sanitized.WriteRune(r)
+		} else if r >= 'A' && r <= 'Z' {
+			sanitized.WriteRune(r + 32) // lowercase
+		} else if r == ' ' || r == '_' {
+			sanitized.WriteRune('-')
+		}
+	}
+	result := sanitized.String()
+	result = strings.Trim(result, "-")
+	if result == "" {
+		return "impl"
+	}
+	// Cap length.
+	if len(result) > 40 {
+		result = result[:40]
+		result = strings.TrimRight(result, "-")
+	}
+	return result
 }
 
 // createGitWorktree creates a new git worktree at worktreeDir on a new branch.
