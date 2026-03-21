@@ -40,11 +40,16 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 	// 4. Find start index.
 	startIdx := 0
 	if input.FromNode != "" {
+		found := false
 		for i, n := range cfg.Nodes {
 			if n.Name == input.FromNode {
 				startIdx = i
+				found = true
 				break
 			}
+		}
+		if !found {
+			return nil, fmt.Errorf("from-node %q not found in pipeline %q", input.FromNode, cfg.Name)
 		}
 	}
 
@@ -58,6 +63,8 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 
 	a := &Activities{}
 	nodeIdx := startIdx
+	failJumps := 0 // Cycle detection for OnFail jumps
+	const maxFailJumps = 5
 
 	for nodeIdx < len(cfg.Nodes) {
 		node := cfg.Nodes[nodeIdx]
@@ -110,12 +117,14 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 				}, nil
 			}
 
-			// Write feedback to disk.
+			// Write feedback to disk so the target session can read it.
 			if result.Feedback != "" {
 				feedbackPath := filepath.Join(input.WorkDir, ".belayer", "input", "feedback.md")
-				_ = os.MkdirAll(filepath.Dir(feedbackPath), 0o755)
-				_ = os.WriteFile(feedbackPath, []byte(result.Feedback), 0o644)
-				artifacts["feedback"] = result.Feedback
+				if err := os.MkdirAll(filepath.Dir(feedbackPath), 0o755); err == nil {
+					if err := os.WriteFile(feedbackPath, []byte(result.Feedback), 0o644); err == nil {
+						artifacts["feedback"] = ".belayer/input/feedback.md"
+					}
+				}
 			}
 
 			// Determine retry target: verdict > node.OnRetry > self.
@@ -143,6 +152,15 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 
 		case model.OutcomeFail:
 			if node.OnFail != "" && node.OnFail != "stop" {
+				failJumps++
+				if failJumps > maxFailJumps {
+					return &model.ClimbOutput{
+						Status:      model.ClimbFailed,
+						NodeOutputs: nodeOutputs,
+						Message:     fmt.Sprintf("node %q: exceeded max fail jumps (%d), possible cycle", node.Name, maxFailJumps),
+						Branch:      input.Branch,
+					}, nil
+				}
 				// Jump to named node.
 				for i, n := range cfg.Nodes {
 					if n.Name == node.OnFail {

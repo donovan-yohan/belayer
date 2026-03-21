@@ -52,15 +52,6 @@ func Detect(node *pipeline.NodeConfig, workDir string, attempt int) model.Comple
 	return typeDefault(node, workDir, attempt)
 }
 
-// DetectCodeOutcome is a stub for code-type outcome detection based on git commits.
-// Currently returns PASS; future implementation may inspect commits since startSHA.
-func DetectCodeOutcome(workDir, startSHA string, attempt int) model.CompletionResult {
-	return model.CompletionResult{
-		Outcome: model.OutcomePass,
-		Attempt: attempt,
-	}
-}
-
 // parseFirstLine parses a verdict line and returns (outcome, retryTarget).
 // Handles "PASS", "FAIL", "RETRY", "RETRY lead" formats.
 func parseFirstLine(line string) (model.NodeOutcome, string) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -22,18 +23,12 @@ func writeCompletionFile(t *testing.T, workDir, taskID, nodeName string, attempt
 		t.Fatalf("mkdir: %v", err)
 	}
 	data, _ := json.Marshal(result)
-	filename := filepath.Join(dir, taskID+"-"+nodeName+"-attempt-"+itoa(attempt)+".json")
+	filename := filepath.Join(dir, taskID+"-"+nodeName+"-attempt-"+strconv.Itoa(attempt)+".json")
 	if err := os.WriteFile(filename, data, 0o644); err != nil {
 		t.Fatalf("write completion file: %v", err)
 	}
 }
 
-func itoa(n int) string {
-	return strings.TrimSpace(strings.Replace(strings.Replace(strings.Replace(strings.Replace(
-		strings.Replace(strings.Replace(strings.Replace(strings.Replace(strings.Replace(strings.Replace(
-			"0123456789"[n:n+1], "", "", 1), "", "", 1), "", "", 1), "", "", 1), "", "", 1),
-		"", "", 1), "", "", 1), "", "", 1), "", "", 1), "", "", 1))
-}
 
 // --- tests ---
 

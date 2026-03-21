@@ -56,7 +56,7 @@ func NewClimbCmd() *cobra.Command {
 
 			// 4. Generate workflow ID and create git branch.
 			workflowID := fmt.Sprintf("climb-%d", time.Now().UnixMilli())
-			branch := fmt.Sprintf("belayer/climb-%s", workflowID)
+			branch := fmt.Sprintf("belayer/%s", workflowID)
 			if err := createGitBranch(cwd, branch); err != nil {
 				return fmt.Errorf("create git branch: %w", err)
 			}

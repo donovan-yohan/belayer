@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,10 @@ func WriteHooksConfig(workDir, taskID, nodeName string, attempt int) error {
 		return fmt.Errorf("create .belayer dir: %w", err)
 	}
 
+	// Build command string — use JSON marshaling for safe escaping of taskID/nodeName.
+	command := fmt.Sprintf("belayer node-complete --task-id %s --node %s --attempt %d", taskID, nodeName, attempt)
+	commandJSON, _ := json.Marshal(command) // produces a safely-escaped JSON string
+
 	hooksJSON := fmt.Sprintf(`{
   "hooks": {
     "Stop": [
@@ -21,13 +26,13 @@ func WriteHooksConfig(workDir, taskID, nodeName string, attempt int) error {
         "hooks": [
           {
             "type": "command",
-            "command": "belayer node-complete --task-id %s --node %s --attempt %d"
+            "command": %s
           }
         ]
       }
     ]
   }
-}`, taskID, nodeName, attempt)
+}`, string(commandJSON))
 
 	path := filepath.Join(hooksDir, "hooks.json")
 	return os.WriteFile(path, []byte(hooksJSON), 0o644)

@@ -56,8 +56,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	// 4. For code-type inputs, materialize diff files.
 	if input.Node.Input.Type == "code" {
 		if err := materializeCodeInput(input.WorkDir); err != nil {
-			// Non-fatal: log and continue.
-			_ = err
+			activity.GetLogger(ctx).Warn("Failed to materialize code input", "error", err)
 		}
 	}
 

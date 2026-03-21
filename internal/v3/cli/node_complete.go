@@ -29,10 +29,9 @@ func NewNodeCompleteCmd() *cobra.Command {
 			if nodeName == "" {
 				nodeName = os.Getenv("BELAYER_NODE")
 			}
-			if attempt == 0 {
+			if !cmd.Flags().Changed("attempt") {
 				if v := os.Getenv("BELAYER_ATTEMPT"); v != "" {
-					n, err := strconv.Atoi(v)
-					if err == nil {
+					if n, err := strconv.Atoi(v); err == nil {
 						attempt = n
 					}
 				}
