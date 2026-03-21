@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"go.temporal.io/sdk/testsuite"
 
+	"github.com/donovan-yohan/belayer/internal/v3/gate"
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
 	"github.com/donovan-yohan/belayer/internal/v3/session"
@@ -38,6 +39,7 @@ func (f *fakeSpawner) Spawn(_ context.Context, opts session.SpawnOpts) error {
 }
 
 // retryThenPassSpawner returns RETRY on the first spotter call, PASS on subsequent calls.
+// For gate nodes, it also writes gate output files with appropriate scores.
 type retryThenPassSpawner struct {
 	workDir      string
 	spotterCalls *int
@@ -48,14 +50,36 @@ func (r *retryThenPassSpawner) Spawn(_ context.Context, opts session.SpawnOpts) 
 
 	if opts.NodeName == "spotter" {
 		*r.spotterCalls++
+		outputDir := filepath.Join(r.workDir, ".belayer", "output")
+		os.MkdirAll(outputDir, 0o755)
+		// Write gate outputs at attempt-scoped paths.
+		resultPath := gate.ScopedPath(".belayer/output/gate-result.json", opts.Attempt)
+		rationalePath := gate.ScopedPath(".belayer/output/rationale.md", opts.Attempt)
 		if *r.spotterCalls == 1 {
-			result = model.CompletionResult{
-				Outcome:    model.OutcomeRetry,
-				TargetNode: "lead",
-				Feedback:   "needs more work",
-				Attempt:    opts.Attempt,
-			}
+			// Write gate files that score in RETRY range (5.0, between retry=4.0 and pass=7.0).
+			os.WriteFile(filepath.Join(r.workDir, resultPath), []byte(fmt.Sprintf(`{
+				"gate": "spotter", "attempt": %d,
+				"dimensions": {
+					"spec_compliance": {"score": 5, "rationale": "issues", "issues": ["gap"]},
+					"test_contracts": {"score": 5, "rationale": "minimal", "issues": []},
+					"runtime_correctness": {"score": 5, "rationale": "concerns", "issues": []}
+				},
+				"weighted_score": 5.0, "outcome": "RETRY", "summary": "Needs work"
+			}`, opts.Attempt)), 0o644)
+			os.WriteFile(filepath.Join(r.workDir, rationalePath), []byte("# Review\nFix bugs."), 0o644)
+			result = model.CompletionResult{Outcome: model.OutcomeRetry, Attempt: opts.Attempt}
 		} else {
+			// Write gate files that score in PASS range (8.0 >= pass=7.0).
+			os.WriteFile(filepath.Join(r.workDir, resultPath), []byte(fmt.Sprintf(`{
+				"gate": "spotter", "attempt": %d,
+				"dimensions": {
+					"spec_compliance": {"score": 8, "rationale": "ok", "issues": []},
+					"test_contracts": {"score": 8, "rationale": "ok", "issues": []},
+					"runtime_correctness": {"score": 8, "rationale": "ok", "issues": []}
+				},
+				"weighted_score": 8.0, "outcome": "PASS", "summary": "Good"
+			}`, opts.Attempt)), 0o644)
+			os.WriteFile(filepath.Join(r.workDir, rationalePath), []byte("# Review\nLooks good."), 0o644)
 			result = model.CompletionResult{Outcome: model.OutcomePass, Attempt: opts.Attempt}
 		}
 	} else {
@@ -112,6 +136,17 @@ func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 	// Pre-seed output files that the workflow checks for file-type nodes.
 	writeFileAtPath(s.T(), workDir, ".belayer/output/plan.md", "PASS\nHere is the plan.")
 	writeFileAtPath(s.T(), workDir, ".belayer/output/review.md", "PASS\nLooks good.")
+	// Pre-seed gate output files for the spotter gate node (attempt-scoped paths).
+	writeFileAtPath(s.T(), workDir, gate.ScopedPath(".belayer/output/gate-result.json", 0), `{
+		"gate": "spotter", "attempt": 0,
+		"dimensions": {
+			"spec_compliance": {"score": 8, "rationale": "ok", "issues": []},
+			"test_contracts": {"score": 8, "rationale": "ok", "issues": []},
+			"runtime_correctness": {"score": 8, "rationale": "ok", "issues": []}
+		},
+		"weighted_score": 8.0, "outcome": "PASS", "summary": "Good"
+	}`)
+	writeFileAtPath(s.T(), workDir, gate.ScopedPath(".belayer/output/rationale.md", 0), "# Review\nLooks good.")
 
 	spawner := &fakeSpawner{
 		workDir: workDir,
@@ -172,4 +207,69 @@ func (s *IntegrationTestSuite) TestEndToEnd_RetryLoop() {
 	s.NoError(s.env.GetWorkflowResult(&result))
 	s.Equal(model.ClimbCompleted, result.Status)
 	s.Equal(2, calls, "spotter should have been called twice (retry + pass)")
+}
+
+// TestIntegration_GatePipeline verifies gate pipeline parsing and validation end-to-end.
+func TestIntegration_GatePipeline(t *testing.T) {
+	pipelineYAML := []byte(`
+name: gate-test
+nodes:
+  - name: lead
+    type: node
+    description: Write code
+    output:
+      type: code
+    on_pass: review
+    on_fail: stop
+    max_retries: 3
+  - name: review
+    type: gate
+    description: Review the code
+    input:
+      type: code
+    dimensions:
+      - name: correctness
+        description: "Does it work?"
+        weight: 0.6
+      - name: quality
+        description: "Is it clean?"
+        weight: 0.4
+    thresholds:
+      pass: 7.0
+      retry: 4.0
+    output:
+      type: gate_result
+      path: .belayer/output/gate-result.json
+      rationale_path: .belayer/output/rationale.md
+    on_pass: next
+    on_retry: lead
+    on_fail: stop
+    max_retries: 2
+`)
+
+	cfg, err := pipeline.ParsePipeline(pipelineYAML)
+	if err != nil {
+		t.Fatalf("parse pipeline: %v", err)
+	}
+	if err := pipeline.Validate(cfg); err != nil {
+		t.Fatalf("validate pipeline: %v", err)
+	}
+
+	// Verify gate node parsed correctly
+	gate := cfg.FindNode("review")
+	if gate == nil {
+		t.Fatal("expected 'review' gate node")
+	}
+	if !gate.IsGate() {
+		t.Fatal("expected review to be a gate")
+	}
+	if len(gate.Dimensions) != 2 {
+		t.Fatalf("dimensions: got %d, want 2", len(gate.Dimensions))
+	}
+	if gate.Thresholds.Pass != 7.0 {
+		t.Errorf("pass threshold: got %f, want 7.0", gate.Thresholds.Pass)
+	}
+	if gate.Output.Type != "gate_result" {
+		t.Errorf("output type: got %q, want gate_result", gate.Output.Type)
+	}
 }

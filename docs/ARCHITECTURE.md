@@ -193,7 +193,8 @@ Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is 
 |--------|------|---------|
 | Model | `internal/v3/model/` | Domain types: NodeOutcome, CompletionResult, ClimbInput/Output |
 | Pipeline | `internal/v3/pipeline/` | YAML parser, validator, default setter→lead→spotter config |
-| Events | `internal/v3/events/` | JSONL event logger for pipeline observability |
+| Gate | `internal/v3/gate/` | Gate result parsing, weighted scoring, threshold routing, prompt builder |
+| Events | `internal/v3/events/` | JSONL event logger for pipeline observability (node + gate events) |
 | Outcome | `internal/v3/outcome/` | Outcome detection: verdict.txt > output file first line > type default |
 | Session | `internal/v3/session/` | Hooks config generator, tmux-backed Claude session spawner |
 | Temporal | `internal/v3/temporal/` | ClimbWorkflow, NodeActivity (spawn + heartbeat + poll completion) |
@@ -201,11 +202,13 @@ Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is 
 
 ### Key Concepts
 
-- **Activity Per Node**: Each pipeline node = one Temporal Activity. Simplest model.
+- **Two pipeline primitives**: Nodes (constructive — produce artifacts) and Gates (adversarial — evaluate artifacts with multi-dimensional scoring)
+- **Activity Per Node**: Each pipeline node/gate = one Temporal Activity. Simplest model.
 - **File-based completion**: Stop hook calls `belayer node-complete` which writes `.belayer/completion/<id>-<node>-attempt-<N>.json`
+- **Gate scoring**: Gates produce `gate-result.json` (structured scores) + `rationale.md` (human-readable). Activity computes weighted score from YAML-declared dimensions/weights and applies threshold routing (score-then-route anti-gaming)
 - **Natural language roles**: Node descriptions are prompts passed via `--append-system-prompt`
 - **Attempt-scoped**: Completion files, output paths, and verdict files include attempt number to prevent stale reads
-- **CLI entry point**: `belayer climb --file design.md` → Temporal workflow → setter → lead → spotter → branch
+- **CLI entry point**: `belayer climb --file design.md` → Temporal workflow → setter → lead → spotter(gate) → branch
 
 ## Architecture Decision Records
 

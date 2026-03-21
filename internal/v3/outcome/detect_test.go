@@ -149,6 +149,21 @@ func TestCodeTypeDefaultPass(t *testing.T) {
 	}
 }
 
+func TestDetect_GateResultType_DefaultsToPass(t *testing.T) {
+	workDir := t.TempDir()
+	node := &pipeline.NodeConfig{
+		Name:   "review",
+		Type:   pipeline.NodeTypeGate,
+		Output: pipeline.OutputConfig{Type: "gate_result"},
+	}
+
+	result := Detect(node, workDir, 0)
+	// Gate result nodes default to PASS — the activity handles scoring.
+	if result.Outcome != model.OutcomePass {
+		t.Errorf("outcome: got %q, want %q", result.Outcome, model.OutcomePass)
+	}
+}
+
 // --- precedence: verdict.txt over output file ---
 
 func TestVerdictTakesPrecedenceOverOutputFile(t *testing.T) {

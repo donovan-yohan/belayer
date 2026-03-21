@@ -102,3 +102,155 @@ func TestValidateMissingOutputType(t *testing.T) {
 		t.Errorf("error should mention output.type, got: %v", err)
 	}
 }
+
+func validGatePipeline() *PipelineConfig {
+	return &PipelineConfig{
+		Name: "gate-pipeline",
+		Nodes: []NodeConfig{
+			{
+				Name:   "lead",
+				Type:   NodeTypeNode,
+				Output: OutputConfig{Type: "code"},
+				OnPass: "review",
+				OnFail: "stop",
+			},
+			{
+				Name: "review",
+				Type: NodeTypeGate,
+				Output: OutputConfig{Type: "gate_result"},
+				Dimensions: []DimensionConfig{
+					{Name: "correctness", Description: "works?", Weight: 0.6},
+					{Name: "quality", Description: "clean?", Weight: 0.4},
+				},
+				Thresholds: ThresholdConfig{Pass: 7.0, Retry: 4.0},
+				OnPass:     "next",
+				OnRetry:    "lead",
+				OnFail:     "stop",
+			},
+		},
+	}
+}
+
+func TestValidateGatePipelineValid(t *testing.T) {
+	if err := Validate(validGatePipeline()); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidateGateNoDimensions(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Dimensions = nil
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for gate with no dimensions")
+	}
+	if !strings.Contains(err.Error(), "dimension") {
+		t.Errorf("error should mention dimension, got: %v", err)
+	}
+}
+
+func TestValidateGateWeightsDontSumToOne(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Dimensions[0].Weight = 0.3 // 0.3 + 0.4 = 0.7
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for weights not summing to 1.0")
+	}
+	if !strings.Contains(err.Error(), "sum to") {
+		t.Errorf("error should mention sum, got: %v", err)
+	}
+}
+
+func TestValidateGateDuplicateDimensionName(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Dimensions[1].Name = "correctness" // duplicate
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for duplicate dimension name")
+	}
+	if !strings.Contains(err.Error(), "duplicate dimension") {
+		t.Errorf("error should mention duplicate dimension, got: %v", err)
+	}
+}
+
+func TestValidateGateRetryAbovePass(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Thresholds.Retry = 8.0 // retry > pass
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for retry >= pass")
+	}
+	if !strings.Contains(err.Error(), "retry") {
+		t.Errorf("error should mention retry, got: %v", err)
+	}
+}
+
+func TestValidateGatePassThresholdOutOfRange(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Thresholds.Pass = 11.0 // > 10
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for pass threshold > 10")
+	}
+	if !strings.Contains(err.Error(), "pass") {
+		t.Errorf("error should mention pass, got: %v", err)
+	}
+}
+
+func TestValidateGateRetryThresholdNegative(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Thresholds.Retry = -1.0
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for negative retry threshold")
+	}
+	if !strings.Contains(err.Error(), "retry") {
+		t.Errorf("error should mention retry, got: %v", err)
+	}
+}
+
+func TestValidateGateResultOutputType(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Output.Type = "gate_result"
+	if err := Validate(cfg); err != nil {
+		t.Errorf("gate_result should be valid output type, got: %v", err)
+	}
+}
+
+func TestValidateGateWithNonGateResultOutput(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Output.Type = "file" // gate must use gate_result
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for gate with non-gate_result output")
+	}
+	if !strings.Contains(err.Error(), "gate_result") {
+		t.Errorf("error should mention gate_result, got: %v", err)
+	}
+}
+
+func TestValidateNonGateWithGateResultOutput(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Nodes[0].Output.Type = "gate_result" // non-gate must not use gate_result
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for non-gate with gate_result output")
+	}
+	if !strings.Contains(err.Error(), "gate_result") {
+		t.Errorf("error should mention gate_result, got: %v", err)
+	}
+}
+
+func TestValidateNonGateWithDimensions(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Nodes[0].Dimensions = []DimensionConfig{
+		{Name: "x", Weight: 1.0},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for non-gate with dimensions")
+	}
+	if !strings.Contains(err.Error(), "dimensions") {
+		t.Errorf("error should mention dimensions, got: %v", err)
+	}
+}

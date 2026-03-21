@@ -139,3 +139,33 @@ func TestLogger_AppendToExisting(t *testing.T) {
 		t.Errorf("expected 2 lines after append, got %d", count)
 	}
 }
+
+func TestGateEvents(t *testing.T) {
+	evt := GateStarted("review", 1)
+	if evt.Type != "gate_started" {
+		t.Errorf("Type: got %q, want %q", evt.Type, "gate_started")
+	}
+	if evt.Node != "review" {
+		t.Errorf("Node: got %q, want %q", evt.Node, "review")
+	}
+
+	scores := map[string]float64{"correctness": 8.0, "quality": 7.0}
+	scored := GateScored("review", 1, scores, 7.5)
+	if scored.Type != "gate_scored" {
+		t.Errorf("Type: got %q, want %q", scored.Type, "gate_scored")
+	}
+	if scored.WeightedScore != 7.5 {
+		t.Errorf("WeightedScore: got %f, want 7.5", scored.WeightedScore)
+	}
+	if scored.DimensionScores["correctness"] != 8.0 {
+		t.Errorf("correctness score: got %f, want 8.0", scored.DimensionScores["correctness"])
+	}
+
+	completed := GateCompleted("review", 1, "PASS", 7.5)
+	if completed.Type != "gate_completed" {
+		t.Errorf("Type: got %q, want %q", completed.Type, "gate_completed")
+	}
+	if completed.WeightedScore != 7.5 {
+		t.Errorf("WeightedScore: got %f, want 7.5", completed.WeightedScore)
+	}
+}

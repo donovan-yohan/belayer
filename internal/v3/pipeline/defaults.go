@@ -4,6 +4,7 @@ package pipeline
 const DefaultPipelineYAML = `name: default-climb
 nodes:
   - name: setter
+    type: node
     description: |
       You are the setter. You receive a design document and create a detailed
       implementation plan. Do NOT write code. Your output is a plan.md file
@@ -23,6 +24,7 @@ nodes:
     max_retries: 2
 
   - name: lead
+    type: node
     description: |
       You are the lead. You receive an implementation plan and write the code.
       Focus on clean, tested implementation. Follow the plan closely.
@@ -40,19 +42,40 @@ nodes:
     max_retries: 3
 
   - name: spotter
+    type: gate
     description: |
-      You are the spotter — an adversarial code reviewer. You receive a git
-      diff and review it for quality, correctness, and adherence to the plan.
+      You are the spotter — an adversarial code reviewer. Review the code
+      changes for spec compliance, test contract fulfillment, and runtime
+      correctness.
 
-      Run /harness:review to review the changes.
-      Write your verdict to .belayer/output/review.md.
-      Format: start with PASS, RETRY, or FAIL on the first line.
-      If RETRY, include specific feedback for the lead to address.
+      For each dimension below, provide:
+      - A score from 0-10
+      - A brief rationale (1-2 sentences)
+      - Specific issues found (if any)
+
+      Be honest. Gaming the score helps no one.
     input:
       type: code
+    dimensions:
+      - name: spec_compliance
+        description: "Do the changes match what was specified in the plan?"
+        weight: 0.35
+        rubric: "9-10: exact match, 6-8: minor deviations, 3-5: significant gaps, 0-2: wrong direction"
+      - name: test_contracts
+        description: "Are test contracts fulfilled? Do tests actually test the right things?"
+        weight: 0.3
+        rubric: "9-10: comprehensive, 6-8: happy path covered, 3-5: minimal tests, 0-2: untested"
+      - name: runtime_correctness
+        description: "Would this work in production? Runtime errors, performance, security?"
+        weight: 0.35
+        rubric: "9-10: production-ready, 6-8: minor concerns, 3-5: significant risks, 0-2: broken"
+    thresholds:
+      pass: 7.0
+      retry: 4.0
     output:
-      type: file
-      path: .belayer/output/review.md
+      type: gate_result
+      path: .belayer/output/gate-result.json
+      rationale_path: .belayer/output/rationale.md
     on_pass: next
     on_retry: lead
     on_fail: stop

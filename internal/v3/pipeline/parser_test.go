@@ -72,6 +72,96 @@ func TestParsePipelineFileNotFound(t *testing.T) {
 	}
 }
 
+const gateYAML = `
+name: gate-pipeline
+nodes:
+  - name: lead
+    type: node
+    description: Write code
+    output:
+      type: code
+    on_pass: review
+    on_fail: stop
+  - name: review
+    type: gate
+    description: Review the code
+    input:
+      type: code
+    dimensions:
+      - name: correctness
+        description: "Does the code work?"
+        weight: 0.5
+      - name: quality
+        description: "Is the code clean?"
+        weight: 0.5
+        rubric: "9-10: excellent, 6-8: minor issues"
+    thresholds:
+      pass: 7.0
+      retry: 4.0
+    output:
+      type: gate_result
+      path: .belayer/output/gate-result.json
+      rationale_path: .belayer/output/rationale.md
+    on_pass: next
+    on_retry: lead
+    on_fail: stop
+    max_retries: 2
+`
+
+func TestParsePipelineGateNode(t *testing.T) {
+	cfg, err := ParsePipeline([]byte(gateYAML))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.Nodes) != 2 {
+		t.Fatalf("Nodes: got %d, want 2", len(cfg.Nodes))
+	}
+
+	gate := cfg.Nodes[1]
+	if gate.Type != NodeTypeGate {
+		t.Errorf("Type: got %q, want %q", gate.Type, NodeTypeGate)
+	}
+	if len(gate.Dimensions) != 2 {
+		t.Fatalf("Dimensions: got %d, want 2", len(gate.Dimensions))
+	}
+	if gate.Dimensions[0].Name != "correctness" {
+		t.Errorf("Dimensions[0].Name: got %q, want %q", gate.Dimensions[0].Name, "correctness")
+	}
+	if gate.Dimensions[0].Weight != 0.5 {
+		t.Errorf("Dimensions[0].Weight: got %f, want 0.5", gate.Dimensions[0].Weight)
+	}
+	if gate.Dimensions[1].Rubric != "9-10: excellent, 6-8: minor issues" {
+		t.Errorf("Dimensions[1].Rubric: got %q", gate.Dimensions[1].Rubric)
+	}
+	if gate.Thresholds.Pass != 7.0 {
+		t.Errorf("Thresholds.Pass: got %f, want 7.0", gate.Thresholds.Pass)
+	}
+	if gate.Thresholds.Retry != 4.0 {
+		t.Errorf("Thresholds.Retry: got %f, want 4.0", gate.Thresholds.Retry)
+	}
+	if gate.Output.RationalePath != ".belayer/output/rationale.md" {
+		t.Errorf("Output.RationalePath: got %q", gate.Output.RationalePath)
+	}
+}
+
+func TestIsGate(t *testing.T) {
+	node := &NodeConfig{Name: "lead", Type: NodeTypeNode}
+	if node.IsGate() {
+		t.Error("expected node to not be a gate")
+	}
+
+	gate := &NodeConfig{Name: "review", Type: NodeTypeGate}
+	if !gate.IsGate() {
+		t.Error("expected gate to be a gate")
+	}
+
+	// Default (empty type) should not be a gate.
+	empty := &NodeConfig{Name: "default"}
+	if empty.IsGate() {
+		t.Error("expected empty type to not be a gate")
+	}
+}
+
 func TestOutputKey(t *testing.T) {
 	// No key set: falls back to node name.
 	n := &NodeConfig{Name: "build", Output: OutputConfig{Type: "file"}}
