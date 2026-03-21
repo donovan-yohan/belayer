@@ -193,6 +193,30 @@ func TestValidateGateResultOutputType(t *testing.T) {
 	}
 }
 
+func TestValidateGateWithNonGateResultOutput(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Output.Type = "file" // gate must use gate_result
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for gate with non-gate_result output")
+	}
+	if !strings.Contains(err.Error(), "gate_result") {
+		t.Errorf("error should mention gate_result, got: %v", err)
+	}
+}
+
+func TestValidateNonGateWithGateResultOutput(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Nodes[0].Output.Type = "gate_result" // non-gate must not use gate_result
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for non-gate with gate_result output")
+	}
+	if !strings.Contains(err.Error(), "gate_result") {
+		t.Errorf("error should mention gate_result, got: %v", err)
+	}
+}
+
 func TestValidateNonGateWithDimensions(t *testing.T) {
 	cfg := validPipeline()
 	cfg.Nodes[0].Dimensions = []DimensionConfig{

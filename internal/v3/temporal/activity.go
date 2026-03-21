@@ -137,6 +137,14 @@ func processGateResult(workDir string, node pipeline.NodeConfig) (model.Completi
 	for i, d := range node.Dimensions {
 		expectedDims[i] = d.Name
 	}
+	// Verify gate name matches to prevent stale/mismatched data.
+	if gateResult.Gate != "" && gateResult.Gate != node.Name {
+		return model.CompletionResult{
+			Outcome:  model.OutcomeFail,
+			Feedback: fmt.Sprintf("gate result mismatch: expected gate %q, got %q", node.Name, gateResult.Gate),
+		}, nil
+	}
+
 	if err := gate.ValidateGateResult(gateResult, expectedDims); err != nil {
 		return model.CompletionResult{
 			Outcome:  model.OutcomeFail,
@@ -150,10 +158,10 @@ func processGateResult(workDir string, node pipeline.NodeConfig) (model.Completi
 		rationalePath = ".belayer/output/rationale.md"
 	}
 	absRationalePath := filepath.Join(workDir, rationalePath)
-	if _, err := os.Stat(absRationalePath); os.IsNotExist(err) {
+	if _, err := os.Stat(absRationalePath); err != nil {
 		return model.CompletionResult{
 			Outcome:  model.OutcomeFail,
-			Feedback: "gate failed: rationale.md is mandatory but was not produced",
+			Feedback: fmt.Sprintf("gate failed: rationale.md is mandatory but was not accessible: %v", err),
 		}, nil
 	}
 

@@ -38,6 +38,13 @@ func Validate(cfg *PipelineConfig) error {
 		if !validOutputTypes[n.Output.Type] {
 			return fmt.Errorf("node %q: output.type must be \"file\", \"code\", or \"gate_result\", got %q", n.Name, n.Output.Type)
 		}
+		// Enforce consistency between node type and output type.
+		if n.IsGate() && n.Output.Type != "gate_result" {
+			return fmt.Errorf("gate %q: output.type must be \"gate_result\", got %q", n.Name, n.Output.Type)
+		}
+		if !n.IsGate() && n.Output.Type == "gate_result" {
+			return fmt.Errorf("node %q: output.type \"gate_result\" is only valid on gate nodes", n.Name)
+		}
 		for _, ref := range []struct {
 			field string
 			value string
