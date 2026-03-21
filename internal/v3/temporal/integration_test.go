@@ -204,3 +204,68 @@ func (s *IntegrationTestSuite) TestEndToEnd_RetryLoop() {
 	s.Equal(model.ClimbCompleted, result.Status)
 	s.Equal(2, calls, "spotter should have been called twice (retry + pass)")
 }
+
+// TestIntegration_GatePipeline verifies gate pipeline parsing and validation end-to-end.
+func TestIntegration_GatePipeline(t *testing.T) {
+	pipelineYAML := []byte(`
+name: gate-test
+nodes:
+  - name: lead
+    type: node
+    description: Write code
+    output:
+      type: code
+    on_pass: review
+    on_fail: stop
+    max_retries: 3
+  - name: review
+    type: gate
+    description: Review the code
+    input:
+      type: code
+    dimensions:
+      - name: correctness
+        description: "Does it work?"
+        weight: 0.6
+      - name: quality
+        description: "Is it clean?"
+        weight: 0.4
+    thresholds:
+      pass: 7.0
+      retry: 4.0
+    output:
+      type: gate_result
+      path: .belayer/output/gate-result.json
+      rationale_path: .belayer/output/rationale.md
+    on_pass: next
+    on_retry: lead
+    on_fail: stop
+    max_retries: 2
+`)
+
+	cfg, err := pipeline.ParsePipeline(pipelineYAML)
+	if err != nil {
+		t.Fatalf("parse pipeline: %v", err)
+	}
+	if err := pipeline.Validate(cfg); err != nil {
+		t.Fatalf("validate pipeline: %v", err)
+	}
+
+	// Verify gate node parsed correctly
+	gate := cfg.FindNode("review")
+	if gate == nil {
+		t.Fatal("expected 'review' gate node")
+	}
+	if !gate.IsGate() {
+		t.Fatal("expected review to be a gate")
+	}
+	if len(gate.Dimensions) != 2 {
+		t.Fatalf("dimensions: got %d, want 2", len(gate.Dimensions))
+	}
+	if gate.Thresholds.Pass != 7.0 {
+		t.Errorf("pass threshold: got %f, want 7.0", gate.Thresholds.Pass)
+	}
+	if gate.Output.Type != "gate_result" {
+		t.Errorf("output type: got %q, want gate_result", gate.Output.Type)
+	}
+}
