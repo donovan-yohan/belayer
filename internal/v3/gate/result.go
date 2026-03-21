@@ -3,10 +3,21 @@ package gate
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
 )
+
+// ScopedPath inserts an attempt suffix before the file extension, producing
+// attempt-scoped output paths (e.g., "gate-result.json" → "gate-result-attempt-0.json").
+// This prevents stale gate outputs from prior attempts from being reused.
+func ScopedPath(basePath string, attempt int) string {
+	ext := filepath.Ext(basePath)
+	base := strings.TrimSuffix(basePath, ext)
+	return fmt.Sprintf("%s-attempt-%d%s", base, attempt, ext)
+}
 
 // DimensionResult holds the score and rationale for a single gate dimension.
 type DimensionResult struct {

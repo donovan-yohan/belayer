@@ -46,13 +46,18 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		return nil, fmt.Errorf("clean stale completion files: %w", err)
 	}
 
+	// 1b. For gate nodes, clean stale gate output files from previous attempts.
+	if input.Node.IsGate() {
+		cleanStaleGateOutputs(input.WorkDir, input.Node, input.Attempt)
+	}
+
 	// 2. Write hooks config.
 	if err := session.WriteHooksConfig(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt); err != nil {
 		return nil, fmt.Errorf("write hooks config: %w", err)
 	}
 
 	// 3. Build input prompt.
-	inputPrompt := buildInputPrompt(input.Node, input.Artifacts, input.WorkDir)
+	inputPrompt := buildInputPrompt(input.Node, input.Artifacts, input.WorkDir, input.Attempt)
 
 	// 4. For code-type inputs, materialize diff files.
 	if input.Node.Input.Type == "code" {
@@ -92,7 +97,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 
 	// For gate nodes, post-process: read gate-result.json, score, apply thresholds.
 	if input.Node.IsGate() {
-		gateResult, err := processGateResult(input.WorkDir, input.Node)
+		gateResult, err := processGateResult(input.WorkDir, input.Node, input.Attempt)
 		if err != nil {
 			return &NodeActivityOutput{
 				Result: model.CompletionResult{
@@ -112,12 +117,13 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 // processGateResult reads gate-result.json, validates, computes weighted score,
 // and applies thresholds to determine the gate outcome. This is the score-then-route
 // pattern: the activity decides outcome, not the Claude session.
-func processGateResult(workDir string, node pipeline.NodeConfig) (model.CompletionResult, error) {
-	// Resolve gate-result.json path
-	resultPath := node.Output.Path
-	if resultPath == "" {
-		resultPath = ".belayer/output/gate-result.json"
+func processGateResult(workDir string, node pipeline.NodeConfig, attempt int) (model.CompletionResult, error) {
+	// Resolve attempt-scoped gate-result.json path.
+	resultBase := node.Output.Path
+	if resultBase == "" {
+		resultBase = ".belayer/output/gate-result.json"
 	}
+	resultPath := gate.ScopedPath(resultBase, attempt)
 	absResultPath := filepath.Join(workDir, resultPath)
 
 	// Read gate-result.json
@@ -153,10 +159,11 @@ func processGateResult(workDir string, node pipeline.NodeConfig) (model.Completi
 	}
 
 	// Check rationale exists (anti-gaming: rationale is mandatory)
-	rationalePath := node.Output.RationalePath
-	if rationalePath == "" {
-		rationalePath = ".belayer/output/rationale.md"
+	rationaleBase := node.Output.RationalePath
+	if rationaleBase == "" {
+		rationaleBase = ".belayer/output/rationale.md"
 	}
+	rationalePath := gate.ScopedPath(rationaleBase, attempt)
 	absRationalePath := filepath.Join(workDir, rationalePath)
 	if _, err := os.Stat(absRationalePath); err != nil {
 		return model.CompletionResult{
@@ -247,11 +254,31 @@ func cleanStaleCompletionFiles(workDir, taskID, nodeName string, currentAttempt 
 	return nil
 }
 
+// cleanStaleGateOutputs removes gate-result and rationale files from previous attempts.
+func cleanStaleGateOutputs(workDir string, node pipeline.NodeConfig, currentAttempt int) {
+	resultBase := node.Output.Path
+	if resultBase == "" {
+		resultBase = ".belayer/output/gate-result.json"
+	}
+	rationaleBase := node.Output.RationalePath
+	if rationaleBase == "" {
+		rationaleBase = ".belayer/output/rationale.md"
+	}
+	for i := 0; i < currentAttempt; i++ {
+		_ = os.Remove(filepath.Join(workDir, gate.ScopedPath(resultBase, i)))
+		_ = os.Remove(filepath.Join(workDir, gate.ScopedPath(rationaleBase, i)))
+	}
+}
+
 // buildInputPrompt constructs the input prompt for a node based on its input type and artifacts.
-func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string, workDir string) string {
+func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string, workDir string, attempt ...int) string {
 	if node.IsGate() {
+		a := 0
+		if len(attempt) > 0 {
+			a = attempt[0]
+		}
 		var sb strings.Builder
-		sb.WriteString(gate.BuildGatePrompt(node))
+		sb.WriteString(gate.BuildGatePrompt(node, a))
 		sb.WriteString("\n")
 		switch node.Input.Type {
 		case "code":

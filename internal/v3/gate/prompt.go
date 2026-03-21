@@ -9,7 +9,7 @@ import (
 
 // BuildGatePrompt constructs the structured prompt for a gate's Claude session.
 // This prompt includes dimension definitions, rubrics, and output format instructions.
-func BuildGatePrompt(node pipeline.NodeConfig) string {
+func BuildGatePrompt(node pipeline.NodeConfig, attempt int) string {
 	var sb strings.Builder
 
 	sb.WriteString("You are evaluating work as a quality gate.\n\n")
@@ -28,15 +28,17 @@ func BuildGatePrompt(node pipeline.NodeConfig) string {
 		}
 	}
 
-	// Resolve output paths (use config values, fall back to defaults).
-	resultPath := node.Output.Path
-	if resultPath == "" {
-		resultPath = ".belayer/output/gate-result.json"
+	// Resolve output paths (use config values, fall back to defaults), scoped by attempt.
+	resultBase := node.Output.Path
+	if resultBase == "" {
+		resultBase = ".belayer/output/gate-result.json"
 	}
-	rationalePath := node.Output.RationalePath
-	if rationalePath == "" {
-		rationalePath = ".belayer/output/rationale.md"
+	resultPath := ScopedPath(resultBase, attempt)
+	rationaleBase := node.Output.RationalePath
+	if rationaleBase == "" {
+		rationaleBase = ".belayer/output/rationale.md"
 	}
+	rationalePath := ScopedPath(rationaleBase, attempt)
 
 	// Output instructions
 	sb.WriteString("\nProduce two files:\n\n")
@@ -44,7 +46,7 @@ func BuildGatePrompt(node pipeline.NodeConfig) string {
 	sb.WriteString("```json\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"gate\": \"" + node.Name + "\",\n")
-	sb.WriteString("  \"attempt\": 0,\n")
+	sb.WriteString(fmt.Sprintf("  \"attempt\": %d,\n", attempt))
 	sb.WriteString("  \"dimensions\": {\n")
 	for i, dim := range node.Dimensions {
 		comma := ","

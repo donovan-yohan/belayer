@@ -18,7 +18,7 @@ func TestBuildGatePrompt_IncludesDimensions(t *testing.T) {
 		},
 	}
 
-	prompt := BuildGatePrompt(node)
+	prompt := BuildGatePrompt(node, 0)
 
 	if !strings.Contains(prompt, "correctness") {
 		t.Error("prompt should contain dimension name 'correctness'")
@@ -29,11 +29,11 @@ func TestBuildGatePrompt_IncludesDimensions(t *testing.T) {
 	if !strings.Contains(prompt, "9-10: great") {
 		t.Error("prompt should contain rubric when present")
 	}
-	if !strings.Contains(prompt, "gate-result.json") {
-		t.Error("prompt should mention output file")
+	if !strings.Contains(prompt, "gate-result-attempt-0.json") {
+		t.Error("prompt should mention attempt-scoped output file")
 	}
-	if !strings.Contains(prompt, "rationale.md") {
-		t.Error("prompt should mention rationale file")
+	if !strings.Contains(prompt, "rationale-attempt-0.md") {
+		t.Error("prompt should mention attempt-scoped rationale file")
 	}
 }
 
@@ -46,7 +46,7 @@ func TestBuildGatePrompt_NoRubric(t *testing.T) {
 		},
 	}
 
-	prompt := BuildGatePrompt(node)
+	prompt := BuildGatePrompt(node, 0)
 
 	if strings.Contains(prompt, "Rubric:") {
 		t.Error("prompt should not contain Rubric label when no rubric set")

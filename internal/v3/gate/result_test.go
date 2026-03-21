@@ -138,3 +138,22 @@ func TestApplyThresholds(t *testing.T) {
 		}
 	}
 }
+
+func TestScopedPath(t *testing.T) {
+	tests := []struct {
+		base    string
+		attempt int
+		want    string
+	}{
+		{".belayer/output/gate-result.json", 0, ".belayer/output/gate-result-attempt-0.json"},
+		{".belayer/output/gate-result.json", 2, ".belayer/output/gate-result-attempt-2.json"},
+		{".belayer/output/rationale.md", 1, ".belayer/output/rationale-attempt-1.md"},
+		{"custom/path/review.json", 3, "custom/path/review-attempt-3.json"},
+	}
+	for _, tt := range tests {
+		got := ScopedPath(tt.base, tt.attempt)
+		if got != tt.want {
+			t.Errorf("ScopedPath(%q, %d): got %q, want %q", tt.base, tt.attempt, got, tt.want)
+		}
+	}
+}
