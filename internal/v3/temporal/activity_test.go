@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/donovan-yohan/belayer/internal/v3/gate"
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
 )
@@ -76,9 +75,7 @@ func TestNodeActivity_CleansStaleCompletionFiles(t *testing.T) {
 	// Also write attempt 2 file so we can confirm it's untouched
 	writeCompletionFile(t, workDir, taskID, nodeName, 2, model.CompletionResult{Outcome: model.OutcomePass, Attempt: 2})
 
-	if err := cleanStaleCompletionFiles(workDir, taskID, nodeName, 2); err != nil {
-		t.Fatalf("cleanStaleCompletionFiles: %v", err)
-	}
+	cleanStaleCompletionFiles(workDir, taskID, nodeName, 2)
 
 	// Attempt 1 should be gone.
 	staleFile := filepath.Join(workDir, ".belayer", "completion", taskID+"-"+nodeName+"-attempt-1.json")
@@ -105,7 +102,7 @@ func TestPrepareNodeInputs_DesignDocInput(t *testing.T) {
 		"design": "/tmp/design.md",
 	}
 
-	prompt := buildInputPrompt(node, artifacts, "/tmp/work")
+	prompt := buildInputPrompt(node, artifacts)
 	if !strings.Contains(prompt, "/tmp/design.md") {
 		t.Errorf("expected artifact path in prompt, got: %s", prompt)
 	}
@@ -119,7 +116,7 @@ func TestPrepareNodeInputs_CodeInput(t *testing.T) {
 		},
 	}
 
-	prompt := buildInputPrompt(node, nil, "/tmp/work")
+	prompt := buildInputPrompt(node, nil)
 	if !strings.Contains(strings.ToLower(prompt), "diff") {
 		t.Errorf("expected 'diff' in code input prompt, got: %s", prompt)
 	}
@@ -153,17 +150,35 @@ func TestBuildInputPrompt_GateNode(t *testing.T) {
 		},
 	}
 
-	prompt := buildInputPrompt(node, nil, "/tmp/work")
+	prompt := buildInputPrompt(node, nil)
 	if !strings.Contains(prompt, "correctness") {
 		t.Error("gate prompt should include dimension names")
 	}
-	if !strings.Contains(prompt, "gate-result-attempt-0.json") {
-		t.Error("gate prompt should mention attempt-scoped gate-result file")
+	if !strings.Contains(prompt, "gate-result.json") {
+		t.Error("gate prompt should mention gate-result.json")
 	}
 }
 
-func testGateNode() pipeline.NodeConfig {
-	return pipeline.NodeConfig{
+func TestProcessGateResult_Pass(t *testing.T) {
+	workDir := t.TempDir()
+	outputDir := filepath.Join(workDir, ".belayer", "output")
+	os.MkdirAll(outputDir, 0o755)
+
+	gateJSON := `{
+		"gate": "review",
+		"attempt": 0,
+		"dimensions": {
+			"correctness": {"score": 8, "rationale": "solid", "issues": []},
+			"quality": {"score": 7, "rationale": "clean", "issues": []}
+		},
+		"weighted_score": 7.6,
+		"outcome": "PASS",
+		"summary": "Good"
+	}`
+	os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(gateJSON), 0o644)
+	os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nLooks good."), 0o644)
+
+	node := pipeline.NodeConfig{
 		Name: "review",
 		Type: pipeline.NodeTypeGate,
 		Dimensions: []pipeline.DimensionConfig{
@@ -177,34 +192,8 @@ func testGateNode() pipeline.NodeConfig {
 			RationalePath: ".belayer/output/rationale.md",
 		},
 	}
-}
 
-// writeGateOutputs writes gate-result.json and rationale.md at attempt-scoped paths.
-func writeGateOutputs(t *testing.T, workDir string, node pipeline.NodeConfig, attempt int, gateJSON, rationale string) {
-	t.Helper()
-	outputDir := filepath.Join(workDir, ".belayer", "output")
-	os.MkdirAll(outputDir, 0o755)
-	resultPath := gate.ScopedPath(node.Output.Path, attempt)
-	os.WriteFile(filepath.Join(workDir, resultPath), []byte(gateJSON), 0o644)
-	if rationale != "" {
-		rationalePath := gate.ScopedPath(node.Output.RationalePath, attempt)
-		os.WriteFile(filepath.Join(workDir, rationalePath), []byte(rationale), 0o644)
-	}
-}
-
-func TestProcessGateResult_Pass(t *testing.T) {
-	workDir := t.TempDir()
-	node := testGateNode()
-	writeGateOutputs(t, workDir, node, 0, `{
-		"gate": "review", "attempt": 0,
-		"dimensions": {
-			"correctness": {"score": 8, "rationale": "solid", "issues": []},
-			"quality": {"score": 7, "rationale": "clean", "issues": []}
-		},
-		"weighted_score": 7.6, "outcome": "PASS", "summary": "Good"
-	}`, "# Review\nLooks good.")
-
-	result, err := processGateResult(workDir, node, 0)
+	result, err := processGateResult(workDir, node)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -215,17 +204,39 @@ func TestProcessGateResult_Pass(t *testing.T) {
 
 func TestProcessGateResult_Retry(t *testing.T) {
 	workDir := t.TempDir()
-	node := testGateNode()
-	writeGateOutputs(t, workDir, node, 0, `{
-		"gate": "review", "attempt": 0,
+	outputDir := filepath.Join(workDir, ".belayer", "output")
+	os.MkdirAll(outputDir, 0o755)
+
+	gateJSON := `{
+		"gate": "review",
+		"attempt": 0,
 		"dimensions": {
 			"correctness": {"score": 5, "rationale": "issues", "issues": ["bug"]},
 			"quality": {"score": 5, "rationale": "messy", "issues": ["style"]}
 		},
-		"weighted_score": 5.0, "outcome": "RETRY", "summary": "Needs work"
-	}`, "# Review\nFix bugs.")
+		"weighted_score": 5.0,
+		"outcome": "RETRY",
+		"summary": "Needs work"
+	}`
+	os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(gateJSON), 0o644)
+	os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nFix bugs."), 0o644)
 
-	result, err := processGateResult(workDir, node, 0)
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 0.6},
+			{Name: "quality", Weight: 0.4},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	result, err := processGateResult(workDir, node)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -239,17 +250,39 @@ func TestProcessGateResult_Retry(t *testing.T) {
 
 func TestProcessGateResult_Fail(t *testing.T) {
 	workDir := t.TempDir()
-	node := testGateNode()
-	writeGateOutputs(t, workDir, node, 0, `{
-		"gate": "review", "attempt": 0,
+	outputDir := filepath.Join(workDir, ".belayer", "output")
+	os.MkdirAll(outputDir, 0o755)
+
+	gateJSON := `{
+		"gate": "review",
+		"attempt": 0,
 		"dimensions": {
 			"correctness": {"score": 2, "rationale": "broken", "issues": ["crash"]},
 			"quality": {"score": 3, "rationale": "unreadable", "issues": []}
 		},
-		"weighted_score": 2.4, "outcome": "FAIL", "summary": "Fundamentally broken"
-	}`, "# Review\nBroken.")
+		"weighted_score": 2.4,
+		"outcome": "FAIL",
+		"summary": "Fundamentally broken"
+	}`
+	os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(gateJSON), 0o644)
+	os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nBroken."), 0o644)
 
-	result, err := processGateResult(workDir, node, 0)
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 0.6},
+			{Name: "quality", Weight: 0.4},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	result, err := processGateResult(workDir, node)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,16 +293,34 @@ func TestProcessGateResult_Fail(t *testing.T) {
 
 func TestProcessGateResult_MissingRationale(t *testing.T) {
 	workDir := t.TempDir()
-	node := testGateNode()
-	node.Dimensions = []pipeline.DimensionConfig{{Name: "correctness", Weight: 1.0}}
-	// Write gate-result but NO rationale
-	writeGateOutputs(t, workDir, node, 0, `{
-		"gate": "review", "attempt": 0,
-		"dimensions": {"correctness": {"score": 8, "rationale": "ok", "issues": []}},
-		"weighted_score": 8, "outcome": "PASS", "summary": "ok"
-	}`, "") // empty rationale → not written
+	outputDir := filepath.Join(workDir, ".belayer", "output")
+	os.MkdirAll(outputDir, 0o755)
 
-	result, err := processGateResult(workDir, node, 0)
+	gateJSON := `{
+		"gate": "review",
+		"attempt": 0,
+		"dimensions": {"correctness": {"score": 8, "rationale": "ok", "issues": []}},
+		"weighted_score": 8,
+		"outcome": "PASS",
+		"summary": "ok"
+	}`
+	os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(gateJSON), 0o644)
+
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 1.0},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	result, err := processGateResult(workDir, node)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -280,32 +331,23 @@ func TestProcessGateResult_MissingRationale(t *testing.T) {
 
 func TestProcessGateResult_MissingGateResultJSON(t *testing.T) {
 	workDir := t.TempDir()
-	node := testGateNode()
-	node.Dimensions = []pipeline.DimensionConfig{{Name: "correctness", Weight: 1.0}}
 
-	_, err := processGateResult(workDir, node, 0)
+	node := pipeline.NodeConfig{
+		Name: "review",
+		Type: pipeline.NodeTypeGate,
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 1.0},
+		},
+		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
+		Output: pipeline.OutputConfig{
+			Type:          "gate_result",
+			Path:          ".belayer/output/gate-result.json",
+			RationalePath: ".belayer/output/rationale.md",
+		},
+	}
+
+	_, err := processGateResult(workDir, node)
 	if err == nil {
 		t.Fatal("expected error for missing gate-result.json")
-	}
-}
-
-func TestProcessGateResult_StaleAttemptIgnored(t *testing.T) {
-	workDir := t.TempDir()
-	node := testGateNode()
-
-	// Write gate output for attempt 0 (stale)
-	writeGateOutputs(t, workDir, node, 0, `{
-		"gate": "review", "attempt": 0,
-		"dimensions": {
-			"correctness": {"score": 9, "rationale": "stale", "issues": []},
-			"quality": {"score": 9, "rationale": "stale", "issues": []}
-		},
-		"weighted_score": 9, "outcome": "PASS", "summary": "Stale"
-	}`, "# Stale rationale")
-
-	// Reading attempt 1 should fail — no files at attempt-1 paths
-	_, err := processGateResult(workDir, node, 1)
-	if err == nil {
-		t.Fatal("expected error — attempt 1 gate output should not exist, proving stale attempt 0 is not reused")
 	}
 }

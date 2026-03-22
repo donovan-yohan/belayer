@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/stretchr/testify/suite"
 	"go.temporal.io/sdk/testsuite"
 
-	"github.com/donovan-yohan/belayer/internal/v3/gate"
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
 	"github.com/donovan-yohan/belayer/internal/v3/session"
@@ -52,34 +52,31 @@ func (r *retryThenPassSpawner) Spawn(_ context.Context, opts session.SpawnOpts) 
 		*r.spotterCalls++
 		outputDir := filepath.Join(r.workDir, ".belayer", "output")
 		os.MkdirAll(outputDir, 0o755)
-		// Write gate outputs at attempt-scoped paths.
-		resultPath := gate.ScopedPath(".belayer/output/gate-result.json", opts.Attempt)
-		rationalePath := gate.ScopedPath(".belayer/output/rationale.md", opts.Attempt)
 		if *r.spotterCalls == 1 {
 			// Write gate files that score in RETRY range (5.0, between retry=4.0 and pass=7.0).
-			os.WriteFile(filepath.Join(r.workDir, resultPath), []byte(fmt.Sprintf(`{
-				"gate": "spotter", "attempt": %d,
+			os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(`{
+				"gate": "spotter", "attempt": 0,
 				"dimensions": {
 					"spec_compliance": {"score": 5, "rationale": "issues", "issues": ["gap"]},
 					"test_contracts": {"score": 5, "rationale": "minimal", "issues": []},
 					"runtime_correctness": {"score": 5, "rationale": "concerns", "issues": []}
 				},
 				"weighted_score": 5.0, "outcome": "RETRY", "summary": "Needs work"
-			}`, opts.Attempt)), 0o644)
-			os.WriteFile(filepath.Join(r.workDir, rationalePath), []byte("# Review\nFix bugs."), 0o644)
+			}`), 0o644)
+			os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nFix bugs."), 0o644)
 			result = model.CompletionResult{Outcome: model.OutcomeRetry, Attempt: opts.Attempt}
 		} else {
 			// Write gate files that score in PASS range (8.0 >= pass=7.0).
-			os.WriteFile(filepath.Join(r.workDir, resultPath), []byte(fmt.Sprintf(`{
-				"gate": "spotter", "attempt": %d,
+			os.WriteFile(filepath.Join(outputDir, "gate-result.json"), []byte(`{
+				"gate": "spotter", "attempt": 0,
 				"dimensions": {
 					"spec_compliance": {"score": 8, "rationale": "ok", "issues": []},
 					"test_contracts": {"score": 8, "rationale": "ok", "issues": []},
 					"runtime_correctness": {"score": 8, "rationale": "ok", "issues": []}
 				},
 				"weighted_score": 8.0, "outcome": "PASS", "summary": "Good"
-			}`, opts.Attempt)), 0o644)
-			os.WriteFile(filepath.Join(r.workDir, rationalePath), []byte("# Review\nLooks good."), 0o644)
+			}`), 0o644)
+			os.WriteFile(filepath.Join(outputDir, "rationale.md"), []byte("# Review\nLooks good."), 0o644)
 			result = model.CompletionResult{Outcome: model.OutcomePass, Attempt: opts.Attempt}
 		}
 	} else {
@@ -115,6 +112,24 @@ func TestIntegrationSuite(t *testing.T) {
 
 // --- helpers ---
 
+// initGitRepo initializes a git repo with an initial commit so that
+// materializeCodeInput (git diff) works in tests.
+func initGitRepo(t *testing.T, workDir string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+}
+
 // writeFileAtPath creates parent dirs and writes content to a path inside workDir.
 func writeFileAtPath(t *testing.T, workDir, rel, content string) {
 	t.Helper()
@@ -132,12 +147,13 @@ func integrationPipeline() []byte {
 // TestEndToEnd_AllPass: fakeSpawner returns PASS for every node → ClimbCompleted.
 func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 	workDir := s.T().TempDir()
+	initGitRepo(s.T(), workDir)
 
 	// Pre-seed output files that the workflow checks for file-type nodes.
 	writeFileAtPath(s.T(), workDir, ".belayer/output/plan.md", "PASS\nHere is the plan.")
 	writeFileAtPath(s.T(), workDir, ".belayer/output/review.md", "PASS\nLooks good.")
-	// Pre-seed gate output files for the spotter gate node (attempt-scoped paths).
-	writeFileAtPath(s.T(), workDir, gate.ScopedPath(".belayer/output/gate-result.json", 0), `{
+	// Pre-seed gate output files for the spotter gate node.
+	writeFileAtPath(s.T(), workDir, ".belayer/output/gate-result.json", `{
 		"gate": "spotter", "attempt": 0,
 		"dimensions": {
 			"spec_compliance": {"score": 8, "rationale": "ok", "issues": []},
@@ -146,7 +162,7 @@ func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 		},
 		"weighted_score": 8.0, "outcome": "PASS", "summary": "Good"
 	}`)
-	writeFileAtPath(s.T(), workDir, gate.ScopedPath(".belayer/output/rationale.md", 0), "# Review\nLooks good.")
+	writeFileAtPath(s.T(), workDir, ".belayer/output/rationale.md", "# Review\nLooks good.")
 
 	spawner := &fakeSpawner{
 		workDir: workDir,
@@ -179,6 +195,7 @@ func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 // TestEndToEnd_RetryLoop: spotter returns RETRY on first call, PASS on second → ClimbCompleted.
 func (s *IntegrationTestSuite) TestEndToEnd_RetryLoop() {
 	workDir := s.T().TempDir()
+	initGitRepo(s.T(), workDir)
 
 	writeFileAtPath(s.T(), workDir, ".belayer/output/plan.md", "PASS\nHere is the plan.")
 	writeFileAtPath(s.T(), workDir, ".belayer/output/review.md", "PASS\nLooks good.")
@@ -218,7 +235,7 @@ nodes:
     type: node
     description: Write code
     output:
-      type: code
+      type: commit
     on_pass: review
     on_fail: stop
     max_retries: 3
@@ -226,7 +243,7 @@ nodes:
     type: gate
     description: Review the code
     input:
-      type: code
+      type: commit
     dimensions:
       - name: correctness
         description: "Does it work?"

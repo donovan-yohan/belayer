@@ -1,7 +1,4 @@
-package pipeline
-
-// DefaultPipelineYAML is the built-in setter → lead → spotter pipeline.
-const DefaultPipelineYAML = `name: default-climb
+name: team
 intake:
   - name: user-session
     type: interactive
@@ -21,7 +18,7 @@ nodes:
     output:
       type: file
       path: .belayer/output/plan.md
-    on_pass: next
+    on_pass: lead
     on_retry: setter
     on_fail: stop
     max_retries: 2
@@ -39,7 +36,7 @@ nodes:
       key: setter
     output:
       type: commit
-    on_pass: next
+    on_pass: spotter
     on_retry: self
     on_fail: stop
     max_retries: 3
@@ -79,10 +76,23 @@ nodes:
       type: gate_result
       path: .belayer/output/gate-result.json
       rationale_path: .belayer/output/rationale.md
-    on_pass: next
+    on_pass: pr-creator
     on_retry: lead
     on_fail: stop
     max_retries: 2
+
+  - name: pr-creator
+    type: node
+    description: |
+      Create a pull request from the implemented changes. Read the commit SHA
+      from your input context. Use the git branch to open a PR with a clear
+      title and summary of what was done.
+    input:
+      type: commit
+    output:
+      type: file
+      key: pr-url
+    on_pass: stop
+    on_fail: stop
 safety:
   max_concurrent_runs: 3
-`

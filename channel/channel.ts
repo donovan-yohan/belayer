@@ -100,7 +100,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         body: JSON.stringify({
           spec: args.spec,
           repos: args.repos || [],
-          pipeline: args.pipeline || "",
+          source: "interactive",
+          external_id: `submit-${Date.now()}`,
+          pipeline_name: (args.pipeline as string) || "",
         }),
       });
 

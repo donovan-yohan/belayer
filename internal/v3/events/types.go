@@ -1,12 +1,16 @@
 package events
 
-import "time"
+import (
+	"time"
+
+	"github.com/donovan-yohan/belayer/internal/v3/model"
+)
 
 type Event struct {
 	Timestamp       time.Time          `json:"ts"`
 	Type            string             `json:"event"`
 	Node            string             `json:"node,omitempty"`
-	Outcome         string             `json:"outcome,omitempty"`
+	Outcome         model.NodeOutcome  `json:"outcome,omitempty"`
 	Target          string             `json:"target,omitempty"`
 	Attempt         int                `json:"attempt,omitempty"`
 	DurationS       float64            `json:"duration_s,omitempty"`
@@ -28,7 +32,7 @@ func NodeStarted(node string, attempt int) Event {
 	return Event{Timestamp: time.Now(), Type: "node_started", Node: node, Attempt: attempt}
 }
 
-func NodeCompleted(node, outcome string, durationS float64) Event {
+func NodeCompleted(node string, outcome model.NodeOutcome, durationS float64) Event {
 	return Event{Timestamp: time.Now(), Type: "node_completed", Node: node, Outcome: outcome, DurationS: durationS}
 }
 
@@ -36,7 +40,7 @@ func NodeRetry(node, target, feedback string) Event {
 	return Event{Timestamp: time.Now(), Type: "node_retry", Node: node, Target: target, Feedback: feedback}
 }
 
-func PipelineCompleted(outcome string, durationS float64) Event {
+func PipelineCompleted(outcome model.NodeOutcome, durationS float64) Event {
 	return Event{Timestamp: time.Now(), Type: "pipeline_completed", Outcome: outcome, DurationS: durationS}
 }
 
@@ -59,7 +63,7 @@ func GateScored(gate string, attempt int, dimensionScores map[string]float64, we
 	}
 }
 
-func GateCompleted(gate string, attempt int, outcome string, weightedScore float64) Event {
+func GateCompleted(gate string, attempt int, outcome model.NodeOutcome, weightedScore float64) Event {
 	return Event{
 		Timestamp:     time.Now(),
 		Type:          "gate_completed",

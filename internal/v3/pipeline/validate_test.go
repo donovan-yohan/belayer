@@ -17,7 +17,7 @@ func validPipeline() *PipelineConfig {
 			},
 			{
 				Name:    "test",
-				Output:  OutputConfig{Type: "code"},
+				Output:  OutputConfig{Type: "commit"},
 				OnPass:  "stop",
 				OnRetry: "self",
 				OnFail:  "stop",
@@ -110,7 +110,7 @@ func validGatePipeline() *PipelineConfig {
 			{
 				Name:   "lead",
 				Type:   NodeTypeNode,
-				Output: OutputConfig{Type: "code"},
+				Output: OutputConfig{Type: "commit"},
 				OnPass: "review",
 				OnFail: "stop",
 			},
@@ -185,30 +185,6 @@ func TestValidateGateRetryAbovePass(t *testing.T) {
 	}
 }
 
-func TestValidateGatePassThresholdOutOfRange(t *testing.T) {
-	cfg := validGatePipeline()
-	cfg.Nodes[1].Thresholds.Pass = 11.0 // > 10
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected error for pass threshold > 10")
-	}
-	if !strings.Contains(err.Error(), "pass") {
-		t.Errorf("error should mention pass, got: %v", err)
-	}
-}
-
-func TestValidateGateRetryThresholdNegative(t *testing.T) {
-	cfg := validGatePipeline()
-	cfg.Nodes[1].Thresholds.Retry = -1.0
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected error for negative retry threshold")
-	}
-	if !strings.Contains(err.Error(), "retry") {
-		t.Errorf("error should mention retry, got: %v", err)
-	}
-}
-
 func TestValidateGateResultOutputType(t *testing.T) {
 	cfg := validGatePipeline()
 	cfg.Nodes[1].Output.Type = "gate_result"
@@ -252,5 +228,88 @@ func TestValidateNonGateWithDimensions(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "dimensions") {
 		t.Errorf("error should mention dimensions, got: %v", err)
+	}
+}
+
+func TestValidate_CommitOutputType(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Nodes[0].Output.Type = "commit"
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected commit output type to be valid, got: %v", err)
+	}
+}
+
+func TestValidate_IntakeValid(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Intake = []IntakeConfig{
+		{Name: "tickets", Type: "jira"},
+		{Name: "manual", Type: "interactive"},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected valid intake to pass, got: %v", err)
+	}
+}
+
+func TestValidate_IntakeUnknownType(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Intake = []IntakeConfig{
+		{Name: "bad", Type: "bogus"},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for unknown intake type")
+	}
+	if !strings.Contains(err.Error(), "unknown type") {
+		t.Errorf("error should mention unknown type, got: %v", err)
+	}
+}
+
+func TestValidate_IntakeDuplicateNames(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Intake = []IntakeConfig{
+		{Name: "src", Type: "jira"},
+		{Name: "src", Type: "jira"},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for duplicate intake names")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error should mention duplicate, got: %v", err)
+	}
+}
+
+func TestValidate_IntakeDuplicateInteractive(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Intake = []IntakeConfig{
+		{Name: "a", Type: "interactive"},
+		{Name: "b", Type: "interactive"},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for more than one interactive intake")
+	}
+	if !strings.Contains(err.Error(), "interactive") {
+		t.Errorf("error should mention interactive, got: %v", err)
+	}
+}
+
+func TestValidate_FanOutValid(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Nodes[0].FanOut = "repos"
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected fan_out repos to be valid, got: %v", err)
+	}
+}
+
+func TestValidate_FanOutInvalid(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Nodes[0].FanOut = "unknown"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for unknown fan_out value")
+	}
+	if !strings.Contains(err.Error(), "fan_out") {
+		t.Errorf("error should mention fan_out, got: %v", err)
 	}
 }

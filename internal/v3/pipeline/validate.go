@@ -30,13 +30,25 @@ func Validate(cfg *PipelineConfig) error {
 		"stop": true,
 		"self": true,
 	}
+	validOutputTypes := map[string]bool{
+		"file":        true,
+		"gate_result": true,
+		"commit":      true,
+	}
+	validNodeTypes := map[NodeType]bool{
+		"":           true,
+		NodeTypeNode: true,
+		NodeTypeGate: true,
+	}
 	for _, n := range cfg.Nodes {
+		if !validNodeTypes[n.Type] {
+			return fmt.Errorf("node %q: unknown type %q (must be \"node\" or \"gate\")", n.Name, n.Type)
+		}
 		if n.Output.Type == "" {
 			return fmt.Errorf("node %q: output.type is required", n.Name)
 		}
-		validOutputTypes := map[string]bool{"file": true, "code": true, "gate_result": true}
 		if !validOutputTypes[n.Output.Type] {
-			return fmt.Errorf("node %q: output.type must be \"file\", \"code\", or \"gate_result\", got %q", n.Name, n.Output.Type)
+			return fmt.Errorf("node %q: output.type must be \"file\", \"gate_result\", or \"commit\", got %q", n.Name, n.Output.Type)
 		}
 		// Enforce consistency between node type and output type.
 		if n.IsGate() && n.Output.Type != "gate_result" {
@@ -86,14 +98,42 @@ func Validate(cfg *PipelineConfig) error {
 			if n.Thresholds.Pass <= 0 || n.Thresholds.Pass > 10 {
 				return fmt.Errorf("gate %q: thresholds.pass must be in (0, 10], got %.1f", n.Name, n.Thresholds.Pass)
 			}
-			if n.Thresholds.Retry < 0 || n.Thresholds.Retry > 10 {
-				return fmt.Errorf("gate %q: thresholds.retry must be in [0, 10], got %.1f", n.Name, n.Thresholds.Retry)
+			if n.Thresholds.Retry < 0 {
+				return fmt.Errorf("gate %q: thresholds.retry must be non-negative, got %.1f", n.Name, n.Thresholds.Retry)
 			}
 			if n.Thresholds.Retry >= n.Thresholds.Pass {
 				return fmt.Errorf("gate %q: thresholds.retry (%.1f) must be less than thresholds.pass (%.1f)", n.Name, n.Thresholds.Retry, n.Thresholds.Pass)
 			}
 		} else if len(n.Dimensions) > 0 {
 			return fmt.Errorf("node %q: dimensions are only valid on gate nodes", n.Name)
+		}
+		if n.FanOut != "" && n.FanOut != "repos" {
+			return fmt.Errorf("node %q: unknown fan_out value %q", n.Name, n.FanOut)
+		}
+	}
+	// Validate intake configs.
+	validIntakeTypes := map[string]bool{
+		"jira":        true,
+		"interactive": true,
+	}
+	intakeNames := make(map[string]bool)
+	interactiveCount := 0
+	for _, intake := range cfg.Intake {
+		if intake.Name == "" {
+			return fmt.Errorf("intake: name is required")
+		}
+		if intakeNames[intake.Name] {
+			return fmt.Errorf("intake: duplicate name %q", intake.Name)
+		}
+		intakeNames[intake.Name] = true
+		if !validIntakeTypes[intake.Type] {
+			return fmt.Errorf("intake %q: unknown type %q", intake.Name, intake.Type)
+		}
+		if intake.Type == "interactive" {
+			interactiveCount++
+			if interactiveCount > 1 {
+				return fmt.Errorf("intake: only one interactive intake allowed")
+			}
 		}
 	}
 	return nil

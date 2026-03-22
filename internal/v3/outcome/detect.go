@@ -88,11 +88,12 @@ func typeDefault(node *pipeline.NodeConfig, workDir string, attempt int) model.C
 		}
 		return model.CompletionResult{Outcome: model.OutcomeFail, Attempt: attempt}
 	case "gate_result":
-		// Gate outcome is determined by the activity's scoring logic, not verdict detection.
-		// Default to PASS here — the activity overrides based on threshold evaluation.
+		// Defensive default: gate outcome is determined by processGateResult() in the activity,
+		// which is called directly — Detect() is not invoked for gates in current code.
+		// If this path ever becomes reachable, PASS is a safe no-op since the activity will override.
 		return model.CompletionResult{Outcome: model.OutcomePass, Attempt: attempt}
 	default:
-		// code and unknown types default to PASS (caller checks commits)
+		// commit and unknown types default to PASS (caller checks commits)
 		return model.CompletionResult{Outcome: model.OutcomePass, Attempt: attempt}
 	}
 }

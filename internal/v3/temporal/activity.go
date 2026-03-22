@@ -38,18 +38,29 @@ type Activities struct {
 	Spawner session.Spawner
 }
 
+// WriteFeedbackInput is the input to WriteFeedbackActivity.
+type WriteFeedbackInput struct {
+	WorkDir      string
+	FeedbackText string
+}
+
+// WriteFeedbackActivity writes feedback text to disk so the target session can read it on retry.
+func (a *Activities) WriteFeedbackActivity(ctx context.Context, input WriteFeedbackInput) (string, error) {
+	feedbackPath := filepath.Join(input.WorkDir, ".belayer", "input", "feedback.md")
+	if err := os.MkdirAll(filepath.Dir(feedbackPath), 0o755); err != nil {
+		return "", fmt.Errorf("create feedback dir: %w", err)
+	}
+	if err := os.WriteFile(feedbackPath, []byte(input.FeedbackText), 0o644); err != nil {
+		return "", fmt.Errorf("write feedback: %w", err)
+	}
+	return ".belayer/input/feedback.md", nil
+}
+
 // NodeActivity is the core Temporal activity that spawns a Claude session for a pipeline node,
 // polls for its completion file, and returns the result.
 func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) (*NodeActivityOutput, error) {
 	// 1. Clean stale completion files from previous attempts.
-	if err := cleanStaleCompletionFiles(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt); err != nil {
-		return nil, fmt.Errorf("clean stale completion files: %w", err)
-	}
-
-	// 1b. For gate nodes, clean stale gate output files from previous attempts.
-	if input.Node.IsGate() {
-		cleanStaleGateOutputs(input.WorkDir, input.Node, input.Attempt)
-	}
+	cleanStaleCompletionFiles(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt)
 
 	// 2. Write hooks config.
 	if err := session.WriteHooksConfig(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt); err != nil {
@@ -57,11 +68,14 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	}
 
 	// 3. Build input prompt.
-	inputPrompt := buildInputPrompt(input.Node, input.Artifacts, input.WorkDir, input.Attempt)
+	inputPrompt := buildInputPrompt(input.Node, input.Artifacts)
 
-	// 4. For code-type inputs, materialize diff files.
-	if input.Node.Input.Type == "code" {
+	// 4. For code/commit-type inputs, materialize diff files.
+	if input.Node.Input.Type == "code" || input.Node.Input.Type == "commit" {
 		if err := materializeCodeInput(input.WorkDir); err != nil {
+			if input.Node.IsGate() {
+				return nil, fmt.Errorf("materialize code input for gate %q: %w", input.Node.Name, err)
+			}
 			activity.GetLogger(ctx).Warn("Failed to materialize code input", "error", err)
 		}
 	}
@@ -87,9 +101,12 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		return nil, err
 	}
 
-	// 7. For code-type outputs, verify commits if startSHA is set.
-	if input.Node.Output.Type == "code" && input.StartSHA != "" {
-		if !hasNewCommits(input.WorkDir, input.StartSHA) {
+	// 7. For commit-type outputs, verify commits if startSHA is set.
+	if input.Node.Output.Type == "commit" && input.StartSHA != "" {
+		hasCommits, gitErr := hasNewCommits(input.WorkDir, input.StartSHA)
+		if gitErr != nil {
+			activity.GetLogger(ctx).Warn("Failed to check for new commits", "error", gitErr)
+		} else if !hasCommits {
 			result.Outcome = model.OutcomeRetry
 			result.Feedback = "no new commits detected since start"
 		}
@@ -97,15 +114,11 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 
 	// For gate nodes, post-process: read gate-result.json, score, apply thresholds.
 	if input.Node.IsGate() {
-		gateResult, err := processGateResult(input.WorkDir, input.Node, input.Attempt)
+		gateResult, err := processGateResult(input.WorkDir, input.Node)
 		if err != nil {
-			return &NodeActivityOutput{
-				Result: model.CompletionResult{
-					Outcome:  model.OutcomeFail,
-					Feedback: fmt.Sprintf("gate processing failed: %v", err),
-					Attempt:  input.Attempt,
-				},
-			}, nil
+			// Infrastructure failures (corrupt JSON, missing file) are real errors —
+			// return them so Temporal can retry, rather than masking as OutcomeFail.
+			return nil, fmt.Errorf("gate %q processing failed: %w", input.Node.Name, err)
 		}
 		gateResult.Attempt = input.Attempt
 		return &NodeActivityOutput{Result: gateResult}, nil
@@ -117,13 +130,12 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 // processGateResult reads gate-result.json, validates, computes weighted score,
 // and applies thresholds to determine the gate outcome. This is the score-then-route
 // pattern: the activity decides outcome, not the Claude session.
-func processGateResult(workDir string, node pipeline.NodeConfig, attempt int) (model.CompletionResult, error) {
-	// Resolve attempt-scoped gate-result.json path.
-	resultBase := node.Output.Path
-	if resultBase == "" {
-		resultBase = ".belayer/output/gate-result.json"
+func processGateResult(workDir string, node pipeline.NodeConfig) (model.CompletionResult, error) {
+	// Resolve gate-result.json path
+	resultPath := node.Output.Path
+	if resultPath == "" {
+		resultPath = ".belayer/output/gate-result.json"
 	}
-	resultPath := gate.ScopedPath(resultBase, attempt)
 	absResultPath := filepath.Join(workDir, resultPath)
 
 	// Read gate-result.json
@@ -159,11 +171,10 @@ func processGateResult(workDir string, node pipeline.NodeConfig, attempt int) (m
 	}
 
 	// Check rationale exists (anti-gaming: rationale is mandatory)
-	rationaleBase := node.Output.RationalePath
-	if rationaleBase == "" {
-		rationaleBase = ".belayer/output/rationale.md"
+	rationalePath := node.Output.RationalePath
+	if rationalePath == "" {
+		rationalePath = ".belayer/output/rationale.md"
 	}
-	rationalePath := gate.ScopedPath(rationaleBase, attempt)
 	absRationalePath := filepath.Join(workDir, rationalePath)
 	if _, err := os.Stat(absRationalePath); err != nil {
 		return model.CompletionResult{
@@ -173,7 +184,10 @@ func processGateResult(workDir string, node pipeline.NodeConfig, attempt int) (m
 	}
 
 	// Compute weighted score (score-then-route: we compute, not the session)
-	weightedScore := gate.ComputeWeightedScore(gateResult, node.Dimensions)
+	weightedScore, err := gate.ComputeWeightedScore(gateResult, node.Dimensions)
+	if err != nil {
+		return model.CompletionResult{}, fmt.Errorf("gate %q score computation: %w", node.Name, err)
+	}
 
 	// Apply thresholds
 	outcome := gate.ApplyThresholds(weightedScore, node.Thresholds)
@@ -221,8 +235,17 @@ func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, at
 }
 
 // recordHeartbeat calls activity.RecordHeartbeat safely, ignoring panics when called outside a Temporal worker.
-func recordHeartbeat(ctx context.Context, details ...interface{}) {
-	defer func() { recover() }() //nolint:errcheck
+func recordHeartbeat(ctx context.Context, details ...any) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Only swallow the expected "not in activity context" panic from Temporal SDK.
+			// Re-panic on unexpected errors to avoid hiding real bugs.
+			if msg, ok := r.(string); ok && strings.Contains(msg, "Not an activity context") {
+				return
+			}
+			panic(r)
+		}
+	}()
 	activity.RecordHeartbeat(ctx, details...)
 }
 
@@ -244,79 +267,52 @@ func readCompletionFile(workDir, taskID, nodeName string, attempt int) (model.Co
 }
 
 // cleanStaleCompletionFiles removes completion files from attempts < currentAttempt.
-func cleanStaleCompletionFiles(workDir, taskID, nodeName string, currentAttempt int) error {
+func cleanStaleCompletionFiles(workDir, taskID, nodeName string, currentAttempt int) {
 	dir := filepath.Join(workDir, ".belayer", "completion")
 	for i := 0; i < currentAttempt; i++ {
 		filename := fmt.Sprintf("%s-%s-attempt-%d.json", taskID, nodeName, i)
-		path := filepath.Join(dir, filename)
-		_ = os.Remove(path) // ignore not-found errors
+		_ = os.Remove(filepath.Join(dir, filename)) // ignore not-found errors
 	}
-	return nil
 }
 
-// cleanStaleGateOutputs removes gate-result and rationale files from previous attempts.
-func cleanStaleGateOutputs(workDir string, node pipeline.NodeConfig, currentAttempt int) {
-	resultBase := node.Output.Path
-	if resultBase == "" {
-		resultBase = ".belayer/output/gate-result.json"
+// resolveInputKey returns the artifact key for a node's input, defaulting to node name.
+func resolveInputKey(node pipeline.NodeConfig) string {
+	if node.Input.Key != "" {
+		return node.Input.Key
 	}
-	rationaleBase := node.Output.RationalePath
-	if rationaleBase == "" {
-		rationaleBase = ".belayer/output/rationale.md"
-	}
-	for i := 0; i < currentAttempt; i++ {
-		_ = os.Remove(filepath.Join(workDir, gate.ScopedPath(resultBase, i)))
-		_ = os.Remove(filepath.Join(workDir, gate.ScopedPath(rationaleBase, i)))
-	}
+	return node.Name
 }
 
 // buildInputPrompt constructs the input prompt for a node based on its input type and artifacts.
-func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string, workDir string, attempt ...int) string {
-	if node.IsGate() {
-		a := 0
-		if len(attempt) > 0 {
-			a = attempt[0]
-		}
-		var sb strings.Builder
-		sb.WriteString(gate.BuildGatePrompt(node, a))
-		sb.WriteString("\n")
-		switch node.Input.Type {
-		case "code":
-			sb.WriteString("\nInput: Review the changes. Full diff at .belayer/input/diff.txt\n")
-		case "file":
-			key := node.Input.Key
-			if key == "" {
-				key = node.Name
-			}
-			if path, ok := artifacts[key]; ok {
-				sb.WriteString(fmt.Sprintf("\nInput artifact at: %s\n", path))
-			}
-		}
-		if feedback, ok := artifacts["feedback"]; ok && feedback != "" {
-			sb.WriteString(fmt.Sprintf("\nFeedback from previous attempt: %s\n", feedback))
-		}
-		return sb.String()
-	}
-
+func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) string {
 	var sb strings.Builder
 
-	switch node.Input.Type {
-	case "file":
-		key := node.Input.Key
-		if key == "" {
-			key = node.Name
+	if node.IsGate() {
+		sb.WriteString(gate.BuildGatePrompt(node))
+		sb.WriteString("\n")
+		switch node.Input.Type {
+		case "code", "commit":
+			sb.WriteString("\nInput: Review the changes. Full diff at .belayer/input/diff.txt\n")
+		case "file":
+			if path, ok := artifacts[resolveInputKey(node)]; ok {
+				fmt.Fprintf(&sb, "\nInput artifact at: %s\n", path)
+			}
 		}
-		if path, ok := artifacts[key]; ok {
-			sb.WriteString(fmt.Sprintf("Your input artifact is at: %s", path))
+	} else {
+		switch node.Input.Type {
+		case "file":
+			if path, ok := artifacts[resolveInputKey(node)]; ok {
+				fmt.Fprintf(&sb, "Your input artifact is at: %s", path)
+			}
+		case "code", "commit":
+			sb.WriteString("Review the changes. Full diff at .belayer/input/diff.txt")
+		default:
+			sb.WriteString(node.Description)
 		}
-	case "code":
-		sb.WriteString("Review the changes. Full diff at .belayer/input/diff.txt")
-	default:
-		sb.WriteString(node.Description)
 	}
 
 	if feedback, ok := artifacts["feedback"]; ok && feedback != "" {
-		sb.WriteString(fmt.Sprintf("\n\nFeedback from previous attempt: %s", feedback))
+		fmt.Fprintf(&sb, "\n\nFeedback from previous attempt: %s", feedback)
 	}
 
 	return sb.String()
@@ -371,12 +367,12 @@ func detectDefaultBranch(workDir string) string {
 }
 
 // hasNewCommits returns true if there are commits in workDir since startSHA.
-func hasNewCommits(workDir, startSHA string) bool {
+func hasNewCommits(workDir, startSHA string) (bool, error) {
 	out, err := runGit(workDir, "log", startSHA+"..HEAD", "--oneline")
 	if err != nil {
-		return false
+		return false, fmt.Errorf("git log %s..HEAD: %w", startSHA, err)
 	}
-	return strings.TrimSpace(out) != ""
+	return strings.TrimSpace(out) != "", nil
 }
 
 // GetHeadSHA returns the current HEAD SHA for the given workDir.

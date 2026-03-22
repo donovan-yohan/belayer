@@ -96,7 +96,10 @@ func TestComputeWeightedScore(t *testing.T) {
 		{Name: "quality", Weight: 0.4},
 	}
 	// 8*0.6 + 6*0.4 = 4.8 + 2.4 = 7.2
-	got := ComputeWeightedScore(result, dims)
+	got, err := ComputeWeightedScore(result, dims)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got < 7.19 || got > 7.21 {
 		t.Errorf("weighted score: got %f, want ~7.2", got)
 	}
@@ -111,9 +114,28 @@ func TestComputeWeightedScore_ClampsOutOfRange(t *testing.T) {
 	dims := []pipeline.DimensionConfig{
 		{Name: "a", Weight: 1.0},
 	}
-	got := ComputeWeightedScore(result, dims)
+	got, err := ComputeWeightedScore(result, dims)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != 10.0 {
 		t.Errorf("expected clamped score 10.0, got %f", got)
+	}
+}
+
+func TestComputeWeightedScore_MissingDimension(t *testing.T) {
+	result := &GateResult{
+		Dimensions: map[string]DimensionResult{
+			"a": {Score: 8},
+		},
+	}
+	dims := []pipeline.DimensionConfig{
+		{Name: "a", Weight: 0.5},
+		{Name: "b", Weight: 0.5},
+	}
+	_, err := ComputeWeightedScore(result, dims)
+	if err == nil {
+		t.Fatal("expected error for missing dimension")
 	}
 }
 
@@ -135,25 +157,6 @@ func TestApplyThresholds(t *testing.T) {
 		got := ApplyThresholds(tt.score, thresholds)
 		if got != tt.want {
 			t.Errorf("ApplyThresholds(%f): got %q, want %q", tt.score, got, tt.want)
-		}
-	}
-}
-
-func TestScopedPath(t *testing.T) {
-	tests := []struct {
-		base    string
-		attempt int
-		want    string
-	}{
-		{".belayer/output/gate-result.json", 0, ".belayer/output/gate-result-attempt-0.json"},
-		{".belayer/output/gate-result.json", 2, ".belayer/output/gate-result-attempt-2.json"},
-		{".belayer/output/rationale.md", 1, ".belayer/output/rationale-attempt-1.md"},
-		{"custom/path/review.json", 3, "custom/path/review-attempt-3.json"},
-	}
-	for _, tt := range tests {
-		got := ScopedPath(tt.base, tt.attempt)
-		if got != tt.want {
-			t.Errorf("ScopedPath(%q, %d): got %q, want %q", tt.base, tt.attempt, got, tt.want)
 		}
 	}
 }

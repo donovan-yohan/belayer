@@ -39,7 +39,7 @@ func fileNode(outputPath string) *pipeline.NodeConfig {
 func codeNode() *pipeline.NodeConfig {
 	return &pipeline.NodeConfig{
 		Name:   "test-node",
-		Output: pipeline.OutputConfig{Type: "code"},
+		Output: pipeline.OutputConfig{Type: "commit"},
 	}
 }
 

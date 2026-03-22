@@ -3,21 +3,10 @@ package gate
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"strings"
 
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
 )
-
-// ScopedPath inserts an attempt suffix before the file extension, producing
-// attempt-scoped output paths (e.g., "gate-result.json" → "gate-result-attempt-0.json").
-// This prevents stale gate outputs from prior attempts from being reused.
-func ScopedPath(basePath string, attempt int) string {
-	ext := filepath.Ext(basePath)
-	base := strings.TrimSuffix(basePath, ext)
-	return fmt.Sprintf("%s-attempt-%d%s", base, attempt, ext)
-}
 
 // DimensionResult holds the score and rationale for a single gate dimension.
 type DimensionResult struct {
@@ -57,17 +46,18 @@ func ValidateGateResult(result *GateResult, expectedDimensions []string) error {
 }
 
 // ComputeWeightedScore computes the weighted average score across dimensions.
-// Scores are clamped to [0, 10].
-func ComputeWeightedScore(result *GateResult, dimensions []pipeline.DimensionConfig) float64 {
+// Scores are clamped to [0, 10]. Returns an error if any expected dimension is missing
+// from the result (weights would no longer sum to 1.0, deflating the score).
+func ComputeWeightedScore(result *GateResult, dimensions []pipeline.DimensionConfig) (float64, error) {
 	var total float64
 	for _, dim := range dimensions {
 		dr, ok := result.Dimensions[dim.Name]
 		if !ok {
-			continue
+			return 0, fmt.Errorf("dimension %q missing from gate result", dim.Name)
 		}
 		total += clampScore(dr.Score) * dim.Weight
 	}
-	return total
+	return total, nil
 }
 
 // ApplyThresholds determines the outcome based on score and thresholds.
