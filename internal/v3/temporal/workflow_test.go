@@ -142,7 +142,7 @@ nodes:
     type: node
     description: Write code
     output:
-      type: code
+      type: commit
     on_pass: review
     on_fail: stop
     max_retries: 3
@@ -150,7 +150,7 @@ nodes:
     type: gate
     description: Review the code
     input:
-      type: code
+      type: commit
     dimensions:
       - name: correctness
         description: "Does it work?"

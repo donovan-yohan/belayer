@@ -46,17 +46,18 @@ func ValidateGateResult(result *GateResult, expectedDimensions []string) error {
 }
 
 // ComputeWeightedScore computes the weighted average score across dimensions.
-// Scores are clamped to [0, 10].
-func ComputeWeightedScore(result *GateResult, dimensions []pipeline.DimensionConfig) float64 {
+// Scores are clamped to [0, 10]. Returns an error if any expected dimension is missing
+// from the result (weights would no longer sum to 1.0, deflating the score).
+func ComputeWeightedScore(result *GateResult, dimensions []pipeline.DimensionConfig) (float64, error) {
 	var total float64
 	for _, dim := range dimensions {
 		dr, ok := result.Dimensions[dim.Name]
 		if !ok {
-			continue
+			return 0, fmt.Errorf("dimension %q missing from gate result", dim.Name)
 		}
 		total += clampScore(dr.Score) * dim.Weight
 	}
-	return total
+	return total, nil
 }
 
 // ApplyThresholds determines the outcome based on score and thresholds.

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/donovan-yohan/belayer/internal/v3/model"
 )
 
 func TestNewLogger_CreatesParentDir(t *testing.T) {
@@ -35,9 +37,9 @@ func TestLogger_WriteAndRead(t *testing.T) {
 	evts := []Event{
 		PipelineStarted("wf-1", "my-pipeline", "some input"),
 		NodeStarted("planner", 1),
-		NodeCompleted("planner", "pass", 1.5),
+		NodeCompleted("planner", model.OutcomePass, 1.5),
 		NodeRetry("planner", "executor", "needs more detail"),
-		PipelineCompleted("pass", 3.0),
+		PipelineCompleted(model.OutcomePass, 3.0),
 		PipelineFailed("executor", "timed out"),
 	}
 
@@ -85,10 +87,10 @@ func TestLogger_WriteAndRead(t *testing.T) {
 		{0, "pipeline_started", "pipeline", func(e Event) string { return e.Pipeline }, "my-pipeline"},
 		{0, "pipeline_started", "input", func(e Event) string { return e.Input }, "some input"},
 		{1, "node_started", "node", func(e Event) string { return e.Node }, "planner"},
-		{2, "node_completed", "outcome", func(e Event) string { return e.Outcome }, "pass"},
+		{2, "node_completed", "outcome", func(e Event) string { return string(e.Outcome) }, "PASS"},
 		{3, "node_retry", "target", func(e Event) string { return e.Target }, "executor"},
 		{3, "node_retry", "feedback", func(e Event) string { return e.Feedback }, "needs more detail"},
-		{4, "pipeline_completed", "outcome", func(e Event) string { return e.Outcome }, "pass"},
+		{4, "pipeline_completed", "outcome", func(e Event) string { return string(e.Outcome) }, "PASS"},
 		{5, "pipeline_failed", "reason", func(e Event) string { return e.Reason }, "timed out"},
 	}
 
@@ -161,7 +163,7 @@ func TestGateEvents(t *testing.T) {
 		t.Errorf("correctness score: got %f, want 8.0", scored.DimensionScores["correctness"])
 	}
 
-	completed := GateCompleted("review", 1, "PASS", 7.5)
+	completed := GateCompleted("review", 1, model.OutcomePass, 7.5)
 	if completed.Type != "gate_completed" {
 		t.Errorf("Type: got %q, want %q", completed.Type, "gate_completed")
 	}

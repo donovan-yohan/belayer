@@ -105,7 +105,18 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 					Branch:      input.Branch,
 				}, nil
 			}
-			nodeIdx++
+			// Resolve named on_pass target; default to next sequential node.
+			if node.OnPass != "" && node.OnPass != "next" {
+				if i := findNodeIndex(cfg.Nodes, node.OnPass); i != -1 {
+					nodeIdx = i
+				} else {
+					workflow.GetLogger(ctx).Warn("on_pass target not found, advancing sequentially",
+						"node", node.Name, "target", node.OnPass)
+					nodeIdx++
+				}
+			} else {
+				nodeIdx++
+			}
 
 		case model.OutcomeRetry:
 			retryCount[node.Name]++
@@ -144,9 +155,12 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 				targetName = node.Name
 			}
 
-			// Find target node index; stay on current node if not found.
+			// Find target node index; warn and stay on current node if not found.
 			if i := findNodeIndex(cfg.Nodes, targetName); i != -1 {
 				nodeIdx = i
+			} else {
+				workflow.GetLogger(ctx).Warn("retry target not found, retrying current node",
+					"node", node.Name, "target", targetName)
 			}
 
 		case model.OutcomeFail:
@@ -162,6 +176,15 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 				}
 				if i := findNodeIndex(cfg.Nodes, node.OnFail); i != -1 {
 					nodeIdx = i
+				} else {
+					workflow.GetLogger(ctx).Warn("on_fail target not found, treating as terminal failure",
+						"node", node.Name, "target", node.OnFail)
+					return &model.ClimbOutput{
+						Status:      model.ClimbFailed,
+						NodeOutputs: nodeOutputs,
+						Message:     fmt.Sprintf("node %q failed: on_fail target %q not found", node.Name, node.OnFail),
+						Branch:      input.Branch,
+					}, nil
 				}
 			} else {
 				return &model.ClimbOutput{

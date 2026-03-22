@@ -36,6 +36,7 @@ func parsePollInterval(s string) time.Duration {
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {
+		fmt.Printf("Warning: invalid poll_interval %q, defaulting to 5m\n", s)
 		return 5 * time.Minute
 	}
 	return d

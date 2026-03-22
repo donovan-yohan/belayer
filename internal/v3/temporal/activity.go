@@ -70,9 +70,12 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	// 3. Build input prompt.
 	inputPrompt := buildInputPrompt(input.Node, input.Artifacts)
 
-	// 4. For code-type inputs, materialize diff files.
-	if input.Node.Input.Type == "code" {
+	// 4. For code/commit-type inputs, materialize diff files.
+	if input.Node.Input.Type == "code" || input.Node.Input.Type == "commit" {
 		if err := materializeCodeInput(input.WorkDir); err != nil {
+			if input.Node.IsGate() {
+				return nil, fmt.Errorf("materialize code input for gate %q: %w", input.Node.Name, err)
+			}
 			activity.GetLogger(ctx).Warn("Failed to materialize code input", "error", err)
 		}
 	}
@@ -98,9 +101,12 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		return nil, err
 	}
 
-	// 7. For code-type outputs, verify commits if startSHA is set.
-	if input.Node.Output.Type == "code" && input.StartSHA != "" {
-		if !hasNewCommits(input.WorkDir, input.StartSHA) {
+	// 7. For commit-type outputs, verify commits if startSHA is set.
+	if input.Node.Output.Type == "commit" && input.StartSHA != "" {
+		hasCommits, gitErr := hasNewCommits(input.WorkDir, input.StartSHA)
+		if gitErr != nil {
+			activity.GetLogger(ctx).Warn("Failed to check for new commits", "error", gitErr)
+		} else if !hasCommits {
 			result.Outcome = model.OutcomeRetry
 			result.Feedback = "no new commits detected since start"
 		}
@@ -110,13 +116,9 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	if input.Node.IsGate() {
 		gateResult, err := processGateResult(input.WorkDir, input.Node)
 		if err != nil {
-			return &NodeActivityOutput{
-				Result: model.CompletionResult{
-					Outcome:  model.OutcomeFail,
-					Feedback: fmt.Sprintf("gate processing failed: %v", err),
-					Attempt:  input.Attempt,
-				},
-			}, nil
+			// Infrastructure failures (corrupt JSON, missing file) are real errors —
+			// return them so Temporal can retry, rather than masking as OutcomeFail.
+			return nil, fmt.Errorf("gate %q processing failed: %w", input.Node.Name, err)
 		}
 		gateResult.Attempt = input.Attempt
 		return &NodeActivityOutput{Result: gateResult}, nil
@@ -182,7 +184,10 @@ func processGateResult(workDir string, node pipeline.NodeConfig) (model.Completi
 	}
 
 	// Compute weighted score (score-then-route: we compute, not the session)
-	weightedScore := gate.ComputeWeightedScore(gateResult, node.Dimensions)
+	weightedScore, err := gate.ComputeWeightedScore(gateResult, node.Dimensions)
+	if err != nil {
+		return model.CompletionResult{}, fmt.Errorf("gate %q score computation: %w", node.Name, err)
+	}
 
 	// Apply thresholds
 	outcome := gate.ApplyThresholds(weightedScore, node.Thresholds)
@@ -230,8 +235,17 @@ func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, at
 }
 
 // recordHeartbeat calls activity.RecordHeartbeat safely, ignoring panics when called outside a Temporal worker.
-func recordHeartbeat(ctx context.Context, details ...interface{}) {
-	defer func() { recover() }() //nolint:errcheck
+func recordHeartbeat(ctx context.Context, details ...any) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Only swallow the expected "not in activity context" panic from Temporal SDK.
+			// Re-panic on unexpected errors to avoid hiding real bugs.
+			if msg, ok := r.(string); ok && strings.Contains(msg, "Not an activity context") {
+				return
+			}
+			panic(r)
+		}
+	}()
 	activity.RecordHeartbeat(ctx, details...)
 }
 
@@ -261,6 +275,14 @@ func cleanStaleCompletionFiles(workDir, taskID, nodeName string, currentAttempt 
 	}
 }
 
+// resolveInputKey returns the artifact key for a node's input, defaulting to node name.
+func resolveInputKey(node pipeline.NodeConfig) string {
+	if node.Input.Key != "" {
+		return node.Input.Key
+	}
+	return node.Name
+}
+
 // buildInputPrompt constructs the input prompt for a node based on its input type and artifacts.
 func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) string {
 	var sb strings.Builder
@@ -269,28 +291,20 @@ func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) str
 		sb.WriteString(gate.BuildGatePrompt(node))
 		sb.WriteString("\n")
 		switch node.Input.Type {
-		case "code":
+		case "code", "commit":
 			sb.WriteString("\nInput: Review the changes. Full diff at .belayer/input/diff.txt\n")
 		case "file":
-			key := node.Input.Key
-			if key == "" {
-				key = node.Name
-			}
-			if path, ok := artifacts[key]; ok {
-				sb.WriteString(fmt.Sprintf("\nInput artifact at: %s\n", path))
+			if path, ok := artifacts[resolveInputKey(node)]; ok {
+				fmt.Fprintf(&sb, "\nInput artifact at: %s\n", path)
 			}
 		}
 	} else {
 		switch node.Input.Type {
 		case "file":
-			key := node.Input.Key
-			if key == "" {
-				key = node.Name
+			if path, ok := artifacts[resolveInputKey(node)]; ok {
+				fmt.Fprintf(&sb, "Your input artifact is at: %s", path)
 			}
-			if path, ok := artifacts[key]; ok {
-				sb.WriteString(fmt.Sprintf("Your input artifact is at: %s", path))
-			}
-		case "code":
+		case "code", "commit":
 			sb.WriteString("Review the changes. Full diff at .belayer/input/diff.txt")
 		default:
 			sb.WriteString(node.Description)
@@ -298,7 +312,7 @@ func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) str
 	}
 
 	if feedback, ok := artifacts["feedback"]; ok && feedback != "" {
-		sb.WriteString(fmt.Sprintf("\n\nFeedback from previous attempt: %s", feedback))
+		fmt.Fprintf(&sb, "\n\nFeedback from previous attempt: %s", feedback)
 	}
 
 	return sb.String()
@@ -353,12 +367,12 @@ func detectDefaultBranch(workDir string) string {
 }
 
 // hasNewCommits returns true if there are commits in workDir since startSHA.
-func hasNewCommits(workDir, startSHA string) bool {
+func hasNewCommits(workDir, startSHA string) (bool, error) {
 	out, err := runGit(workDir, "log", startSHA+"..HEAD", "--oneline")
 	if err != nil {
-		return false
+		return false, fmt.Errorf("git log %s..HEAD: %w", startSHA, err)
 	}
-	return strings.TrimSpace(out) != ""
+	return strings.TrimSpace(out) != "", nil
 }
 
 // GetHeadSHA returns the current HEAD SHA for the given workDir.

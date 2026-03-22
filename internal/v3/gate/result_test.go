@@ -96,7 +96,10 @@ func TestComputeWeightedScore(t *testing.T) {
 		{Name: "quality", Weight: 0.4},
 	}
 	// 8*0.6 + 6*0.4 = 4.8 + 2.4 = 7.2
-	got := ComputeWeightedScore(result, dims)
+	got, err := ComputeWeightedScore(result, dims)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got < 7.19 || got > 7.21 {
 		t.Errorf("weighted score: got %f, want ~7.2", got)
 	}
@@ -111,9 +114,28 @@ func TestComputeWeightedScore_ClampsOutOfRange(t *testing.T) {
 	dims := []pipeline.DimensionConfig{
 		{Name: "a", Weight: 1.0},
 	}
-	got := ComputeWeightedScore(result, dims)
+	got, err := ComputeWeightedScore(result, dims)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != 10.0 {
 		t.Errorf("expected clamped score 10.0, got %f", got)
+	}
+}
+
+func TestComputeWeightedScore_MissingDimension(t *testing.T) {
+	result := &GateResult{
+		Dimensions: map[string]DimensionResult{
+			"a": {Score: 8},
+		},
+	}
+	dims := []pipeline.DimensionConfig{
+		{Name: "a", Weight: 0.5},
+		{Name: "b", Weight: 0.5},
+	}
+	_, err := ComputeWeightedScore(result, dims)
+	if err == nil {
+		t.Fatal("expected error for missing dimension")
 	}
 }
 

@@ -19,7 +19,7 @@ nodes:
   - name: test
     description: Run tests
     output:
-      type: code
+      type: commit
     on_pass: stop
     on_fail: stop
 `
@@ -79,14 +79,14 @@ nodes:
     type: node
     description: Write code
     output:
-      type: code
+      type: commit
     on_pass: review
     on_fail: stop
   - name: review
     type: gate
     description: Review the code
     input:
-      type: code
+      type: commit
     dimensions:
       - name: correctness
         description: "Does the code work?"

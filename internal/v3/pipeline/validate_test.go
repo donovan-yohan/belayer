@@ -17,7 +17,7 @@ func validPipeline() *PipelineConfig {
 			},
 			{
 				Name:    "test",
-				Output:  OutputConfig{Type: "code"},
+				Output:  OutputConfig{Type: "commit"},
 				OnPass:  "stop",
 				OnRetry: "self",
 				OnFail:  "stop",
@@ -110,7 +110,7 @@ func validGatePipeline() *PipelineConfig {
 			{
 				Name:   "lead",
 				Type:   NodeTypeNode,
-				Output: OutputConfig{Type: "code"},
+				Output: OutputConfig{Type: "commit"},
 				OnPass: "review",
 				OnFail: "stop",
 			},
@@ -268,7 +268,7 @@ func TestValidate_IntakeDuplicateNames(t *testing.T) {
 	cfg := validPipeline()
 	cfg.Intake = []IntakeConfig{
 		{Name: "src", Type: "jira"},
-		{Name: "src", Type: "linear"},
+		{Name: "src", Type: "jira"},
 	}
 	err := Validate(cfg)
 	if err == nil {

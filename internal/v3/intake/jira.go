@@ -25,8 +25,8 @@ type JiraAdapter struct {
 }
 
 // NewJiraAdapter constructs a JiraAdapter from an IntakeConfig.
-// Required config keys: project, credential_env.
-// Optional config keys: filter, jira_url, jira_email.
+// Required config keys: project, credential_env, jira_url.
+// Optional config keys: filter, jira_email.
 func NewJiraAdapter(cfg pipeline.IntakeConfig, pipelineName string) (*JiraAdapter, error) {
 	project := cfg.Config["project"]
 	if project == "" {

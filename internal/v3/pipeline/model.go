@@ -67,7 +67,7 @@ type InputConfig struct {
 }
 
 // OutputConfig specifies what a node produces.
-// Type is one of: file | commit | code | gate_result
+// Type is one of: file | commit | gate_result
 type OutputConfig struct {
 	Type          string `yaml:"type" json:"type"`
 	Path          string `yaml:"path,omitempty" json:"path,omitempty"`

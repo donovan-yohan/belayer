@@ -30,7 +30,10 @@ func ResolvePipelineYAML(cwd string) ([]byte, string, error) {
 	for _, path := range candidates {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, "", fmt.Errorf("read pipeline %q: %w", path, err)
 		}
 		cfg, err := pipeline.ParsePipeline(data)
 		if err != nil {
@@ -81,6 +84,7 @@ func GenerateBranchSlug(description string) string {
 	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", "haiku", prompt)
 	out, err := cmd.Output()
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: branch slug generation failed (falling back to \"impl\"): %v\n", err)
 		return "impl"
 	}
 

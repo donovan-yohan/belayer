@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -111,6 +112,24 @@ func TestIntegrationSuite(t *testing.T) {
 
 // --- helpers ---
 
+// initGitRepo initializes a git repo with an initial commit so that
+// materializeCodeInput (git diff) works in tests.
+func initGitRepo(t *testing.T, workDir string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = workDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s: %v", args, out, err)
+		}
+	}
+}
+
 // writeFileAtPath creates parent dirs and writes content to a path inside workDir.
 func writeFileAtPath(t *testing.T, workDir, rel, content string) {
 	t.Helper()
@@ -128,6 +147,7 @@ func integrationPipeline() []byte {
 // TestEndToEnd_AllPass: fakeSpawner returns PASS for every node → ClimbCompleted.
 func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 	workDir := s.T().TempDir()
+	initGitRepo(s.T(), workDir)
 
 	// Pre-seed output files that the workflow checks for file-type nodes.
 	writeFileAtPath(s.T(), workDir, ".belayer/output/plan.md", "PASS\nHere is the plan.")
@@ -175,6 +195,7 @@ func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 // TestEndToEnd_RetryLoop: spotter returns RETRY on first call, PASS on second → ClimbCompleted.
 func (s *IntegrationTestSuite) TestEndToEnd_RetryLoop() {
 	workDir := s.T().TempDir()
+	initGitRepo(s.T(), workDir)
 
 	writeFileAtPath(s.T(), workDir, ".belayer/output/plan.md", "PASS\nHere is the plan.")
 	writeFileAtPath(s.T(), workDir, ".belayer/output/review.md", "PASS\nLooks good.")
@@ -214,7 +235,7 @@ nodes:
     type: node
     description: Write code
     output:
-      type: code
+      type: commit
     on_pass: review
     on_fail: stop
     max_retries: 3
@@ -222,7 +243,7 @@ nodes:
     type: gate
     description: Review the code
     input:
-      type: code
+      type: commit
     dimensions:
       - name: correctness
         description: "Does it work?"

@@ -28,8 +28,8 @@ func newWorkerCmd() *cobra.Command {
 		Short: "Start the Temporal worker for pipeline execution",
 		Long: `Start a long-lived Temporal worker that executes pipeline runs.
 
-The worker registers the ClimbWorkflow and all activity implementations,
-serves an HTTP API for the submit tool, and reconciles intake schedules.
+The worker registers the ClimbWorkflow and all activity implementations
+and serves an HTTP API for the submit tool.
 
 Start this BEFORE running 'belayer start' or 'belayer climb'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -67,7 +67,19 @@ func runWorker(workDir string) error {
 	w.RegisterActivity(activities)
 
 	// Start HTTP API server for submit/status tools.
-	go startHTTPAPI(c, workDir)
+	httpErrCh := make(chan error, 1)
+	go func() {
+		httpErrCh <- startHTTPAPI(c, workDir)
+	}()
+
+	// Fail fast if the HTTP API can't bind (e.g., port already in use).
+	// Give it a moment to start, then check for errors.
+	select {
+	case err := <-httpErrCh:
+		return fmt.Errorf("HTTP API failed to start: %w", err)
+	case <-time.After(100 * time.Millisecond):
+		// HTTP server started successfully.
+	}
 
 	fmt.Printf("Belayer worker started\n")
 	fmt.Printf("  Task queue: %s\n", beltemporal.TaskQueueName)
@@ -79,7 +91,7 @@ func runWorker(workDir string) error {
 }
 
 // startHTTPAPI runs the HTTP API server for submit/status tool calls.
-func startHTTPAPI(temporalClient client.Client, workDir string) {
+func startHTTPAPI(temporalClient client.Client, workDir string) error {
 	mux := http.NewServeMux()
 
 	// POST /start — accepts SubmitSpec JSON, starts a ClimbWorkflow, returns workflow ID.
@@ -94,8 +106,12 @@ func startHTTPAPI(temporalClient client.Client, workDir string) {
 			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if spec.Spec == "" {
-			http.Error(w, "spec is required", http.StatusBadRequest)
+		// Backfill defaults before validation.
+		if spec.Source == "" {
+			spec.Source = "interactive"
+		}
+		if err := spec.Validate(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -108,9 +124,6 @@ func startHTTPAPI(temporalClient client.Client, workDir string) {
 		if spec.PipelineName == "" {
 			spec.PipelineName = pipelineName
 		}
-		if spec.Source == "" {
-			spec.Source = "interactive"
-		}
 		if spec.ExternalID == "" {
 			spec.ExternalID = fmt.Sprintf("submit-%d", time.Now().UnixMilli())
 		}
@@ -119,7 +132,10 @@ func startHTTPAPI(temporalClient client.Client, workDir string) {
 		workflowID := intake.GenerateWorkflowID(spec.PipelineName, spec.Source, spec.ExternalID)
 		ts := time.Now().UnixMilli()
 
-		// Create worktree and branch (shared timestamp prevents mismatch).
+		// Create worktree and branch using a shared timestamp.
+		// Note: LEARNINGS.md recommends run-ID-based naming, but the worktree must
+		// be created BEFORE the workflow starts (WorkDir is part of ClimbInput),
+		// so we use a timestamp instead — intentional deviation.
 		branchSlug := intake.GenerateBranchSlug(spec.Spec)
 		branch := fmt.Sprintf("belayer/%s-%d", branchSlug, ts)
 		worktreeDir := fmt.Sprintf("%s/.belayer/worktrees/%d", workDir, ts)
@@ -167,7 +183,5 @@ func startHTTPAPI(temporalClient client.Client, workDir string) {
 		Addr:    fmt.Sprintf("127.0.0.1:%d", workerHTTPPort),
 		Handler: mux,
 	}
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Fprintf(os.Stderr, "Worker HTTP API failed: %v\n", err)
-	}
+	return server.ListenAndServe()
 }
