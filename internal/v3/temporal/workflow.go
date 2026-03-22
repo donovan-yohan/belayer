@@ -34,6 +34,9 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 	if err != nil {
 		return nil, fmt.Errorf("parse pipeline: %w", err)
 	}
+	if err := pipeline.Validate(cfg); err != nil {
+		return nil, fmt.Errorf("validate pipeline: %w", err)
+	}
 
 	// 2. Initialize state.
 	artifacts := make(map[string]string)
