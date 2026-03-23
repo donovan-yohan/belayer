@@ -99,7 +99,7 @@ When `init.md` generates a new LEARNINGS.md, use exactly this scaffold:
 Persistent learnings captured across sessions. Append-only, merge-friendly.
 
 Status: `active` | `superseded`
-Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance`
+Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance` | `review-escape`
 
 ---
 ```

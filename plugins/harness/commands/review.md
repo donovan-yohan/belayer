@@ -80,31 +80,37 @@ Context-isolated adversarial review using `claude -p`. This phase catches produc
    - Select perspective variants based on deployment context (SRE, Scale, Security, Distributed — these stack)
    - If Known Non-Issues exist, append: "Note: the following have been reviewed and confirmed as non-issues for this project: {list}. Do not report these unless circumstances have materially changed."
 
-8. **Generate the diff for the isolated reviewer:**
+8. **Generate the diff for the isolated reviewer** using a unique temp file to avoid collisions with concurrent reviews:
    ```bash
-   git diff HEAD~{N} > /tmp/harness-adversarial-diff.patch
+   ADVERSARIAL_DIFF=$(mktemp /tmp/harness-adversarial-XXXXXX.patch)
+   git diff HEAD~{N} > "$ADVERSARIAL_DIFF"
    ```
+   If the diff is empty, skip the adversarial review with status "skipped — empty diff" and proceed to Phase 4.
 
-9. **Shell out to `claude -p`** with the constructed prompt and diff. This is the critical isolation step — no conversation context crosses this boundary:
+9. **Shell out to `claude -p`** with the constructed prompt and diff. Write the prompt to a temp file first to avoid shell escaping issues with deployment context or question content:
    ```bash
-   cat /tmp/harness-adversarial-diff.patch | claude -p "{constructed_prompt}" --output-format text
+   ADVERSARIAL_PROMPT=$(mktemp /tmp/harness-adversarial-prompt-XXXXXX.md)
+   # Write the constructed prompt to $ADVERSARIAL_PROMPT
+   cat "$ADVERSARIAL_DIFF" | claude -p "$(cat "$ADVERSARIAL_PROMPT")" --output-format text
    ```
-   Use `timeout: 300000` (5 minutes) on the Bash call.
+   Use `timeout: 300000` (5 minutes) on the Bash call. This is the critical isolation step — no conversation context crosses this boundary.
 
 10. **Parse the adversarial review output:**
     - Look for `VERDICT: FAIL` or `VERDICT: PASS`
     - Extract individual findings with their severity (CRITICAL, HIGH, MEDIUM, LOW)
-    - If the command fails or times out, log the failure and proceed to Phase 4 — adversarial review is additive, not blocking
+    - If the output contains no parseable `VERDICT:` line, treat as inconclusive — set status to "inconclusive — could not parse verdict" and report the raw output
+    - If the command fails or times out, print a warning: "Adversarial review skipped: {reason}. Proceeding with agent review." Set the adversarial review status to "skipped — {reason}" for the final report
 
 11. **Integrate findings into the review cycle:**
     - **CRITICAL findings:** These MUST be fixed before proceeding to Phase 4. Fix inline, commit, and re-run verification.
     - **HIGH/MEDIUM findings:** Add to the fix queue. These will be addressed alongside Phase 4 agent findings.
     - **LOW findings:** Note in the report but do not block.
     - **PASS verdict:** Proceed to Phase 4 normally.
+    - **Inconclusive/skipped:** Proceed to Phase 4. Note in the report.
 
 12. Clean up:
     ```bash
-    rm -f /tmp/harness-adversarial-diff.patch
+    rm -f "$ADVERSARIAL_DIFF" "$ADVERSARIAL_PROMPT"
     ```
 
 ### Phase 4: Review Loop

@@ -6,7 +6,7 @@ import (
 )
 
 func TestPluginVersion(t *testing.T) {
-	if got := MustPluginVersion("harness"); got != "3.1.0" {
+	if got := MustPluginVersion("harness"); got != "3.2.0" {
 		t.Fatalf("unexpected harness version: %s", got)
 	}
 	if got := MustPluginVersion("pr"); got != "1.2.0" {

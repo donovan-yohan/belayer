@@ -114,6 +114,20 @@ Every assumption of single-execution is wrong. Every "read then write"
 is a race condition. Find the coordination failure.
 ```
 
+## Escape Category to Question Bank Mapping
+
+When `/harness:reflect` categorizes an escape, use this mapping to route the new question to the correct Question Bank section:
+
+| Escape Category | Question Bank Heading |
+|----------------|----------------------|
+| `concurrency` | Concurrency & Scale |
+| `distributed` | Distributed Systems |
+| `failure-modes` | Failure Modes & Resilience |
+| `resource-exhaustion` | Resource Exhaustion |
+| `data-integrity` | Data Integrity |
+| `security` | Security |
+| `logic` | (create new section or add to most relevant existing section) |
+
 ## Default Question Bank
 
 These are the starter questions created during `/harness:init`. Projects extend this bank in `docs/REVIEW_GUIDANCE.md` as bugs escape review.

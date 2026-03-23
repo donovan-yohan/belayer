@@ -94,7 +94,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     Persistent learnings captured across sessions. Append-only, merge-friendly.
 
     Status: `active` | `superseded`
-    Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance`
+    Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance` | `review-escape`
 
     ---
     ```

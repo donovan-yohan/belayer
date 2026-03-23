@@ -108,7 +108,7 @@ Full documentation reconciliation, conversation mining, and retrospective. Run a
      Persistent learnings captured across sessions. Append-only, merge-friendly.
 
      Status: `active` | `superseded`
-     Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance`
+     Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance` | `review-escape`
 
      ---
      ```
@@ -118,7 +118,7 @@ Full documentation reconciliation, conversation mining, and retrospective. Run a
 
      ### L-{NNN}: {one-line insight}
      - status: active
-     - category: {matching domain: architecture|testing|patterns|workflow|debugging|performance}
+     - category: {matching domain: architecture|testing|patterns|workflow|debugging|performance|review-escape}
      - source: /harness:reflect {YYYY-MM-DD}
      - branch: {current git branch}
 
@@ -172,7 +172,7 @@ This phase feeds the self-learning review system. When bugs escape `/harness:rev
 
    c. If the escape was a `logic` category bug (something the existing review agents should have caught), also write a learning to `docs/LEARNINGS.md` with category `review-escape` noting which agent should have caught it and why it might have been missed (confidence threshold too high? wrong framing?)
 
-14.11. If `docs/REVIEW_GUIDANCE.md` does NOT exist, skip this phase silently. The adversarial review system is opt-in — it's created during `/harness:init` but older projects may not have it.
+14.11. If `docs/REVIEW_GUIDANCE.md` does NOT exist, skip this phase. In the final Report, set Review Escape Mining to: "Skipped — docs/REVIEW_GUIDANCE.md not found. Run /harness:init to enable adversarial review learning."
 
 14.12. Report escape mining results (include in the final Report output):
    - Number of escapes detected
