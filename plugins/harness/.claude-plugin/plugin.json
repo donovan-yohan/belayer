@@ -1,7 +1,7 @@
 {
   "name": "harness",
-  "version": "3.0.0",
-  "description": "3-tier documentation system with learning persistence, doc lifecycle management, and health scoring. Brainstorm, plan, orchestrate, review, reflect, complete with multi-persona review loops.",
+  "version": "3.1.0",
+  "description": "3-tier documentation system with learning persistence, doc lifecycle management, and health scoring. Brainstorm, plan, orchestrate, review, reflect, complete with pr-review-toolkit agents and superpowers SDD delegation.",
   "author": {
     "name": "donovanyohan"
   },

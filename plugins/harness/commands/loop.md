@@ -81,7 +81,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
    <LOOP_OVERRIDES>
    These overrides REPLACE conflicting instructions from /harness:orchestrate:
 
-   - **No checkpoints:** Do not output checkpoint status blocks (Phase 6 steps 10-11 of orchestrate). Do not wait for user input between tasks. This overrides the Orchestrator Rule "Report progress at checkpoints and wait for user feedback." Proceed immediately to the next task after updating the living plan.
+   - **No checkpoints:** Do not output checkpoint status blocks or wait for user input between tasks. This overrides orchestrate's "Checkpoint after EVERY task" HARNESS_OVERRIDES entry. Proceed immediately to the next task after updating the living plan.
    - **Auto-resolve blockers:** If a worker reports a surprise or blocker, append it to the decision log and make a judgment call:
      - **Fundamental** (would require changing the design doc's approach or affects 3+ unstarted tasks): STOP the loop via Emergency Stop
      - **Tactical** (unexpected API shape, missing test fixture, localized workaround): resolve and continue
@@ -97,7 +97,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
    <LOOP_OVERRIDES>
    These overrides REPLACE conflicting instructions from /harness:review:
 
-   - **No resolution prompt:** Do not present the Phase 5 "Which approach?" options (review.md steps 8-9). Do not wait for user selection. Findings are auto-triaged as described below.
+   - **No resolution prompt:** Do not present the Phase 6 resolution options (review.md steps 12-13). Do not wait for user selection. Findings are auto-triaged as described below.
    </LOOP_OVERRIDES>
 
 11. **Auto-triage findings** using this rule:
