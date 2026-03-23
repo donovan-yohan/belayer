@@ -32,6 +32,9 @@ Standalone Go CLI tool that orchestrates autonomous coding agents across multipl
 - **Long-lived crags with problem isolation**: Crag (repos, config) persists; each problem gets isolated worktrees
 - **Idempotent store operations**: All DB writes that can be retried (Init, env create, worktree setup) use `INSERT OR REPLACE`. See `docs/QUALITY.md` for the full idempotency requirement.
 - **Interactive session context**: `internal/defaults/claudemd/setter.md`, `internal/defaults/claudemd/explorer.md`, and the relevant `internal/defaults/commands/blr-*.md` assets are deployed into `belayer setter` and `belayer explorer` sessions. When these CLI surfaces change, update the templates/commands together and verify them during code review.
+- **Plugin version sync**: When modifying `plugins/*/`, bump version in all 3 locations: `plugin.json`, `registry.go` constant (`HarnessVersion`/`PRVersion`/`ExplorerVersion`), and `agentassets_test.go` `TestPluginVersion`
+- **New output types**: Adding a pipeline output type requires updates in: `validate.go` (validOutputTypes map), `model.go` (OutputConfig comment), and `outcome/detect.go` (typeDefault switch). Missing `detect.go` causes silent false-positive outcomes.
+- **Default pipeline changes**: Modifying `DefaultPipelineYAML` in `defaults.go` breaks Temporal workflow tests using `defaultInput()` — update mocks in `workflow_test.go`. Go raw string constants cannot contain backticks.
 
 ## Workflow
 

@@ -12,7 +12,7 @@ func TestPluginVersion(t *testing.T) {
 	if got := MustPluginVersion("pr"); got != "1.2.0" {
 		t.Fatalf("unexpected pr version: %s", got)
 	}
-	if got := MustPluginVersion("explorer"); got != "0.1.0" {
+	if got := MustPluginVersion("explorer"); got != "0.2.0" {
 		t.Fatalf("unexpected explorer version: %s", got)
 	}
 }

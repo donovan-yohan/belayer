@@ -16,7 +16,7 @@ const (
 	// Plugin versions — keep in sync with plugins/*/.claude-plugin/plugin.json
 	HarnessVersion  = "3.1.0"
 	PRVersion       = "1.2.0"
-	ExplorerVersion = "0.1.0"
+	ExplorerVersion = "0.2.0"
 )
 
 // Registry reads and writes Claude Code's plugin registry files.
