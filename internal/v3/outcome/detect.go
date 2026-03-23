@@ -87,13 +87,22 @@ func typeDefault(node *pipeline.NodeConfig, workDir string, attempt int) model.C
 			}
 		}
 		return model.CompletionResult{Outcome: model.OutcomeFail, Attempt: attempt}
+	case "pr":
+		// PR nodes must produce their output file (e.g., pr.json with url, number, branch).
+		if node.Output.Path != "" {
+			opath := filepath.Join(workDir, node.Output.Path)
+			if _, err := os.Stat(opath); err == nil {
+				return model.CompletionResult{Outcome: model.OutcomePass, OutputPath: node.Output.Path, Attempt: attempt}
+			}
+		}
+		return model.CompletionResult{Outcome: model.OutcomeFail, Attempt: attempt}
 	case "gate_result":
 		// Defensive default: gate outcome is determined by processGateResult() in the activity,
 		// which is called directly — Detect() is not invoked for gates in current code.
 		// If this path ever becomes reachable, PASS is a safe no-op since the activity will override.
 		return model.CompletionResult{Outcome: model.OutcomePass, Attempt: attempt}
 	default:
-		// commit and unknown types default to PASS (caller checks commits)
+		// commit types default to PASS (caller checks commits via hasNewCommits)
 		return model.CompletionResult{Outcome: model.OutcomePass, Attempt: attempt}
 	}
 }

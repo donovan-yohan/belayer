@@ -51,4 +51,7 @@ func TestInitCmd_RegistersPlugins(t *testing.T) {
 	if _, ok := ip["pr@belayer"]; !ok {
 		t.Error("pr plugin not installed")
 	}
+	if _, ok := ip["explorer@belayer"]; !ok {
+		t.Error("explorer plugin not installed")
+	}
 }

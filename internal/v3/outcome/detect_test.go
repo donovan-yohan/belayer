@@ -164,6 +164,37 @@ func TestDetect_GateResultType_DefaultsToPass(t *testing.T) {
 	}
 }
 
+// --- pr output type tests ---
+
+func prNode(outputPath string) *pipeline.NodeConfig {
+	return &pipeline.NodeConfig{
+		Name:   "summit",
+		Output: pipeline.OutputConfig{Type: "pr", Path: outputPath},
+	}
+}
+
+func TestDetect_PRTypeExistsDefaultPass(t *testing.T) {
+	dir := makeWorkDir(t)
+	writeFile(t, filepath.Join(dir, "pr.json"), `{"url":"https://github.com/test/1","number":1,"branch":"feat"}`)
+
+	result := Detect(prNode("pr.json"), dir, 0)
+	if result.Outcome != model.OutcomePass {
+		t.Fatalf("expected PASS (pr.json exists), got %s", result.Outcome)
+	}
+	if result.OutputPath != "pr.json" {
+		t.Fatalf("expected output path 'pr.json', got %q", result.OutputPath)
+	}
+}
+
+func TestDetect_PRTypeMissingDefaultFail(t *testing.T) {
+	dir := makeWorkDir(t)
+
+	result := Detect(prNode("pr.json"), dir, 0)
+	if result.Outcome != model.OutcomeFail {
+		t.Fatalf("expected FAIL (pr.json missing), got %s", result.Outcome)
+	}
+}
+
 // --- precedence: verdict.txt over output file ---
 
 func TestVerdictTakesPrecedenceOverOutputFile(t *testing.T) {
