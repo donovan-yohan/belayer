@@ -4,7 +4,7 @@
 
 | Document | Purpose | Status | Created |
 |----------|---------|--------|---------|
-| [summit-node-explorer-plugin-design.md](2026-03-23-summit-node-explorer-plugin-design.md) | Summit PR node, explorer plugin, `/explorer:send` skill | Current | 2026-03-23 |
+_No current designs. All designs have been implemented or superseded._
 
 **See also:** [Belayer v2 Temporal Orchestrator](../designs/temporal-orchestrator-reimagining.md) — implemented 2026-03-19
 
@@ -12,6 +12,7 @@
 
 | Document | Purpose | Status | Created |
 |----------|---------|--------|---------|
+| [2026-03-23-summit-node-explorer-plugin-design](2026-03-23-summit-node-explorer-plugin-design.md) | Summit PR node, explorer plugin, `/explorer:send` skill | Implemented | 2026-03-23 |
 | [2026-03-19-harness-audit-design](2026-03-19-harness-audit-design.md) | Harness plugin audit: workflow fix for stale docs, learning persistence, doc lifecycle | Implemented | 2026-03-19 |
 | [2026-03-17-unified-agent-plugin-source-design](2026-03-17-unified-agent-plugin-source-design.md) | Unified agent plugin source design | Implemented | 2026-03-17 |
 | [2026-03-16-review-deferred-items-design](2026-03-16-review-deferred-items-design.md) | Test coverage, typed enums, HandleApproval bug fix | Implemented | 2026-03-16 |

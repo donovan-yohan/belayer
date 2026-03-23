@@ -1,9 +1,9 @@
 ---
-status: current
+status: implemented
 created: 2026-03-23
 branch: master
 supersedes:
-implemented-by:
+implemented-by: docs/exec-plans/completed/2026-03-23-summit-node-explorer-plugin.md
 consulted-learnings: [L-007, L-009]
 ---
 

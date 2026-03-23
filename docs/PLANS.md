@@ -7,7 +7,6 @@ Execution plans for active and completed work.
 | Plan | Created | Topic |
 |------|---------|-------|
 | [Intake Plugin Model](exec-plans/active/2026-03-21-intake-plugin-model.md) | 2026-03-21 | Intake plugin model, pipeline templates, v2→v3 migration, worker daemon |
-| [Summit Node & Explorer Plugin](exec-plans/active/2026-03-23-summit-node-explorer-plugin.md) | 2026-03-23 | Summit PR node, explorer plugin, /explorer:send command |
 
 ## Tech Debt
 
@@ -23,6 +22,7 @@ Execution plans for active and completed work.
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Summit Node & Explorer Plugin](exec-plans/completed/2026-03-23-summit-node-explorer-plugin.md) | 2026-03-23 | Summit PR node, explorer plugin, /explorer:send command |
 | [Gate Nodes — Quality Scoring](exec-plans/completed/2026-03-20-gate-nodes.md) | 2026-03-21 | Gate nodes as second pipeline primitive: multi-dimensional scoring, threshold routing, anti-gaming |
 | [Belayer v3: Temporal Activity Pipeline](exec-plans/completed/2026-03-20-v3-temporal-pipeline.md) | 2026-03-20 | v3 clean break: Activity-per-node, file-based completion, YAML pipeline config, `belayer climb` CLI |
 | [v2 Wiring Gaps](exec-plans/completed/2026-03-19-v2-wiring-gaps.md) | 2026-03-19 | Worker command, DSL wiring, pipeline CLI, WorkDir resolution |

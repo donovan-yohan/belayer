@@ -96,3 +96,13 @@ When a design doc targets one model (v2 phases/roles) but the codebase has a bet
 Instead of building a separate dedup table (SQLite or otherwise), use deterministic Temporal workflow IDs. Formula: `{pipeline_name}/{intake_name}/{external_id}`. Temporal rejects duplicate workflow IDs natively. Use `WorkflowIDReusePolicy: AllowDuplicate` to allow resubmission after completion. For branch/worktree naming, use the Temporal run ID (unique per execution) instead of the workflow ID to prevent git collisions on resubmission.
 
 ---
+
+### L-010: Go raw string literals cannot contain backticks
+- status: active
+- category: patterns
+- source: /harness:loop 2026-03-23
+- branch: master
+
+When embedding YAML pipeline descriptions in Go const raw strings (backtick-delimited), the YAML content cannot contain backtick characters. Use plain text instead of markdown backtick-fenced code references (e.g., `gh pr view` becomes just gh pr view). String concatenation with `"` + "`" + `"` breaks the YAML structure and is fragile.
+
+---

@@ -1,6 +1,6 @@
 # Summit Node & Explorer Plugin Implementation Plan
 
-> **Status**: Active | **Created**: 2026-03-23 | **Last Updated**: 2026-03-23
+> **Status**: Completed | **Created**: 2026-03-23 | **Last Updated**: 2026-03-23
 > **Design Doc**: `docs/design-docs/2026-03-23-summit-node-explorer-plugin-design.md`
 > **For Claude:** Use /harness:orchestrate to execute this plan.
 
@@ -15,16 +15,20 @@
 
 ## Progress
 
-- [ ] Task 1: Add `pr` output type to pipeline validation
-- [ ] Task 2: Add summit node to default pipeline
-- [ ] Task 3: Update agentassets for explorer plugin
-- [ ] Task 4: Create explorer plugin
-- [ ] Task 5: Register explorer in marketplace and init
-- [ ] Task 6: Update existing tests for new node count
+- [x] Task 1: Add `pr` output type to pipeline validation
+- [x] Task 2: Add summit node to default pipeline
+- [x] Task 3: Update agentassets for explorer plugin
+- [x] Task 4: Create explorer plugin
+- [x] Task 5: Register explorer in marketplace and init
+- [x] Task 6: Final verification
 
 ## Surprises & Discoveries
 
-_None yet — updated during execution by /harness:orchestrate._
+| Date | Discovery | Impact |
+|------|-----------|--------|
+| 2026-03-23 | Go raw string literals cannot contain backticks — summit description backticks broke compilation | Removed markdown backticks from YAML description (they're optional in prompt text) |
+| 2026-03-23 | Temporal workflow tests failed — L-005: fake spawners need summit mock | Added summit activity expectations to tests using defaultInput() |
+| 2026-03-23 | Codex rewrite test: `Claude alias:` header intentionally preserves `/explorer:send` | Changed test to assert positive presence of `explorer-send` instead of absence of `/explorer:send` |
 
 ## Plan Drift
 
@@ -497,10 +501,14 @@ Only if test failures required changes.
 _Filled by /harness:complete when work is done._
 
 **What worked:**
--
+- TDD discipline caught the gate consistency check working correctly without new code
+- Parallel agent dispatch for independent tasks (validation + defaults)
+- L-005 learning correctly predicted the Temporal test breakage
 
 **What didn't:**
--
+- Go raw string backtick limitation wasn't anticipated in the plan — subagent used string concatenation which broke syntax
+- Plan didn't account for Temporal workflow tests needing summit mocks (despite L-005 existing)
 
 **Learnings to codify:**
--
+- Go raw string literals cannot contain backticks — use plain text in YAML descriptions embedded in Go constants
+- When adding nodes to the default pipeline, always check Temporal workflow tests that use `defaultInput()`
