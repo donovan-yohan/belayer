@@ -313,3 +313,23 @@ func TestValidate_FanOutInvalid(t *testing.T) {
 		t.Errorf("error should mention fan_out, got: %v", err)
 	}
 }
+
+func TestValidate_PROutputType(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Nodes[0].Output.Type = "pr"
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected pr output type to be valid, got: %v", err)
+	}
+}
+
+func TestValidate_GateWithPROutputRejected(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Output.Type = "pr"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for gate with pr output type")
+	}
+	if !strings.Contains(err.Error(), "gate_result") {
+		t.Errorf("error should mention gate_result, got: %v", err)
+	}
+}

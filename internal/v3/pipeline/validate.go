@@ -34,6 +34,7 @@ func Validate(cfg *PipelineConfig) error {
 		"file":        true,
 		"gate_result": true,
 		"commit":      true,
+		"pr":          true,
 	}
 	validNodeTypes := map[NodeType]bool{
 		"":           true,
@@ -48,7 +49,7 @@ func Validate(cfg *PipelineConfig) error {
 			return fmt.Errorf("node %q: output.type is required", n.Name)
 		}
 		if !validOutputTypes[n.Output.Type] {
-			return fmt.Errorf("node %q: output.type must be \"file\", \"gate_result\", or \"commit\", got %q", n.Name, n.Output.Type)
+			return fmt.Errorf("node %q: output.type must be \"file\", \"gate_result\", \"commit\", or \"pr\", got %q", n.Name, n.Output.Type)
 		}
 		// Enforce consistency between node type and output type.
 		if n.IsGate() && n.Output.Type != "gate_result" {
