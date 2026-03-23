@@ -62,6 +62,10 @@ func (s *ClimbWorkflowTestSuite) TestClimb_AllNodesPass() {
 		return in.Node.Name == "spotter"
 	})).Return(passOutput("spotter"), nil)
 
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "summit"
+	})).Return(passOutput("summit"), nil)
+
 	s.env.ExecuteWorkflow(ClimbWorkflow, defaultInput())
 
 	s.True(s.env.IsWorkflowCompleted())
@@ -100,6 +104,10 @@ func (s *ClimbWorkflowTestSuite) TestClimb_SpotterRetriesToLead() {
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
 		return in.Node.Name == "spotter" && in.Attempt == 1
 	})).Return(passOutput("spotter"), nil).Once()
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "summit"
+	})).Return(passOutput("summit"), nil)
 
 	s.env.ExecuteWorkflow(ClimbWorkflow, defaultInput())
 
