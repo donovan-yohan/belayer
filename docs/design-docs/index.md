@@ -4,8 +4,7 @@
 
 | Document | Purpose | Status | Created |
 |----------|---------|--------|---------|
-
-_No current designs. All designs have been implemented or superseded._
+| [summit-node-explorer-plugin-design.md](2026-03-23-summit-node-explorer-plugin-design.md) | Summit PR node, explorer plugin, `/explorer:send` skill | Current | 2026-03-23 |
 
 **See also:** [Belayer v2 Temporal Orchestrator](../designs/temporal-orchestrator-reimagining.md) — implemented 2026-03-19
 
