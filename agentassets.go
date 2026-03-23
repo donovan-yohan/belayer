@@ -47,10 +47,7 @@ type StaticSkillSpec struct {
 }
 
 var (
-	commandRefHarness  = regexp.MustCompile(`/harness:([a-z-]+)`)
-	commandRefPR       = regexp.MustCompile(`/pr:([a-z-]+)`)
-	commandRefExplorer = regexp.MustCompile(`/explorer:([a-z-]+)`)
-	superpowersRef     = regexp.MustCompile(`superpowers:([a-z-]+)`)
+	superpowersRef = regexp.MustCompile(`superpowers:([a-z-]+)`)
 
 	loadOnce sync.Once
 	loadErr  error
@@ -92,7 +89,15 @@ func MustPluginVersion(name string) string {
 }
 
 func CodexPackVersion() string {
-	return fmt.Sprintf("harness-%s_pr-%s_explorer-%s", MustPluginVersion("harness"), MustPluginVersion("pr"), MustPluginVersion("explorer"))
+	plugins, err := Plugins()
+	if err != nil {
+		panic(err)
+	}
+	parts := make([]string, len(plugins))
+	for i, p := range plugins {
+		parts[i] = p.Name + "-" + p.Version
+	}
+	return strings.Join(parts, "_")
 }
 
 func Invocation(provider, plugin, name string) string {
@@ -285,9 +290,12 @@ func appendStaticSkill(files map[string][]byte, skill StaticSkillSpec) error {
 
 func rewriteForCodex(content, sourcePrefix string) string {
 	rewritten := content
-	rewritten = commandRefHarness.ReplaceAllString(rewritten, "harness-$1")
-	rewritten = commandRefPR.ReplaceAllString(rewritten, "pr-$1")
-	rewritten = commandRefExplorer.ReplaceAllString(rewritten, "explorer-$1")
+	// Rewrite /<plugin>:<command> → <plugin>-<command> for all loaded plugins.
+	plugins, _ := Plugins()
+	for _, p := range plugins {
+		re := regexp.MustCompile(`/` + regexp.QuoteMeta(p.Name) + `:([a-z-]+)`)
+		rewritten = re.ReplaceAllString(rewritten, p.Name+"-$1")
+	}
 	rewritten = superpowersRef.ReplaceAllString(rewritten, "$1")
 	if sourcePrefix != "" {
 		rewritten = strings.ReplaceAll(rewritten, sourcePrefix, "")

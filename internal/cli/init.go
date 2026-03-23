@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/donovan-yohan/belayer/internal/config"
 	"github.com/donovan-yohan/belayer/internal/defaults"
@@ -43,7 +44,7 @@ func newInitCmd() *cobra.Command {
 			if err := registerPlugins(cmd); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"Warning: plugin registration failed: %v\n"+
-						"  The 'harness', 'pr', and 'explorer' Claude Code plugins were not installed.\n"+
+						"  The Claude Code plugins were not installed.\n"+
 						"  Re-run 'belayer init' after resolving the issue, or install plugins manually.\n", err)
 			}
 
@@ -75,13 +76,15 @@ func registerPlugins(cmd *cobra.Command) error {
 		{"explorer", plugins.ExplorerVersion},
 	}
 
-	for _, p := range specs {
+	names := make([]string, len(specs))
+	for i, p := range specs {
 		if err := reg.InstallPlugin(p.name, p.version); err != nil {
 			return fmt.Errorf("installing %s: %w", p.name, err)
 		}
+		names[i] = p.name
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Registered belayer marketplace. Installed plugins: harness, pr, explorer\n")
+	fmt.Fprintf(cmd.OutOrStdout(), "Registered belayer marketplace. Installed plugins: %s\n", strings.Join(names, ", "))
 	return nil
 }
 

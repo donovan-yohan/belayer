@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
+	"strings"
 )
 
 // Validate checks a PipelineConfig for structural correctness.
@@ -49,7 +51,12 @@ func Validate(cfg *PipelineConfig) error {
 			return fmt.Errorf("node %q: output.type is required", n.Name)
 		}
 		if !validOutputTypes[n.Output.Type] {
-			return fmt.Errorf("node %q: output.type must be \"file\", \"gate_result\", \"commit\", or \"pr\", got %q", n.Name, n.Output.Type)
+			valid := make([]string, 0, len(validOutputTypes))
+			for k := range validOutputTypes {
+				valid = append(valid, fmt.Sprintf("%q", k))
+			}
+			sort.Strings(valid)
+			return fmt.Errorf("node %q: output.type must be one of [%s], got %q", n.Name, strings.Join(valid, ", "), n.Output.Type)
 		}
 		// Enforce consistency between node type and output type.
 		if n.IsGate() && n.Output.Type != "gate_result" {
