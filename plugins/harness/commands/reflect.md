@@ -174,7 +174,7 @@ This phase feeds the self-learning review system. When bugs escape `/harness:rev
 
 14.11. If `docs/REVIEW_GUIDANCE.md` does NOT exist, skip this phase silently. The adversarial review system is opt-in — it's created during `/harness:init` but older projects may not have it.
 
-14.12. Report escape mining results (include in the Phase 8 report):
+14.12. Report escape mining results (include in the final Report output):
    - Number of escapes detected
    - Questions added/refined
    - Categories affected

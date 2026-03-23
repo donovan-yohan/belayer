@@ -130,15 +130,11 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     Each question targets a production failure pattern. Add new questions when bugs
     escape review — see Escape Log below.
 
-    {Include relevant category sections from references/adversarial-review-prompt.md,
-     filtered by detected project characteristics. Always include:
-     - Failure Modes & Resilience
-     - Resource Exhaustion
-     Add others based on detection:
-     - Concurrency & Scale (if HTTP handlers found)
-     - Distributed Systems (if multi-instance or cron detected)
-     - Data Integrity (if database code found)
-     - Security (if auth code found)}
+    ### Failure Modes & Resilience
+    (populated from references/adversarial-review-prompt.md)
+
+    ### Resource Exhaustion
+    (populated from references/adversarial-review-prompt.md)
 
     ## Escape Log
 
@@ -148,6 +144,12 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     | Date | Bug | Caught By | Category | Question Added |
     |------|-----|-----------|----------|----------------|
     ```
+
+    **Populating the question bank:** Read `references/adversarial-review-prompt.md` for the full default question bank. Copy the actual questions (not just placeholders) into the relevant category sections. Always include Failure Modes & Resilience and Resource Exhaustion. Add other categories based on repo detection:
+    - Concurrency & Scale (if HTTP handlers found)
+    - Distributed Systems (if multi-instance deployment or cron detected)
+    - Data Integrity (if database code found)
+    - Security (if auth code found)
 
 9. Generate `docs/ARCHITECTURE.md` using the matklad format. Analyze the project's directory structure, key modules, and build system to produce:
 

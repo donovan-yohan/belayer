@@ -179,9 +179,9 @@ Not every question applies to every diff. Before sending to `claude -p`, filter 
 
 The adversarial review verdict integrates with the harness review cycle:
 
-- **FAIL with CRITICAL findings:** Blocks the review. Must be addressed before Phase 3 agents run.
-- **FAIL with only HIGH/MEDIUM findings:** Proceeds to Phase 3, findings are added to the fix queue alongside agent findings.
-- **PASS:** Proceeds to Phase 3 normally. The adversarial review serves as a pre-filter, not a replacement for the 5 specialized agents.
+- **FAIL with CRITICAL findings:** Blocks the review. Must be addressed before Phase 4 (Review Loop) agents run.
+- **FAIL with only HIGH/MEDIUM findings:** Proceeds to Phase 4, findings are added to the fix queue alongside agent findings.
+- **PASS:** Proceeds to Phase 4 normally. The adversarial review serves as a pre-filter, not a replacement for the 5 specialized agents.
 
 ### False Positive Handling
 
