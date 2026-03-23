@@ -97,6 +97,9 @@ func TestDefaultPipeline_SummitNode(t *testing.T) {
 	if summit.OnRetry != "self" {
 		t.Errorf("summit on_retry: got %q, want %q", summit.OnRetry, "self")
 	}
+	if summit.OnFail != "stop" {
+		t.Errorf("summit on_fail: got %q, want %q", summit.OnFail, "stop")
+	}
 }
 
 func TestDefaultPipeline_Validates(t *testing.T) {

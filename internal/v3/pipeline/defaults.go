@@ -107,6 +107,7 @@ nodes:
     on_retry: self
     on_fail: stop
     max_retries: 2
+
 safety:
   max_concurrent_runs: 3
 `
