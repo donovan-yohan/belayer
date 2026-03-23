@@ -12,6 +12,9 @@ func TestPluginVersion(t *testing.T) {
 	if got := MustPluginVersion("pr"); got != "1.2.0" {
 		t.Fatalf("unexpected pr version: %s", got)
 	}
+	if got := MustPluginVersion("explorer"); got != "0.1.0" {
+		t.Fatalf("unexpected explorer version: %s", got)
+	}
 }
 
 func TestCodexSkillFiles_GeneratesCommandSkillsAndCopiesStaticSkills(t *testing.T) {
@@ -26,6 +29,7 @@ func TestCodexSkillFiles_GeneratesCommandSkillsAndCopiesStaticSkills(t *testing.
 		"pr-author/SKILL.md",
 		"strangler-fig/SKILL.md",
 		"strangler-fig/references/steps-by-context.md",
+		"explorer-send/SKILL.md",
 	}
 	for _, path := range required {
 		if _, ok := files[path]; !ok {
@@ -60,5 +64,12 @@ func TestCodexSkillFiles_RewritesRuntimeReferences(t *testing.T) {
 	}
 	if !strings.Contains(refactor, "references/steps-by-context.md") {
 		t.Fatalf("expected static skill reference path to be preserved as local reference")
+	}
+
+	send := string(files["explorer-send/SKILL.md"])
+	// The "Claude alias:" header line intentionally preserves /explorer:send.
+	// Check that body content (Usage section) is rewritten.
+	if !strings.Contains(send, "explorer-send") {
+		t.Fatalf("expected explorer-send Codex skill reference in explorer send skill")
 	}
 }

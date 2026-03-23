@@ -1,0 +1,10 @@
+{
+  "name": "explorer",
+  "version": "0.1.0",
+  "description": "Submit specs to the belayer pipeline from any interactive coding session.",
+  "author": { "name": "donovanyohan" },
+  "keywords": ["explorer", "submit", "spec", "pipeline", "intake"],
+  "agents": [],
+  "commands": ["./commands/send.md"],
+  "skills": []
+}

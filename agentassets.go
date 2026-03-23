@@ -12,7 +12,7 @@ import (
 	"sync"
 )
 
-//go:embed plugins/harness/commands/*.md plugins/pr/commands/*.md plugins/harness/skills/strangler-fig all:plugins/harness/.claude-plugin/plugin.json all:plugins/pr/.claude-plugin/plugin.json
+//go:embed plugins/harness/commands/*.md plugins/pr/commands/*.md plugins/explorer/commands/*.md plugins/harness/skills/strangler-fig all:plugins/harness/.claude-plugin/plugin.json all:plugins/pr/.claude-plugin/plugin.json all:plugins/explorer/.claude-plugin/plugin.json
 var FS embed.FS
 
 type pluginJSON struct {
@@ -47,9 +47,10 @@ type StaticSkillSpec struct {
 }
 
 var (
-	commandRefHarness = regexp.MustCompile(`/harness:([a-z-]+)`)
-	commandRefPR      = regexp.MustCompile(`/pr:([a-z-]+)`)
-	superpowersRef    = regexp.MustCompile(`superpowers:([a-z-]+)`)
+	commandRefHarness  = regexp.MustCompile(`/harness:([a-z-]+)`)
+	commandRefPR       = regexp.MustCompile(`/pr:([a-z-]+)`)
+	commandRefExplorer = regexp.MustCompile(`/explorer:([a-z-]+)`)
+	superpowersRef     = regexp.MustCompile(`superpowers:([a-z-]+)`)
 
 	loadOnce sync.Once
 	loadErr  error
@@ -91,7 +92,7 @@ func MustPluginVersion(name string) string {
 }
 
 func CodexPackVersion() string {
-	return fmt.Sprintf("harness-%s_pr-%s", MustPluginVersion("harness"), MustPluginVersion("pr"))
+	return fmt.Sprintf("harness-%s_pr-%s_explorer-%s", MustPluginVersion("harness"), MustPluginVersion("pr"), MustPluginVersion("explorer"))
 }
 
 func Invocation(provider, plugin, name string) string {
@@ -145,7 +146,7 @@ description: %s
 }
 
 func loadPlugins() ([]PluginSpec, error) {
-	pluginNames := []string{"harness", "pr"}
+	pluginNames := []string{"harness", "pr", "explorer"}
 	loaded := make([]PluginSpec, 0, len(pluginNames))
 	for _, pluginName := range pluginNames {
 		spec, err := loadPlugin(pluginName)
@@ -286,6 +287,7 @@ func rewriteForCodex(content, sourcePrefix string) string {
 	rewritten := content
 	rewritten = commandRefHarness.ReplaceAllString(rewritten, "harness-$1")
 	rewritten = commandRefPR.ReplaceAllString(rewritten, "pr-$1")
+	rewritten = commandRefExplorer.ReplaceAllString(rewritten, "explorer-$1")
 	rewritten = superpowersRef.ReplaceAllString(rewritten, "$1")
 	if sourcePrefix != "" {
 		rewritten = strings.ReplaceAll(rewritten, sourcePrefix, "")
