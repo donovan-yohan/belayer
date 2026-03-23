@@ -16,6 +16,11 @@
       "name": "pr",
       "source": "./plugins/pr",
       "description": "PR lifecycle management — author, review, resolve, update"
+    },
+    {
+      "name": "explorer",
+      "source": "./plugins/explorer",
+      "description": "Submit specs to the belayer pipeline from any interactive session"
     }
   ]
 }
