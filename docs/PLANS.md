@@ -7,6 +7,7 @@ Execution plans for active and completed work.
 | Plan | Created | Topic |
 |------|---------|-------|
 | [Intake Plugin Model](exec-plans/active/2026-03-21-intake-plugin-model.md) | 2026-03-21 | Intake plugin model, pipeline templates, v2→v3 migration, worker daemon |
+| [Summit Node & Explorer Plugin](exec-plans/active/2026-03-23-summit-node-explorer-plugin.md) | 2026-03-23 | Summit PR node, explorer plugin, /explorer:send command |
 
 ## Tech Debt
 
