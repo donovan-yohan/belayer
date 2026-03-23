@@ -4,7 +4,7 @@ description: Use when executing a living plan with agent teams, or when user say
 
 # Orchestrate
 
-Execute a living plan using agent teams with per-task micro-reflects and living plan updates.
+Execute a living plan using subagent-driven development with per-task living plan updates, micro-reviews, and user checkpoints.
 
 ## Usage
 
@@ -12,12 +12,6 @@ Execute a living plan using agent teams with per-task micro-reflects and living 
 /harness:orchestrate
 /harness:orchestrate docs/exec-plans/active/{file}.md
 ```
-
-## Architecture
-
-- Orchestrator (main agent, Opus) owns coordination, never writes code
-- Workers (Sonnet 4.6) implement tasks
-- Workers report back, orchestrator updates plan and runs micro-reflects
 
 ## Invocation
 
@@ -37,211 +31,72 @@ Execute a living plan using agent teams with per-task micro-reflects and living 
 
 3. If any tasks are already marked complete in Progress, skip them. Resume from the first incomplete task.
 
-### Phase 2: Team & Task Setup
+### Phase 2: Execute with Subagent-Driven Development
 
-4. Create the agent team:
+4. **Invoke `superpowers:subagent-driven-development`** with the plan context. Follow its full process (dispatch implementer subagents per task, spec compliance review, code quality review, handle implementer status).
 
-   ```typescript
-   TeamCreate({
-     team_name: "{plan-kebab-name}",
-     description: "Executing: {plan title}"
-   })
+   <HARNESS_OVERRIDES>
+   The following overrides REPLACE conflicting instructions from superpowers:subagent-driven-development.
+   These take ABSOLUTE PRECEDENCE over any path, handoff, or workflow instruction in that skill:
+
+   - **Plan location:** The plan is in `docs/exec-plans/active/`, NOT `docs/superpowers/plans/`. Provide the full task text from the plan to implementer subagents — do not make them read the plan file.
+   - **No worktree setup:** Do NOT invoke `superpowers:using-git-worktrees`. Harness manages its own workflow context.
+   - **No final code reviewer or finishing-a-development-branch:** Do NOT dispatch the "final code reviewer subagent for entire implementation" step, and do NOT invoke `superpowers:finishing-a-development-branch`. Harness uses `/harness:review` for holistic review instead. After all tasks complete (each having passed their individual two-stage reviews), proceed directly to Phase 3 below.
+   - **Parallel dispatch for independent tasks:** SDD normally processes tasks sequentially. Override this when the plan contains independent tasks (no shared files, no data dependencies). For independent tasks, use `superpowers:dispatching-parallel-agents` to run them concurrently. If agent teams are available (TeamCreate, SendMessage), use them for coordination — create a named team, dispatch named workers, and collect results via SendMessage. After all parallel workers complete, run the two-stage review (spec + quality) on each task's changes before proceeding. Parallel dispatch is an optimization, not a requirement — fall back to sequential if uncertain about independence.
+   - **Living plan updates after EVERY task:** After each task completes (after both reviews pass), update the plan file immediately:
+     - **Progress:** Check off the completed task: `- [x] Task {N}: {name} _(completed {YYYY-MM-DD})_`
+     - **Surprises:** If the implementer reported anything unexpected, add a row: `| {date} | {what} | {plan impact} | {action taken} |`
+     - **Drift:** If the implementer deviated from the plan, add a row: `| Task {N} | {plan said} | {actually happened} | {why} |`
+     - **Decision Log:** If a non-trivial decision was made, add a row: `| {date} | Implementation | {decision} | {rationale} |`
+     - **Last Updated:** Update the timestamp in the plan's status line.
+   - **Micro-review after EVERY task:** After updating the plan, check the task's diff (`git diff HEAD~1`) for:
+     - Stale docs contradicted by the diff (new modules not in ARCHITECTURE.md, changed patterns not in DESIGN.md)
+     - Obvious code issues (unused imports, debug logging, unresolved TODOs)
+     - Test coverage gaps
+     Fix any stale docs immediately. Note code issues for `/harness:review`.
+   - **Checkpoint after EVERY task:** After the micro-review, report status to the user and wait for feedback:
+     ```
+     ## Task {N} Complete
+
+     **Progress:** {M} of {total} tasks done
+     **Surprises:** {any new entries, or "none"}
+     **Drift:** {any deviations, or "none"}
+     **Docs:** {what was updated, or "current"}
+     **Code notes:** {any issues spotted, or "clean"}
+
+     Ready for next task. Continue? (y/n)
+     ```
+     Apply any user corrections before proceeding to the next task.
+   - **Refactor scope awareness:** If the plan header contains `Refactor Scope:`, also update the scope doc's step statuses after each task. When orchestrate finishes all planned steps and hits an async gate, output the gate info:
+     ```
+     Step {N} ({name}): completed
+     Step {M} ({name}): in_progress — {status}
+
+     Gate before Step {X}: {gate condition}
+
+     This refactor is paused at a gate. Return in a new session and run:
+       /harness:refactor-status
+     ```
+   </HARNESS_OVERRIDES>
+
+### Phase 3: Completion
+
+5. When all tasks are complete, report final status:
+
    ```
+   ## All Tasks Complete
 
-5. Create tasks for each remaining plan task:
+   **Progress:** {total} of {total} tasks done
+   **Total surprises:** {N}
+   **Total drift entries:** {N}
+   **Decisions logged:** {N}
 
-   ```typescript
-   TaskCreate({
-     subject: "Task {N}: {task name}",
-     description: `
-       {full task specification from plan}
+   ## Next Step
 
-       Acceptance criteria:
-       {acceptance criteria from plan}
+   Run `/harness:review` to:
+   - Simplify code
+   - Run multi-perspective code review
+   - Fix or defer findings
 
-       MANDATORY COMPLETION REQUIREMENTS:
-       1. Verify implementation: run tests/build/lint as appropriate
-       2. Commit changes with descriptive message
-       3. Report back: what was done, any surprises, any deviations from plan
-     `,
-     activeForm: "Implementing Task {N}"
-   })
+   Then `/harness:reflect` → `/harness:complete`.
    ```
-
-6. Set up dependencies between tasks based on plan structure:
-
-   ```typescript
-   TaskUpdate({ taskId: "2", addBlockedBy: ["1"] })
-   ```
-
-### Phase 3: Dispatch Workers
-
-7. For each unblocked task (or batch of independent tasks), spawn a Sonnet 4.6 worker:
-
-   ```typescript
-   // Mark task in progress
-   TaskUpdate({ taskId: "N", status: "in_progress" })
-
-   // Spawn worker
-   Task({
-     description: "Task {N}: {task name}",
-     prompt: `You are a team member working on: {task name}.
-
-   PROJECT: {absolute path to project}
-   TEAM: {team-name}
-
-   ## Task Specification
-
-   {paste the full ### Task N section from the plan}
-
-   ## Context
-   - Plan: {plan path}
-   - Previous tasks completed: {list}
-   - Known surprises: {from plan's Surprises table, or "none"}
-
-   ## Implementation Approach
-
-   Implement directly using your tools (Read, Edit, Write, Bash).
-   Follow existing patterns in the codebase.
-
-   ## MANDATORY Before Claiming Complete
-
-   1. Run relevant tests/build to verify implementation works
-   2. Commit changes: git add {files} && git commit -m "{descriptive message}"
-   3. Report back:
-      - What was done (summary)
-      - Any surprises (unexpected findings, blockers encountered, different from plan)
-      - Any deviations from plan (what the plan said vs what you actually did, and why)
-   4. Mark task complete via: TaskUpdate({ taskId: "{N}", status: "completed" })
-   `,
-     subagent_type: "general-purpose",
-     model: "sonnet",
-     mode: "bypassPermissions",
-     team_name: "{team-name}",
-     name: "worker-{N}",
-     run_in_background: true
-   })
-   ```
-
-   **Independent tasks dispatched in parallel** — send multiple Task tool calls in one message. Sequential (blocked) tasks wait for their blockers to complete.
-
-### Phase 4: Monitor & Update Living Plan
-
-8. After each task completes, update the plan file immediately:
-
-   **a) Update Progress** — check off the completed task with timestamp:
-   ```markdown
-   - [x] Task {N}: {name} _(completed {YYYY-MM-DD})_
-   ```
-
-   **b) Add Surprises row** if worker reported anything unexpected:
-   ```markdown
-   | {date} | {what was unexpected} | {how it affects the plan} | {what was done} |
-   ```
-
-   **c) Add Plan Drift row** if worker deviated from the plan:
-   ```markdown
-   | Task {N} | {what the plan said} | {what actually happened} | {why} |
-   ```
-
-   **d) Add Decision Log row** if a non-trivial decision was made:
-   ```markdown
-   | {date} | Implementation | {decision} | {rationale} |
-   ```
-
-   **e) Update Last Updated** timestamp in the plan's status line.
-
-   **f) If the plan's source is a refactor scope doc** (check for `Refactor Scope:` in the plan header), also update the scope doc's step statuses. When orchestrate finishes all planned steps and hits an async gate, update the scope doc and output the gate info:
-   ```
-   Step {N} ({name}): completed
-   Step {M} ({name}): in_progress — {status}
-
-   Gate before Step {X}: {gate condition}
-
-   This refactor is paused at a gate. Return in a new session and run:
-     /harness:refactor-status
-   ```
-
-### Phase 5: Micro-Review
-
-9. After updating the plan, run a quick review scoped to the task's changes:
-
-   a) Check the task's diff for obvious issues:
-   ```bash
-   git diff HEAD~1 --stat
-   git diff HEAD~1
-   ```
-
-   b) Scan for:
-   - Stale docs contradicted by the diff (new modules not in ARCHITECTURE.md, changed patterns not in DESIGN.md)
-   - Obvious code issues (unused imports, debug logging left in, TODO comments that should be resolved)
-   - Test coverage gaps (new code paths without corresponding tests)
-
-   c) Fix any stale docs immediately while context is fresh.
-
-   d) If code issues are found, note them in the checkpoint report — they'll be caught thoroughly by `/harness:review` later.
-
-### Phase 6: Checkpoint
-
-10. After each task (or batch of parallel tasks), report status:
-
-    ```
-    ## Task {N} Complete
-
-    **Progress:** {M} of {total} tasks done
-    **Surprises:** {any new entries, or "none"}
-    **Drift:** {any deviations, or "none"}
-    **Docs:** {what was updated, or "current"}
-    **Code notes:** {any issues spotted, or "clean"}
-
-    Ready for next task. Continue? (y/n)
-    ```
-
-11. Wait for user feedback. Apply any corrections before proceeding to next task.
-
-### Phase 7: Completion
-
-12. When all tasks are complete, dispatch team shutdown:
-
-    ```typescript
-    SendMessage({ type: "shutdown_request", recipient: "worker-N", content: "All tasks complete." })
-    // Repeat for each active teammate
-    TeamDelete()
-    ```
-
-13. Report final status:
-
-    ```
-    ## All Tasks Complete
-
-    **Progress:** {total} of {total} tasks done
-    **Total surprises:** {N}
-    **Total drift entries:** {N}
-    **Decisions logged:** {N}
-
-    ## Next Step
-
-    Run `/harness:review` to:
-    - Simplify code
-    - Run multi-perspective code review (6 agents)
-    - Fix or defer findings
-
-    Then `/harness:reflect` → `/harness:complete`.
-    ```
-
-## Orchestrator Rules
-
-**DO:**
-- Write detailed worker prompts with full task spec, project path, and team name
-- Spawn workers with `model: "sonnet"` (Sonnet 4.6) for cost-effective implementation
-- Update living plan after EVERY task (progress, surprises, drift, decisions)
-- Run micro-review after EVERY task to catch stale docs and obvious issues
-- Report progress at checkpoints and wait for user feedback
-- Run integration checks yourself (never delegate to workers)
-
-**DON'T:**
-- Write code yourself — pure control plane only
-- Skip living plan updates after any task
-- Skip micro-reviews after any task
-- Dispatch dependent tasks in parallel (check blockedBy before spawning)
-- Mark the project done without running a final build/test check yourself
