@@ -87,13 +87,24 @@ Context-isolated adversarial review using `claude -p`. This phase catches produc
    ```
    If the diff is empty, skip the adversarial review with status "skipped — empty diff" and proceed to Phase 4.
 
-9. **Shell out to `claude -p`** with the constructed prompt and diff. Write the prompt to a temp file first to avoid shell escaping issues with deployment context or question content:
+9. **Invoke `claude -p`** with the constructed prompt and diff. This is the critical isolation step — no conversation context crosses this boundary.
+
+   **Important:** Do NOT interpolate the prompt into a shell string (e.g., `claude -p "{prompt}"`). The prompt contains newlines, quotes, and backticks from REVIEW_GUIDANCE.md that will break shell parsing. Instead:
+   - Write the constructed prompt to a temp file
+   - Combine the prompt and diff into a single input, then pipe to `claude -p`
    ```bash
    ADVERSARIAL_PROMPT=$(mktemp /tmp/harness-adversarial-prompt-XXXXXX.md)
-   # Write the constructed prompt to $ADVERSARIAL_PROMPT
-   cat "$ADVERSARIAL_DIFF" | claude -p "$(cat "$ADVERSARIAL_PROMPT")" --output-format text
+   # Write the constructed prompt to $ADVERSARIAL_PROMPT via the Write tool
+   # Then invoke claude with the prompt file, piping the diff as context:
+   claude -p "$(cat "$ADVERSARIAL_PROMPT")" < "$ADVERSARIAL_DIFF" --output-format text
    ```
-   Use `timeout: 300000` (5 minutes) on the Bash call. This is the critical isolation step — no conversation context crosses this boundary.
+   Alternatively, concatenate the prompt and diff into a single file and pipe it:
+   ```bash
+   COMBINED=$(mktemp /tmp/harness-adversarial-combined-XXXXXX.md)
+   cat "$ADVERSARIAL_PROMPT" "$ADVERSARIAL_DIFF" > "$COMBINED"
+   cat "$COMBINED" | claude -p - --output-format text
+   ```
+   Use `timeout: 300000` (5 minutes) on the Bash call.
 
 10. **Parse the adversarial review output:**
     - Look for `VERDICT: FAIL` or `VERDICT: PASS`
@@ -110,7 +121,7 @@ Context-isolated adversarial review using `claude -p`. This phase catches produc
 
 12. Clean up:
     ```bash
-    rm -f "$ADVERSARIAL_DIFF" "$ADVERSARIAL_PROMPT"
+    rm -f "$ADVERSARIAL_DIFF" "$ADVERSARIAL_PROMPT" "$COMBINED" 2>/dev/null
     ```
 
 ### Phase 4: Review Loop

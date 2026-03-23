@@ -132,7 +132,7 @@ Full documentation reconciliation, conversation mining, and retrospective. Run a
 
 This phase feeds the self-learning review system. When bugs escape `/harness:review` and are caught by external reviewers (copilot, PR reviewers, QA, production incidents), those escapes become new adversarial questions that improve future reviews.
 
-14.7. **Detect review escapes** — scan the conversation history and available context for bugs that were NOT caught by `/harness:review` but were found by:
+14.6. **Detect review escapes** — scan the conversation history and available context for bugs that were NOT caught by `/harness:review` but were found by:
    - **External PR review** — copilot suggestions, human reviewer comments
    - **Manual testing** — bugs found during QA or dogfooding after review passed
    - **Production incidents** — issues traced to recently reviewed code
@@ -144,7 +144,7 @@ This phase feeds the self-learning review system. When bugs escape `/harness:rev
    - Conversation contains a bug fix for code that was part of the reviewed diff
    - The `/harness:review` report shows all agents PASS but issues were later found
 
-14.8. **Categorize each escape** into the adversarial question bank taxonomy:
+14.7. **Categorize each escape** into the adversarial question bank taxonomy:
    - `concurrency` — race conditions, thundering herds, lock contention
    - `distributed` — double-execution, coordination failures, split-brain
    - `failure-modes` — missing retries, cascade failures, no circuit breaker
@@ -153,12 +153,12 @@ This phase feeds the self-learning review system. When bugs escape `/harness:rev
    - `security` — injection, auth bypass, data exposure
    - `logic` — incorrect behavior, wrong edge case handling (code-level bugs the review agents should have caught)
 
-14.9. **Formulate "what breaks?" questions** for each escape:
+14.8. **Formulate "what breaks?" questions** for each escape:
    - Each question must be specific enough to catch this bug class in future reviews
    - Frame as a scenario, not a fix: "What happens when X?" not "Add jitter to backoff"
    - Example: A thundering herd escape → "Does retry/backoff logic use jitter, or will concurrent clients synchronize into waves?"
 
-14.10. **Update `docs/REVIEW_GUIDANCE.md`** if it exists:
+14.9. **Update `docs/REVIEW_GUIDANCE.md`** if it exists:
 
    a. Append each escape to the **Escape Log** table:
       ```markdown
@@ -172,9 +172,9 @@ This phase feeds the self-learning review system. When bugs escape `/harness:rev
 
    c. If the escape was a `logic` category bug (something the existing review agents should have caught), also write a learning to `docs/LEARNINGS.md` with category `review-escape` noting which agent should have caught it and why it might have been missed (confidence threshold too high? wrong framing?)
 
-14.11. If `docs/REVIEW_GUIDANCE.md` does NOT exist, skip this phase. In the final Report, set Review Escape Mining to: "Skipped — docs/REVIEW_GUIDANCE.md not found. Run /harness:init to enable adversarial review learning."
+14.10. If `docs/REVIEW_GUIDANCE.md` does NOT exist, skip this phase. In the final Report, set Review Escape Mining to: "Skipped — docs/REVIEW_GUIDANCE.md not found. Run /harness:init or /harness:review to enable adversarial review learning."
 
-14.12. Report escape mining results (include in the final Report output):
+14.11. Report escape mining results (include in the final Report output):
    - Number of escapes detected
    - Questions added/refined
    - Categories affected

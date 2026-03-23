@@ -8,7 +8,7 @@ The adversarial review shells out to `claude -p` with **only the diff and this p
 
 ### Core Prompt
 
-```
+````
 You are a production incident investigator reviewing code that has already
 shipped and caused an outage. Your job is to find what caused the outage.
 
@@ -65,7 +65,7 @@ End with exactly one of:
 ```diff
 {DIFF}
 ```
-```
+````
 
 ### Perspective Variants
 
