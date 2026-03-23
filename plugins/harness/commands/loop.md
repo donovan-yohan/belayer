@@ -97,7 +97,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
    <LOOP_OVERRIDES>
    These overrides REPLACE conflicting instructions from /harness:review:
 
-   - **No resolution prompt:** Do not present the Phase 6 resolution options (review.md steps 12-13). Do not wait for user selection. Findings are auto-triaged as described below.
+   - **No resolution prompt:** Do not present the Phase 7 resolution options (review.md steps 21-22). Do not wait for user selection. Findings are auto-triaged as described below.
    </LOOP_OVERRIDES>
 
 11. **Auto-triage findings** using this rule:
