@@ -1,6 +1,6 @@
 package pipeline
 
-// DefaultPipelineYAML is the built-in setter → lead → spotter pipeline.
+// DefaultPipelineYAML is the built-in setter → lead → spotter → summit pipeline.
 const DefaultPipelineYAML = `name: default-climb
 intake:
   - name: user-session
@@ -81,6 +81,30 @@ nodes:
       rationale_path: .belayer/output/rationale.md
     on_pass: next
     on_retry: lead
+    on_fail: stop
+    max_retries: 2
+
+  - name: summit
+    type: node
+    description: |
+      You are the summit. The code has passed review. Your job is to create
+      a pull request for the completed work.
+
+      Run /pr:author to create the PR.
+      After /pr:author completes, verify the PR exists with gh pr view.
+      If the PR was created successfully, write the PR URL and number to
+      .belayer/output/pr.json.
+
+      On retry: check gh pr view first — if a PR already exists, skip
+      /pr:author and write the output directly (idempotency).
+    input:
+      type: gate_result
+      key: spotter
+    output:
+      type: pr
+      path: .belayer/output/pr.json
+    on_pass: stop
+    on_retry: self
     on_fail: stop
     max_retries: 2
 safety:

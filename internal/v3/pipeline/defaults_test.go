@@ -10,8 +10,8 @@ func TestDefaultPipelineParses(t *testing.T) {
 	if cfg.Name != "default-climb" {
 		t.Errorf("Name: got %q, want %q", cfg.Name, "default-climb")
 	}
-	if len(cfg.Nodes) != 3 {
-		t.Errorf("Nodes: got %d, want 3", len(cfg.Nodes))
+	if len(cfg.Nodes) != 4 {
+		t.Errorf("Nodes: got %d, want 4", len(cfg.Nodes))
 	}
 	if len(cfg.Intake) != 1 {
 		t.Errorf("Intake: got %d, want 1", len(cfg.Intake))
@@ -72,6 +72,30 @@ func TestDefaultPipeline_SpotterIsGate(t *testing.T) {
 	}
 	if spotter.Output.Type != "gate_result" {
 		t.Errorf("spotter output type: got %q, want %q", spotter.Output.Type, "gate_result")
+	}
+}
+
+func TestDefaultPipeline_SummitNode(t *testing.T) {
+	cfg, err := ParsePipeline([]byte(DefaultPipelineYAML))
+	if err != nil {
+		t.Fatalf("parse default pipeline: %v", err)
+	}
+
+	summit := cfg.FindNode("summit")
+	if summit == nil {
+		t.Fatal("expected summit node in default pipeline")
+	}
+	if summit.Type != NodeTypeNode {
+		t.Errorf("summit type: got %q, want %q", summit.Type, NodeTypeNode)
+	}
+	if summit.Output.Type != "pr" {
+		t.Errorf("summit output type: got %q, want %q", summit.Output.Type, "pr")
+	}
+	if summit.OnPass != "stop" {
+		t.Errorf("summit on_pass: got %q, want %q", summit.OnPass, "stop")
+	}
+	if summit.OnRetry != "self" {
+		t.Errorf("summit on_retry: got %q, want %q", summit.OnRetry, "self")
 	}
 }
 
