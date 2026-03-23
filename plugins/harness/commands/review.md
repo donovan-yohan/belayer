@@ -6,6 +6,8 @@ description: Use when implementation is done and code needs quality review, when
 
 Multi-agent review loop on local changes using pr-review-toolkit agents. Runs all review agents in parallel, fixes issues, and re-runs failing agents until all pass or max cycles reached. Run after `/harness:orchestrate`, before `/harness:complete`.
 
+**Compatibility note:** This command no longer uses `review-personas.toml` or the previous multi-persona loop configuration. Any remaining references to it in other docs are legacy and will be cleaned up.
+
 ## Usage
 
 ```
@@ -15,13 +17,15 @@ Multi-agent review loop on local changes using pr-review-toolkit agents. Runs al
 
 ## Prerequisites
 
-This command requires the **pr-review-toolkit** plugin. If not installed, STOP and print:
+This command requires the **pr-review-toolkit** plugin. Verify it is installed by checking if its agents are available (e.g., `pr-review-toolkit:code-reviewer` appears in the agent list). If not installed, STOP and print:
 ```
 ERROR: Missing required plugin: pr-review-toolkit
 
 Install it:
   /plugins add pr-review-toolkit
 ```
+
+Optional: The **adr** plugin enables architecture compliance checking in Phase 5. If not installed, Phase 5 is skipped.
 
 ## Invocation
 
@@ -97,14 +101,14 @@ Install it:
 
 ### Phase 5: ADR Compliance
 
-9. Check if `docs/ARCHITECTURE.md` exists in the project.
+9. Check if `docs/ARCHITECTURE.md` exists AND the `adr` plugin is available (i.e., `/adr:review` is a recognized command).
 
-10. **If it exists:**
+10. **If both exist:**
     - Run `/adr:review` against the diff from Phase 1
     - Report any CRITICAL or WARNING violations
     - If the diff introduces new architectural patterns that aren't covered by existing ADRs, note them for `/harness:reflect` — do NOT create new ADRs during review. The bar for flagging is high: only note patterns that represent genuinely new architectural decisions, not routine implementation choices.
 
-11. **If it does not exist:** Skip silently.
+11. **If either is missing:** Skip silently — not every project uses ADRs or has the adr plugin installed.
 
 ### Phase 6: Resolution
 

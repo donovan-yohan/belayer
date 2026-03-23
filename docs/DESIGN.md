@@ -35,7 +35,7 @@ Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and for
 
 Validation flows through four layers. See [review-loops-test-infra-design](design-docs/2026-03-16-review-loops-test-infra-design.md) for full design.
 
-1. **Lead** (multi-persona review loop): Runs implementation, then loops multi-persona review (max 3 cycles) until all personas pass. Personas configured per repo via `review-personas.toml`. Writes `TOP.json` on completion.
+1. **Lead** (multi-agent review loop): Runs implementation, then loops pr-review-toolkit agents (max 3 cycles) until all agents pass. Writes `TOP.json` on completion.
 2. **Spotter** (per-repo spec compliance): Activated when all climbs for a repo complete. Validates spec compliance, test contract fulfillment, and runtime correctness. Writes `SPOT.json`.
 3. **Anchor** (cross-repo alignment): Multi-repo problems only. Reviews all repos for cross-repo consistency with integration-focused personas after all spotters pass. Writes `VERDICT.json`.
 4. **Reflect** (learning capture): Classifies errors, extracts learnings to SQLite, surfaces system improvement recommendations. Runs after final validation, parallel with PR creation.
