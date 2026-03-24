@@ -32,6 +32,10 @@ Audit documentation for staleness, broken links, orphaned guides, and bloat. Pro
 | Design-docs index lacks Current/Archived separation | warn |
 | Superseded design docs without "superseded by" marker | warn |
 | PLANS.md references features for deleted modules | warn |
+| REVIEW_GUIDANCE.md missing (harness initialized but no review guidance) | warn |
+| REVIEW_GUIDANCE.md Deployment Context is empty/placeholder ("unknown") | warn |
+| REVIEW_GUIDANCE.md Escape Log entries without matching question in bank | warn |
+| REVIEW_GUIDANCE.md question categories with zero escapes after 5+ reviews | info |
 
 ## Invocation
 
@@ -47,7 +51,7 @@ prompt: |
   ## Instructions
 
   1. Read CLAUDE.md and verify it has a "Documentation Map" section
-  2. Run ALL eighteen audit checks (see your agent instructions)
+  2. Run ALL audit checks (see your agent instructions and the Checks table)
   3. Produce the full prune report with severity, location, and suggested fix for every issue
   4. Calculate health classification (HEALTHY / NEEDS ATTENTION / UNHEALTHY)
   5. Present the report to the user
@@ -56,6 +60,8 @@ prompt: |
   - After presenting the report, automatically apply safe fixes:
     - Add missing files to docs/design-docs/index.md
     - Remove broken links from Documentation Map
+    - Create docs/REVIEW_GUIDANCE.md from default scaffold if missing (read references/adversarial-review-prompt.md for default question bank)
+    - Add escape log questions to matching bank categories if orphaned
   - For destructive fixes (deleting files, modifying CLAUDE.md), still ask for confirmation
 
   If no --fix flag:

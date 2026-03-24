@@ -21,7 +21,7 @@ Harness transforms monolithic CLAUDE.md files into a 3-tier progressive disclosu
 
 The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md earns its place in the context window. Detailed content lives in Tier 2 summaries and Tier 3 deep docs.
 
-## Eighteen Audit Checks
+## Audit Checks
 
 | Check | What to Look For | Severity |
 |-------|-----------------|----------|
@@ -43,6 +43,10 @@ The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md ear
 | **Missing Frontmatter** | Design docs in `docs/design-docs/` without YAML frontmatter | warn |
 | **Frontmatter Status Consistency** | Docs with `status: current` that have been superseded by newer docs on the same topic, or docs with `status: implemented` that have no `implemented-by` reference | warn |
 | **Index Status Badges** | `docs/design-docs/index.md` Status column doesn't match frontmatter `status` on corresponding docs, or index lacks Status column entirely | warn |
+| **Review Guidance Missing** | `docs/REVIEW_GUIDANCE.md` doesn't exist when harness is initialized (Documentation Map exists in CLAUDE.md) | warn |
+| **Review Guidance Empty Context** | `docs/REVIEW_GUIDANCE.md` Deployment Context section contains only "unknown" placeholders | warn |
+| **Orphaned Escape Log Entries** | Escape Log table entries that don't have a matching question in the Adversarial Question Bank | warn |
+| **Over-indexed Question Categories** | Question bank categories with zero escape log entries after 5+ reviews have been run (may be wasting review time on non-applicable questions) | info |
 
 ## Audit Process
 
@@ -167,6 +171,25 @@ Read `docs/design-docs/index.md`. Check:
 - Does the index have a `Status` column? If not, flag as **warn**
 - If it has a Status column, for each entry: read the corresponding design doc's frontmatter `status` field and compare to the index badge. Flag mismatches as **warn**.
 
+### Step 19: Review Guidance Missing
+
+Check if CLAUDE.md has a Documentation Map (harness is initialized). If so, check if `docs/REVIEW_GUIDANCE.md` exists. If harness is initialized but REVIEW_GUIDANCE.md is missing, flag as **warn** — the adversarial review system won't run during `/harness:review`.
+
+### Step 20: Review Guidance Empty Context
+
+If `docs/REVIEW_GUIDANCE.md` exists, read the Deployment Context section. If all values are "unknown" or placeholder text, flag as **warn** — the adversarial review will run without project-specific context, reducing its effectiveness. Suggest the user fill in deployment topology, database type, scale, and infrastructure details.
+
+### Step 21: Orphaned Escape Log Entries
+
+If `docs/REVIEW_GUIDANCE.md` exists and has an Escape Log table with entries, verify each entry's "Question Added" column text appears (or a close match) in one of the Adversarial Question Bank category sections. Flag entries where the question wasn't actually added as **warn**.
+
+### Step 22: Over-indexed Question Categories
+
+If `docs/REVIEW_GUIDANCE.md` exists:
+- Count the number of escape log entries per question category
+- If a category has questions but zero escape log entries AND the project has run 5+ reviews (check git log for "address review findings" commits), flag the category as **info** — it may be over-indexed for this project's domain
+- This is informational only. Categories without escapes are not necessarily wrong — they may be preventing bugs from ever being introduced.
+
 ## Output Format
 
 ```markdown
@@ -234,13 +257,16 @@ When the user approves fixes, apply them in this order:
 13. **Frontmatter status consistency** — Update `status` field and fill in `supersedes` or `implemented-by` references as needed.
 14. **Index status badges** — If index lacks Status column, add it. Read each design doc's frontmatter and set the index Status column to match: `Current`, `Implemented`, `Superseded`, or `Stale`.
 15. **Stale plans** — Offer to run /harness:complete for each stale plan
+16. **Review guidance missing** — Create `docs/REVIEW_GUIDANCE.md` from the default scaffold. Read the harness plugin's `references/adversarial-review-prompt.md` for the default question bank. Analyze the repo to pre-populate deployment context.
+17. **Review guidance empty context** — Analyze the repo (Dockerfile, CI config, database drivers, deployment manifests) and suggest deployment context values for the user to confirm.
+18. **Orphaned escape log entries** — For each orphaned entry, add the question from the "Question Added" column to the matching category in the Adversarial Question Bank. If no matching category exists, create one.
 
 For each fix applied, report what was changed.
 
 ## Behavioral Rules
 
 **You MUST:**
-- Run ALL eighteen checks before producing the report
+- Run ALL audit checks before producing the report
 - Include file paths in every finding
 - Provide a specific suggested fix for every issue
 - Calculate and report the health classification

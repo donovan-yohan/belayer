@@ -94,10 +94,62 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     Persistent learnings captured across sessions. Append-only, merge-friendly.
 
     Status: `active` | `superseded`
-    Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance`
+    Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance` | `review-escape`
 
     ---
     ```
+
+8.7. Generate `docs/REVIEW_GUIDANCE.md` — the self-learning adversarial review configuration:
+
+    First, analyze the repository to pre-populate deployment context and relevant question categories:
+    - Check for `Dockerfile`, `docker-compose.yml`, `fly.toml`, `render.yaml`, Kubernetes manifests → infer deployment topology (single instance, multi-instance, serverless)
+    - Check for database drivers/ORMs in dependencies → infer database type
+    - Check for cron/scheduler code → flag distributed systems questions
+    - Check for HTTP server/handler code → flag concurrency questions
+    - Check for auth/security middleware → flag security questions
+    - Check CI config for deployment targets → infer scale
+
+    Then generate the file. Read `references/adversarial-review-prompt.md` for the full default question bank. Include only question categories relevant to the detected project characteristics — but always include Resource Exhaustion and Failure Modes as baseline categories.
+
+    ```markdown
+    # Review Guidance
+
+    Production failure patterns and adversarial questions for this project.
+    Updated automatically when bugs escape review — the harness learns from its mistakes.
+
+    ## Deployment Context
+
+    - Instances: {detected or "unknown — update when deployment topology is known"}
+    - Database: {detected or "unknown"}
+    - Scale: {detected or "unknown — update with approximate request volume and data size"}
+    - Infrastructure: {detected or "unknown — list queues, cron, caches, external APIs"}
+
+    ## Adversarial Question Bank
+
+    Questions asked during isolated adversarial review (`/harness:review` Phase 3).
+    Each question targets a production failure pattern. Add new questions when bugs
+    escape review — see Escape Log below.
+
+    ### Failure Modes & Resilience
+    (populated from references/adversarial-review-prompt.md)
+
+    ### Resource Exhaustion
+    (populated from references/adversarial-review-prompt.md)
+
+    ## Escape Log
+
+    Bugs that escaped harness review and were caught externally.
+    Each entry feeds back into the question bank above.
+
+    | Date | Bug | Caught By | Category | Question Added |
+    |------|-----|-----------|----------|----------------|
+    ```
+
+    **Populating the question bank:** Read `references/adversarial-review-prompt.md` for the full default question bank. Copy the actual questions (not just placeholders) into the relevant category sections. Always include Failure Modes & Resilience and Resource Exhaustion. Add other categories based on repo detection:
+    - Concurrency & Scale (if HTTP handlers found)
+    - Distributed Systems (if multi-instance deployment or cron detected)
+    - Data Integrity (if database code found)
+    - Security (if auth code found)
 
 9. Generate `docs/ARCHITECTURE.md` using the matklad format. Analyze the project's directory structure, key modules, and build system to produce:
 
@@ -331,6 +383,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     | Design | `docs/DESIGN.md` | Design principles, core beliefs, pattern decisions |
     | Plans | `docs/PLANS.md` | Active work, completed plans, tech debt tracking |
     | Learnings | `docs/LEARNINGS.md` | Past learnings, corrections, patterns discovered across sessions |
+    | Review Guidance | `docs/REVIEW_GUIDANCE.md` | Adversarial review questions, escape log, deployment context |
     | Bug Analyses | `docs/bug-analyses/` | When investigating bugs, understanding past root causes |
     | Refactor Scopes | `docs/refactor-scopes/` | When planning refactoring, reviewing past extraction patterns |
     | References | `docs/references/` | External library docs, API specs, llms.txt files |
@@ -415,6 +468,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     - docs/DESIGN.md
     - docs/PLANS.md
     - docs/LEARNINGS.md
+    - docs/REVIEW_GUIDANCE.md
     - docs/design-docs/index.md
     - docs/design-docs/core-beliefs.md
     - {any discovered Tier 2 files}
