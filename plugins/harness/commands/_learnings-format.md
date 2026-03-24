@@ -103,3 +103,40 @@ Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` |
 
 ---
 ```
+
+---
+
+## Consulting Learnings
+
+Shared pattern for reading and surfacing relevant learnings. Referenced by `brainstorm.md` (step 2.5), `bug.md` (step 2.5), and `plan.md` (step 3.5).
+
+### Matching Algorithm
+
+1. Read `docs/LEARNINGS.md`. Filter to entries with `status: active`.
+2. Match each learning against the current context using:
+   - **Category match:** Compare learning `category` against the affected domain (e.g., a bug in the pipeline executor matches `architecture` and `patterns` learnings)
+   - **Keyword overlap:** Check for keyword overlap between the learning title/body and the current topic description (bug description, design doc title, planned modules)
+   - **File path match:** If the learning body names specific file paths, check for overlap with the files/modules relevant to the current task
+3. Rank by relevance (prefer learnings that match on multiple criteria).
+4. Surface the **top 3** most relevant learnings.
+5. If LEARNINGS.md doesn't exist or has no active learnings matching the context, skip silently.
+
+### Output Format
+
+When surfacing learnings, use this format:
+
+```
+## Relevant Past Learnings
+
+Based on past work in this project:
+- **{L-NNN}**: {one-line summary} — {recommendation}
+- **{L-NNN}**: {one-line summary} — {recommendation}
+
+These learnings will inform the current task.
+```
+
+### Recurrence Detection
+
+When consulting learnings during `/harness:bug`, also check for recurrence: if a learning's recommendation directly addresses the class of bug being investigated, note this explicitly:
+- "L-012 recommended always checking X, but this bug is exactly that class — the learning failed to prevent recurrence."
+This signals that the learning may need strengthening or that additional guardrails are needed beyond documentation.

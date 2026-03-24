@@ -22,19 +22,9 @@ Design through collaborative dialogue, saved as a versioned design document in t
 2. Read `docs/DESIGN.md` and `docs/design-docs/index.md` to understand existing design context. This grounds the brainstorming in what already exists.
 
 2.5. **Surface past learnings** (if available):
-   - Check if `docs/LEARNINGS.md` exists
-   - If it exists, read it and extract entries with `status: active`
-   - Match learnings against the brainstorm topic by checking category and keyword overlap between the learning titles/bodies and the user's brainstorm arguments
-   - Surface the top 3 most relevant learnings before starting the brainstorm dialogue:
-     ```
-     ## Relevant Past Learnings
-
-     Based on past work in this project:
-     - **{ID}**: {description} — {recommendation}
-     - **{ID}**: {description} — {recommendation}
-
-     These learnings will inform the design and be recorded in the design doc's `consulted-learnings` field.
-     ```
+   - Follow the consultation pattern defined in `_learnings-format.md` § "Consulting Learnings"
+   - Match learnings against the brainstorm topic
+   - Surface the top 3 most relevant learnings before starting the brainstorm dialogue (using the output format from `_learnings-format.md`)
    - Record the IDs of consulted learnings for inclusion in the design doc frontmatter (step 3's HARNESS_OVERRIDES `consulted-learnings` field)
    - If LEARNINGS.md doesn't exist or has no active learnings, skip silently
 
