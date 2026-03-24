@@ -4,7 +4,7 @@
 
 | Document | Purpose | Status | Created |
 |----------|---------|--------|---------|
-_No current designs. All designs have been implemented or superseded._
+| [2026-03-24-bug-architecture-review-design](2026-03-24-bug-architecture-review-design.md) | Architecture review step in bug flow + learnings enforcement across harness lifecycle | Current | 2026-03-24 |
 
 **See also:** [Belayer v2 Temporal Orchestrator](../designs/temporal-orchestrator-reimagining.md) — implemented 2026-03-19
 
