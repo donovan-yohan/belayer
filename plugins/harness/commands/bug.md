@@ -21,6 +21,13 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
 
 2. Read `docs/bug-analyses/index.md` to understand prior investigations. If the directory doesn't exist, create it with an empty index.
 
+2.5. **Check prior learnings** (if available):
+   - Follow the consultation pattern defined in `_learnings-format.md` § "Consulting Learnings"
+   - Match learnings against the bug's affected area and symptoms
+   - If relevant learnings are found, surface them before starting systematic debugging — they may accelerate diagnosis
+   - Also check for recurrence per the "Recurrence Detection" section in `_learnings-format.md`: if a prior learning's recommendation directly addresses this bug class, note it explicitly
+   - If LEARNINGS.md doesn't exist or has no matches, skip silently
+
 3. **Invoke `superpowers:systematic-debugging`** with the user's bug description. Follow the full debug cycle: reproduce, bisect, hypothesize, verify root cause.
 
 4. When debugging reaches confirmed root cause, save findings to `docs/bug-analyses/{YYYY-MM-DD}-{kebab-name}-bug-analysis.md`:
@@ -49,36 +56,36 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
 
     ## Recommended Fix Direction
     {high-level approach — detailed plan comes from /harness:plan}
+
+    ## Architecture Review
+
+    _Populated by step 4.5 — see below._
     ```
 
-4.5. **Write learning from root cause:**
-   - Extract the key actionable insight from the confirmed root cause and recommended fix direction
-   - Check if `docs/LEARNINGS.md` exists. If not, create it with the scaffold:
-     ```markdown
-     # Learnings
+4.5. **Architecture review** — With root cause confirmed, step back and answer: *"Why was it possible for this bug to be written, and how do we prevent it in the future?"*
+   - Read `references/architecture-review-prompt.md` for the detailed review dimensions and instructions
+   - Conduct the review across all four dimensions: systemic spread, design gap, testing gaps, harness context gaps
+   - Append findings to the bug analysis document, replacing the placeholder `## Architecture Review` section with the completed findings
+   - Each dimension produces actionable findings or an explicit "nothing systemic" signal — no forced output, but the section is always written (use "None" templates when clean)
+   - These findings directly expand the scope of the fix plan created by `/harness:plan`
 
-     Persistent learnings captured across sessions. Append-only, merge-friendly.
+4.7. **Write learnings from root cause + architecture review:**
+   - Produce one learning per dimension that has actionable findings, using the categories below. Follow the `_learnings-format.md` spec for format, IDs, and scaffold.
+   - Check if `docs/LEARNINGS.md` exists. If not, create it with the scaffold from `_learnings-format.md` § "LEARNINGS.md Scaffold".
+   - Determine the next learning ID by scanning existing `### L-NNN` headers.
 
-     Status: `active` | `superseded`
-     Categories: `architecture` | `testing` | `patterns` | `workflow` | `debugging` | `performance`
+   | Finding dimension | Learning category |
+   |-------------------|-------------------|
+   | Systemic spread | `patterns` |
+   | Design gap | `architecture` |
+   | Testing gaps | `testing` |
+   | Root cause itself | `debugging` |
+   | Harness context gaps | No learning (flagged for the plan) |
 
-     ---
-     ```
-   - Determine the next learning ID by scanning existing `### L-NNN` headers in the file. If none exist, start at L-001.
-   - Append a new learning entry to the end of the file:
-     ```markdown
-
-     ### L-{NNN}: {one-line root cause summary — actionable, not just "X was broken"}
-     - status: active
-     - category: debugging
-     - source: /harness:bug {YYYY-MM-DD}
-     - branch: {current git branch via `git branch --show-current`}
-
-     {Root cause description rewritten as a forward-looking recommendation. Example: "When modifying X, always verify Y because Z." Not just "X was broken because of Y."}
-
-     ---
-     ```
-   - The learning must be actionable — it should help a future agent avoid the same mistake
+   - Only write a learning if the finding is actionable. "None — isolated to this call site" produces no learning for that dimension.
+   - `/harness:bug` intentionally does not produce `review-escape` category learnings — review escapes are detected by `/harness:reflect`'s Review Escape Mining phase.
+   - Each learning must be forward-looking: "When doing X, always check Y because Z." Not just "X was broken because of Y."
+   - Source field: `/harness:bug {YYYY-MM-DD}`
 
 5. Update `docs/bug-analyses/index.md` — add a row for the new analysis:
     ```markdown
@@ -98,4 +105,4 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
     Run `/harness:plan docs/bug-analyses/{filename}.md` to continue.
     ```
 
-**IMPORTANT:** Do NOT attempt to fix the bug during investigation. The bug command produces a diagnosis; `/harness:plan` turns it into an executable fix plan.
+**IMPORTANT:** Do NOT attempt to fix the bug during investigation. The bug command produces a diagnosis + architecture review; `/harness:plan` turns it into an executable fix plan that addresses the instance, systemic spread, and missing guardrails.
