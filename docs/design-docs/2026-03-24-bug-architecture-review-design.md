@@ -29,7 +29,21 @@ Additionally, learnings are only consumed by `/harness:brainstorm`. They are not
 
 ## Changes
 
+All file paths below are relative to `plugins/harness/`.
+
 ### 1. `commands/bug.md` — Architecture review step + enhanced learnings
+
+The full step sequence after changes:
+
+1. Verify initialized
+2. Read prior bug analyses
+3. **2.5 (new): Check prior learnings**
+4. Systematic debugging → confirmed root cause
+5. Save bug analysis doc (with new Architecture Review section)
+6. **4.5 (new): Architecture review** — read reference file, append findings
+7. **4.7 (modified, was 4.5): Multi-dimensional learnings**
+8. Update index
+9. Guide to next step
 
 **Step 2.5 (new): Check prior learnings**
 
@@ -41,7 +55,7 @@ Match by: category vs. reported affected area, keyword overlap between learning 
 
 **Step 4.5 (new): Architecture review**
 
-After root cause is confirmed and the bug analysis doc is written, read `references/architecture-review-prompt.md` and conduct the review. Append findings to the bug analysis doc as a new `## Architecture Review` section.
+After root cause is confirmed and the bug analysis doc is written, read `references/architecture-review-prompt.md` (an LLM-facing prompt, same pattern as `references/adversarial-review-prompt.md`) and conduct the review. Append findings to the bug analysis doc as a new `## Architecture Review` section.
 
 The reference file contains the detailed prompt for four review dimensions:
 1. **Systemic spread** — Search for analogous patterns in the codebase
@@ -49,7 +63,7 @@ The reference file contains the detailed prompt for four review dimensions:
 3. **Testing gaps** — Specific missing test cases + missing test infrastructure/categories
 4. **Harness context gaps** — Flag stale/missing/misleading docs (don't fix)
 
-Each dimension produces actionable findings or an explicit "nothing systemic" signal. No forced output.
+Each dimension produces actionable findings or an explicit "nothing systemic" signal. No forced output. The `## Architecture Review` section is always written — when a dimension has no findings, use its "None" template text. This keeps the document structure consistent and makes it clear the review was conducted.
 
 **Bug analysis doc template addition:**
 
@@ -84,11 +98,15 @@ Produce one learning per dimension that has actionable findings:
 | Root cause itself | `debugging` |
 | Harness context gaps | No learning (flagged for the plan) |
 
+Note: `/harness:bug` intentionally does not produce `review-escape` category learnings. Bugs investigated via `/harness:bug` were already known — review escapes are detected by `/harness:reflect`'s Review Escape Mining phase, which handles that category.
+
 Only write a learning if the finding is actionable. Follow the existing `_learnings-format.md` spec. Source field: `/harness:bug {YYYY-MM-DD}`.
+
+**Implementation note:** The existing LEARNINGS.md scaffold in `bug.md` is missing the `review-escape` category present in `_learnings-format.md`. Update the scaffold to match `_learnings-format.md` when implementing this change.
 
 ### 2. `references/architecture-review-prompt.md` (new)
 
-Detailed review prompt loaded by bug.md step 4.5. Framed specifically for "root cause confirmed, now zoom out." Contains:
+LLM-facing prompt loaded by bug.md step 4.5 (same pattern as `references/adversarial-review-prompt.md`). Framed specifically for "root cause confirmed, now zoom out." Contains:
 
 - The framing question: "Why was it possible for this bug to be written, and how do we prevent it in the future?"
 - Four dimension definitions with guidance on what to search for and how deep to go
@@ -98,11 +116,13 @@ Detailed review prompt loaded by bug.md step 4.5. Framed specifically for "root 
 
 ### 3. `commands/plan.md` — Learnings consultation
 
-Add a step after reading the design document (between current steps 3 and 4): scan `docs/LEARNINGS.md` for active learnings matching the modules/areas being planned. Match by category vs. modules touched, keyword overlap with task descriptions and file paths.
+Add step 3.5 after reading the design document (between current steps 3 and 4): scan `docs/LEARNINGS.md` for active learnings matching the modules/areas being planned. Match by category vs. modules touched, keyword overlap with task descriptions and file paths.
 
-Surface relevant learnings so the plan can incorporate them. Record consulted learning IDs in the plan header's metadata (add `consulted-learnings` field to the plan template, same pattern as brainstorm's design doc frontmatter).
+Surface relevant learnings so the plan can incorporate them. Record consulted learning IDs in the plan's `>` header block as a new line: `> **Consulted Learnings**: L-003, L-012` (plans use `>` status blocks, not YAML frontmatter — different from design docs).
 
 If LEARNINGS.md doesn't exist or has no matches, skip silently.
+
+**Backward compatibility:** `/harness:plan` already consumes bug analysis docs. Bug analyses created before this change will lack the `## Architecture Review` section — plan should handle this gracefully (the section is simply absent, no special handling needed).
 
 ### 4. `commands/review.md` — Add learnings reviewer to Phase 4
 
@@ -117,17 +137,21 @@ Update the agent table:
 
 The agent receives the same diff and changed file list as the other agents. It returns findings in the same PASS/FAIL format. Violations are treated as review findings and enter the fix cycle like any other agent's findings.
 
+**Implementation note:** Update review.md's report template to reflect 6 agents: change `{passed}/5 passed` to `{passed}/6 passed` and add a `learnings-reviewer` row to the Per-Agent Results table.
+
 ### 5. `agents/learnings-reviewer.md` (new)
 
 Agent definition for the learnings enforcement reviewer. System prompt instructs it to:
 
 1. Read `docs/LEARNINGS.md`, filter to `status: active`
-2. Match each learning against the diff by: category vs. modules touched, keyword overlap, file paths mentioned in learning bodies
-3. For each matched learning, check whether the diff follows or violates the recommendation
+2. Match each learning against the diff using a two-gate filter:
+   - **Gate 1 (file relevance):** The learning must reference file paths, modules, or packages that overlap with the diff's changed files. If the learning names no specific paths, match by category against the diff's affected domains (e.g., a `testing` learning matches test file changes).
+   - **Gate 2 (semantic relevance):** The learning's recommendation must be about the *kind* of change being made, not just the same files. A learning about "always add migration rollbacks" is irrelevant to a comment fix in a migration file.
+3. For each learning that passes both gates, check whether the diff follows or violates the recommendation
 4. Report violations as findings with: the learning ID, what the learning recommends, how the diff violates it, and suggested fix
 5. Return PASS if no violations, FAIL if any learning is violated
 
-The agent should be conservative — only report clear violations, not speculative matches. A learning about database migrations shouldn't fire on unrelated SQL changes.
+The two-gate filter ensures the agent is conservative — only clear violations are reported, not speculative keyword matches. A learning about database migrations should not fire on unrelated SQL changes.
 
 ## Learnings Consumption Summary
 
