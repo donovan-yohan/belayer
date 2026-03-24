@@ -145,7 +145,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
 ### Phase 4: Review Loop
 
-13. Set `cycle = 1`, `max_cycles = 3`, `failing_agents = all 5 review agents`.
+13. Set `cycle = 1`, `max_cycles = 3`, `failing_agents = all 6 review agents`.
 
 14. **Review cycle loop** — repeat until all pass or `cycle > max_cycles`:
 
@@ -158,6 +158,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
    | Test Analyzer | `pr-review-toolkit:pr-test-analyzer` | Test coverage completeness, missing edge cases |
    | Type Design Analyzer | `pr-review-toolkit:type-design-analyzer` | Type design, encapsulation, invariant expression |
    | Comment Analyzer | `pr-review-toolkit:comment-analyzer` | Comment accuracy, staleness, maintainability |
+   | Learnings Reviewer | `harness:learnings-reviewer` | Checks diff against active learnings for violations |
 
    Each agent prompt should include:
    - The full diff (from Phase 1 scope)
@@ -233,7 +234,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
     **Verification:** {passing — with evidence}
     **Adversarial review:** {PASS | FAIL — N findings (breakdown by severity) | skipped}
     **Review cycles:** {N} of {max_cycles}
-    **Agents:** {passed}/5 passed
+    **Agents:** {passed}/6 passed
     **Simplification:** {changes made | no changes needed}
     **ADR compliance:** {N violations | compliant | skipped}
 
@@ -253,6 +254,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
     | pr-test-analyzer | pass | 0 | 0 |
     | type-design-analyzer | pass | 0 | 0 |
     | comment-analyzer | fail | 3 | 1 |
+    | learnings-reviewer | pass | 0 | 0 |
 
     ### Unresolved Issues
     - {any remaining issues, or "None"}
