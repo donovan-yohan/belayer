@@ -1,6 +1,6 @@
 # Bug Architecture Review & Learnings Enforcement — Implementation Plan
 
-> **Status**: Active | **Created**: 2026-03-24 | **Last Updated**: 2026-03-24
+> **Status**: Completed | **Created**: 2026-03-24 | **Completed**: 2026-03-24
 > **Design Doc**: `docs/design-docs/2026-03-24-bug-architecture-review-design.md`
 > **For Claude:** Use /harness:orchestrate to execute this plan.
 
@@ -15,12 +15,12 @@
 
 ## Progress
 
-- [ ] Task 1: Add "Consulting Learnings" section to _learnings-format.md
-- [ ] Task 2: Create references/architecture-review-prompt.md
-- [ ] Task 3: Create agents/learnings-reviewer.md
-- [ ] Task 4: Modify commands/bug.md (steps 2.5, 4.5, 4.7)
-- [ ] Task 5: Modify commands/plan.md (step 3.5)
-- [ ] Task 6: Modify commands/review.md (add 6th agent)
+- [x] Task 1: Add "Consulting Learnings" section to _learnings-format.md
+- [x] Task 2: Create references/architecture-review-prompt.md
+- [x] Task 3: Create agents/learnings-reviewer.md
+- [x] Task 4: Modify commands/bug.md (steps 2.5, 4.5, 4.7)
+- [x] Task 5: Modify commands/plan.md (step 3.5)
+- [x] Task 6: Modify commands/review.md (add 6th agent)
 
 ## Surprises & Discoveries
 
@@ -508,10 +508,13 @@ git commit -m "feat(harness): add learnings-reviewer as 6th agent in review loop
 _Filled by /harness:complete when work is done._
 
 **What worked:**
--
+- Parallel agent dispatch for independent tasks (1-3 and 4-6) was efficient
+- DRY extraction from eng review caught the learnings consultation duplication early
+- Cross-reference verification caught the plugin.json registration gap
 
 **What didn't:**
--
+- Initial one-shot implementation was reverted — should have brainstormed first
 
 **Learnings to codify:**
--
+- Plugin version sync (CLAUDE.md key pattern) applies when adding agents, not just modifying code
+- Markdown prompt changes still need cross-reference verification even though they can't break tests
