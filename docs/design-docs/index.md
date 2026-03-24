@@ -12,6 +12,7 @@ _No current designs. All designs have been implemented or superseded._
 
 | Document | Purpose | Status | Created |
 |----------|---------|--------|---------|
+| [2026-03-24-bug-architecture-review-design](2026-03-24-bug-architecture-review-design.md) | Architecture review step in bug flow + learnings enforcement across harness lifecycle | Implemented | 2026-03-24 |
 | [2026-03-23-summit-node-explorer-plugin-design](2026-03-23-summit-node-explorer-plugin-design.md) | Summit PR node, explorer plugin, `/explorer:send` skill | Implemented | 2026-03-23 |
 | [2026-03-19-harness-audit-design](2026-03-19-harness-audit-design.md) | Harness plugin audit: workflow fix for stale docs, learning persistence, doc lifecycle | Implemented | 2026-03-19 |
 | [2026-03-17-unified-agent-plugin-source-design](2026-03-17-unified-agent-plugin-source-design.md) | Unified agent plugin source design | Implemented | 2026-03-17 |

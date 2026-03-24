@@ -1,13 +1,14 @@
 {
   "name": "harness",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "3-tier documentation system with learning persistence, doc lifecycle management, and health scoring. Brainstorm, plan, orchestrate, review, reflect, complete with pr-review-toolkit agents and superpowers SDD delegation.",
   "author": {
     "name": "donovanyohan"
   },
   "keywords": ["documentation", "claude-md", "planning", "brainstorm", "bug", "refactor", "strangler-fig", "orchestrate", "batch", "maintenance", "reflect", "loop", "autonomous", "learnings", "frontmatter", "lifecycle", "health-score"],
   "agents": [
-    "./agents/harness-pruner.md"
+    "./agents/harness-pruner.md",
+    "./agents/learnings-reviewer.md"
   ],
   "commands": [
     "./commands/init.md",

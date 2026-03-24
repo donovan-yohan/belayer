@@ -22,6 +22,7 @@ Execution plans for active and completed work.
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Bug Architecture Review](exec-plans/completed/2026-03-24-bug-architecture-review.md) | 2026-03-24 | Architecture review step in bug flow + learnings enforcement across harness lifecycle |
 | [Summit Node & Explorer Plugin](exec-plans/completed/2026-03-23-summit-node-explorer-plugin.md) | 2026-03-23 | Summit PR node, explorer plugin, /explorer:send command |
 | [Gate Nodes — Quality Scoring](exec-plans/completed/2026-03-20-gate-nodes.md) | 2026-03-21 | Gate nodes as second pipeline primitive: multi-dimensional scoring, threshold routing, anti-gaming |
 | [Belayer v3: Temporal Activity Pipeline](exec-plans/completed/2026-03-20-v3-temporal-pipeline.md) | 2026-03-20 | v3 clean break: Activity-per-node, file-based completion, YAML pipeline config, `belayer climb` CLI |

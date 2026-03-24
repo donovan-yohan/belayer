@@ -35,6 +35,13 @@ Create a living execution plan from a design document, saved as a versioned arti
    - Components/tasks implied by the design
    - **If the context document is a refactor scope:** Skip steps already marked `completed` in the scope doc. Plan only the next batch of actionable steps (up to the next async gate). Use `Refactor Scope:` instead of `Design Doc:` in the plan header.
 
+3.5. **Consult learnings** (if available):
+   - Follow the consultation pattern defined in `_learnings-format.md` § "Consulting Learnings"
+   - Match learnings against the modules and areas being planned (extracted from the design document in step 3)
+   - Surface relevant learnings so the plan can incorporate their recommendations
+   - Record consulted learning IDs for inclusion in the plan header (step 5)
+   - If LEARNINGS.md doesn't exist or has no matches, skip silently
+
 4. **Invoke `superpowers:writing-plans`** with the design context. Follow its full process to produce bite-sized TDD tasks with exact file paths, code, and commands.
 
    <HARNESS_OVERRIDES>
@@ -54,6 +61,7 @@ Create a living execution plan from a design document, saved as a versioned arti
 
    > **Status**: Active | **Created**: {date} | **Last Updated**: {date}
    > **Design Doc**: `docs/design-docs/{design-doc-filename}` (or **Refactor Scope**: / **Bug Analysis**: with matching path)
+   > **Consulted Learnings**: {L-NNN, L-NNN from step 3.5, or "None"}
    > **For Claude:** Use /harness:orchestrate to execute this plan.
 
    ## Decision Log
