@@ -7,6 +7,7 @@ Execution plans for active and completed work.
 | Plan | Created | Topic |
 |------|---------|-------|
 | [Intake Plugin Model](exec-plans/active/2026-03-21-intake-plugin-model.md) | 2026-03-21 | Intake plugin model, pipeline templates, v2→v3 migration, worker daemon |
+| [Bug Architecture Review](exec-plans/active/2026-03-24-bug-architecture-review.md) | 2026-03-24 | Architecture review step in bug flow + learnings enforcement across harness lifecycle |
 
 ## Tech Debt
 
