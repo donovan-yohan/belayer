@@ -1,6 +1,6 @@
 # Learnings Format Reference
 
-Shared format spec for LEARNINGS.md entries and design doc frontmatter. Referenced by `init.md`, `reflect.md`, `complete.md`, and any command that reads or writes learnings.
+Shared format spec for LEARNINGS.md entries and design doc frontmatter. Referenced by `init.md`, `brainstorm.md`, `bug.md`, `plan.md`, `reflect.md`, `complete.md`, and any command that reads or writes learnings.
 
 ---
 
@@ -37,6 +37,7 @@ Each learning is an H3 header followed by YAML-style metadata lines, then prose:
 | `workflow` | Process, tooling, agent coordination |
 | `debugging` | Diagnostic techniques, failure modes |
 | `performance` | Latency, throughput, resource usage |
+| `review-escape` | Issues that escaped code review, missed by review agents |
 
 ### ID Format
 

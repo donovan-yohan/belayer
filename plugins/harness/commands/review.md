@@ -170,7 +170,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
    c. Determine pass/fail for each agent:
       - **PASS**: No critical or important issues reported
-      - **FAIL**: Critical or important issues found (code-reviewer confidence ≥80, test-analyzer criticality ≥7, type-design-analyzer ratings ≤4, silent-failure-hunter CRITICAL/HIGH, comment-analyzer Critical Issues)
+      - **FAIL**: Critical or important issues found (code-reviewer confidence ≥80, test-analyzer criticality ≥7, type-design-analyzer ratings ≤4, silent-failure-hunter CRITICAL/HIGH, comment-analyzer Critical Issues, learnings-reviewer FAIL verdict)
 
    d. If all pass → exit loop.
 

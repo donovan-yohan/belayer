@@ -59,17 +59,17 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
 
     ## Architecture Review
 
-    _Populated by step 4.5 — see below._
+    _Populated after root cause confirmation._
     ```
 
 4.5. **Architecture review** — With root cause confirmed, step back and answer: *"Why was it possible for this bug to be written, and how do we prevent it in the future?"*
-   - Read `references/architecture-review-prompt.md` for the detailed review dimensions and instructions
+   - Read `references/architecture-review-prompt.md`. If the file cannot be found, STOP and print: "ERROR: Missing reference file: references/architecture-review-prompt.md. The harness plugin may be installed incorrectly. Architecture review cannot proceed."
    - Conduct the review across all four dimensions: systemic spread, design gap, testing gaps, harness context gaps
-   - Append findings to the bug analysis document, replacing the placeholder `## Architecture Review` section with the completed findings
+   - Replace the placeholder `## Architecture Review` section in the bug analysis document with the completed findings
    - Each dimension produces actionable findings or an explicit "nothing systemic" signal — no forced output, but the section is always written (use "None" templates when clean)
    - These findings directly expand the scope of the fix plan created by `/harness:plan`
 
-4.7. **Write learnings from root cause + architecture review:**
+4.6. **Write learnings from root cause + architecture review:**
    - Produce one learning per dimension that has actionable findings, using the categories below. Follow the `_learnings-format.md` spec for format, IDs, and scaffold.
    - Check if `docs/LEARNINGS.md` exists. If not, create it with the scaffold from `_learnings-format.md` § "LEARNINGS.md Scaffold".
    - Determine the next learning ID by scanning existing `### L-NNN` headers.
