@@ -50,7 +50,7 @@ Optional: The **adr** plugin enables architecture compliance checking in Phase 6
 
 ### Phase 3: Adversarial Production Review
 
-Context-isolated adversarial review using `claude -p`. This phase catches production failure patterns (thundering herds, resource exhaustion, distributed coordination bugs) that open-ended subagent review misses. The key: the reviewer gets **only the diff and targeted questions** — no conversation history, no knowledge of intent.
+Context-isolated adversarial review using the bundled `scripts/adversarial-review.sh` script. This invokes `claude --bare -p` as a **completely separate OS process** — no conversation context, no plugins, no hooks, no shared state. The reviewer sees only the diff and a targeted adversarial prompt. Output is structured JSON validated against a schema.
 
 4. Check if `docs/REVIEW_GUIDANCE.md` exists. If it does not exist, generate it now using the default scaffold (see `/harness:init` Phase 2 step 8.7 for the scaffold template, or read `references/adversarial-review-prompt.md` for the default question bank). Commit it:
    ```bash
@@ -79,49 +79,68 @@ Context-isolated adversarial review using `claude -p`. This phase catches produc
    - Insert filtered questions
    - Select perspective variants based on deployment context (SRE, Scale, Security, Distributed — these stack)
    - If Known Non-Issues exist, append: "Note: the following have been reviewed and confirmed as non-issues for this project: {list}. Do not report these unless circumstances have materially changed."
+   - Write the constructed prompt to a temp file via the Write tool:
+     ```bash
+     ADVERSARIAL_PROMPT=$(mktemp /tmp/harness-adversarial-prompt-XXXXXX.md)
+     ```
 
-8. **Generate the diff for the isolated reviewer** using a unique temp file to avoid collisions with concurrent reviews:
+8. **Generate the diff:**
    ```bash
    ADVERSARIAL_DIFF=$(mktemp /tmp/harness-adversarial-XXXXXX.patch)
    git diff HEAD~{N} > "$ADVERSARIAL_DIFF"
    ```
-   If the diff is empty, skip the adversarial review with status "skipped — empty diff" and proceed to Phase 4.
 
-9. **Invoke `claude -p`** with the constructed prompt and diff. This is the critical isolation step — no conversation context crosses this boundary.
-
-   **Important:** Do NOT interpolate the prompt into a shell string (e.g., `claude -p "{prompt}"`). The prompt contains newlines, quotes, and backticks from REVIEW_GUIDANCE.md that will break shell parsing. Instead:
-   - Write the constructed prompt to a temp file
-   - Combine the prompt and diff into a single input, then pipe to `claude -p`
+9. **Run the adversarial review script.** The script handles process isolation (`env -u CLAUDECODE`), `--bare` mode, `--json-schema` validation, temp file management, timeouts, and error handling. All of that complexity lives in the script, not here.
    ```bash
-   ADVERSARIAL_PROMPT=$(mktemp /tmp/harness-adversarial-prompt-XXXXXX.md)
-   # Write the constructed prompt to $ADVERSARIAL_PROMPT via the Write tool
-   # Then invoke claude with the prompt file, piping the diff as context:
-   claude -p "$(cat "$ADVERSARIAL_PROMPT")" < "$ADVERSARIAL_DIFF" --output-format text
+   ${CLAUDE_PLUGIN_ROOT}/scripts/adversarial-review.sh \
+     --prompt-file "$ADVERSARIAL_PROMPT" \
+     --diff-file "$ADVERSARIAL_DIFF" \
+     --model sonnet \
+     --effort max \
+     --timeout 300
    ```
-   Alternatively, concatenate the prompt and diff into a single file and pipe it:
-   ```bash
-   COMBINED=$(mktemp /tmp/harness-adversarial-combined-XXXXXX.md)
-   cat "$ADVERSARIAL_PROMPT" "$ADVERSARIAL_DIFF" > "$COMBINED"
-   cat "$COMBINED" | claude -p - --output-format text
-   ```
-   Use `timeout: 300000` (5 minutes) on the Bash call.
+   Use `timeout: 360000` (6 minutes, allowing buffer beyond the script's internal 5-minute timeout) on the Bash call.
 
-10. **Parse the adversarial review output:**
-    - Look for `VERDICT: FAIL` or `VERDICT: PASS`
-    - Extract individual findings with their severity (CRITICAL, HIGH, MEDIUM, LOW)
-    - If the output contains no parseable `VERDICT:` line, treat as inconclusive — set status to "inconclusive — could not parse verdict" and report the raw output
-    - If the command fails or times out, print a warning: "Adversarial review skipped: {reason}. Proceeding with agent review." Set the adversarial review status to "skipped — {reason}" for the final report
+   **Exit codes:**
+   | Code | Meaning | Action |
+   |------|---------|--------|
+   | 0 | PASS | Proceed to Phase 4 |
+   | 1 | FAIL — CRITICAL findings | Must fix before Phase 4 |
+   | 2 | FAIL — HIGH/MEDIUM only | Add to fix queue, proceed to Phase 4 |
+   | 3 | Inconclusive | Log warning, proceed to Phase 4 |
+   | 4 | Error/timeout/skip | Log warning, proceed to Phase 4 |
+
+   The script outputs structured JSON to stdout:
+   ```json
+   {
+     "verdict": "FAIL",
+     "findings": [
+       {
+         "severity": "CRITICAL",
+         "title": "Connection pool exhaustion under load",
+         "location": "handleRequest()",
+         "scenario": "1000 concurrent requests",
+         "impact": "Service becomes unresponsive",
+         "fix": "Add connection pool limit with timeout"
+       }
+     ],
+     "summary": "Found 1 critical production failure mode."
+   }
+   ```
+
+10. **Parse the JSON output** and capture the exit code:
+    - Read stdout as JSON — no free-text parsing needed
+    - If the script exited non-zero with no stdout, check stderr for the error JSON
 
 11. **Integrate findings into the review cycle:**
-    - **CRITICAL findings:** These MUST be fixed before proceeding to Phase 4. Fix inline, commit, and re-run verification.
-    - **HIGH/MEDIUM findings:** Add to the fix queue. These will be addressed alongside Phase 4 agent findings.
-    - **LOW findings:** Note in the report but do not block.
-    - **PASS verdict:** Proceed to Phase 4 normally.
-    - **Inconclusive/skipped:** Proceed to Phase 4. Note in the report.
+    - **Exit 1 (CRITICAL):** Fix all CRITICAL findings inline, commit, and re-run verification before proceeding to Phase 4.
+    - **Exit 2 (HIGH/MEDIUM):** Add findings to the fix queue. These will be addressed alongside Phase 4 agent findings.
+    - **Exit 0 (PASS):** Proceed to Phase 4 normally.
+    - **Exit 3/4 (inconclusive/error):** Print a warning with the reason from the JSON output. Proceed to Phase 4 — adversarial review is additive, not blocking.
 
 12. Clean up:
     ```bash
-    rm -f "$ADVERSARIAL_DIFF" "$ADVERSARIAL_PROMPT" "$COMBINED" 2>/dev/null
+    rm -f "$ADVERSARIAL_DIFF" "$ADVERSARIAL_PROMPT" 2>/dev/null
     ```
 
 ### Phase 4: Review Loop
