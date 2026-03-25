@@ -11,41 +11,63 @@ Output: per-repo PRs with aligned implementations, structured progress reports, 
 
 ## Orchestration Layers
 
-Belayer uses climbing metaphors for its agent hierarchy:
+Belayer uses climbing metaphors and a three-phase model:
 
 ```
-User (CLI)
-  |
-  v
-Setter (interactive Claude session — human defines problems)
-  |
-  v
-Belayer (DAG executor daemon — manages climbs/problems)
-  |-- Polls SQLite for state changes
-  |-- Spawns/monitors leads, spotters, anchors
-  |-- Triggers agentic nodes (ephemeral Claude sessions)
-  |
-  v
-Lead (bundled execution loop per repo — does the climbing)
-  |-- Runs in isolated git worktree
-  |-- Full interactive Claude Code session (not claude -p)
-  |-- Role via --append-system-prompt, context via .lead/<climbID>/GOAL.json
-  |-- Self-check: build + tests
-  |
-  v
-Spotter (per-repo runtime validator — watches for problems)
-  |-- Project type detection (frontend, backend, CLI, library)
-  |-- Runs validation profile checklists
-  |-- Produces SPOT.json verdict
-  |
-  v
-Anchor (cross-repo alignment reviewer — ties all lines together)
-  |-- Reviews changes across all repos for a problem
-  |-- Prompt builder + verdict types
-  |-- PASS → create PRs, FAIL → re-dispatch with feedback
+┌─────────────────────────────────────────────────────────────┐
+│  EXPLORE                                                    │
+│  belayer explore                                            │
+│  intake sources (interactive, jira, github issues, ...)     │
+│            │                                                │
+│            ▼                                                │
+│         spec.md                                             │
+└─────────────────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│  CLIMB                                                      │
+│  belayer climb                                              │
+│                                                             │
+│  [single-repo]                                              │
+│    spec.md → Lead (plan→implement→review→pr) → PR           │
+│                                                             │
+│  [multi-repo — additive layers only]                        │
+│    spec.md → Setter (fan-out) → per-repo spec.md            │
+│                  │                                          │
+│                  ▼                (per repo, in parallel)   │
+│             Lead(repo-A)   Lead(repo-B)   Lead(repo-C)      │
+│                  │                │               │         │
+│                  ▼                ▼               ▼         │
+│             commit hash    commit hash    commit hash       │
+│                  └──────────────┬──────────────┘           │
+│                                 ▼                           │
+│                   Spotter (fan-in, gate scoring)            │
+│                   N commit hashes → gate score + feedback   │
+│                                 │                           │
+│                           PASS / FAIL                       │
+│                                 │                           │
+│                                 ▼                           │
+│                           PR manifest                       │
+└─────────────────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│  SUMMIT  (not yet implemented)                              │
+│  belayer summit                                             │
+│  PR manifest → auto-merge, monitoring, observability        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**Three-layer validation**: Lead (self-check) → Spotter (per-repo runtime validation) → Anchor (cross-repo alignment)
+> Setter and Spotter are multi-repo only. Single-repo climbs run Lead directly.
+
+## Named Roles
+
+| Role | Scope | Contract |
+|------|-------|----------|
+| Setter | Multi-repo only | spec.md → per-repo spec.md |
+| Spotter | Multi-repo only | N commit hashes → gate score + feedback |
+| Lead | Per-repo | spec.md → commits + PR |
+| Boulderer | One-off (deferred) | task → single commit |
 
 ## Code Map
 
@@ -63,10 +85,10 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 | Model | `internal/model/` | Domain types and status enums |
 | Crag | `internal/crag/` | Crag lifecycle (create, load, delete, worktree management) |
 | Repo | `internal/repo/` | Git operations (bare clone, worktree add/remove/list) |
-| Belayer | `internal/belayer/` | DAG executor daemon. Manages leads, spotters, and anchors |
+| Belayer | `internal/belayer/` | DAG executor daemon (v1). Manages leads and validation |
 | Lead | `internal/lead/` | Lead execution runner, store, ClaudeSpawner (interactive sessions via tmux) |
-| Spotter | `internal/spotter/` | Per-repo runtime validator. Project type detection, validation profiles, SPOT.json types |
-| Anchor | `internal/anchor/` | Cross-repo alignment reviewer. Verdict types (VerdictJSON, RepoVerdict) |
+| Spotter | `internal/spotter/` | Per-repo runtime validator (v1 code — three-phase model reframes "spotter" as multi-repo cross-repo validator; this package is the per-repo quality gate, to be renamed) |
+| Anchor | `internal/anchor/` | Cross-repo alignment reviewer (v1 code — three-phase model merges this role into "spotter") |
 | Store | `internal/store/` | SQLite CRUD operations (problems, climbs, events, tracker_issues, pull_requests, pr_reactions) |
 | Tmux | `internal/tmux/` | Tmux session/window/pane management for agent spawning |
 | Log Manager | `internal/logmgr/` | Log file management for lead sessions |
@@ -81,43 +103,36 @@ Anchor (cross-repo alignment reviewer — ties all lines together)
 
 ## Data Flow
 
+> **Note:** This diagram reflects the three-phase model. The v1 code still uses
+> the old per-repo Spotter + Anchor naming — see TODOS.md P1 for the rename plan.
+
 ```
-Problem Input (text/Jira) --> Intake Pipeline (sufficiency + brainstorm) --> Decomposition (agentic, crag-aware)
-                                                    |
-                  +------------------+--------------+
-                  v                  v              v
-            Lead(repo-A)       Lead(repo-B)    Lead(repo-C)
-            self-check:       self-check:      self-check:
-            build + tests     build + tests    build + tests
-                  |                  |              |
-                  v                  v              v
-            Spotter(A)         Spotter(B)      Spotter(C)       ← "spotting" state (per-repo)
-            runtime validate   runtime validate runtime validate
-            → SPOT.json        → SPOT.json      → SPOT.json
-                  |                  |              |
-                  +--------+---------+--------------+
-                           v
-                 Belayer detects "all spotted"
-                           |
-                           v
-                 Anchor Review (cross-repo alignment)
-                      |          |
-                    PASS       FAIL
-                      |          |
-                 Create PRs  Re-dispatch with feedback
-                      |
-                      v
-                 PR Monitoring (polling CI + reviews)
-                      |
-              +-------+-------+
-              v               v
-         CI Failure      Review Comment
-              |               |
-         CI Fix Lead    Notify setter
-         (1 attempt)    (human-driven)
-              |
-              v
-         All PRs merged → problem complete
+EXPLORE: Intake sources → spec.md
+                |
+                v
+CLIMB:  [single-repo]  spec.md → Lead (plan→implement→review→pr) → PR manifest
+        [multi-repo]   spec.md → Setter (decompose, fan-out)
+                                    |
+                       +------------+------------+
+                       v            v            v
+                  Lead(repo-A) Lead(repo-B) Lead(repo-C)
+                  (plan→impl   (plan→impl   (plan→impl
+                   →review→pr)  →review→pr)  →review→pr)
+                       |            |            |
+                       v            v            v
+                  commit hash  commit hash  commit hash
+                       +------------+------------+
+                                    |
+                                    v
+                         Spotter (fan-in, cross-repo gate)
+                              |          |
+                            PASS       FAIL → feedback → Setter
+                              |
+                              v
+                         PR manifest
+                              |
+                              v
+SUMMIT: PR manifest → auto-merge → monitoring → observability
 ```
 
 ### Tracker Intake (Planning Hat)
@@ -165,12 +180,14 @@ Config resolution: crag config > global config > embedded defaults (via `interna
 
 ## Pipeline Engine (internal/v3/)
 
+The three-phase model (Explore/Climb/Summit) is an architectural reframing of v3, not a rewrite. The v3 Temporal pipeline, node activities, and gate scoring remain unchanged — the phases provide a vocabulary for how those pieces compose end-to-end.
+
 Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is a Temporal Activity that spawns an interactive Claude Code session. File-based rendezvous (completion files) replaces Temporal Signals. YAML pipeline config with natural language node descriptions.
 
 | Module | Path | Purpose |
 |--------|------|---------|
 | Model | `internal/v3/model/` | Domain types: NodeOutcome, CompletionResult, ClimbInput/Output |
-| Pipeline | `internal/v3/pipeline/` | YAML parser, validator, default setter→lead→spotter config |
+| Pipeline | `internal/v3/pipeline/` | YAML parser, validator, default pipeline config (node names to be renamed per TODOS.md P1) |
 | Gate | `internal/v3/gate/` | Gate result parsing, weighted scoring, threshold routing, prompt builder |
 | Events | `internal/v3/events/` | JSONL event logger for pipeline observability (node + gate events) |
 | Outcome | `internal/v3/outcome/` | Outcome detection: verdict.txt > output file first line > type default |
@@ -187,10 +204,24 @@ Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is 
 - **Gate scoring**: Gates produce `gate-result.json` (structured scores) + `rationale.md` (human-readable). Activity computes weighted score from YAML-declared dimensions/weights and applies threshold routing (score-then-route anti-gaming)
 - **Natural language roles**: Node descriptions are prompts passed via `--append-system-prompt`
 - **Attempt-scoped**: Completion files, output paths, and verdict files include attempt number to prevent stale reads
-- **CLI entry point**: `belayer climb --file design.md` → Temporal workflow → setter → lead → spotter(gate) → branch
+- **CLI entry point**: `belayer climb --file design.md` → Temporal workflow → plan → implement → review(gate) → pr-author → branch (current code uses legacy names setter/lead/spotter/summit — see TODOS.md P1)
 - **Intake plugins**: `intake:` section in pipeline YAML defines where work comes from (interactive, jira). Each intake produces a `SubmitSpec` → bridge creates worktree → starts `ClimbWorkflow`
 - **Worker daemon**: `belayer worker` runs Temporal worker + HTTP API for submit/status. `belayer start` opens interactive session connected via MCP channel
 - **Belayer is plumbing**: Routes typed references (commit SHAs, file paths) between nodes. Nodes are black boxes.
+
+## Config Hierarchy
+
+```
+~/.belayer/                        # global
+  config.json                      # global settings
+  crags/                           # multi-repo crag definitions
+
+./.belayer/                        # repo-level (per-repo)
+  pipeline.yaml                    # climb pipeline config
+  .internal/                       # git-ignored state
+```
+
+Resolution: repo-level > global > embedded defaults
 
 ## Architecture Decision Records
 

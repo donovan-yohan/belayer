@@ -8,8 +8,8 @@ The belayer daemon is deterministic Go code (state machine + event loop). It spa
 
 1. **Sufficiency check**: Does this problem have enough context?
 2. **Problem decomposition**: Break problem into per-repo climb specs
-3. **Spotter**: Per-repo runtime validation (browser checks, dev server, console errors)
-4. **Anchor** (formerly "alignment review"): Cross-repo alignment review
+3. **Per-repo quality gate**: Runtime validation (v1 code calls this "spotter" — three-phase model reserves "spotter" for multi-repo cross-repo validation; see Setter/Spotter Contracts below)
+4. **Cross-repo validation**: Multi-repo alignment review (v1 code calls this "anchor" — three-phase model calls this "spotter")
 5. **Stuck analysis**: Why is a lead stuck? Suggest recovery
 
 Agentic nodes receive structured input (from SQLite), produce structured output (written to SQLite), and exit.
@@ -36,8 +36,8 @@ Uses pure Go SQLite (`modernc.org/sqlite`) — no CGO required. WAL mode and for
 Validation flows through four layers. See [review-loops-test-infra-design](design-docs/2026-03-16-review-loops-test-infra-design.md) for full design.
 
 1. **Lead** (multi-agent review loop): Runs implementation, then loops pr-review-toolkit agents (max 3 cycles) until all agents pass. Writes `TOP.json` on completion.
-2. **Spotter** (per-repo spec compliance): Activated when all climbs for a repo complete. Validates spec compliance, test contract fulfillment, and runtime correctness. Writes `SPOT.json`.
-3. **Anchor** (cross-repo alignment): Multi-repo problems only. Reviews all repos for cross-repo consistency with integration-focused personas after all spotters pass. Writes `VERDICT.json`.
+2. **Per-repo quality gate** (v1 code: "spotter"): Activated when all climbs for a repo complete. Validates spec compliance, test contract fulfillment, and runtime correctness. Writes `SPOT.json`. (Three-phase model renames this to a "review" gate node — see TODOS.md P1.)
+3. **Cross-repo validation** (v1 code: "anchor", three-phase model: "spotter"): Multi-repo problems only. Reviews all repos for cross-repo consistency. Writes `VERDICT.json`. (Three-phase model merges this into the Spotter role.)
 4. **Reflect** (learning capture): Classifies errors, extracts learnings to SQLite, surfaces system improvement recommendations. Runs after final validation, parallel with PR creation.
 
 ### Signal Files
@@ -233,13 +233,74 @@ Climbing metaphors throughout:
 | **Crag** | Long-lived workspace (repos, config, database) |
 | **Problem** | Work item submitted by the user |
 | **Climb** | Per-repo subtask derived from a problem |
-| **Setter** | Interactive user session for creating problems |
+| **Setter** | Multi-repo work distributor (multi-repo only) |
 | **Belayer** | Daemon / DAG executor |
 | **Lead** | Implementation agent (per-repo) |
-| **Spotter** | Per-repo runtime validator |
+| **Spotter** | Multi-repo cross-repo validator (multi-repo only) |
 | **Anchor** | Cross-repo alignment reviewer |
+| **Boulderer** | One-off specialist for small tasks (deferred) |
 
 > The **setter** defines **problems** at the **crag**. The **belayer** sends **leads** up their **climbs**. When they **top** out, the **spotter** validates. If no retries were needed, it was **flashed**.
+
+## Strategic Principles
+
+1. **Belayer optimizes for autonomy, not efficiency** — Redundant work is acceptable if it enables self-correction without human intervention.
+2. **Multi-repo is additive, not transformative** — The per-repo pipeline is unchanged; setter and spotter layer on top without altering what each lead does.
+3. **Belayer is plumbing** — Belayer provides contracts and orchestration, not node implementations. What runs inside a node is not belayer's concern.
+4. **Agent-agnostic** — Nodes are black boxes. Use whatever agent fulfills the contract: Claude, Codex, a shell script, or a future runtime.
+5. **Boring by default** — Solve specific problems with opinionated plumbing. Don't over-abstract or generalize beyond the stated use case.
+
+## Setter/Spotter Contracts
+
+Setter and spotter are first-class belayer concepts, not generic pipeline nodes. They are multi-repo only — single-repo problems bypass both.
+
+**Setter contract**: `spec.md` in → per-repo `spec.md` out.
+
+- Receives the top-level problem spec.
+- Produces one `spec.md` per target repo, scoped to that repo's responsibilities.
+- Belayer routes each per-repo spec to the appropriate lead as the climb input.
+
+**Spotter contract**: N commit hashes in → gate score + `feedback/rationale.md` out.
+
+- Receives the final commit hashes from all leads after their climbs complete.
+- Produces a numeric gate score and a rationale document covering cross-repo consistency.
+- A failing spotter score blocks PR creation and re-dispatches affected leads with the rationale as feedback.
+
+Belayer provides the contracts and orchestration. Users implement the nodes. This is what keeps belayer agent-agnostic — the runtime inside a setter or spotter is not prescribed.
+
+## PR Manifest
+
+The PR manifest is the typed interface between the Climb and Summit phases. It is written after all leads complete and all spotters pass, and is consumed by the Summit phase to create and monitor pull requests.
+
+```json
+{
+  "prs": [
+    {
+      "repo": "api",
+      "url": "...",
+      "number": 42,
+      "branch": "...",
+      "commit": "abc1234",
+      "ci_status": "passed",
+      "reviews": "approved"
+    }
+  ],
+  "validation": {
+    "cross_repo": "PASS",
+    "spotter_score": 8.5
+  }
+}
+```
+
+## Why Belayer
+
+| belayer | competitors |
+|---------|-------------|
+| Agent-agnostic orchestration | Model-locked agents |
+| Multi-repo as additive layer | Multi-repo as agent feature |
+| Pipeline-as-YAML | Hardcoded workflows |
+| Three phases with typed contracts | Monolithic pipelines |
+| You own your nodes | Platform owns your agents |
 
 ## Plugin Marketplace
 

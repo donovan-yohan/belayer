@@ -4,9 +4,7 @@
 
 | Document | Purpose | Status | Created |
 |----------|---------|--------|---------|
-_No current designs. All designs have been implemented or superseded._
-
-**See also:** [Belayer v2 Temporal Orchestrator](../designs/temporal-orchestrator-reimagining.md) — implemented 2026-03-19
+| [2026-03-25-three-phase-architecture-design](2026-03-25-three-phase-architecture-design.md) | Three-phase architecture: Explore/Climb/Summit, multi-repo setter/spotter, config hierarchy | Current | 2026-03-25 |
 
 ## Archived
 

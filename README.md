@@ -1,41 +1,90 @@
 # belayer
 
-A Go CLI that orchestrates autonomous coding agents across multiple repositories. Give it a work item, and it decomposes it into per-repo climbs, spawns isolated agent sessions in git worktrees, monitors progress, validates cross-repo alignment, and creates PRs.
+An agent-agnostic orchestration standard for autonomous coding agents. Describe your workflow in a pipeline YAML, point it at one or many repos, and walk away. Belayer handles the sequencing, retries, validation, and PR lifecycle.
 
-## How It Works
+## Three Phases: Explore. Climb. Summit.
 
+```mermaid
+graph LR
+    subgraph Explore
+        I1([intake]) -.->|spec.md| EX[explorer]
+        I2([intake]) -.->|spec.md| EX
+    end
+
+    subgraph Climb
+        EX -->|spec.md| L0["lead<br/>(single-repo)"]
+        EX -->|spec.md| SET["setter*"]
+        SET -->|per-repo spec| L1["lead"]
+        SET -->|per-repo spec| L2["lead"]
+        L1 -->|commit| SPT["spotter*"]
+        L2 -->|commit| SPT
+        SPT -.->|feedback| SET
+    end
+
+    subgraph Summit
+        L0 -->|PR manifest| SUM[summit]
+        SPT -->|PR manifest| SUM
+    end
 ```
-Problem Input (text or Jira ticket)
-        |
-        v
-  Brainstorm + Test Contract (interactive setter session)
-        |
-        v
-  Climbs DAG (per-repo, with dependencies)
-        |
-  +-----+------+------+
-  v     v      v      v
-Lead  Lead   Lead   Lead     (parallel, isolated worktrees)
-  |     |      |      |      each runs multi-persona review loop
-  +-----+------+------+
-        |
-        v
-  Spotter (per-repo spec compliance)
-     |          |
-   PASS       FAIL → correction climbs → re-spot
-     |
-     v
-  Anchor (cross-repo alignment, multi-repo only)
-     |          |
-   PASS       FAIL → re-dispatch
-     |
-  Create PRs + Reflect (capture learnings)
-```
+<sub>*setter and spotter are multi-repo only</sub>
 
-**Three layers:**
-- **User** — CLI commands
-- **Belayer** — Deterministic Go daemon; polls SQLite, manages DAG execution, enforces concurrency limits
-- **Lead** — Ephemeral agent session per climb (Claude Code or Codex CLI); runs in an isolated git worktree
+| Phase | Command | What it does |
+|-------|---------|-------------|
+| **Explore** | `belayer explore` | Intake — produce a spec.md from any source (interactive, Jira, GitHub Issues) |
+| **Climb** | `belayer climb` | Implementation — per-repo pipeline (plan → implement → review → PR) produces a PR manifest |
+| **Summit** | `belayer summit` | Output — risk-gated auto-merge, observability, monitoring *(not yet implemented)* |
+
+**Multi-repo is additive.** The per-repo pipeline runs identically whether you have one repo or ten. Multi-repo adds two coordination layers:
+- **Setter** — decomposes spec.md into per-repo specs (fan-out)
+- **Spotter** — validates cross-repo alignment after all repos complete (fan-in)
+
+Neither changes how work happens inside a repo.
+
+## Why Belayer
+
+| belayer | alternatives |
+|---------|-------------|
+| **Agent-agnostic** — use Claude Code, Codex, OpenCode, or anything | Model-locked to one provider |
+| **Orchestration standard** — belayer routes artifacts, nodes are black boxes | Agents that happen to orchestrate |
+| **Pipeline-as-YAML** — fully customizable node sequences | Hardcoded workflows |
+| **Multi-repo as additive layer** — same per-repo pipeline, coordination on top | Multi-repo as an agent feature |
+| **You own your nodes** — bring your own implementations | Platform owns your agents |
+
+## FAQ
+
+<details>
+<summary><b>Why does belayer create PRs before cross-repo validation?</b></summary>
+
+Belayer follows the **additive workflow principle**: the per-repo flow (including PR creation and review) runs identically whether you're working on one repo or ten. Multi-repo coordination (setter/spotter) layers on top without changing how individual repos work.
+
+If you only automated one repo, you'd follow the full flow to completion including PR. Multi-repo adds validation *after* — and if the spotter finds issues, the retry loop handles revisions. The setter provides branch/PR context in feedback so leads pick up existing work rather than starting from scratch.
+
+**Belayer optimizes for autonomy, not efficiency.** Redundant work is acceptable if it means the system can self-correct without human intervention.
+</details>
+
+<details>
+<summary><b>Why are setter and spotter opinionated rather than generic fan-out/fan-in?</b></summary>
+
+Belayer solves a specific problem: coordinating autonomous agents across multiple repos. Setter (decompose and distribute) and spotter (cross-repo validation) are the two coordination patterns that emerge from this problem.
+
+Building a generic fan-out primitive would be over-engineering for a problem with one use case. Belayer is plumbing — it provides the contracts and orchestration, not the implementations. But the plumbing itself has opinions about how multi-repo coordination should work.
+</details>
+
+<details>
+<summary><b>What's belayer's responsibility vs the node's responsibility?</b></summary>
+
+Belayer connects known-working agents at the right time. If a node implementation is inflexible, can't handle retries, or produces poor output — that's a node implementation problem, not an orchestration problem.
+
+Belayer provides observability (loop counts, feedback content, scores) so humans can identify and improve underperforming nodes. The goal is continuous improvement through measurement, not architectural constraints that force correctness.
+</details>
+
+<details>
+<summary><b>Why doesn't belayer implement setter/spotter for you?</b></summary>
+
+Belayer provides contracts: setter expects spec.md in and produces per-repo spec.md out. Spotter expects N commit hashes in and produces a gate score + feedback out. How you implement these is up to you — your decomposition logic, your validation criteria, your tools.
+
+This keeps belayer agent-agnostic. Your nodes could be Claude Code sessions, Codex, OpenCode, custom scripts, or anything else that fulfills the contract.
+</details>
 
 ## Claude Code Marketplace
 

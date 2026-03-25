@@ -1,6 +1,6 @@
 # belayer
 
-Standalone Go CLI tool that orchestrates autonomous coding agents across multiple repositories. Takes work items (problems), decomposes them into per-repo climbs, spawns isolated lead execution loops in git worktrees, monitors progress, and validates cross-repo alignment before creating PRs.
+Standalone Go CLI that orchestrates autonomous coding agents across repositories via three phases: **Explore** (intake via spec.md), **Climb** (per-repo implementation pipeline + PR), **Summit** (post-merge monitoring). Multi-repo adds setter (fan-out) and spotter (fan-in) as additive coordination layers.
 
 ## Quick Reference
 
@@ -21,11 +21,12 @@ Standalone Go CLI tool that orchestrates autonomous coding agents across multipl
 | Learnings | `docs/LEARNINGS.md` | Past learnings, corrections, patterns discovered across sessions |
 | Design Docs | `docs/design-docs/` | Feature brainstorm outputs and design decisions |
 | ADRs | `docs/adrs/` | Architecture decision records |
+| TODOs | `docs/TODOS.md` | Deferred items, P1/P2/P3 backlog, tech debt tracker |
 
 ## Key Patterns
 
 - **Stripe-style blueprint**: Deterministic Go code handles orchestration; ephemeral Claude sessions for judgment calls
-- **3 layers**: User (setter) -> Belayer (Go DAG executor daemon) -> Lead (bundled execution loop)
+- **Three-phase model**: Explore (intake) -> Climb (implementation) -> Summit (output). Multi-repo adds setter (fan-out) + spotter (fan-in) as additive layers
 - **Bare repos + worktrees**: extend-cli pattern for repo isolation
 - **SQLite**: Single source of truth for all state (problems, leads, verdicts, events)
 - **Agentic nodes**: Ephemeral Claude sessions for: sufficiency checks, problem decomposition, alignment reviews, stuck analysis
