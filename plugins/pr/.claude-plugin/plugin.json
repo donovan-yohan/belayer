@@ -1,6 +1,6 @@
 {
   "name": "pr",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Pull request lifecycle management - authoring, reviewing, resolving, and updating PRs. Review uses pr-review-toolkit agents for multi-perspective analysis.",
   "author": {
     "name": "donovanyohan"
