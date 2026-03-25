@@ -42,7 +42,7 @@ Create a living execution plan from a design document, saved as a versioned arti
    - Record consulted learning IDs for inclusion in the plan header (step 5)
    - If LEARNINGS.md doesn't exist or has no matches, skip silently
 
-4. **Invoke `superpowers:writing-plans`** with the design context. Follow its full process to produce bite-sized TDD tasks with exact file paths, code, and commands.
+4. **Invoke `superpowers:writing-plans`** using the Skill tool: `Skill("superpowers:writing-plans")`. Then follow the loaded skill's full process to produce bite-sized TDD tasks with exact file paths, code, and commands. You MUST use the Skill tool — do not write the plan from memory or replicate the planning methodology without loading it.
 
    <HARNESS_OVERRIDES>
    The following overrides REPLACE conflicting instructions from superpowers:writing-plans.
@@ -61,7 +61,7 @@ Create a living execution plan from a design document, saved as a versioned arti
 
    > **Status**: Active | **Created**: {date} | **Last Updated**: {date}
    > **Design Doc**: `docs/design-docs/{design-doc-filename}` (or **Refactor Scope**: / **Bug Analysis**: with matching path)
-   > **Consulted Learnings**: {L-NNN, L-NNN from step 3.5, or "None"}
+   > **Consulted Learnings**: {L-YYYYMMDD-slug, L-YYYYMMDD-slug from step 3.5, or "None"}
    > **For Claude:** Use /harness:orchestrate to execute this plan.
 
    ## Decision Log

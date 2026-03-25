@@ -28,7 +28,7 @@ Design through collaborative dialogue, saved as a versioned design document in t
    - Record the IDs of consulted learnings for inclusion in the design doc frontmatter (step 3's HARNESS_OVERRIDES `consulted-learnings` field)
    - If LEARNINGS.md doesn't exist or has no active learnings, skip silently
 
-3. **Invoke `superpowers:brainstorming`** with the user's arguments. Follow the brainstorming skill's full process (explore context, clarify questions, propose approaches, present design).
+3. **Invoke `superpowers:brainstorming`** using the Skill tool: `Skill("superpowers:brainstorming")`. Then follow the loaded skill's full process (explore context, clarify questions, propose approaches, present design). You MUST use the Skill tool — do not replicate the brainstorming methodology from memory.
 
    <HARNESS_OVERRIDES>
    The following overrides REPLACE conflicting instructions from superpowers:brainstorming.
@@ -52,9 +52,9 @@ Design through collaborative dialogue, saved as a versioned design document in t
      Insert this frontmatter block at the very top of the file, before the H1 title. The `branch` field must be the actual current git branch, not a placeholder.
    </HARNESS_OVERRIDES>
 
-4. After the design doc is written, update `docs/design-docs/index.md` — add a row:
+4. After the design doc is written, update `docs/design-docs/index.md` — append a line under **Current Designs**:
    ```markdown
-   | [{name}-design.md]({date}-{name}-design.md) | {one-line purpose} | {date} |
+   - [{date}-{name}-design]({date}-{name}-design.md) — {one-line purpose} ({date})
    ```
 
 5. If the design introduces new principles, patterns, or significant decisions, update `docs/DESIGN.md`:

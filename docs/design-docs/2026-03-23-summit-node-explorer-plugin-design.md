@@ -4,7 +4,7 @@ created: 2026-03-23
 branch: master
 supersedes:
 implemented-by: docs/exec-plans/completed/2026-03-23-summit-node-explorer-plugin.md
-consulted-learnings: [L-007, L-009]
+consulted-learnings: [L-20260321-resolve-model-conflicts, L-20260321-workflow-id-dedup]
 ---
 
 # Summit Node & Explorer Plugin

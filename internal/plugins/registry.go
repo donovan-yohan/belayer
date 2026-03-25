@@ -14,8 +14,8 @@ const (
 	installedFile    = "installed_plugins.json"
 
 	// Plugin versions — keep in sync with plugins/*/.claude-plugin/plugin.json
-	HarnessVersion  = "3.4.0"
-	PRVersion       = "1.2.0"
+	HarnessVersion  = "4.0.0"
+	PRVersion       = "1.3.0"
 	ExplorerVersion = "0.2.0"
 )
 

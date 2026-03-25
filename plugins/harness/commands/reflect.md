@@ -112,11 +112,11 @@ Full documentation reconciliation, conversation mining, and retrospective. Run a
 
      ---
      ```
-   - Determine the next learning ID by scanning existing `### L-NNN` headers. Start at L-001 if none exist.
+   - Determine the next learning ID: use today's date (`YYYYMMDD`) and a short kebab-case slug from the learning topic. Format: `L-YYYYMMDD-slug`. See `_learnings-format.md` § "ID Format" for details.
    - Append each learning:
      ```markdown
 
-     ### L-{NNN}: {one-line insight}
+     ### L-{YYYYMMDD}-{slug}: {one-line insight}
      - status: active
      - category: {matching domain: architecture|testing|patterns|workflow|debugging|performance|review-escape}
      - source: /harness:reflect {YYYY-MM-DD}

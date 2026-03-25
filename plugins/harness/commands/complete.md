@@ -27,7 +27,7 @@ Plan archival, prune health check, and PR creation. Run after `/harness:review` 
 
 ### Phase 2: Verification Gate
 
-4. **Apply `superpowers:verification-before-completion`** — run the project's verification commands (tests, build, lint, typecheck). All must pass before proceeding. Do not archive or create a PR with failing verification.
+4. **Apply `superpowers:verification-before-completion`** using the Skill tool: `Skill("superpowers:verification-before-completion")`. Follow the loaded skill to run the project's verification commands (tests, build, lint, typecheck). All must pass before proceeding. Do not archive or create a PR with failing verification.
 
 ### Phase 3: Plan Archival
 

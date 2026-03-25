@@ -36,6 +36,8 @@ Audit documentation for staleness, broken links, orphaned guides, and bloat. Pro
 | REVIEW_GUIDANCE.md Deployment Context is empty/placeholder ("unknown") | warn |
 | REVIEW_GUIDANCE.md Escape Log entries without matching question in bank | warn |
 | REVIEW_GUIDANCE.md question categories with zero escapes after 5+ reviews | info |
+| LEARNINGS.md contains legacy `L-NNN` sequential IDs (should be `L-YYYYMMDD-slug`) | warn |
+| Index files use legacy markdown table format (should be bullet lists) | warn |
 
 ## Invocation
 
@@ -62,6 +64,8 @@ prompt: |
     - Remove broken links from Documentation Map
     - Create docs/REVIEW_GUIDANCE.md from default scaffold if missing (read references/adversarial-review-prompt.md for default question bank)
     - Add escape log questions to matching bank categories if orphaned
+    - Migrate legacy `L-NNN` learning IDs to `L-YYYYMMDD-slug` format (using date from source metadata)
+    - Convert legacy table-format index files to bullet list format
   - For destructive fixes (deleting files, modifying CLAUDE.md), still ask for confirmation
 
   If no --fix flag:

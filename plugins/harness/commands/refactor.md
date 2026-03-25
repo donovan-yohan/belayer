@@ -21,7 +21,7 @@ Scope an incremental refactoring using the Strangler Fig pattern, saved as a ver
 
 2. Read `docs/refactor-scopes/index.md` to understand prior refactoring efforts. If the directory doesn't exist, create it with an empty index.
 
-3. **Invoke the `harness:strangler-fig` skill** with the user's refactoring target. Follow the full interactive scoping dialogue through all three phases: identify extraction target, dependency & seam analysis, and map the strangler fig steps.
+3. **Invoke the `harness:strangler-fig` skill** using the Skill tool: `Skill("harness:strangler-fig")`. Then follow the loaded skill's full interactive scoping dialogue through all three phases: identify extraction target, dependency & seam analysis, and map the strangler fig steps. You MUST use the Skill tool — do not replicate the scoping methodology from memory.
 
 4. When scoping is complete, save the refactor scope doc to `docs/refactor-scopes/{YYYY-MM-DD}-{kebab-name}-refactor-scope.md`:
 
@@ -101,9 +101,9 @@ Scope an incremental refactoring using the Strangler Fig pattern, saved as a ver
 
    For the **Branch Base** field: Goal 1 uses "default branch". Each subsequent goal that depends on a prior goal uses that prior goal's branch name as its base.
 
-6. Update `docs/refactor-scopes/index.md` — add a row for the new scope:
+6. Update `docs/refactor-scopes/index.md` — append a line:
    ```markdown
-   | [{name}-refactor-scope.md]({date}-{name}-refactor-scope.md) | {one-line summary} | {date} |
+   - [{date}-{name}-refactor-scope]({date}-{name}-refactor-scope.md) — {one-line summary} ({date})
    ```
 
 7. Guide the user to next steps:

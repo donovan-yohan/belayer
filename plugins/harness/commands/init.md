@@ -253,13 +253,15 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
 
     ## Current Designs
 
-    | Document | Purpose | Status | Created |
-    |----------|---------|--------|---------|
+    (no designs yet)
 
     ## Archived
 
-    | Document | Purpose | Status | Created |
-    |----------|---------|--------|---------|
+    ### Implemented
+
+    ### Superseded
+
+    ### Stale
     ```
 
 12a. Generate `docs/bug-analyses/index.md`:
@@ -267,8 +269,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     ```markdown
     # Bug Analyses
 
-    | Document | Summary | Date |
-    |----------|---------|------|
+    (no analyses yet)
     ```
 
 12b. Generate `docs/refactor-scopes/index.md`:
@@ -276,8 +277,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     ```markdown
     # Refactor Scopes
 
-    | Document | Summary | Date |
-    |----------|---------|------|
+    (no scopes yet)
     ```
 
 13. Generate `docs/design-docs/core-beliefs.md`:

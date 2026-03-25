@@ -26,7 +26,7 @@ Orchestrates the full PR lifecycle: author → review → resolve → merge, wit
 
 ## Prerequisites
 
-This command requires the **pr-review-toolkit** plugin. The code-simplifier gate uses the built-in `code-simplifier:code-simplifier` subagent (skip with `--skip-simplify` if unavailable).
+This command requires the **pr-review-toolkit** plugin. The code-simplifier gate uses the built-in `/simplify` command (skip with `--skip-simplify` if unavailable).
 
 ## Invocation
 
@@ -80,12 +80,7 @@ Check if code-simplifier has been run:
 git log --oneline -20 | grep -i "simplif"
 ```
 
-If no evidence found, **spawn `code-simplifier:code-simplifier` subagent**:
-```
-Review changes on this branch against the base branch. Focus on code smells, DRY violations, and unnecessary complexity. Make improvements directly.
-```
-
-Wait for completion before proceeding.
+If no evidence found, run the built-in `/simplify` command to review changed code for reuse, quality, and efficiency. Wait for completion before proceeding.
 
 **1d. Verification gate:**
 
@@ -139,7 +134,7 @@ Capture the PR number and URL for subsequent phases.
 
 ### Phase 2: Review
 
-Invoke `/pr:review` on the PR created in Phase 1. This runs all 6 pr-review-toolkit agents in parallel (code-reviewer, silent-failure-hunter, pr-test-analyzer, type-design-analyzer, comment-analyzer, code-simplifier) and posts inline review comments.
+Invoke `/pr:review` using the Skill tool: `Skill("pr:review", args="<PR number>")`. This loads the review command which runs all 6 pr-review-toolkit agents in parallel with proper `subagent_type` parameters and posts inline review comments. You MUST use the Skill tool — do not manually spawn the review agents.
 
 Read the posted review to check for findings.
 

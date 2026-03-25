@@ -42,11 +42,13 @@ The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md ear
 | **PLANS.md Ghost Features** | PLANS.md references completed work for modules that have since been deleted | warn |
 | **Missing Frontmatter** | Design docs in `docs/design-docs/` without YAML frontmatter | warn |
 | **Frontmatter Status Consistency** | Docs with `status: current` that have been superseded by newer docs on the same topic, or docs with `status: implemented` that have no `implemented-by` reference | warn |
-| **Index Status Badges** | `docs/design-docs/index.md` Status column doesn't match frontmatter `status` on corresponding docs, or index lacks Status column entirely | warn |
+| **Index Status Badges** | `docs/design-docs/index.md` entries are listed under the wrong section (e.g., a `status: superseded` doc under Implemented), or the index uses a legacy table format instead of bullet lists | warn |
 | **Review Guidance Missing** | `docs/REVIEW_GUIDANCE.md` doesn't exist when harness is initialized (Documentation Map exists in CLAUDE.md) | warn |
 | **Review Guidance Empty Context** | `docs/REVIEW_GUIDANCE.md` Deployment Context section contains only "unknown" placeholders | warn |
 | **Orphaned Escape Log Entries** | Escape Log table entries that don't have a matching question in the Adversarial Question Bank | warn |
 | **Over-indexed Question Categories** | Question bank categories with zero escape log entries after 5+ reviews have been run (may be wasting review time on non-applicable questions) | info |
+| **Legacy Learning IDs** | `docs/LEARNINGS.md` contains entries using old `L-NNN` sequential format instead of `L-YYYYMMDD-slug` date-slug format | warn |
+| **Legacy Index Table Format** | `docs/design-docs/index.md`, `docs/bug-analyses/index.md`, or `docs/refactor-scopes/index.md` uses markdown table format instead of bullet list format | warn |
 
 ## Audit Process
 
@@ -168,8 +170,8 @@ For each design doc with YAML frontmatter:
 ### Step 18: Index Status Badges
 
 Read `docs/design-docs/index.md`. Check:
-- Does the index have a `Status` column? If not, flag as **warn**
-- If it has a Status column, for each entry: read the corresponding design doc's frontmatter `status` field and compare to the index badge. Flag mismatches as **warn**.
+- Does the index use the bullet list format (`- [title](file.md) — description (date)`)? If it uses a legacy markdown table format, flag as **warn** — tables cause merge conflicts when multiple agents add entries concurrently.
+- Is each entry listed under the correct section (Current Designs / Archived > Implemented / Archived > Superseded / Archived > Stale)? For each entry, read the corresponding design doc's frontmatter `status` field and compare to the section it's in. Flag mismatches as **warn**.
 
 ### Step 19: Review Guidance Missing
 
@@ -189,6 +191,25 @@ If `docs/REVIEW_GUIDANCE.md` exists:
 - Count the number of escape log entries per question category
 - If a category has questions but zero escape log entries AND the project has run 5+ reviews (check git log for "address review findings" commits), flag the category as **info** — it may be over-indexed for this project's domain
 - This is informational only. Categories without escapes are not necessarily wrong — they may be preventing bugs from ever being introduced.
+
+### Step 23: Legacy Learning IDs
+
+If `docs/LEARNINGS.md` exists, scan H3 headers for the old sequential ID pattern (`### L-\d{3}:`). The current format is `### L-YYYYMMDD-slug:` (e.g., `L-20260321-score-then-route`).
+
+- If any `L-NNN` entries are found, flag as **warn** per entry
+- To determine the migration target ID: read each entry's `source:` metadata line to extract the date, then derive a slug from the entry title (2-4 word kebab-case summary)
+- Example: `### L-007: Resolve model conflicts before planning` with `source: /harness:loop 2026-03-21` → `### L-20260321-resolve-model-conflicts: Resolve model conflicts before planning`
+
+### Step 24: Legacy Index Table Format
+
+Check each index file for legacy markdown table format:
+- `docs/design-docs/index.md`
+- `docs/bug-analyses/index.md`
+- `docs/refactor-scopes/index.md`
+
+The current format uses bullet lists (`- [title](file.md) — description (date)`). The legacy format uses markdown tables (`| Document | Purpose | Status | Created |`).
+
+Detection: if the file contains a line matching `^\|.*\|.*\|` (pipe-delimited table row), it uses the legacy format. Flag as **warn**.
 
 ## Output Format
 
@@ -215,6 +236,8 @@ If `docs/REVIEW_GUIDANCE.md` exists:
 | warn | Stale plan (45 days) | docs/exec-plans/active/2025-... | Run /harness:complete or update |
 | warn | Missing index entry | docs/design-docs/new-topic.md | Add to docs/design-docs/index.md |
 | warn | PLANS.md drift | docs/PLANS.md | Sync Active Plans table with exec-plans/active/ |
+| warn | Legacy learning ID | docs/LEARNINGS.md L-007 | Migrate to L-20260321-resolve-model-conflicts |
+| warn | Legacy index table format | docs/design-docs/index.md | Convert table to bullet list format |
 | info | Stale Tier 2 doc (95 days) | docs/ARCHITECTURE.md | Review and update |
 
 ### Summary
@@ -255,11 +278,22 @@ When the user approves fixes, apply them in this order:
 11. **Documentation Map format** — Offer to run /harness:init to migrate v1 map to 3-tier format
 12. **Missing frontmatter** — Read the design doc; infer status from context (if listed in index Archived section → `implemented`; if newer doc on same topic exists → `superseded`; otherwise → `current`). Infer `created` from filename date prefix. Add frontmatter block at file top.
 13. **Frontmatter status consistency** — Update `status` field and fill in `supersedes` or `implemented-by` references as needed.
-14. **Index status badges** — If index lacks Status column, add it. Read each design doc's frontmatter and set the index Status column to match: `Current`, `Implemented`, `Superseded`, or `Stale`.
+14. **Index status badges** — If the index uses a legacy table format, migrate it to bullet list format (`- [title](file.md) — description (date)`) with section headers (Current Designs / Archived > Implemented / Superseded / Stale). Move each entry to the section matching its frontmatter `status`. If already using bullet list format, just move misplaced entries to the correct section.
 15. **Stale plans** — Offer to run /harness:complete for each stale plan
 16. **Review guidance missing** — Create `docs/REVIEW_GUIDANCE.md` from the default scaffold. Read the harness plugin's `references/adversarial-review-prompt.md` for the default question bank. Analyze the repo to pre-populate deployment context.
 17. **Review guidance empty context** — Analyze the repo (Dockerfile, CI config, database drivers, deployment manifests) and suggest deployment context values for the user to confirm.
 18. **Orphaned escape log entries** — For each orphaned entry, add the question from the "Question Added" column to the matching category in the Adversarial Question Bank. If no matching category exists, create one.
+19. **Legacy learning IDs** — For each `L-NNN` entry in LEARNINGS.md:
+    1. Read the entry's `source:` line to extract the date (e.g., `source: /harness:reflect 2026-03-21` → `20260321`)
+    2. Derive a slug from the entry title: take 2-4 key words, lowercase, join with hyphens
+    3. Rename the H3 header from `### L-NNN: {title}` to `### L-YYYYMMDD-slug: {title}`
+    4. Search all `.md` files under `docs/` for references to the old ID (e.g., `L-007` in `consulted-learnings` frontmatter) and update them to the new ID
+    5. Do NOT modify files under `docs/exec-plans/completed/` — those are archival records
+20. **Legacy index table format** — For each index file using table format:
+    1. Parse each table row to extract: link text, file path, description, date, and status (if present)
+    2. Convert to bullet list format: `- [title](file.md) — description (date)`
+    3. For `docs/design-docs/index.md`: group entries by status under section headers (Current Designs / Archived > Implemented / Superseded / Stale). Read each design doc's frontmatter `status` to determine the correct section.
+    4. For `docs/bug-analyses/index.md` and `docs/refactor-scopes/index.md`: flat bullet list (no sections needed)
 
 For each fix applied, report what was changed.
 

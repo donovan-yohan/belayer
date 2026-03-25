@@ -9,7 +9,7 @@ Shared format spec for LEARNINGS.md entries and design doc frontmatter. Referenc
 Each learning is an H3 header followed by YAML-style metadata lines, then prose:
 
 ```markdown
-### L-NNN: {one-line summary}
+### L-YYYYMMDD-slug: {one-line summary}
 - status: active
 - category: {category}
 - source: {command} {date}
@@ -41,15 +41,21 @@ Each learning is an H3 header followed by YAML-style metadata lines, then prose:
 
 ### ID Format
 
-IDs are `L-NNN` — sequential, zero-padded to 3 digits.
+IDs use date-slug format: `L-YYYYMMDD-slug` where:
+- `YYYYMMDD` is the date the learning was captured
+- `slug` is a short kebab-case descriptor derived from the learning's topic (2-4 words)
 
-To assign the next ID: scan existing H3 headers matching `### L-\d+:`, extract the highest number, and increment by 1. If no entries exist, start at `L-001`.
+Example: `L-20260320-heartbeat-panic`, `L-20260321-score-then-route`
+
+To assign a new ID: use today's date and a descriptive slug. If two learnings share a date and slug would collide, differentiate the slugs (e.g., `L-20260321-workflow-no-file-io` vs `L-20260321-workflow-id-dedup`). No sequential numbering — this prevents merge conflicts when multiple branches add learnings concurrently.
 
 ---
 
 ## Reading Learnings
 
 To find active learnings: grep for H3 headers (`^### L-`) and check that the following `status:` line reads `active`.
+
+To find learnings by date: grep for `^### L-YYYYMMDD` (e.g., `^### L-20260321` for all learnings from 2026-03-21).
 
 To match against a topic: compare the `category` field and keyword overlap with the learning's title and body text against the topic being researched.
 
@@ -75,7 +81,7 @@ created: YYYY-MM-DD
 branch: {branch name}
 supersedes:            # optional: relative path to older doc
 implemented-by:        # optional: path to exec plan
-consulted-learnings:   # optional: [L-001, L-003]
+consulted-learnings:   # optional: [L-20260320-heartbeat-panic, L-20260321-score-then-route]
 ---
 ```
 
@@ -130,8 +136,8 @@ When surfacing learnings, use this format:
 ## Relevant Past Learnings
 
 Based on past work in this project:
-- **{L-NNN}**: {one-line summary} — {recommendation}
-- **{L-NNN}**: {one-line summary} — {recommendation}
+- **{L-YYYYMMDD-slug}**: {one-line summary} — {recommendation}
+- **{L-YYYYMMDD-slug}**: {one-line summary} — {recommendation}
 
 These learnings will inform the current task.
 ```
@@ -139,5 +145,5 @@ These learnings will inform the current task.
 ### Recurrence Detection
 
 When consulting learnings during `/harness:bug`, also check for recurrence: if a learning's recommendation directly addresses the class of bug being investigated, note this explicitly:
-- "L-012 recommended always checking X, but this bug is exactly that class — the learning failed to prevent recurrence."
+- "L-20260320-heartbeat-panic recommended always checking X, but this bug is exactly that class — the learning failed to prevent recurrence."
 This signals that the learning may need strengthening or that additional guardrails are needed beyond documentation.

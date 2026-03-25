@@ -58,16 +58,24 @@ Get the diff against the PR's actual target branch:
 git diff "$BASE"...HEAD
 ```
 
-Spawn **all 6 pr-review-toolkit agents in parallel**, passing each the PR number and diff context. Each agent covers a distinct review dimension:
+Spawn **all 6 pr-review-toolkit agents in parallel** using the Agent tool with `subagent_type` set to the fully qualified agent name. Each agent covers a distinct review dimension:
 
-| Agent | Focus |
+| Agent (`subagent_type`) | Focus |
 |-------|-------|
-| `code-reviewer` | Code quality, bugs, logic errors, CLAUDE.md/style guide adherence |
-| `silent-failure-hunter` | Silent failures, inadequate error handling, inappropriate fallbacks |
-| `pr-test-analyzer` | Test coverage completeness, missing edge cases |
-| `type-design-analyzer` | Type design quality, encapsulation, invariant expression |
-| `comment-analyzer` | Comment accuracy, staleness, long-term maintainability |
-| `code-simplifier` | Unnecessary complexity, DRY violations, code smells |
+| `pr-review-toolkit:code-reviewer` | Code quality, bugs, logic errors, CLAUDE.md/style guide adherence |
+| `pr-review-toolkit:silent-failure-hunter` | Silent failures, inadequate error handling, inappropriate fallbacks |
+| `pr-review-toolkit:pr-test-analyzer` | Test coverage completeness, missing edge cases |
+| `pr-review-toolkit:type-design-analyzer` | Type design quality, encapsulation, invariant expression |
+| `pr-review-toolkit:comment-analyzer` | Comment accuracy, staleness, long-term maintainability |
+| `pr-review-toolkit:code-simplifier` | Unnecessary complexity, DRY violations, code smells |
+
+<MANDATORY>
+You MUST use the `subagent_type` parameter when spawning each agent. Example:
+```
+Agent(subagent_type="pr-review-toolkit:code-reviewer", prompt="Review PR #N...", run_in_background=true)
+```
+Do NOT spawn generic agents with descriptions like "Code reviewer agent". The `subagent_type` parameter loads the agent's specialized system prompt — without it, the agent runs as a generic model with no review methodology.
+</MANDATORY>
 
 **All 6 agents run concurrently.** Wait for all to complete before proceeding.
 

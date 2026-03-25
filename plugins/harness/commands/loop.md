@@ -8,7 +8,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 **Prerequisite:** A design document must already exist (from `/harness:brainstorm`, `/harness:bug`, or `/harness:refactor`).
 
-**"Execute inline"** means: follow that command's instructions directly within this conversation, applying any LOOP_OVERRIDES specified here. Do not spawn a separate invocation of the command.
+**"Execute inline"** means: use the **Skill tool** to invoke the command (e.g., `Skill("harness:plan")`), then follow the loaded skill's instructions step-by-step within this conversation, applying any LOOP_OVERRIDES specified here. You MUST invoke the Skill tool — do NOT write the output from memory or conversation context. The skill's methodology exists to catch things your memory will miss.
 
 ## Usage
 
@@ -70,13 +70,39 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 5. Execute `/harness:plan` inline, passing the design doc path. Plan executes autonomously by default and requires no overrides.
 
-6. Append to decision log: which design doc was used, any ambiguities resolved during planning.
+   <MANDATORY>
+   You MUST use the Skill tool to invoke `/harness:plan` and then follow its loaded instructions step-by-step. Do NOT write the plan from memory or conversation context — the plan skill's methodology systematically extracts deliverables from the design doc, which is exactly what prevents missed deliverables. Writing a plan "from what you remember" is the #1 cause of loop failures.
 
-7. Note the plan file path in `docs/exec-plans/active/` for subsequent phases.
+   If the Skill tool is unavailable, you MUST at minimum:
+   1. Re-read the design doc's full deliverable/approach sections
+   2. List every deliverable explicitly mentioned
+   3. Create a plan task for each one
+   4. Cross-check: does every deliverable have a task? If not, add the missing tasks.
+   </MANDATORY>
+
+6. **Deliverable traceability check (REQUIRED before proceeding):**
+   After the plan is created, verify completeness:
+   1. Re-read the design doc's "Approach", "Deliverables", or "Deliverable Summary" sections (and any review addenda like CEO/eng review accepted scope)
+   2. List every deliverable mentioned, including those with specific target locations (e.g., "Mermaid diagram — for README.md")
+   3. For each deliverable, verify a task exists in the plan
+   4. If ANY deliverable has no corresponding task, add it to the plan NOW
+   5. Append the traceability table to the plan file:
+      ```markdown
+      ## Deliverable Traceability
+      | Design Doc Deliverable | Plan Task |
+      |----------------------|-----------|
+      | {deliverable 1} | Task {N} |
+      | {deliverable 2} | Task {N} |
+      ```
+   6. Append traceability result to decision log
+
+7. Append to decision log: which design doc was used, any ambiguities resolved during planning.
+
+8. Note the plan file path in `docs/exec-plans/active/` for subsequent phases.
 
 ### Phase 3: Orchestrate (Autonomous)
 
-8. Execute `/harness:orchestrate` inline with the following overrides:
+9. Execute `/harness:orchestrate` inline with the following overrides:
 
    <LOOP_OVERRIDES>
    These overrides REPLACE conflicting instructions from /harness:orchestrate:
@@ -88,11 +114,19 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
    - **Decision logging:** For every non-trivial decision, append to the Loop Decision Log file.
    </LOOP_OVERRIDES>
 
-9. When orchestrate completes, append summary to decision log: tasks completed, surprises, drift entries.
+10. When orchestrate completes, append summary to decision log: tasks completed, surprises, drift entries.
 
 ### Phase 4: Review
 
-10. Execute `/harness:review` inline with the following overrides:
+11. **Deliverable coverage check (REQUIRED before code quality review):**
+    1. Re-read the design doc's deliverable list (same source as Phase 2 step 6)
+    2. Run `git diff --name-only` and `git status` to see all changed/new files
+    3. For each deliverable, verify at least one file was changed or created that addresses it
+    4. If ANY deliverable has no corresponding file change, flag it as a **SIGNIFICANT** gap — this is a planning failure, not a code quality issue
+    5. If gaps are found: create tasks for the missing deliverables and execute them (via `/harness:orchestrate` inline with Phase 3 LOOP_OVERRIDES) BEFORE proceeding to the code quality review
+    6. Append coverage check results to decision log
+
+12. Execute `/harness:review` inline with the following overrides:
 
    <LOOP_OVERRIDES>
    These overrides REPLACE conflicting instructions from /harness:review:
@@ -100,17 +134,17 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
    - **No resolution prompt:** Do not present the Phase 7 resolution options (review.md steps 21-22). Do not wait for user selection. Findings are auto-triaged as described below.
    </LOOP_OVERRIDES>
 
-11. **Auto-triage findings** using this rule:
+13. **Auto-triage findings** using this rule:
     - **Minor** (affects only readability, maintainability, or style — e.g., naming, comments, simplification, formatting): fix inline immediately
     - **Significant** (could cause incorrect behavior at runtime or in production — e.g., logic bugs, missing tests, security concerns, silent failures, inadequate error handling): collect into a fix task list
     - **When in doubt, treat as significant.**
     - Append each triage decision to the decision log with rationale
 
-12. If significant issues exist, proceed to Phase 5. Otherwise, skip to Phase 6.
+14. If significant issues exist, proceed to Phase 5. Otherwise, skip to Phase 6.
 
 ### Phase 5: Fix Cycle (max 2 iterations)
 
-13. Set `fix_iteration = 1`. Create a lightweight fix plan at `docs/exec-plans/active/.loop-fix-plan-{slug}.md`:
+15. Set `fix_iteration = 1`. Create a lightweight fix plan at `docs/exec-plans/active/.loop-fix-plan-{slug}.md`:
     ```markdown
     # Fix Plan (Loop Iteration {fix_iteration})
 
@@ -133,26 +167,26 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
     ### Task 2: ...
     ```
 
-14. Execute `/harness:orchestrate` inline with:
+16. Execute `/harness:orchestrate` inline with:
     - The fix plan path (not the original plan)
     - Same `LOOP_OVERRIDES` as Phase 3 (no checkpoints, auto-resolve, decision logging)
 
-15. Re-run `/harness:review` inline (with Phase 4 LOOP_OVERRIDES) scoped to the fix commits only.
+17. Re-run `/harness:review` inline (with Phase 4 LOOP_OVERRIDES) scoped to the fix commits only.
 
-16. If new significant issues are found AND `fix_iteration == 1`:
+18. If new significant issues are found AND `fix_iteration == 1`:
     - Set `fix_iteration = 2`
     - Append to decision log: "Entering fix cycle iteration 2"
-    - Repeat steps 13-15
+    - Repeat steps 15-17
 
-17. If issues remain after iteration 2:
+19. If issues remain after iteration 2:
     - Append all unresolved issues to the decision log as "deferred"
     - Do NOT enter a third cycle — proceed to Phase 6
 
-18. Clean up: delete `docs/exec-plans/active/.loop-fix-plan-{slug}.md`
+20. Clean up: delete `docs/exec-plans/active/.loop-fix-plan-{slug}.md`
 
 ### Phase 6: Reflect (Autonomous)
 
-19. Execute `/harness:reflect` inline with the following overrides:
+21. Execute `/harness:reflect` inline with the following overrides:
 
     <LOOP_OVERRIDES>
     These overrides REPLACE conflicting instructions from /harness:reflect:
@@ -164,7 +198,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
     - **Auto-approve doc fixes:** Apply all staleness fixes and doc updates without asking for confirmation. For file deletions: add a tombstone note to the file AND append the path to the decision log — do not delete the file.
     </LOOP_OVERRIDES>
 
-20. Check if prune is warranted:
+22. Check if prune is warranted:
     - Did reflect detect deleted-code staleness?
     - Has the project not been pruned in 30+ days? Check: `git log --all --oneline --grep="prune" --since="30 days ago"`
     - If either condition is true, execute `/harness:prune --fix` inline
@@ -172,7 +206,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 ### Phase 7: Complete (Autonomous)
 
-21. Execute `/harness:complete` inline with the following overrides:
+23. Execute `/harness:complete` inline with the following overrides:
 
     <LOOP_OVERRIDES>
     These overrides REPLACE conflicting instructions from /harness:complete:
@@ -184,17 +218,17 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 ### Phase 8: PR Decision
 
-22. Determine whether to open a PR by checking:
+24. Determine whether to open a PR by checking:
     - **Remote exists?** `git remote -v` — if no remote, skip PR
     - **Not on main/master?** If on main/master, skip PR (work is already on trunk)
     - **PR workflow present?** Check for `.github/` directory or CLAUDE.md mentions of PR requirements
     - **Project convention?** Check if CLAUDE.md has PR instructions
 
-23. If conditions favor a PR:
+25. If conditions favor a PR:
     - Try invoking `/pr:author`. If the command is not recognized, fall back to `gh pr create`
     - Append to decision log: "Opened PR — {rationale}"
 
-24. If conditions are unclear or unfavorable:
+26. If conditions are unclear or unfavorable:
     - Append to decision log: "Skipped PR — {rationale}"
     - Include recommendation in the final summary
 
@@ -202,7 +236,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 **Note:** If in multi-goal mode, skip this section — use the Multi-Goal Summary above instead.
 
-25. Read the full Loop Decision Log file. Output the complete summary:
+27. Read the full Loop Decision Log file. Output the complete summary:
 
     ```
     ## Loop Complete
@@ -230,7 +264,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
     - {or "Skipped — {reason}. Run `/pr:author` to create manually."}
     ```
 
-26. Clean up: delete `docs/exec-plans/active/.loop-decision-log-{slug}.md`
+28. Clean up: delete `docs/exec-plans/active/.loop-decision-log-{slug}.md`
 
 ## Multi-Goal Execution
 

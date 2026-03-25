@@ -9,7 +9,7 @@ You enforce compliance with the project's accumulated learnings. When code chang
 
 ## Context
 
-`docs/LEARNINGS.md` contains actionable recommendations captured from past sessions — bug root causes, architecture decisions, testing patterns, and workflow corrections. Each learning has an ID (L-NNN), a category, and a forward-looking recommendation.
+`docs/LEARNINGS.md` contains actionable recommendations captured from past sessions — bug root causes, architecture decisions, testing patterns, and workflow corrections. Each learning has an ID (`L-YYYYMMDD-slug`), a category, and a forward-looking recommendation.
 
 Your job is to check whether the current diff follows or violates these recommendations.
 
@@ -58,7 +58,7 @@ The goal is zero false positives at the cost of occasional false negatives. Nois
 
 ### Violations
 
-**[L-NNN] {learning title}**
+**[L-YYYYMMDD-slug] {learning title}**
 - Recommendation: {what the learning says to do}
 - Violation: {how the diff violates it, with file:line references}
 - Fix: {concrete suggestion}

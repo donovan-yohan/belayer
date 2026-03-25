@@ -46,7 +46,7 @@ Optional: The **adr** plugin enables architecture compliance checking in Phase 6
 
 ### Phase 2: Verification Gate
 
-3. **Apply `superpowers:verification-before-completion`** — run the project's verification commands (tests, build, lint, typecheck) BEFORE starting review. If verification fails, STOP and fix first. Do not review broken code.
+3. **Apply `superpowers:verification-before-completion`** using the Skill tool: `Skill("superpowers:verification-before-completion")`. Follow the loaded skill to run the project's verification commands (tests, build, lint, typecheck) BEFORE starting review. If verification fails, STOP and fix first. Do not review broken code.
 
 ### Phase 3: Adversarial Production Review
 
@@ -188,7 +188,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
 ### Phase 5: Code Simplification
 
-16. Spawn the `pr-review-toolkit:code-simplifier` agent scoped to the changed files. This agent modifies code directly — let it make improvements.
+16. Spawn the code-simplifier agent using the Agent tool with `subagent_type: "pr-review-toolkit:code-simplifier"`, scoped to the changed files. This agent modifies code directly — let it make improvements.
 
 17. If the simplifier made changes, commit and re-run verification:
    ```bash

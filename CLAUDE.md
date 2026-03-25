@@ -22,6 +22,7 @@ Standalone Go CLI that orchestrates autonomous coding agents across repositories
 | Design Docs | `docs/design-docs/` | Feature brainstorm outputs and design decisions |
 | ADRs | `docs/adrs/` | Architecture decision records |
 | TODOs | `docs/TODOS.md` | Deferred items, P1/P2/P3 backlog, tech debt tracker |
+| Plugins | `docs/PLUGINS.md` | Plugin authoring patterns, invocation mandates, version sync, merge-friendly formats |
 
 ## Key Patterns
 
@@ -36,6 +37,10 @@ Standalone Go CLI that orchestrates autonomous coding agents across repositories
 - **Plugin version sync**: When modifying `plugins/*/`, bump version in all 3 locations: `plugin.json`, `registry.go` constant (`HarnessVersion`/`PRVersion`/`ExplorerVersion`), and `agentassets_test.go` `TestPluginVersion`
 - **New output types**: Adding a pipeline output type requires updates in: `validate.go` (validOutputTypes map), `model.go` (OutputConfig comment), and `outcome/detect.go` (typeDefault switch). Missing `detect.go` causes silent false-positive outcomes.
 - **Default pipeline changes**: Modifying `DefaultPipelineYAML` in `defaults.go` breaks Temporal workflow tests using `defaultInput()` — update mocks in `workflow_test.go`. Go raw string constants cannot contain backticks.
+
+## Plugin Development
+
+When editing files under `plugins/*/`, you MUST use `plugin-dev` skills before making changes. See `docs/PLUGINS.md` for full patterns (invocation mandates, MANDATORY blocks, merge-friendly formats, version sync).
 
 ## Workflow
 

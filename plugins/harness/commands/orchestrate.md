@@ -33,7 +33,7 @@ Execute a living plan using subagent-driven development with per-task living pla
 
 ### Phase 2: Execute with Subagent-Driven Development
 
-4. **Invoke `superpowers:subagent-driven-development`** with the plan context. Follow its full process (dispatch implementer subagents per task, spec compliance review, code quality review, handle implementer status).
+4. **Invoke `superpowers:subagent-driven-development`** using the Skill tool: `Skill("superpowers:subagent-driven-development")`. Then follow the loaded skill's full process (dispatch implementer subagents per task, spec compliance review, code quality review, handle implementer status). You MUST use the Skill tool — do not replicate the SDD methodology from memory.
 
    <HARNESS_OVERRIDES>
    The following overrides REPLACE conflicting instructions from superpowers:subagent-driven-development.

@@ -59,16 +59,11 @@ Check if code-simplifier has been run:
 git log --oneline -20 | grep -i "simplif"
 ```
 
-If no evidence found, inform user and **spawn `code-simplifier:code-simplifier` subagent** (built-in Claude Code agent; skip if unavailable) with prompt:
-```
-Review changes on this branch against the base branch. Focus on code smells, DRY violations, and unnecessary complexity. Make improvements directly.
-```
-
-Wait for completion before proceeding.
+If no evidence found, run the built-in `/simplify` command to review changed code for reuse, quality, and efficiency. Wait for completion before proceeding.
 
 ### 4. Verification Gate
 
-**REQUIRED: Apply superpowers:verification-before-completion**
+**REQUIRED: Apply `superpowers:verification-before-completion`** using the Skill tool: `Skill("superpowers:verification-before-completion")`.
 
 Identify project's verification commands by checking for:
 - `package.json` -> `npm test`, `npm run lint`, `npm run typecheck`

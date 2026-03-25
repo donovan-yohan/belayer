@@ -28,7 +28,7 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
    - Also check for recurrence per the "Recurrence Detection" section in `_learnings-format.md`: if a prior learning's recommendation directly addresses this bug class, note it explicitly
    - If LEARNINGS.md doesn't exist or has no matches, skip silently
 
-3. **Invoke `superpowers:systematic-debugging`** with the user's bug description. Follow the full debug cycle: reproduce, bisect, hypothesize, verify root cause.
+3. **Invoke `superpowers:systematic-debugging`** using the Skill tool: `Skill("superpowers:systematic-debugging")`. Then follow the loaded skill's full debug cycle: reproduce, bisect, hypothesize, verify root cause. You MUST use the Skill tool — do not replicate the debugging methodology from memory.
 
 4. When debugging reaches confirmed root cause, save findings to `docs/bug-analyses/{YYYY-MM-DD}-{kebab-name}-bug-analysis.md`:
 
@@ -72,7 +72,7 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
 4.6. **Write learnings from root cause + architecture review:**
    - Produce one learning per dimension that has actionable findings, using the categories below. Follow the `_learnings-format.md` spec for format, IDs, and scaffold.
    - Check if `docs/LEARNINGS.md` exists. If not, create it with the scaffold from `_learnings-format.md` § "LEARNINGS.md Scaffold".
-   - Determine the next learning ID by scanning existing `### L-NNN` headers.
+   - Determine the next learning ID: use today's date (`YYYYMMDD`) and a short kebab-case slug from the learning topic. Format: `L-YYYYMMDD-slug`. See `_learnings-format.md` § "ID Format" for details.
 
    | Finding dimension | Learning category |
    |-------------------|-------------------|
@@ -87,9 +87,9 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
    - Each learning must be forward-looking: "When doing X, always check Y because Z." Not just "X was broken because of Y."
    - Source field: `/harness:bug {YYYY-MM-DD}`
 
-5. Update `docs/bug-analyses/index.md` — add a row for the new analysis:
+5. Update `docs/bug-analyses/index.md` — append a line:
     ```markdown
-    | [{name}-bug-analysis.md]({date}-{name}-bug-analysis.md) | {one-line summary} | {date} |
+    - [{date}-{name}-bug-analysis]({date}-{name}-bug-analysis.md) — {one-line summary} ({date})
     ```
 
 6. Guide user to next step:
