@@ -1,6 +1,9 @@
 package belayerassets
 
 import (
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -71,5 +74,58 @@ func TestCodexSkillFiles_RewritesRuntimeReferences(t *testing.T) {
 	// Check that body content (Usage section) is rewritten.
 	if !strings.Contains(send, "explorer-send") {
 		t.Fatalf("expected explorer-send Codex skill reference in explorer send skill")
+	}
+}
+
+func TestTrackedCodexSkillsSnapshot(t *testing.T) {
+	want, err := CodexSkillFiles()
+	if err != nil {
+		t.Fatalf("CodexSkillFiles returned error: %v", err)
+	}
+
+	got := make(map[string][]byte)
+	if err := filepath.Walk("skills", func(current string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		relPath, err := filepath.Rel("skills", current)
+		if err != nil {
+			return err
+		}
+		raw, err := os.ReadFile(current)
+		if err != nil {
+			return err
+		}
+		got[filepath.ToSlash(relPath)] = raw
+		return nil
+	}); err != nil {
+		t.Fatalf("walk tracked skills snapshot: %v", err)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("tracked skills snapshot file count mismatch: got %d want %d", len(got), len(want))
+	}
+
+	var missing []string
+	var mismatched []string
+	for relPath, expected := range want {
+		actual, ok := got[relPath]
+		if !ok {
+			missing = append(missing, relPath)
+			continue
+		}
+		if string(actual) != string(expected) {
+			mismatched = append(mismatched, relPath)
+		}
+	}
+
+	if len(missing) > 0 || len(mismatched) > 0 {
+		sort.Strings(missing)
+		sort.Strings(mismatched)
+		t.Fatalf("tracked skills snapshot is stale; missing=%v mismatched=%v", missing, mismatched)
 	}
 }

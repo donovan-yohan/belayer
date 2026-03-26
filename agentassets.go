@@ -12,6 +12,8 @@ import (
 	"sync"
 )
 
+//go:generate go run ./cmd/gencodexskills
+
 //go:embed plugins/harness/commands/*.md plugins/pr/commands/*.md plugins/explorer/commands/*.md plugins/harness/skills/strangler-fig all:plugins/harness/.claude-plugin/plugin.json all:plugins/pr/.claude-plugin/plugin.json all:plugins/explorer/.claude-plugin/plugin.json
 var FS embed.FS
 

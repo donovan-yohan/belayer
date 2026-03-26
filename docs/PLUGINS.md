@@ -1,10 +1,43 @@
 # Plugin Development
 
-Patterns, conventions, and authoring rules for the `plugins/harness/` and `plugins/pr/` Claude Code plugins shipped with belayer.
+Patterns, conventions, and authoring rules for the shared Belayer workflow packs shipped to Claude Code and Codex.
 
 ## Current State
 
-Belayer ships three plugins: **harness** (documentation lifecycle), **pr** (pull request lifecycle), and **explorer** (spec submission). All are embedded via `embed.FS` and installed by `belayer init`.
+Belayer ships three workflow packs: **harness** (documentation lifecycle), **pr** (pull request lifecycle), and **explorer** (spec submission).
+
+- Claude consumes them from `plugins/*/`
+- Codex consumes them from the generated `skills/` tree
+- `agentassets.go` is the runtime adapter that turns the authored plugin source into Codex-native `SKILL.md` directories
+
+## Cross-Agent Source Of Truth
+
+Belayer follows a thin-runtime-layer model similar to Superpowers:
+
+- Author workflow content once under `plugins/*/commands/*.md` and `plugins/*/skills/*`
+- Treat command frontmatter `description:` as the canonical trigger text for both agents
+- Generate the Codex-facing `skills/` projection from that same source via `go run ./cmd/gencodexskills`
+- Never hand-edit `skills/`; it is a tracked build artifact used for repo-checkout Codex installs
+
+When you change any authored plugin file, refresh and verify the Codex pack:
+
+```bash
+go run ./cmd/gencodexskills
+go test . -run 'TestCodexSkillFiles|TestTrackedCodexSkillsSnapshot|TestPluginVersion'
+```
+
+`TestTrackedCodexSkillsSnapshot` is the drift check. If it fails, the checked-in `skills/` tree is stale.
+
+## Runtime Overrides And Data Mapping
+
+Belayer still authors the shared workflows in the Claude marketplace shape, but the Codex projection is generated mechanically:
+
+- `/harness:plan` becomes `harness-plan`
+- `/pr:author` becomes `pr-author`
+- `superpowers:writing-plans` becomes `writing-plans`
+- static skill references under `plugins/*/skills/*` are rewritten to local paths inside the generated Codex skill directory
+
+Keep runtime-specific deltas constrained to these adapter rules. Do not fork the underlying workflow text just to satisfy one agent.
 
 ## Key Patterns
 
