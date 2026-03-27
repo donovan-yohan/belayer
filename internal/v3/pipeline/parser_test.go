@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const validYAML = `
@@ -160,6 +162,23 @@ func TestIsGate(t *testing.T) {
 	if empty.IsGate() {
 		t.Error("expected empty type to not be a gate")
 	}
+}
+
+func TestParsePipeline_CommandField(t *testing.T) {
+	yaml := `
+name: test
+nodes:
+  - name: worker
+    type: node
+    command: ./scripts/run.sh
+    description: do work
+    input: { type: description }
+    output: { type: file }
+    on_pass: stop
+`
+	cfg, err := ParsePipeline([]byte(yaml))
+	require.NoError(t, err)
+	require.Equal(t, "./scripts/run.sh", cfg.Nodes[0].Command)
 }
 
 func TestOutputKey(t *testing.T) {

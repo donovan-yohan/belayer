@@ -46,6 +46,7 @@ type PipelineConfig struct {
 type NodeConfig struct {
 	Name        string            `yaml:"name" json:"name"`
 	Type        NodeType          `yaml:"type,omitempty" json:"type,omitempty"`
+	Command     string            `yaml:"command,omitempty" json:"command,omitempty"`
 	Description string            `yaml:"description" json:"description"`
 	Input       InputConfig       `yaml:"input" json:"input"`
 	Output      OutputConfig      `yaml:"output" json:"output"`
