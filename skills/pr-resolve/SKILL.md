@@ -1,6 +1,10 @@
 ---
+name: pr-resolve
 description: Use when PR has unaddressed comments, when review feedback needs action, or when asked to handle PR feedback
 ---
+
+> Generated from Claude plugin command: plugins/pr/commands/resolve.md
+> Claude alias: /pr:resolve
 
 # Resolve PR Comments
 
@@ -9,9 +13,9 @@ Analyzes outstanding PR comments and determines actions to address them.
 ## Usage
 
 ```
-/pr:resolve              # Resolve comments on current branch's PR
-/pr:resolve 123          # Resolve comments on PR #123
-/pr:resolve --dry-run    # Show plan without making changes
+pr-resolve              # Resolve comments on current branch's PR
+pr-resolve 123          # Resolve comments on PR #123
+pr-resolve --dry-run    # Show plan without making changes
 ```
 
 ## Invocation
@@ -113,7 +117,7 @@ Reply **before** resolving so the reviewer sees what was done.
 
 ### 6. Report Completion
 
-Report files modified, commit SHA, and which comments were resolved vs left open. Suggest `/pr:update` to sync PR description.
+Report files modified, commit SHA, and which comments were resolved vs left open. Suggest `pr-update` to sync PR description.
 
 ## Common Mistakes
 

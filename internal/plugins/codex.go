@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 
 	belayerassets "github.com/donovan-yohan/belayer"
 )
@@ -73,31 +72,7 @@ func writeCodexSkillFiles(versionPath string) error {
 	if err != nil {
 		return fmt.Errorf("generate codex skill files: %w", err)
 	}
-
-	if err := os.RemoveAll(versionPath); err != nil {
-		return fmt.Errorf("remove versioned skill path %s: %w", versionPath, err)
-	}
-	if err := os.MkdirAll(versionPath, 0o755); err != nil {
-		return fmt.Errorf("create versioned skill path %s: %w", versionPath, err)
-	}
-
-	paths := make([]string, 0, len(files))
-	for relPath := range files {
-		paths = append(paths, relPath)
-	}
-	sort.Strings(paths)
-
-	for _, relPath := range paths {
-		target := filepath.Join(versionPath, relPath)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return fmt.Errorf("create parent dir for %s: %w", target, err)
-		}
-		if err := os.WriteFile(target, files[relPath], 0o644); err != nil {
-			return fmt.Errorf("write %s: %w", target, err)
-		}
-	}
-
-	return nil
+	return belayerassets.WriteSkillFiles(versionPath, files)
 }
 
 func copyDir(src, dst string) error {

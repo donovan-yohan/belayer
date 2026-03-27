@@ -1,6 +1,9 @@
 package belayerassets
 
 import (
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -9,7 +12,7 @@ func TestPluginVersion(t *testing.T) {
 	if got := MustPluginVersion("harness"); got != "4.0.0" {
 		t.Fatalf("unexpected harness version: %s", got)
 	}
-	if got := MustPluginVersion("pr"); got != "1.3.0" {
+	if got := MustPluginVersion("pr"); got != "1.3.1" {
 		t.Fatalf("unexpected pr version: %s", got)
 	}
 	if got := MustPluginVersion("explorer"); got != "0.2.0" {
@@ -71,5 +74,69 @@ func TestCodexSkillFiles_RewritesRuntimeReferences(t *testing.T) {
 	// Check that body content (Usage section) is rewritten.
 	if !strings.Contains(send, "explorer-send") {
 		t.Fatalf("expected explorer-send Codex skill reference in explorer send skill")
+	}
+}
+
+func TestTrackedCodexSkillsSnapshot(t *testing.T) {
+	want, err := CodexSkillFiles()
+	if err != nil {
+		t.Fatalf("CodexSkillFiles returned error: %v", err)
+	}
+
+	got := make(map[string][]byte)
+	if err := filepath.WalkDir("skills", func(current string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := d.Name()
+		if d.IsDir() {
+			if strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(name, ".") || strings.EqualFold(name, "Thumbs.db") {
+			return nil
+		}
+
+		relPath, err := filepath.Rel("skills", current)
+		if err != nil {
+			return err
+		}
+		raw, err := os.ReadFile(current)
+		if err != nil {
+			return err
+		}
+		got[filepath.ToSlash(relPath)] = raw
+		return nil
+	}); err != nil {
+		t.Fatalf("walk tracked skills snapshot: %v", err)
+	}
+
+	var missing []string
+	var mismatched []string
+	for relPath, expected := range want {
+		actual, ok := got[relPath]
+		if !ok {
+			missing = append(missing, relPath)
+			continue
+		}
+		if string(actual) != string(expected) {
+			mismatched = append(mismatched, relPath)
+		}
+	}
+
+	var extra []string
+	for relPath := range got {
+		if _, ok := want[relPath]; !ok {
+			extra = append(extra, relPath)
+		}
+	}
+
+	if len(missing) > 0 || len(mismatched) > 0 || len(extra) > 0 {
+		sort.Strings(missing)
+		sort.Strings(mismatched)
+		sort.Strings(extra)
+		t.Fatalf("tracked skills snapshot is stale; missing=%v mismatched=%v extra=%v", missing, mismatched, extra)
 	}
 }

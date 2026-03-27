@@ -1,6 +1,10 @@
 ---
+name: pr-automate
 description: Use when automating the full PR lifecycle, when wanting hands-off PR creation through merge, or when asked to automate a pull request
 ---
+
+> Generated from Claude plugin command: plugins/pr/commands/automate.md
+> Claude alias: /pr:automate
 
 # Automate PR
 
@@ -9,10 +13,10 @@ Orchestrates the full PR lifecycle: author → review → resolve → merge, wit
 ## Usage
 
 ```
-/pr:automate                    # Full automated flow
-/pr:automate --skip-simplify    # Skip code-simplifier gate
-/pr:automate --base develop     # Target different base branch
-/pr:automate --dry-run          # Author + review only, no resolve or merge
+pr-automate                    # Full automated flow
+pr-automate --skip-simplify    # Skip code-simplifier gate
+pr-automate --base develop     # Target different base branch
+pr-automate --dry-run          # Author + review only, no resolve or merge
 ```
 
 ## Hard Stops
@@ -123,7 +127,7 @@ gh pr create --title "<type>: <concise-title>" --body "$(cat <<'EOF'
 - <How this was verified>
 
 ---
-*Created with `/pr:automate`*
+*Created with `pr-automate`*
 EOF
 )"
 ```
@@ -134,7 +138,7 @@ Capture the PR number and URL for subsequent phases.
 
 ### Phase 2: Review
 
-Invoke `/pr:review` using the Skill tool: `Skill("pr:review", args="<PR number>")`. This loads the review command which runs all 6 pr-review-toolkit agents in parallel with proper `subagent_type` parameters and posts inline review comments. You MUST use the Skill tool — do not manually spawn the review agents.
+Invoke `pr-review` using the Skill tool: `Skill("pr-review", args="<PR number>")`. This loads the review command which runs all 6 pr-review-toolkit agents in parallel with proper `subagent_type` parameters and posts inline review comments. You MUST use the Skill tool — do not manually spawn the review agents.
 
 Read the posted review to check for findings.
 

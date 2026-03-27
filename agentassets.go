@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 )
+
+//go:generate go run ./cmd/gencodexskills
 
 //go:embed plugins/harness/commands/*.md plugins/pr/commands/*.md plugins/explorer/commands/*.md plugins/harness/skills/strangler-fig all:plugins/harness/.claude-plugin/plugin.json all:plugins/pr/.claude-plugin/plugin.json all:plugins/explorer/.claude-plugin/plugin.json
 var FS embed.FS
@@ -117,10 +121,10 @@ func CodexSkillFiles() (map[string][]byte, error) {
 	for _, plugin := range plugins {
 		for _, command := range plugin.Commands {
 			target := path.Join(command.CodexSkillName(), "SKILL.md")
-			files[target] = []byte(command.RenderCodexSkill())
+			files[target] = []byte(command.RenderCodexSkill(plugins))
 		}
 		for _, skill := range plugin.Skills {
-			if err := appendStaticSkill(files, skill); err != nil {
+			if err := appendStaticSkill(files, skill, plugins); err != nil {
 				return nil, err
 			}
 		}
@@ -136,8 +140,9 @@ func (c CommandSpec) CodexSkillName() string {
 	return Invocation("codex", c.Plugin, c.Name)
 }
 
-func (c CommandSpec) RenderCodexSkill() string {
-	body := rewriteForCodex(c.Body, "")
+func (c CommandSpec) RenderCodexSkill(plugins []PluginSpec) string {
+	body := rewriteForCodex(c.Body, "", plugins)
+	description := rewriteForCodex(c.Description, "", plugins)
 	return fmt.Sprintf(`---
 name: %s
 description: %s
@@ -147,7 +152,7 @@ description: %s
 > Claude alias: %s
 
 %s
-`, c.CodexSkillName(), c.Description, c.SourcePath, c.ClaudeCommand(), strings.TrimSpace(body))
+`, c.CodexSkillName(), description, c.SourcePath, c.ClaudeCommand(), strings.TrimSpace(body))
 }
 
 func loadPlugins() ([]PluginSpec, error) {
@@ -256,7 +261,7 @@ func extractTitle(body string) string {
 	return ""
 }
 
-func appendStaticSkill(files map[string][]byte, skill StaticSkillSpec) error {
+func appendStaticSkill(files map[string][]byte, skill StaticSkillSpec, plugins []PluginSpec) error {
 	var paths []string
 	if err := fs.WalkDir(FS, skill.SourceDir, func(current string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -281,20 +286,49 @@ func appendStaticSkill(files map[string][]byte, skill StaticSkillSpec) error {
 			return fmt.Errorf("read %s: %w", sourcePath, err)
 		}
 		if path.Base(sourcePath) == "SKILL.md" {
-			raw = []byte(rewriteForCodex(string(raw), prefix))
+			raw = []byte(rewriteForCodex(string(raw), prefix, plugins))
 		}
 		files[target] = raw
 	}
 	return nil
 }
 
-func rewriteForCodex(content, sourcePrefix string) string {
+// WriteSkillFiles writes the given file map to targetRoot, removing the directory first.
+func WriteSkillFiles(targetRoot string, files map[string][]byte) error {
+	if err := os.RemoveAll(targetRoot); err != nil {
+		return fmt.Errorf("remove %s: %w", targetRoot, err)
+	}
+	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", targetRoot, err)
+	}
+
+	paths := make([]string, 0, len(files))
+	for relPath := range files {
+		paths = append(paths, relPath)
+	}
+	sort.Strings(paths)
+
+	for _, relPath := range paths {
+		target := filepath.Join(targetRoot, filepath.FromSlash(relPath))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("create parent dir for %s: %w", target, err)
+		}
+		if err := os.WriteFile(target, files[relPath], 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", target, err)
+		}
+	}
+	return nil
+}
+
+func rewriteForCodex(content, sourcePrefix string, plugins []PluginSpec) string {
 	rewritten := content
-	// Rewrite /<plugin>:<command> → <plugin>-<command> for all loaded plugins.
-	plugins, _ := Plugins()
 	for _, p := range plugins {
-		re := regexp.MustCompile(`/` + regexp.QuoteMeta(p.Name) + `:([a-z-]+)`)
-		rewritten = re.ReplaceAllString(rewritten, p.Name+"-$1")
+		// Rewrite /<plugin>:<command> → <plugin>-<command>
+		slashRef := regexp.MustCompile(`/` + regexp.QuoteMeta(p.Name) + `:([a-z-]+)`)
+		rewritten = slashRef.ReplaceAllString(rewritten, p.Name+"-$1")
+		// Rewrite Skill("<plugin>:<command>") → Skill("<plugin>-<command>")
+		skillRef := regexp.MustCompile(`Skill\("` + regexp.QuoteMeta(p.Name) + `:([a-z-]+)"`)
+		rewritten = skillRef.ReplaceAllString(rewritten, `Skill("`+p.Name+`-$1"`)
 	}
 	rewritten = superpowersRef.ReplaceAllString(rewritten, "$1")
 	if sourcePrefix != "" {

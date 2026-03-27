@@ -86,23 +86,55 @@ Belayer provides contracts: setter expects spec.md in and produces per-repo spec
 This keeps belayer agent-agnostic. Your nodes could be Claude Code sessions, Codex, OpenCode, custom scripts, or anything else that fulfills the contract.
 </details>
 
-## Claude Code Marketplace
+## Claude Code Marketplace and Codex Skills
 
-This repository is a valid [Claude Code marketplace](https://github.com/anthropics/claude-code-plugins) plugin repository. It vendors two plugins that are automatically available when you work in this project:
+This repo now follows the same broad cross-agent pattern used by Superpowers: keep the workflow content in one authored tree, then expose thin runtime-specific install layers.
+
+- `plugins/` is the authored source of truth for Belayer workflows
+- `skills/` is the generated native Codex skill pack derived from those same plugin files
+- `go run ./cmd/gencodexskills` refreshes the tracked Codex pack after plugin edits
+
+Belayer currently ships three shared workflow packs:
 
 - **harness** (`plugins/harness/`) — 3-tier documentation system with living execution plans: brainstorm, bug, refactor, plan, orchestrate, complete, and the strangler-fig refactoring skill
 - **pr** (`plugins/pr/`) — Pull request lifecycle management: authoring, reviewing, resolving, and updating PRs
+- **explorer** (`plugins/explorer/`) — Submit a spec into the belayer pipeline from an interactive agent session
 
-### Installing the plugins
+### Claude Code
 
-These plugins are vendored in the `plugins/` directory and are picked up automatically by Claude Code when working in this repo. No additional installation is needed for contributors.
+This repository is a valid [Claude Code marketplace](https://github.com/anthropics/claude-code-plugins) plugin repository. The vendored plugins under `plugins/` are picked up automatically when you work in this repo.
 
-If you want to use these plugins in **other projects**, install them from the marketplace:
+If you want to use them in other projects, install them from the marketplace:
 
 ```bash
 claude plugin add donovan-yohan/belayer --path plugins/harness
 claude plugin add donovan-yohan/belayer --path plugins/pr
+claude plugin add donovan-yohan/belayer --path plugins/explorer
 ```
+
+### Codex
+
+Codex uses native skill discovery from `~/.agents/skills/`. Belayer supports that in two ways:
+
+For contributors working from this checkout:
+
+```bash
+go run ./cmd/gencodexskills
+mkdir -p ~/.agents/skills
+ln -s /absolute/path/to/belayer/skills ~/.agents/skills/belayer
+```
+
+Then restart Codex.
+
+If you are using the installed Belayer CLI instead of a repo checkout, run:
+
+```bash
+belayer init
+```
+
+When `codex` is on your `PATH`, `belayer init` writes a versioned pack under `~/.belayer/agent-assets/codex/<pack-version>/skills/` and mounts it at `~/.agents/skills/belayer`.
+
+Codex installation, repair steps, and troubleshooting live in [`.codex/INSTALL.md`](.codex/INSTALL.md).
 
 ## Prerequisites
 
