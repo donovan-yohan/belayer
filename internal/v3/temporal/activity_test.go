@@ -128,7 +128,7 @@ func TestPollForCompletion_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := pollForCompletion(ctx, workDir, "task-xyz", "coder", 1, 50*time.Millisecond)
+	_, err := pollForCompletion(ctx, workDir, "task-xyz", "coder", 1, 50*time.Millisecond, nil)
 	if err == nil {
 		t.Fatal("expected context error, got nil")
 	}

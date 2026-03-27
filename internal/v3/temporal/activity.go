@@ -33,6 +33,33 @@ type NodeActivityOutput struct {
 	Result model.CompletionResult
 }
 
+// NodeContext is the typed contract between belayer core and framework implementations.
+type NodeContext struct {
+	TaskID      string                     `json:"task_id"`
+	NodeName    string                     `json:"node_name"`
+	NodeType    string                     `json:"node_type"`
+	Attempt     int                        `json:"attempt"`
+	WorkDir     string                     `json:"work_dir"`
+	Description string                     `json:"description"`
+	InputPrompt string                     `json:"input_prompt"`
+	Artifacts   map[string]string          `json:"artifacts"`
+	Dimensions  []pipeline.DimensionConfig `json:"dimensions,omitempty"`
+	Thresholds  *pipeline.ThresholdConfig  `json:"thresholds,omitempty"`
+}
+
+// writeNodeContext writes node-context.json to the internal input directory.
+func writeNodeContext(workDir string, nc NodeContext) error {
+	dir := session.InputDir(workDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create input dir: %w", err)
+	}
+	data, err := json.MarshalIndent(nc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal node context: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, "node-context.json"), data, 0o644)
+}
+
 // Activities holds dependencies for Temporal activity implementations.
 type Activities struct {
 	Spawner session.Spawner
@@ -62,15 +89,10 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	// 1. Clean stale completion files from previous attempts.
 	cleanStaleCompletionFiles(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt)
 
-	// 2. Write hooks config.
-	if err := session.WriteHooksConfig(input.WorkDir, input.TaskID, input.Node.Name, input.Attempt); err != nil {
-		return nil, fmt.Errorf("write hooks config: %w", err)
-	}
-
-	// 3. Build input prompt.
+	// 2. Build input prompt.
 	inputPrompt := buildInputPrompt(input.Node, input.Artifacts)
 
-	// 4. For code/commit-type inputs, materialize diff files.
+	// 3. For code/commit-type inputs, materialize diff files.
 	if input.Node.Input.Type == "code" || input.Node.Input.Type == "commit" {
 		if err := materializeCodeInput(input.WorkDir); err != nil {
 			if input.Node.IsGate() {
@@ -80,23 +102,44 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		}
 	}
 
+	// 4. Write node-context.json.
+	var thresholds *pipeline.ThresholdConfig
+	if input.Node.IsGate() {
+		thresholds = &input.Node.Thresholds
+	}
+	nc := NodeContext{
+		TaskID:      input.TaskID,
+		NodeName:    input.Node.Name,
+		NodeType:    string(input.Node.EffectiveType()),
+		Attempt:     input.Attempt,
+		WorkDir:     input.WorkDir,
+		Description: input.Node.Description,
+		InputPrompt: inputPrompt,
+		Artifacts:   input.Artifacts,
+		Dimensions:  input.Node.Dimensions,
+		Thresholds:  thresholds,
+	}
+	if err := writeNodeContext(input.WorkDir, nc); err != nil {
+		return nil, fmt.Errorf("write node context: %w", err)
+	}
+
 	// 5. Spawn session.
-	hooksPath := session.HooksConfigPath(input.WorkDir)
 	opts := session.SpawnOpts{
 		NodeName:    input.Node.Name,
 		TaskID:      input.TaskID,
 		Attempt:     input.Attempt,
 		WorkDir:     input.WorkDir,
 		Description: input.Node.Description,
-		HooksPath:   hooksPath,
+		Command:     input.Node.Command,
 		InputPrompt: inputPrompt,
 	}
-	if err := a.Spawner.Spawn(ctx, opts); err != nil {
+	exitCh, err := a.Spawner.Spawn(ctx, opts)
+	if err != nil {
 		return nil, fmt.Errorf("spawn session: %w", err)
 	}
 
-	// 6. Poll for completion file with heartbeats.
-	result, err := pollForCompletion(ctx, input.WorkDir, input.TaskID, input.Node.Name, input.Attempt, 5*time.Second)
+	// 6. Poll for completion file with heartbeats, checking exit channel.
+	result, err := pollForCompletion(ctx, input.WorkDir, input.TaskID, input.Node.Name, input.Attempt, 5*time.Second, exitCh)
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +159,6 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	if input.Node.IsGate() {
 		gateResult, err := processGateResult(input.WorkDir, input.Node)
 		if err != nil {
-			// Infrastructure failures (corrupt JSON, missing file) are real errors —
-			// return them so Temporal can retry, rather than masking as OutcomeFail.
 			return nil, fmt.Errorf("gate %q processing failed: %w", input.Node.Name, err)
 		}
 		gateResult.Attempt = input.Attempt
@@ -210,8 +251,9 @@ func processGateResult(workDir string, node pipeline.NodeConfig) (model.Completi
 }
 
 // pollForCompletion checks immediately, then ticks at interval, sends heartbeats, and reads
-// the completion file when it appears.
-func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, attempt int, interval time.Duration) (model.CompletionResult, error) {
+// the completion file when it appears. If exitCh fires (process exited), checks one more
+// time for the completion file before returning an error.
+func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, attempt int, interval time.Duration, exitCh <-chan error) (model.CompletionResult, error) {
 	// Check immediately before the first tick (handles fast/fake spawners in tests).
 	if result, err := readCompletionFile(workDir, taskID, nodeName, attempt); err == nil {
 		return result, nil
@@ -224,6 +266,24 @@ func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, at
 		select {
 		case <-ctx.Done():
 			return model.CompletionResult{}, ctx.Err()
+		case err, ok := <-exitCh:
+			if !ok {
+				// Channel closed without error — process exited cleanly.
+				// Check one more time for completion file.
+				if result, readErr := readCompletionFile(workDir, taskID, nodeName, attempt); readErr == nil {
+					return result, nil
+				}
+				return model.CompletionResult{}, fmt.Errorf("node %q process exited without writing completion file", nodeName)
+			}
+			// Process exited with error. Check one more time for completion file
+			// (process may have written it just before exiting).
+			if result, readErr := readCompletionFile(workDir, taskID, nodeName, attempt); readErr == nil {
+				return result, nil
+			}
+			if err != nil {
+				return model.CompletionResult{}, fmt.Errorf("node %q process exited without completion file: %w", nodeName, err)
+			}
+			return model.CompletionResult{}, fmt.Errorf("node %q process exited without writing completion file", nodeName)
 		case <-ticker.C:
 			recordHeartbeat(ctx, fmt.Sprintf("polling for %s attempt %d", nodeName, attempt))
 			result, err := readCompletionFile(workDir, taskID, nodeName, attempt)
