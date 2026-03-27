@@ -159,6 +159,49 @@ func TestBuildInputPrompt_GateNode(t *testing.T) {
 	}
 }
 
+func TestWriteNodeContext_RoundTrip(t *testing.T) {
+	workDir := t.TempDir()
+	nc := NodeContext{
+		TaskID:      "climb-123",
+		NodeName:    "implement",
+		NodeType:    "node",
+		Attempt:     2,
+		WorkDir:     workDir,
+		Description: "Build the feature",
+		InputPrompt: "Your input is at: spec.md",
+		Artifacts:   map[string]string{"design_doc": "spec.md"},
+	}
+
+	if err := writeNodeContext(workDir, nc); err != nil {
+		t.Fatalf("writeNodeContext: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(workDir, ".belayer", ".internal", "input", "node-context.json"))
+	if err != nil {
+		t.Fatalf("read node-context.json: %v", err)
+	}
+
+	var got NodeContext
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.TaskID != nc.TaskID {
+		t.Errorf("TaskID = %q, want %q", got.TaskID, nc.TaskID)
+	}
+	if got.NodeName != nc.NodeName {
+		t.Errorf("NodeName = %q, want %q", got.NodeName, nc.NodeName)
+	}
+	if got.Attempt != nc.Attempt {
+		t.Errorf("Attempt = %d, want %d", got.Attempt, nc.Attempt)
+	}
+	if got.Dimensions != nil {
+		t.Error("Dimensions should be nil (omitempty)")
+	}
+	if got.Thresholds != nil {
+		t.Error("Thresholds should be nil (omitempty)")
+	}
+}
+
 func TestProcessGateResult_Pass(t *testing.T) {
 	workDir := t.TempDir()
 	outputDir := filepath.Join(workDir, ".belayer", "output")

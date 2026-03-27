@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // List returns the names of all built-in frameworks.
@@ -67,7 +68,11 @@ func Install(source, targetDir string, force bool) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
-		return os.WriteFile(target, data, 0o644)
+		perm := os.FileMode(0o644)
+		if strings.HasSuffix(path, ".sh") {
+			perm = 0o755
+		}
+		return os.WriteFile(target, data, perm)
 	})
 }
 
@@ -78,8 +83,5 @@ func EnsureInternalDir(workDir string) error {
 		return err
 	}
 	gitignorePath := filepath.Join(internalDir, ".gitignore")
-	if _, err := os.Stat(gitignorePath); err != nil {
-		return os.WriteFile(gitignorePath, []byte("*\n"), 0o644)
-	}
-	return nil
+	return os.WriteFile(gitignorePath, []byte("*\n"), 0o644)
 }

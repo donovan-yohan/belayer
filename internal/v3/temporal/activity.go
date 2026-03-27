@@ -266,7 +266,7 @@ func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, at
 		select {
 		case <-ctx.Done():
 			return model.CompletionResult{}, ctx.Err()
-		case err, ok := <-exitCh:
+		case err, ok := <-exitCh: // nil exitCh blocks forever (Go spec), so only ticker and ctx.Done fire when spawner returns nil — intentional
 			if !ok {
 				// Channel closed without error — process exited cleanly.
 				// Check one more time for completion file.
