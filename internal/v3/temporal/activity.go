@@ -83,7 +83,7 @@ func (a *Activities) WriteFeedbackActivity(ctx context.Context, input WriteFeedb
 	return ".belayer/.internal/input/feedback.md", nil
 }
 
-// NodeActivity is the core Temporal activity that spawns a Claude session for a pipeline node,
+// NodeActivity is the core Temporal activity that spawns a process for a pipeline node,
 // polls for its completion file, and returns the result.
 func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) (*NodeActivityOutput, error) {
 	// 1. Clean stale completion files from previous attempts.
@@ -266,22 +266,13 @@ func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, at
 		select {
 		case <-ctx.Done():
 			return model.CompletionResult{}, ctx.Err()
-		case err, ok := <-exitCh: // nil exitCh blocks forever (Go spec), so only ticker and ctx.Done fire when spawner returns nil — intentional
-			if !ok {
-				// Channel closed without error — process exited cleanly.
-				// Check one more time for completion file.
-				if result, readErr := readCompletionFile(workDir, taskID, nodeName, attempt); readErr == nil {
-					return result, nil
-				}
-				return model.CompletionResult{}, fmt.Errorf("node %q process exited without writing completion file", nodeName)
-			}
-			// Process exited with error. Check one more time for completion file
-			// (process may have written it just before exiting).
+		case exitErr, ok := <-exitCh: // nil exitCh blocks forever (Go spec), so only ticker and ctx.Done fire when spawner returns nil — intentional
+			// Process exited (cleanly or with error). Check one last time for completion file.
 			if result, readErr := readCompletionFile(workDir, taskID, nodeName, attempt); readErr == nil {
 				return result, nil
 			}
-			if err != nil {
-				return model.CompletionResult{}, fmt.Errorf("node %q process exited without completion file: %w", nodeName, err)
+			if ok && exitErr != nil {
+				return model.CompletionResult{}, fmt.Errorf("node %q process exited without completion file: %w", nodeName, exitErr)
 			}
 			return model.CompletionResult{}, fmt.Errorf("node %q process exited without writing completion file", nodeName)
 		case <-ticker.C:

@@ -30,7 +30,7 @@ func BuildGatePrompt(node pipeline.NodeConfig) string {
 
 	// Output instructions
 	sb.WriteString("\nProduce two files:\n\n")
-	sb.WriteString("1. `.belayer/output/gate-result.json` — structured scores per dimension:\n")
+	sb.WriteString("1. `.belayer/.internal/output/gate-result.json` — structured scores per dimension:\n")
 	sb.WriteString("```json\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"gate\": \"" + node.Name + "\",\n")
@@ -49,7 +49,7 @@ func BuildGatePrompt(node pipeline.NodeConfig) string {
 	sb.WriteString("  \"summary\": \"\"\n")
 	sb.WriteString("}\n")
 	sb.WriteString("```\n\n")
-	sb.WriteString("2. `.belayer/output/rationale.md` — human-readable review with action items for each dimension.\n\n")
+	sb.WriteString("2. `.belayer/.internal/output/rationale.md` — human-readable review with action items for each dimension.\n\n")
 	sb.WriteString("Be rigorous. The only way to improve the score is to genuinely improve the work.\n")
 
 	return sb.String()

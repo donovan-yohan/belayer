@@ -47,16 +47,6 @@ Examples:
 				return fmt.Errorf("create .internal directory: %w", err)
 			}
 
-			// Make scripts executable.
-			scriptsDir := filepath.Join(targetDir, "scripts")
-			if entries, err := os.ReadDir(scriptsDir); err == nil {
-				for _, e := range entries {
-					if !e.IsDir() {
-						os.Chmod(filepath.Join(scriptsDir, e.Name()), 0o755)
-					}
-				}
-			}
-
 			fmt.Printf("Framework %q installed to .belayer/\n", frameworkFlag)
 			fmt.Println("Customize .belayer/pipeline.yaml, then run: belayer climb")
 			return nil

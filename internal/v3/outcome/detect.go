@@ -11,11 +11,11 @@ import (
 )
 
 // verdictFile is the path within workDir where an explicit verdict is written.
-const verdictFile = ".belayer/output/verdict.txt"
+const verdictFile = ".belayer/.internal/output/verdict.txt"
 
 // Detect determines the CompletionResult for a node execution.
 // Precedence:
-//  1. .belayer/output/verdict.txt — parse first line for PASS / RETRY target / FAIL
+//  1. .belayer/.internal/output/verdict.txt — parse first line for PASS / RETRY target / FAIL
 //  2. Output file first line — for file-type nodes, check output.path, parse first line
 //  3. Type-based default — file: exists=PASS, missing=FAIL; code: PASS
 func Detect(node *pipeline.NodeConfig, workDir string, attempt int) model.CompletionResult {
