@@ -1,0 +1,3 @@
+name: claude-tmux
+description: Interactive Claude Code sessions in tmux windows
+version: 0.1.0
