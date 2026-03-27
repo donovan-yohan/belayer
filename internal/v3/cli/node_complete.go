@@ -10,6 +10,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/outcome"
 	"github.com/donovan-yohan/belayer/internal/v3/pipeline"
+	"github.com/donovan-yohan/belayer/internal/v3/session"
 	"github.com/spf13/cobra"
 )
 
@@ -44,9 +45,13 @@ func NewNodeCompleteCmd() *cobra.Command {
 				return fmt.Errorf("--node or BELAYER_NODE is required")
 			}
 
-			workDir, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("get working directory: %w", err)
+			workDir := os.Getenv("BELAYER_WORK_DIR")
+			if workDir == "" {
+				var err error
+				workDir, err = os.Getwd()
+				if err != nil {
+					return fmt.Errorf("get working directory: %w", err)
+				}
 			}
 
 			node := resolveNodeConfig(workDir, nodeName)
@@ -103,8 +108,7 @@ func resolveNodeConfig(workDir, nodeName string) *pipeline.NodeConfig {
 
 // completionFilePath returns the path for an attempt-scoped completion file.
 func completionFilePath(workDir, taskID, nodeName string, attempt int) string {
-	filename := fmt.Sprintf("%s-%s-attempt-%d.json", taskID, nodeName, attempt)
-	return filepath.Join(workDir, ".belayer", "completion", filename)
+	return session.CompletionFilePath(workDir, taskID, nodeName, attempt)
 }
 
 // writeCompletionFile marshals result as JSON and writes it to the

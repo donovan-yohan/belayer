@@ -46,14 +46,14 @@ type WriteFeedbackInput struct {
 
 // WriteFeedbackActivity writes feedback text to disk so the target session can read it on retry.
 func (a *Activities) WriteFeedbackActivity(ctx context.Context, input WriteFeedbackInput) (string, error) {
-	feedbackPath := filepath.Join(input.WorkDir, ".belayer", "input", "feedback.md")
+	feedbackPath := filepath.Join(session.InputDir(input.WorkDir), "feedback.md")
 	if err := os.MkdirAll(filepath.Dir(feedbackPath), 0o755); err != nil {
 		return "", fmt.Errorf("create feedback dir: %w", err)
 	}
 	if err := os.WriteFile(feedbackPath, []byte(input.FeedbackText), 0o644); err != nil {
 		return "", fmt.Errorf("write feedback: %w", err)
 	}
-	return ".belayer/input/feedback.md", nil
+	return ".belayer/.internal/input/feedback.md", nil
 }
 
 // NodeActivity is the core Temporal activity that spawns a Claude session for a pipeline node,
@@ -134,7 +134,7 @@ func processGateResult(workDir string, node pipeline.NodeConfig) (model.Completi
 	// Resolve gate-result.json path
 	resultPath := node.Output.Path
 	if resultPath == "" {
-		resultPath = ".belayer/output/gate-result.json"
+		resultPath = ".belayer/.internal/output/gate-result.json"
 	}
 	absResultPath := filepath.Join(workDir, resultPath)
 
@@ -173,7 +173,7 @@ func processGateResult(workDir string, node pipeline.NodeConfig) (model.Completi
 	// Check rationale exists (anti-gaming: rationale is mandatory)
 	rationalePath := node.Output.RationalePath
 	if rationalePath == "" {
-		rationalePath = ".belayer/output/rationale.md"
+		rationalePath = ".belayer/.internal/output/rationale.md"
 	}
 	absRationalePath := filepath.Join(workDir, rationalePath)
 	if _, err := os.Stat(absRationalePath); err != nil {
@@ -249,10 +249,9 @@ func recordHeartbeat(ctx context.Context, details ...any) {
 	activity.RecordHeartbeat(ctx, details...)
 }
 
-// readCompletionFile reads .belayer/completion/<taskID>-<nodeName>-attempt-<N>.json.
+// readCompletionFile reads .belayer/.internal/completion/<taskID>-<nodeName>-attempt-<N>.json.
 func readCompletionFile(workDir, taskID, nodeName string, attempt int) (model.CompletionResult, error) {
-	filename := fmt.Sprintf("%s-%s-attempt-%d.json", taskID, nodeName, attempt)
-	path := filepath.Join(workDir, ".belayer", "completion", filename)
+	path := session.CompletionFilePath(workDir, taskID, nodeName, attempt)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -268,10 +267,9 @@ func readCompletionFile(workDir, taskID, nodeName string, attempt int) (model.Co
 
 // cleanStaleCompletionFiles removes completion files from attempts < currentAttempt.
 func cleanStaleCompletionFiles(workDir, taskID, nodeName string, currentAttempt int) {
-	dir := filepath.Join(workDir, ".belayer", "completion")
 	for i := 0; i < currentAttempt; i++ {
-		filename := fmt.Sprintf("%s-%s-attempt-%d.json", taskID, nodeName, i)
-		_ = os.Remove(filepath.Join(dir, filename)) // ignore not-found errors
+		path := session.CompletionFilePath(workDir, taskID, nodeName, i)
+		_ = os.Remove(path) // ignore not-found errors
 	}
 }
 
@@ -292,7 +290,7 @@ func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) str
 		sb.WriteString("\n")
 		switch node.Input.Type {
 		case "code", "commit":
-			sb.WriteString("\nInput: Review the changes. Full diff at .belayer/input/diff.txt\n")
+			sb.WriteString("\nInput: Review the changes. Full diff at .belayer/.internal/input/diff.txt\n")
 		case "file":
 			if path, ok := artifacts[resolveInputKey(node)]; ok {
 				fmt.Fprintf(&sb, "\nInput artifact at: %s\n", path)
@@ -305,7 +303,7 @@ func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) str
 				fmt.Fprintf(&sb, "Your input artifact is at: %s", path)
 			}
 		case "code", "commit":
-			sb.WriteString("Review the changes. Full diff at .belayer/input/diff.txt")
+			sb.WriteString("Review the changes. Full diff at .belayer/.internal/input/diff.txt")
 		default:
 			sb.WriteString(node.Description)
 		}
@@ -318,9 +316,9 @@ func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) str
 	return sb.String()
 }
 
-// materializeCodeInput runs git diff against the default branch and writes results to .belayer/input/.
+// materializeCodeInput runs git diff against the default branch and writes results to .belayer/.internal/input/.
 func materializeCodeInput(workDir string) error {
-	inputDir := filepath.Join(workDir, ".belayer", "input")
+	inputDir := session.InputDir(workDir)
 	if err := os.MkdirAll(inputDir, 0o755); err != nil {
 		return fmt.Errorf("create input dir: %w", err)
 	}
