@@ -166,16 +166,18 @@ gh api repos/{owner}/{repo}/issues/<number>/comments --paginate --jq '.[] | {id,
 
 **Categorize each comment:**
 
+**Default bias: implement everything actionable.** Agents are fast — the cost of implementing is low, the cost of deferring is high. Never decline actionable feedback as "better in a follow-up PR."
+
 | Category | Criteria | Automated Action |
 |----------|----------|-----------------|
-| **Actionable** | Requests a code change | Make the change |
+| **Actionable** | Requests a code change or suggests an improvement | Make the change — no exceptions, no deferring |
 | **Question** | Asks for clarification | **HARD STOP** |
 | **Discussion** | Debate about approach | **HARD STOP** |
 | **Resolved** | Already addressed | Skip |
 
 **If any Question or Discussion items exist → STOP.** Report to user with a summary of what needs human input.
 
-**For Actionable items:**
+**For Actionable items (implement ALL of them):**
 1. Read each referenced file
 2. Make the requested change
 3. Run project tests to verify no regressions

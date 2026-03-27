@@ -37,12 +37,19 @@ gh api repos/{owner}/{repo}/issues/<number>/comments --paginate --jq '.[] | {id,
 
 ### 2. Categorize Comments
 
+**Default bias: implement everything.** Agents are fast and capable — the cost of implementing feedback is low, the cost of deferring is high (context loss, stale PRs, reviewer fatigue). Treat every comment as work to do in THIS PR unless it literally cannot be done here.
+
+**Evaluate correctness, not effort.** The question is never "is this too much work?" — it's "is this technically sound?" Read the surrounding code, understand the reviewer's intent, and verify the suggestion wouldn't introduce a bug or regression. If it's correct, implement it regardless of scope. If it's wrong, decline with a clear technical explanation of why.
+
 | Category | Criteria | Action |
 |----------|----------|--------|
-| **Actionable** | Requests code change | Make the change |
-| **Question** | Asks for clarification | Draft response |
-| **Discussion** | Debate about approach | Summarize options |
+| **Actionable** | Requests code change | Verify correctness, then make the change |
+| **Suggestion** | Proposes improvement or alternative approach | Verify it's sound, then implement it. If the reviewer took time to suggest it, it's worth doing now |
+| **Question** | Asks for clarification | Draft response AND make any code change implied by the question (add comment, rename, clarify logic) |
+| **Discussion** | Debate about approach | Pick the best option and implement it. If genuinely ambiguous, ask the user — do NOT defer to a follow-up PR |
 | **Resolved** | Already addressed | Skip |
+
+**The "follow-up PR" trap:** Never categorize work as "out of scope" or "better in a separate PR" unless it would require changes to files/systems completely unrelated to this PR's purpose. Reviewer feedback on code IN this PR belongs IN this PR.
 
 ### 3. Present Action Plan
 
@@ -75,7 +82,7 @@ After pushing fixes, **you MUST resolve comment threads on GitHub** using the Gr
 | Category | GitHub Action |
 |----------|--------------|
 | **Actionable — fixed** | Reply with what you changed, then **resolve the thread** |
-| **Actionable — declined with rationale** | Reply explaining why with clear reasoning, then **resolve the thread** |
+| **Actionable — declined (rare)** | Reply explaining why with a specific technical justification. Only valid reasons: (1) the suggestion is technically incorrect — would introduce a bug, break a contract, or cause a regression (explain what and why), (2) the change would break an unrelated system, (3) it requires access/permissions you don't have, (4) the user explicitly told you not to. "Too much work" and "better as a follow-up" are NOT valid reasons. Then **resolve the thread** |
 | **Question / Discussion** | Reply if you have useful context, but **leave the thread open** |
 
 #### How to resolve a thread
@@ -117,7 +124,10 @@ Report files modified, commit SHA, and which comments were resolved vs left open
 
 | Mistake | Fix |
 |---------|-----|
-| Blindly implementing all feedback | Evaluate each comment critically |
+| Deferring feedback to a "follow-up PR" | Implement it now. The reviewer gave feedback on THIS code — address it in THIS PR. Agents are fast; use that. |
+| Categorizing suggestions as "out of scope" | If the reviewer commented on code in this PR, it's in scope. Period. |
+| Declining feedback because it's "a lot of work" | That's exactly what agents are for. Implement it. |
+| Implementing a suggestion without verifying correctness | Read the surrounding code first. If the suggestion would introduce a bug, decline with a specific technical explanation — don't blindly apply it |
 | Not testing after changes | Always verify before pushing |
 | Not replying to reviewers | Always communicate what was addressed |
 | Addressing comments but not resolving threads on GitHub | Always resolve threads for fixed/declined items via `gh api graphql` |
