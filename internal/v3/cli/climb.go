@@ -12,7 +12,6 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
-	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/donovan-yohan/belayer/internal/v3/events"
 	"github.com/donovan-yohan/belayer/internal/v3/intake"
 	"github.com/donovan-yohan/belayer/internal/v3/model"
@@ -68,8 +67,7 @@ func NewClimbCmd() *cobra.Command {
 			}()
 
 			// 5. Start in-process worker.
-			tm := tmux.NewRealTmux()
-			spawner := session.NewTmuxSpawner(tm)
+			spawner := &session.ExecSpawner{}
 			activities := &beltemporal.Activities{Spawner: spawner}
 
 			w := worker.New(tc, beltemporal.TaskQueueName, worker.Options{})

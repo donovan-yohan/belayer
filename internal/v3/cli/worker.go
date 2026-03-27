@@ -11,7 +11,6 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
-	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/donovan-yohan/belayer/internal/v3/intake"
 	"github.com/donovan-yohan/belayer/internal/v3/model"
 	"github.com/donovan-yohan/belayer/internal/v3/session"
@@ -58,8 +57,7 @@ func runWorker(workDir string) error {
 	defer c.Close()
 
 	// Wire real providers into the activities.
-	tm := tmux.NewRealTmux()
-	spawner := session.NewTmuxSpawner(tm)
+	spawner := &session.ExecSpawner{}
 	activities := &beltemporal.Activities{Spawner: spawner}
 
 	w := worker.New(c, beltemporal.TaskQueueName, worker.Options{})
