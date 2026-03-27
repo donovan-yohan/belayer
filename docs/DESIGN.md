@@ -247,8 +247,9 @@ Climbing metaphors throughout:
 1. **Belayer optimizes for autonomy, not efficiency** — Redundant work is acceptable if it enables self-correction without human intervention.
 2. **Multi-repo is additive, not transformative** — The per-repo pipeline is unchanged; setter and spotter layer on top without altering what each lead does.
 3. **Belayer is plumbing** — Belayer provides contracts and orchestration, not node implementations. What runs inside a node is not belayer's concern.
-4. **Agent-agnostic** — Nodes are black boxes. Use whatever agent fulfills the contract: Claude, Codex, a shell script, or a future runtime.
-5. **Boring by default** — Solve specific problems with opinionated plumbing. Don't over-abstract or generalize beyond the stated use case.
+4. **Agent-agnostic** — Nodes are black boxes. Use whatever agent fulfills the contract: Claude, Codex, a shell script, or a future runtime. Core ships ExecSpawner (generic command exec); specific agent integrations live in frameworks.
+5. **Orchestration is owned by the environment** — Pipeline config and node scripts live in the target repo's `.belayer/` directory, not in belayer core. `belayer setup --framework` scaffolds the orchestration definition; users customize freely.
+6. **Boring by default** — Solve specific problems with opinionated plumbing. Don't over-abstract or generalize beyond the stated use case.
 
 ## Setter/Spotter Contracts
 

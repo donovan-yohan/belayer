@@ -191,18 +191,22 @@ Belayer v3 simplifies v2 into an Activity-per-Node model. Each pipeline node is 
 | Gate | `internal/v3/gate/` | Gate result parsing, weighted scoring, threshold routing, prompt builder |
 | Events | `internal/v3/events/` | JSONL event logger for pipeline observability (node + gate events) |
 | Outcome | `internal/v3/outcome/` | Outcome detection: verdict.txt > output file first line > type default |
-| Session | `internal/v3/session/` | Hooks config generator, tmux-backed Claude session spawner |
-| Temporal | `internal/v3/temporal/` | ClimbWorkflow, NodeActivity (spawn + heartbeat + poll completion) |
+| Session | `internal/v3/session/` | ExecSpawner (generic command exec), path helpers for `.belayer/.internal/`, SpawnOpts |
+| Temporal | `internal/v3/temporal/` | ClimbWorkflow, NodeActivity (spawn + heartbeat + poll completion + node-context.json) |
 | Intake | `internal/v3/intake/` | Intake adapter interface, SubmitSpec, bridge function, Jira adapter, schedule reconciliation |
-| CLI | `internal/v3/cli/` | Commands: climb, node-complete, status, worker, start |
+| Frameworks | `frameworks/` | Built-in framework templates (embed.FS), Install/List/EnsureInternalDir |
+| CLI | `internal/v3/cli/` | Commands: climb, node-complete, status, worker, start, setup |
 
 ### Key Concepts
 
 - **Two pipeline primitives**: Nodes (constructive — produce artifacts) and Gates (adversarial — evaluate artifacts with multi-dimensional scoring)
 - **Activity Per Node**: Each pipeline node/gate = one Temporal Activity. Simplest model.
-- **File-based completion**: Stop hook calls `belayer node-complete` which writes `.belayer/completion/<id>-<node>-attempt-<N>.json`
+- **File-based completion**: Node commands write `.belayer/.internal/completion/<id>-<node>-attempt-<N>.json` when done (via `belayer node-complete` or directly)
+- **Node protocol**: `NodeActivity` writes `.belayer/.internal/input/node-context.json` before spawning. The framework command reads it for context.
+- **ExecSpawner**: Core spawner execs the `command:` field from pipeline YAML via `sh -c`. Returns an exit channel for fast-fail on process death. TmuxSpawner removed from core — now lives in the `claude-tmux` framework.
+- **Framework model**: `belayer setup --framework <name-or-path>` scaffolds pipeline.yaml + scripts into `.belayer/`. Built-in frameworks embedded via `//go:embed`. Orchestration config is committed; runtime state is in `.belayer/.internal/` (gitignored).
 - **Gate scoring**: Gates produce `gate-result.json` (structured scores) + `rationale.md` (human-readable). Activity computes weighted score from YAML-declared dimensions/weights and applies threshold routing (score-then-route anti-gaming)
-- **Natural language roles**: Node descriptions are prompts passed via `--append-system-prompt`
+- **Natural language roles**: Node descriptions are prompts in pipeline YAML, passed to the framework command via node-context.json
 - **Attempt-scoped**: Completion files, output paths, and verdict files include attempt number to prevent stale reads
 - **CLI entry point**: `belayer climb --file design.md` → Temporal workflow → plan → implement → review(gate) → pr-author → branch (current code uses legacy names setter/lead/spotter/summit — see TODOS.md P1)
 - **Intake plugins**: `intake:` section in pipeline YAML defines where work comes from (interactive, jira). Each intake produces a `SubmitSpec` → bridge creates worktree → starts `ClimbWorkflow`
