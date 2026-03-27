@@ -22,6 +22,7 @@ Execution plans for active and completed work.
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [ExecSpawner + Framework Scaffolding](exec-plans/completed/2026-03-26-exec-spawner-framework-scaffolding.md) | 2026-03-26 | Decouple node spawning, framework model, belayer setup, claude-tmux |
 | [Three-Phase Architecture Docs](exec-plans/completed/2026-03-25-three-phase-architecture-docs.md) | 2026-03-25 | Explore/Climb/Summit architecture docs, config hierarchy, pipeline examples, competitive positioning |
 | [Bug Architecture Review](exec-plans/completed/2026-03-24-bug-architecture-review.md) | 2026-03-24 | Architecture review step in bug flow + learnings enforcement across harness lifecycle |
 | [Summit Node & Explorer Plugin](exec-plans/completed/2026-03-23-summit-node-explorer-plugin.md) | 2026-03-23 | Summit PR node, explorer plugin, /explorer:send command |

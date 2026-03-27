@@ -28,6 +28,12 @@ Deferred items from architecture reviews and implementation plans.
 - Observability: log monitoring in stage/prod
 **Context:** Interface defined (PR manifest JSON). Implementation deferred.
 
+### P2: Multi-language Node SDKs
+- Thin SDK libraries (Go, Python, TypeScript) that read `node-context.json` and write completion files
+- Orchestrator-side SDK: submit pipelines, check status, stream events via worker HTTP API
+- Each SDK wraps the file-based completion contract so users don't hand-write JSON
+**Context:** Lowers the barrier for non-Go users to implement belayer nodes. Enables front-end-driven orchestrators. Depends on ExecSpawner + `node-context.json` contract (examples/ extraction refactor). Identified in CEO review 2026-03-26.
+
 ### P3: Boulderer
 - `belayer solo <task>` CLI command
 - Pipeline-dispatched boulderer (nodes can spawn one)
