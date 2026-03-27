@@ -18,7 +18,7 @@ import (
 
 func writeCompletionFile(t *testing.T, workDir, taskID, nodeName string, attempt int, result model.CompletionResult) {
 	t.Helper()
-	dir := filepath.Join(workDir, ".belayer", "completion")
+	dir := filepath.Join(workDir, ".belayer", ".internal", "completion")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -78,13 +78,13 @@ func TestNodeActivity_CleansStaleCompletionFiles(t *testing.T) {
 	cleanStaleCompletionFiles(workDir, taskID, nodeName, 2)
 
 	// Attempt 1 should be gone.
-	staleFile := filepath.Join(workDir, ".belayer", "completion", taskID+"-"+nodeName+"-attempt-1.json")
+	staleFile := filepath.Join(workDir, ".belayer", ".internal", "completion", taskID+"-"+nodeName+"-attempt-1.json")
 	if _, err := os.Stat(staleFile); !os.IsNotExist(err) {
 		t.Error("expected attempt-1.json to be removed")
 	}
 
 	// Attempt 2 should remain.
-	currentFile := filepath.Join(workDir, ".belayer", "completion", taskID+"-"+nodeName+"-attempt-2.json")
+	currentFile := filepath.Join(workDir, ".belayer", ".internal", "completion", taskID+"-"+nodeName+"-attempt-2.json")
 	if _, err := os.Stat(currentFile); os.IsNotExist(err) {
 		t.Error("expected attempt-2.json to remain")
 	}

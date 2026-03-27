@@ -3,7 +3,6 @@ package temporal
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,17 +24,20 @@ type fakeSpawner struct {
 	results map[string]model.CompletionResult // node name → result
 }
 
-func (f *fakeSpawner) Spawn(_ context.Context, opts session.SpawnOpts) error {
+func (f *fakeSpawner) Spawn(_ context.Context, opts session.SpawnOpts) (<-chan error, error) {
 	result, ok := f.results[opts.NodeName]
 	if !ok {
 		result = model.CompletionResult{Outcome: model.OutcomePass, Attempt: opts.Attempt}
 	}
 	result.Attempt = opts.Attempt
-	completionDir := filepath.Join(f.workDir, ".belayer", "completion")
+	completionDir := session.CompletionDir(f.workDir)
 	os.MkdirAll(completionDir, 0o755)
-	path := filepath.Join(completionDir, fmt.Sprintf("%s-%s-attempt-%d.json", opts.TaskID, opts.NodeName, opts.Attempt))
+	path := session.CompletionFilePath(f.workDir, opts.TaskID, opts.NodeName, opts.Attempt)
 	data, _ := json.Marshal(result)
-	return os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // retryThenPassSpawner returns RETRY on the first spotter call, PASS on subsequent calls.
@@ -45,12 +47,12 @@ type retryThenPassSpawner struct {
 	spotterCalls *int
 }
 
-func (r *retryThenPassSpawner) Spawn(_ context.Context, opts session.SpawnOpts) error {
+func (r *retryThenPassSpawner) Spawn(_ context.Context, opts session.SpawnOpts) (<-chan error, error) {
 	var result model.CompletionResult
 
 	if opts.NodeName == "spotter" {
 		*r.spotterCalls++
-		outputDir := filepath.Join(r.workDir, ".belayer", "output")
+		outputDir := session.OutputDir(r.workDir)
 		os.MkdirAll(outputDir, 0o755)
 		if *r.spotterCalls == 1 {
 			// Write gate files that score in RETRY range (5.0, between retry=4.0 and pass=7.0).
@@ -83,11 +85,14 @@ func (r *retryThenPassSpawner) Spawn(_ context.Context, opts session.SpawnOpts) 
 		result = model.CompletionResult{Outcome: model.OutcomePass, Attempt: opts.Attempt}
 	}
 
-	completionDir := filepath.Join(r.workDir, ".belayer", "completion")
+	completionDir := session.CompletionDir(r.workDir)
 	os.MkdirAll(completionDir, 0o755)
-	path := filepath.Join(completionDir, fmt.Sprintf("%s-%s-attempt-%d.json", opts.TaskID, opts.NodeName, opts.Attempt))
+	path := session.CompletionFilePath(r.workDir, opts.TaskID, opts.NodeName, opts.Attempt)
 	data, _ := json.Marshal(result)
-	return os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // --- test suite ---
@@ -138,10 +143,86 @@ func writeFileAtPath(t *testing.T, workDir, rel, content string) {
 	require.NoError(t, os.WriteFile(full, []byte(content), 0o644))
 }
 
-// integrationPipeline returns a minimal 3-node pipeline YAML for integration testing.
+// integrationPipeline returns a minimal 4-node pipeline YAML for integration testing.
 // Output nodes write to known paths so fakeSpawner can pre-seed them.
 func integrationPipeline() []byte {
-	return []byte(pipeline.DefaultPipelineYAML)
+	return []byte(`name: test-pipeline
+intake:
+  - name: user-session
+    type: interactive
+nodes:
+  - name: setter
+    type: node
+    command: echo test
+    description: plan
+    input:
+      type: file
+      key: design_doc
+    output:
+      type: file
+      path: .belayer/.internal/output/plan.md
+    on_pass: next
+    on_retry: setter
+    on_fail: stop
+    max_retries: 2
+
+  - name: lead
+    type: node
+    command: echo test
+    description: implement
+    input:
+      type: file
+      key: setter
+    output:
+      type: commit
+    on_pass: next
+    on_retry: self
+    on_fail: stop
+    max_retries: 3
+
+  - name: spotter
+    type: gate
+    command: echo test
+    description: review
+    input:
+      type: commit
+    dimensions:
+      - name: spec_compliance
+        description: match
+        weight: 0.35
+      - name: test_contracts
+        description: tests
+        weight: 0.3
+      - name: runtime_correctness
+        description: works
+        weight: 0.35
+    thresholds:
+      pass: 7.0
+      retry: 4.0
+    output:
+      type: gate_result
+    on_pass: next
+    on_retry: lead
+    on_fail: stop
+    max_retries: 2
+
+  - name: summit
+    type: node
+    command: echo test
+    description: PR
+    input:
+      type: gate_result
+      key: spotter
+    output:
+      type: pr
+    on_pass: stop
+    on_retry: self
+    on_fail: stop
+    max_retries: 2
+
+safety:
+  max_concurrent_runs: 3
+`)
 }
 
 // TestEndToEnd_AllPass: fakeSpawner returns PASS for every node → ClimbCompleted.
@@ -150,10 +231,10 @@ func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 	initGitRepo(s.T(), workDir)
 
 	// Pre-seed output files that the workflow checks for file-type nodes.
-	writeFileAtPath(s.T(), workDir, ".belayer/output/plan.md", "PASS\nHere is the plan.")
-	writeFileAtPath(s.T(), workDir, ".belayer/output/review.md", "PASS\nLooks good.")
+	writeFileAtPath(s.T(), workDir, ".belayer/.internal/output/plan.md", "PASS\nHere is the plan.")
+	writeFileAtPath(s.T(), workDir, ".belayer/.internal/output/review.md", "PASS\nLooks good.")
 	// Pre-seed gate output files for the spotter gate node.
-	writeFileAtPath(s.T(), workDir, ".belayer/output/gate-result.json", `{
+	writeFileAtPath(s.T(), workDir, ".belayer/.internal/output/gate-result.json", `{
 		"gate": "spotter", "attempt": 0,
 		"dimensions": {
 			"spec_compliance": {"score": 8, "rationale": "ok", "issues": []},
@@ -162,14 +243,14 @@ func (s *IntegrationTestSuite) TestEndToEnd_AllPass() {
 		},
 		"weighted_score": 8.0, "outcome": "PASS", "summary": "Good"
 	}`)
-	writeFileAtPath(s.T(), workDir, ".belayer/output/rationale.md", "# Review\nLooks good.")
+	writeFileAtPath(s.T(), workDir, ".belayer/.internal/output/rationale.md", "# Review\nLooks good.")
 
 	spawner := &fakeSpawner{
 		workDir: workDir,
 		results: map[string]model.CompletionResult{
-			"setter":  {Outcome: model.OutcomePass, OutputPath: filepath.Join(workDir, ".belayer/output/plan.md")},
+			"setter":  {Outcome: model.OutcomePass, OutputPath: ".belayer/.internal/output/plan.md"},
 			"lead":    {Outcome: model.OutcomePass},
-			"spotter": {Outcome: model.OutcomePass, OutputPath: filepath.Join(workDir, ".belayer/output/review.md")},
+			"spotter": {Outcome: model.OutcomePass, OutputPath: ".belayer/.internal/output/review.md"},
 		},
 	}
 
@@ -197,8 +278,8 @@ func (s *IntegrationTestSuite) TestEndToEnd_RetryLoop() {
 	workDir := s.T().TempDir()
 	initGitRepo(s.T(), workDir)
 
-	writeFileAtPath(s.T(), workDir, ".belayer/output/plan.md", "PASS\nHere is the plan.")
-	writeFileAtPath(s.T(), workDir, ".belayer/output/review.md", "PASS\nLooks good.")
+	writeFileAtPath(s.T(), workDir, ".belayer/.internal/output/plan.md", "PASS\nHere is the plan.")
+	writeFileAtPath(s.T(), workDir, ".belayer/.internal/output/review.md", "PASS\nLooks good.")
 
 	calls := 0
 	spawner := &retryThenPassSpawner{
@@ -256,8 +337,8 @@ nodes:
       retry: 4.0
     output:
       type: gate_result
-      path: .belayer/output/gate-result.json
-      rationale_path: .belayer/output/rationale.md
+      path: .belayer/.internal/output/gate-result.json
+      rationale_path: .belayer/.internal/output/rationale.md
     on_pass: next
     on_retry: lead
     on_fail: stop
