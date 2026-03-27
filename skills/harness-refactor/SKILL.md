@@ -25,7 +25,7 @@ harness-refactor extract auth from UserController   # With initial target
 
 2. Read `docs/refactor-scopes/index.md` to understand prior refactoring efforts. If the directory doesn't exist, create it with an empty index.
 
-3. **Invoke the `harness:strangler-fig` skill** using the Skill tool: `Skill("harness:strangler-fig")`. Then follow the loaded skill's full interactive scoping dialogue through all three phases: identify extraction target, dependency & seam analysis, and map the strangler fig steps. You MUST use the Skill tool — do not replicate the scoping methodology from memory.
+3. **Invoke the `harness:strangler-fig` skill** using the Skill tool: `Skill("harness-strangler-fig")`. Then follow the loaded skill's full interactive scoping dialogue through all three phases: identify extraction target, dependency & seam analysis, and map the strangler fig steps. You MUST use the Skill tool — do not replicate the scoping methodology from memory.
 
 4. When scoping is complete, save the refactor scope doc to `docs/refactor-scopes/{YYYY-MM-DD}-{kebab-name}-refactor-scope.md`:
 

@@ -1,6 +1,6 @@
 ---
 name: harness-complete
-description: Use when ready to archive the plan and create the PR, when user says "we're done", "complete this", "wrap up", or after /harness:reflect finishes
+description: Use when ready to archive the plan and create the PR, when user says "we're done", "complete this", "wrap up", or after harness-reflect finishes
 ---
 
 > Generated from Claude plugin command: plugins/harness/commands/complete.md

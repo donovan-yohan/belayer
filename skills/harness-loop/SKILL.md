@@ -12,7 +12,7 @@ Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and co
 
 **Prerequisite:** A design document must already exist (from `harness-brainstorm`, `harness-bug`, or `harness-refactor`).
 
-**"Execute inline"** means: use the **Skill tool** to invoke the command (e.g., `Skill("harness:plan")`), then follow the loaded skill's instructions step-by-step within this conversation, applying any LOOP_OVERRIDES specified here. You MUST invoke the Skill tool — do NOT write the output from memory or conversation context. The skill's methodology exists to catch things your memory will miss.
+**"Execute inline"** means: use the **Skill tool** to invoke the command (e.g., `Skill("harness-plan")`), then follow the loaded skill's instructions step-by-step within this conversation, applying any LOOP_OVERRIDES specified here. You MUST invoke the Skill tool — do NOT write the output from memory or conversation context. The skill's methodology exists to catch things your memory will miss.
 
 ## Usage
 

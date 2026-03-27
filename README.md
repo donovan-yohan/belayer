@@ -134,7 +134,7 @@ belayer init
 
 When `codex` is on your `PATH`, `belayer init` writes a versioned pack under `~/.belayer/agent-assets/codex/<pack-version>/skills/` and mounts it at `~/.agents/skills/belayer`.
 
-Codex installation, repair steps, and troubleshooting live in [`.codex/INSTALL.md`](/Users/donovanyohan/Documents/Programs/personal/belayer/.codex/INSTALL.md).
+Codex installation, repair steps, and troubleshooting live in [`.codex/INSTALL.md`](.codex/INSTALL.md).
 
 ## Prerequisites
 

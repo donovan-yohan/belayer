@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	belayerassets "github.com/donovan-yohan/belayer"
 )
@@ -15,36 +14,21 @@ func main() {
 		fatalf("determine working directory: %v", err)
 	}
 
+	if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err != nil {
+		fatalf("gencodexskills must be run from the repository root (no go.mod found in %s)", repoRoot)
+	}
+
 	targetRoot := filepath.Join(repoRoot, "skills")
 	files, err := belayerassets.CodexSkillFiles()
 	if err != nil {
 		fatalf("generate codex skill files: %v", err)
 	}
 
-	if err := os.RemoveAll(targetRoot); err != nil {
-		fatalf("remove %s: %v", targetRoot, err)
-	}
-	if err := os.MkdirAll(targetRoot, 0o755); err != nil {
-		fatalf("create %s: %v", targetRoot, err)
+	if err := belayerassets.WriteSkillFiles(targetRoot, files); err != nil {
+		fatalf("write skill files: %v", err)
 	}
 
-	paths := make([]string, 0, len(files))
-	for relPath := range files {
-		paths = append(paths, relPath)
-	}
-	sort.Strings(paths)
-
-	for _, relPath := range paths {
-		target := filepath.Join(targetRoot, filepath.FromSlash(relPath))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			fatalf("create parent directory for %s: %v", target, err)
-		}
-		if err := os.WriteFile(target, files[relPath], 0o644); err != nil {
-			fatalf("write %s: %v", target, err)
-		}
-	}
-
-	fmt.Printf("wrote %d files to %s\n", len(paths), targetRoot)
+	fmt.Printf("wrote %d files to %s\n", len(files), targetRoot)
 }
 
 func fatalf(format string, args ...any) {

@@ -1,6 +1,6 @@
 ---
 name: harness-review
-description: Use when implementation is done and code needs quality review, when user says "review the code", "check the code", or after /harness:orchestrate completes all tasks
+description: Use when implementation is done and code needs quality review, when user says "review the code", "check the code", or after harness-orchestrate completes all tasks
 ---
 
 > Generated from Claude plugin command: plugins/harness/commands/review.md

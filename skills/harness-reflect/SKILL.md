@@ -1,6 +1,6 @@
 ---
 name: harness-reflect
-description: Use when capturing learnings and updating docs after review, when user says "reflect", "retrospective", "update docs", or after /harness:review completes
+description: Use when capturing learnings and updating docs after review, when user says "reflect", "retrospective", "update docs", or after harness-review completes
 ---
 
 > Generated from Claude plugin command: plugins/harness/commands/reflect.md

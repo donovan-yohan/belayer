@@ -39,8 +39,7 @@ gh api repos/{owner}/{repo}/issues/<number>/comments --paginate --jq '.[] | {id,
 
 | Category | Criteria | Action |
 |----------|----------|--------|
-| **Actionable** | Requests code change | Verify correctness, then make the change |
-| **Suggestion** | Proposes improvement or alternative approach | Verify it's sound, then implement it. If the reviewer took time to suggest it, it's worth doing now |
+| **Actionable** | Requests code change or suggests an improvement | Verify correctness, then make the change. If the reviewer took time to suggest it, it's worth doing now |
 | **Question** | Asks for clarification | Draft response AND make any code change implied by the question (add comment, rename, clarify logic) |
 | **Discussion** | Debate about approach | Pick the best option and implement it. If genuinely ambiguous, ask the user — do NOT defer to a follow-up PR |
 | **Resolved** | Already addressed | Skip |

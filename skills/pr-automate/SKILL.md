@@ -138,7 +138,7 @@ Capture the PR number and URL for subsequent phases.
 
 ### Phase 2: Review
 
-Invoke `pr-review` using the Skill tool: `Skill("pr:review", args="<PR number>")`. This loads the review command which runs all 6 pr-review-toolkit agents in parallel with proper `subagent_type` parameters and posts inline review comments. You MUST use the Skill tool — do not manually spawn the review agents.
+Invoke `pr-review` using the Skill tool: `Skill("pr-review", args="<PR number>")`. This loads the review command which runs all 6 pr-review-toolkit agents in parallel with proper `subagent_type` parameters and posts inline review comments. You MUST use the Skill tool — do not manually spawn the review agents.
 
 Read the posted review to check for findings.
 
@@ -170,16 +170,18 @@ gh api repos/{owner}/{repo}/issues/<number>/comments --paginate --jq '.[] | {id,
 
 **Categorize each comment:**
 
+**Default bias: implement everything actionable.** Agents are fast — the cost of implementing is low, the cost of deferring is high. Never decline actionable feedback as "better in a follow-up PR."
+
 | Category | Criteria | Automated Action |
 |----------|----------|-----------------|
-| **Actionable** | Requests a code change | Make the change |
+| **Actionable** | Requests a code change or suggests an improvement | Make the change — no exceptions, no deferring |
 | **Question** | Asks for clarification | **HARD STOP** |
 | **Discussion** | Debate about approach | **HARD STOP** |
 | **Resolved** | Already addressed | Skip |
 
 **If any Question or Discussion items exist → STOP.** Report to user with a summary of what needs human input.
 
-**For Actionable items:**
+**For Actionable items (implement ALL of them):**
 1. Read each referenced file
 2. Make the requested change
 3. Run project tests to verify no regressions

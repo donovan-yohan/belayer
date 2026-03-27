@@ -12,7 +12,7 @@ func TestPluginVersion(t *testing.T) {
 	if got := MustPluginVersion("harness"); got != "4.0.0" {
 		t.Fatalf("unexpected harness version: %s", got)
 	}
-	if got := MustPluginVersion("pr"); got != "1.3.0" {
+	if got := MustPluginVersion("pr"); got != "1.3.1" {
 		t.Fatalf("unexpected pr version: %s", got)
 	}
 	if got := MustPluginVersion("explorer"); got != "0.2.0" {
@@ -84,11 +84,18 @@ func TestTrackedCodexSkillsSnapshot(t *testing.T) {
 	}
 
 	got := make(map[string][]byte)
-	if err := filepath.Walk("skills", func(current string, info os.FileInfo, err error) error {
+	if err := filepath.WalkDir("skills", func(current string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		name := d.Name()
+		if d.IsDir() {
+			if strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasPrefix(name, ".") || strings.EqualFold(name, "Thumbs.db") {
 			return nil
 		}
 
@@ -106,10 +113,6 @@ func TestTrackedCodexSkillsSnapshot(t *testing.T) {
 		t.Fatalf("walk tracked skills snapshot: %v", err)
 	}
 
-	if len(got) != len(want) {
-		t.Fatalf("tracked skills snapshot file count mismatch: got %d want %d", len(got), len(want))
-	}
-
 	var missing []string
 	var mismatched []string
 	for relPath, expected := range want {
@@ -123,9 +126,17 @@ func TestTrackedCodexSkillsSnapshot(t *testing.T) {
 		}
 	}
 
-	if len(missing) > 0 || len(mismatched) > 0 {
+	var extra []string
+	for relPath := range got {
+		if _, ok := want[relPath]; !ok {
+			extra = append(extra, relPath)
+		}
+	}
+
+	if len(missing) > 0 || len(mismatched) > 0 || len(extra) > 0 {
 		sort.Strings(missing)
 		sort.Strings(mismatched)
-		t.Fatalf("tracked skills snapshot is stale; missing=%v mismatched=%v", missing, mismatched)
+		sort.Strings(extra)
+		t.Fatalf("tracked skills snapshot is stale; missing=%v mismatched=%v extra=%v", missing, mismatched, extra)
 	}
 }
