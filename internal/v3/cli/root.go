@@ -9,5 +9,6 @@ func RegisterV3Commands(root *cobra.Command) {
 		newStatusCmd(),
 		newWorkerCmd(),
 		newStartCmd(),
+		newSetupCmd(),
 	)
 }
