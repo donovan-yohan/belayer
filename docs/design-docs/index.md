@@ -2,13 +2,13 @@
 
 ## Current Designs
 
-- [2026-03-27-code-restructuring-v1-removal-design](2026-03-27-code-restructuring-v1-removal-design.md) — Remove v1 legacy code, flatten v3 to internal/, rename pipeline nodes (2026-03-27)
 - [2026-03-25-three-phase-architecture-design](2026-03-25-three-phase-architecture-design.md) — Three-phase architecture: Explore/Climb/Summit, multi-repo setter/spotter, config hierarchy (2026-03-25)
 
 ## Archived
 
 ### Implemented
 
+- [2026-03-27-code-restructuring-v1-removal-design](2026-03-27-code-restructuring-v1-removal-design.md) — Remove v1 legacy code, flatten v3 to internal/, rename pipeline nodes (2026-03-27)
 - [2026-03-26-exec-spawner-framework-scaffolding-design](2026-03-26-exec-spawner-framework-scaffolding-design.md) — Decouple node spawning from core, framework scaffolding via `belayer setup`, node protocol (2026-03-26)
 - [2026-03-24-bug-architecture-review-design](2026-03-24-bug-architecture-review-design.md) — Architecture review step in bug flow + learnings enforcement across harness lifecycle (2026-03-24)
 - [2026-03-23-summit-node-explorer-plugin-design](2026-03-23-summit-node-explorer-plugin-design.md) — Summit PR node, explorer plugin, `/explorer:send` skill (2026-03-23)

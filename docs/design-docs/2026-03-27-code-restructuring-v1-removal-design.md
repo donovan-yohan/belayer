@@ -1,5 +1,5 @@
 ---
-status: current
+status: implemented
 created: 2026-03-27
 branch: dy/feat/exec-spawner-framework
 supersedes:

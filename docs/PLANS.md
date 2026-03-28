@@ -12,16 +12,16 @@ Execution plans for active and completed work.
 
 | Issue | Severity | Notes |
 |-------|----------|-------|
-| Schedule reconciliation is a stub | Medium | `internal/v3/intake/schedule.go` logs intent but does not create Temporal schedules. Phase 2 |
+| Schedule reconciliation is a stub | Medium | `internal/intake/schedule.go` logs intent but does not create Temporal schedules |
 | Worker `/status` endpoint is a stub | Low | Returns health only — full workflow listing deferred to Phase 2 |
 | `StartSHA` in `NodeActivityInput` never populated | Low | Code-output commit verification guard never fires |
-| Flaky `TestProcessPendingProblem_Decomposition` | Low | v1 daemon — TempDir cleanup race. Reassess when v1 code is removed |
 
 
 ## Completed Plans
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Code Restructuring: V1 Removal](exec-plans/completed/2026-03-27-code-restructuring-v1-removal.md) | 2026-03-27 | Remove v1 legacy code, flatten internal/v3/, rename pipeline nodes, fix deferred items |
 | [ExecSpawner + Framework Scaffolding](exec-plans/completed/2026-03-26-exec-spawner-framework-scaffolding.md) | 2026-03-26 | Decouple node spawning, framework model, belayer setup, claude-tmux |
 | [Three-Phase Architecture Docs](exec-plans/completed/2026-03-25-three-phase-architecture-docs.md) | 2026-03-25 | Explore/Climb/Summit architecture docs, config hierarchy, pipeline examples, competitive positioning |
 | [Bug Architecture Review](exec-plans/completed/2026-03-24-bug-architecture-review.md) | 2026-03-24 | Architecture review step in bug flow + learnings enforcement across harness lifecycle |
