@@ -219,7 +219,7 @@ RAW_OUTPUT=$(
 if [[ $EXIT_CODE -eq 124 ]]; then
   # timeout(1) returns 124 on timeout
   echo "{\"verdict\":\"SKIP\",\"reason\":\"timeout after ${TIMEOUT}s\",\"findings\":[],\"summary\":\"Adversarial review timed out.\"}"
-  cleanup
+  rm -f "$SCHEMA_FILE" "$COMBINED_INPUT" "$STDERR_FILE" "$DIFF_TEMP" 2>/dev/null
   exit 4
 fi
 

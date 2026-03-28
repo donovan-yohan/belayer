@@ -112,7 +112,7 @@ Full documentation reconciliation, conversation mining, and retrospective. Run a
 
      ---
      ```
-   - Determine the next learning ID: use today's date (`YYYYMMDD`) and a short kebab-case slug from the learning topic. Format: `L-YYYYMMDD-slug`. See `_learnings-format.md` § "ID Format" for details.
+   - Determine the next learning ID: use today's date (`YYYYMMDD`) and a short kebab-case slug from the learning topic. Format: `L-YYYYMMDD-slug`. See `references/learnings-format.md` § "ID Format" for details.
    - Append each learning:
      ```markdown
 

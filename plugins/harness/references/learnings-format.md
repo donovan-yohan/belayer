@@ -1,6 +1,6 @@
 # Learnings Format Reference
 
-Shared format spec for LEARNINGS.md entries and design doc frontmatter. Referenced by `init.md`, `brainstorm.md`, `bug.md`, `plan.md`, `reflect.md`, `complete.md`, and any command that reads or writes learnings.
+Shared format spec for LEARNINGS.md entries and design doc frontmatter. Referenced by `commands/init.md`, `commands/brainstorm.md`, `commands/bug.md`, `commands/plan.md`, `commands/reflect.md`, `commands/complete.md`, and any command that reads or writes learnings.
 
 ---
 
