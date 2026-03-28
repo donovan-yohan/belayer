@@ -10,48 +10,35 @@ Go's built-in `go test` with `testing` package. No external test framework.
 
 | File | Coverage |
 |------|----------|
-| `internal/db/db_test.go` | Open, Migrate (idempotent), foreign keys |
-| `internal/config/config_test.go` | Default config, JSON round-trip |
-| `internal/repo/repo_test.go` | URL parsing, worktree add/remove, bare clone, unpushed-commit detection |
-| `internal/crag/crag_test.go` | Crag create/load/delete, worktree management |
-| `internal/spotter/types_test.go` | SPOT.json type parsing |
-| `internal/climbctx/climbctx_test.go` | GOAL.json types and writer (lead, spotter, anchor variants) |
-| `internal/belayerconfig/config_test.go` | Config loader, crag/global/embedded resolution chain, TOML parsing |
-| `internal/defaults/defaults_test.go` | Embedded file system (belayer.toml, prompts, profiles exist) |
-| `internal/defaults/write_test.go` | WriteToDir (file creation, no-overwrite behavior) |
-| `internal/belayer/belayer_test.go` | Belayer daemon lifecycle, spotting flow, anchor flow, crash recovery |
-| `internal/belayer/dag_test.go` | DAG construction and traversal |
-| `internal/lead/claude_test.go` | ClaudeSpawner env injection (empty, single, multiple env vars) |
-| `internal/store/store_test.go` | Store CRUD: tracker_issues, pull_requests, pr_reactions, problem tracker_issue_id, environment idempotency |
-| `internal/review/engine_test.go` | Reaction engine: event classification, CI/review state, decision logic |
-| `internal/scm/stacking_test.go` | PR stacking: greedy bin-packing, single climb, empty input |
-| `internal/scm/prbodygen_test.go` | PR body generation: prompt builder, output parser |
-| `internal/scm/github/github_test.go` | GitHub SCM: PR status parsing, activity parsing, CI status logic |
-| `internal/tracker/github/github_test.go` | GitHub tracker: issue list/detail JSON parsing |
-| `internal/tracker/specassembly_test.go` | Spec assembly: prompt builder, output parser |
+| `internal/model/types_test.go` | Domain types: NodeOutcome, CompletionResult |
+| `internal/pipeline/parser_test.go` | YAML pipeline parsing, node/gate config |
+| `internal/pipeline/validate_test.go` | Pipeline validation rules |
+| `internal/pipeline/doc_examples_test.go` | Pipeline documentation examples |
+| `internal/gate/result_test.go` | Gate result parsing, weighted scoring |
+| `internal/gate/prompt_test.go` | Gate prompt builder |
+| `internal/events/logger_test.go` | JSONL event logging |
+| `internal/outcome/detect_test.go` | Outcome detection: verdict.txt, output file, type default |
+| `internal/session/exec_spawner_test.go` | ExecSpawner: command exec, exit channel |
+| `internal/session/paths_test.go` | Path helpers for `.belayer/.internal/` |
+| `internal/session/spawner_test.go` | SpawnOpts, spawner interface |
+| `internal/temporal/workflow_test.go` | ClimbWorkflow orchestration |
+| `internal/temporal/activity_test.go` | NodeActivity: spawn, heartbeat, poll completion |
+| `internal/temporal/integration_test.go` | End-to-end pipeline integration |
+| `internal/intake/bridge_test.go` | Intake bridge: SubmitSpec to workflow |
+| `internal/intake/jira_test.go` | Jira intake adapter |
+| `internal/intake/schedule_test.go` | Schedule reconciliation |
+| `internal/cli/node_complete_test.go` | Node-complete CLI command |
+| `internal/plugins/registry_test.go` | Plugin registry, marketplace registration |
 
 ## Conventions
 
 - Table-driven tests preferred
-- Test helpers in `internal/testutil/`
-- SQLite tests use in-memory databases (`:memory:`)
 - No tests should require network access or running services
-- Mock claude scripts: Prepend temp dir to `PATH` with mock `claude` bash scripts that return canned JSON based on prompt content
-- Mock tmux implementations must include all TmuxManager interface methods (SetRemainOnExit, IsPaneDead, CapturePaneContent)
+- Temporal test environment: `TestWorkflowEnvironment` runs activities synchronously; polling loops based on `time.NewTicker` will never fire, so always add an immediate pre-tick check
+- Fake spawners in integration tests must produce the output format matching the pipeline node type (e.g., gate nodes need gate-result.json + rationale.md, not just completion files)
 
 ## Idempotency Requirement
 
-All store operations and CLI commands that modify state **must be idempotent** — safe to call multiple times with the same inputs without error. This is critical because:
-
-1. **The daemon retries failed initializations.** If Init fails partway through, it will re-run from the start. Any state written before the failure must not block the retry.
-2. **Subprocesses and the daemon share the database.** The daemon calls CLI subcommands (e.g., `belayer env create`) that write to the same SQLite database. The daemon may also write the same data directly. Both writes must succeed.
-3. **Crash recovery replays state transitions.** Problems can be reset to `pending` and re-initialized.
-
-**Rules:**
-- Use `INSERT OR REPLACE` (not bare `INSERT`) for any store method that may be called during Init or retry paths
-- Add an idempotency test for every store method: call it twice with the same inputs, assert no error on the second call
-- CLI commands that create resources must handle "already exists" gracefully (warn or no-op, never fatal)
-
-## Known Issues
-
-- `TestProcessPendingProblem_Decomposition`: Flaky due to TempDir cleanup race condition. Passes ~2/3 runs. Pre-existing, low severity.
+Pipeline completion files and node-context.json writes must be idempotent. Temporal activities may be retried, so:
+- Completion files include attempt number to prevent stale reads
+- `NodeActivity` cleans stale completion files from previous attempts before spawning

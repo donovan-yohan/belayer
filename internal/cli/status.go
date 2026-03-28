@@ -2,77 +2,45 @@ package cli
 
 import (
 	"fmt"
-	"path/filepath"
 
-	"github.com/donovan-yohan/belayer/internal/db"
-	"github.com/donovan-yohan/belayer/internal/crag"
-	"github.com/donovan-yohan/belayer/internal/model"
-	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/spf13/cobra"
+	"go.temporal.io/api/workflowservice/v1"
+	"go.temporal.io/sdk/client"
 )
 
 func newStatusCmd() *cobra.Command {
-	var cragName string
-
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "status",
-		Short: "Show problem and climb status",
+		Short: "List ClimbWorkflow pipeline runs",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			resolvedName, err := resolveCragName(cragName)
+			c, err := client.Dial(client.Options{})
 			if err != nil {
-				return err
+				return fmt.Errorf("connect to Temporal: %w", err)
 			}
+			defer c.Close()
 
-			_, cragDir, err := crag.Load(resolvedName)
+			resp, err := c.ListWorkflow(cmd.Context(), &workflowservice.ListWorkflowExecutionsRequest{
+				Namespace: "default",
+				Query:     `WorkflowType = "ClimbWorkflow"`,
+			})
 			if err != nil {
-				return fmt.Errorf("loading crag %q: %w", resolvedName, err)
+				return fmt.Errorf("list workflows: %w", err)
 			}
 
-			dbPath := filepath.Join(cragDir, "belayer.db")
-			database, err := db.Open(dbPath)
-			if err != nil {
-				return fmt.Errorf("opening database: %w", err)
-			}
-			defer database.Close()
-
-			s := store.New(database.Conn())
-			out := cmd.OutOrStdout()
-
-			fmt.Fprintf(out, "Crag: %s\n\n", resolvedName)
-
-			for _, status := range []model.ProblemStatus{
-				model.ProblemStatusRunning,
-				model.ProblemStatusPending,
-				model.ProblemStatusReviewing,
-				model.ProblemStatusComplete,
-				model.ProblemStatusStuck,
-			} {
-				problems, err := s.GetProblemsByStatus(status)
-				if err != nil {
-					return fmt.Errorf("querying problems: %w", err)
-				}
-				for _, problem := range problems {
-					fmt.Fprintf(out, "Problem: %s [%s]\n", problem.ID, problem.Status)
-
-					climbs, err := s.GetClimbsForProblem(problem.ID)
-					if err != nil {
-						fmt.Fprintf(out, "  Climbs: error querying: %v\n", err)
-						continue
-					}
-					if len(climbs) > 0 {
-						fmt.Fprintf(out, "  Climbs:\n")
-						for _, c := range climbs {
-							fmt.Fprintf(out, "    %s [%s] repo=%s attempt=%d\n", c.ID, c.Status, c.RepoName, c.Attempt)
-						}
-					}
-					fmt.Fprintln(out)
-				}
+			if len(resp.Executions) == 0 {
+				fmt.Println("No pipeline runs found.")
+				return nil
 			}
 
+			fmt.Printf("%-40s  %-20s  %s\n", "WORKFLOW ID", "STATUS", "STARTED")
+			fmt.Printf("%-40s  %-20s  %s\n", "---", "---", "---")
+			for _, wf := range resp.Executions {
+				id := wf.GetExecution().GetWorkflowId()
+				status := wf.GetStatus().String()
+				started := wf.GetStartTime().AsTime().Format("2006-01-02 15:04:05")
+				fmt.Printf("%-40s  %-20s  %s\n", id, status, started)
+			}
 			return nil
 		},
 	}
-
-	cmd.Flags().StringVar(&cragName, "crag", "", "Crag name (defaults to default crag)")
-	return cmd
 }

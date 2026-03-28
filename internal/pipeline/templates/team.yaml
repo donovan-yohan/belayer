@@ -1,0 +1,98 @@
+name: team
+intake:
+  - name: user-session
+    type: interactive
+nodes:
+  - name: plan
+    type: node
+    description: |
+      You are the setter. You receive a design document and create a detailed
+      implementation plan. Do NOT write code. Your output is a plan.md file
+      that a separate agent will use to implement the feature.
+
+      Run /harness:plan to create the implementation plan.
+      When done, write the plan to .belayer/output/plan.md.
+    input:
+      type: file
+      key: design_doc
+    output:
+      type: file
+      path: .belayer/output/plan.md
+    on_pass: lead
+    on_retry: plan
+    on_fail: stop
+    max_retries: 2
+
+  - name: implement
+    type: node
+    description: |
+      You are the lead. You receive an implementation plan and write the code.
+      Focus on clean, tested implementation. Follow the plan closely.
+
+      Run /harness:orchestrate to execute the plan.
+      Commit your changes to the current branch.
+    input:
+      type: file
+      key: setter
+    output:
+      type: commit
+    on_pass: spotter
+    on_retry: self
+    on_fail: stop
+    max_retries: 3
+
+  - name: review
+    type: gate
+    description: |
+      You are the spotter — an adversarial code reviewer. Review the code
+      changes for spec compliance, test contract fulfillment, and runtime
+      correctness.
+
+      For each dimension below, provide:
+      - A score from 0-10
+      - A brief rationale (1-2 sentences)
+      - Specific issues found (if any)
+
+      Be honest. Gaming the score helps no one.
+    input:
+      type: commit
+    dimensions:
+      - name: spec_compliance
+        description: "Do the changes match what was specified in the plan?"
+        weight: 0.35
+        rubric: "9-10: exact match, 6-8: minor deviations, 3-5: significant gaps, 0-2: wrong direction"
+      - name: test_contracts
+        description: "Are test contracts fulfilled? Do tests actually test the right things?"
+        weight: 0.3
+        rubric: "9-10: comprehensive, 6-8: happy path covered, 3-5: minimal tests, 0-2: untested"
+      - name: runtime_correctness
+        description: "Would this work in production? Runtime errors, performance, security?"
+        weight: 0.35
+        rubric: "9-10: production-ready, 6-8: minor concerns, 3-5: significant risks, 0-2: broken"
+    thresholds:
+      pass: 7.0
+      retry: 4.0
+    output:
+      type: gate_result
+      path: .belayer/output/gate-result.json
+      rationale_path: .belayer/output/rationale.md
+    on_pass: pr-creator
+    on_retry: implement
+    on_fail: stop
+    max_retries: 2
+
+  - name: pr-author
+    type: node
+    description: |
+      Create a pull request from the implemented changes. Read the commit SHA
+      from your input context. Use the git branch to open a PR with a clear
+      title and summary of what was done.
+    input:
+      type: commit
+    output:
+      type: file
+      key: pr-url
+    on_pass: stop
+    on_fail: stop
+safety:
+  max_concurrent_runs: 3

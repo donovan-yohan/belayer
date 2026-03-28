@@ -1,0 +1,54 @@
+name: claude-tmux
+intake:
+  - name: user-session
+    type: interactive
+nodes:
+  - name: implement
+    type: node
+    command: .belayer/scripts/run.sh
+    description: |
+      You are the implementer. You receive a design document and implement
+      the feature. Write tests. Commit your changes when done.
+    input:
+      type: file
+      key: design_doc
+    output:
+      type: commit
+    on_pass: review
+    on_retry: self
+    on_fail: stop
+    max_retries: 3
+
+  - name: review
+    type: gate
+    command: .belayer/scripts/run.sh
+    description: |
+      You are an adversarial code reviewer. Review the code changes for
+      spec compliance, test coverage, and runtime correctness.
+
+      For each dimension, provide a score from 0-10 with rationale.
+      Be honest. Gaming the score helps no one.
+    input:
+      type: commit
+    dimensions:
+      - name: spec_compliance
+        description: "Do the changes match what was specified?"
+        weight: 0.35
+      - name: test_contracts
+        description: "Are tests meaningful and sufficient?"
+        weight: 0.3
+      - name: runtime_correctness
+        description: "Would this work in production?"
+        weight: 0.35
+    thresholds:
+      pass: 7.0
+      retry: 4.0
+    output:
+      type: gate_result
+    on_pass: stop
+    on_retry: implement
+    on_fail: stop
+    max_retries: 2
+
+safety:
+  max_concurrent_runs: 3
