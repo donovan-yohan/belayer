@@ -9,8 +9,9 @@ Audit documentation for staleness, broken links, orphaned guides, and bloat. Pro
 ## Usage
 
 ```
-/harness:prune               # Full documentation audit with fix suggestions
-/harness:prune --fix         # Audit and auto-apply safe fixes
+/harness:prune                      # Full documentation audit with fix suggestions
+/harness:prune --fix                # Audit and auto-apply safe fixes
+/harness:prune --archive-completed  # Bulk-archive all completed plans (100% tasks ✓ or Status: Complete)
 ```
 
 ## Checks
@@ -23,9 +24,14 @@ Audit documentation for staleness, broken links, orphaned guides, and bloat. Pro
 | Orphaned Tier 2 files (not in Documentation Map) | warn |
 | Orphaned Tier 3 files (not in any index or Deep Docs table) | warn |
 | Stale Tier 2/3 docs (90+ days unchanged) | info |
-| Stale active plans (30+ days old) | warn |
+| Completed plans not archived (100% tasks ✓ in active/) | warn |
+| Completed plan header in active/ directory (Status: Complete) | error |
+| Plan header/checkbox state mismatch | warn |
+| Abandoned plans (0% done, 14+ days old) | warn |
+| Stale active plans (30+ days, partial progress) | warn |
 | Missing design-docs/index.md entries | warn |
-| PLANS.md Active Plans table doesn't match exec-plans/active/ | warn |
+| PLANS.md phantom entry (entry exists, file doesn't) | error |
+| PLANS.md undocumented plan (file exists, entry doesn't) | warn |
 | Tier 2 Deep Docs tables reference missing files | error |
 | Broken cross-references between docs | error |
 | Code Map paths that don't exist on filesystem | error |
@@ -71,6 +77,20 @@ prompt: |
   If no --fix flag:
   - Present the report and ask: "Would you like me to fix the errors and warnings automatically?"
   - Apply fixes only if user approves
+
+  If --archive-completed flag:
+  - Scan docs/exec-plans/active/ for plans that are complete:
+    - 100% of Progress checkboxes are [x], OR
+    - Status header contains "Completed" or "Complete"
+  - For each completed plan found:
+    1. Update Status header to "Completed" with today's date
+    2. Move file from docs/exec-plans/active/ to docs/exec-plans/completed/
+    3. Update docs/PLANS.md: move entry from Active to Completed table
+    4. Update the source design doc's frontmatter: set `status: implemented` and `implemented-by: docs/exec-plans/completed/{file}` (if source design doc exists)
+    5. Update docs/design-docs/index.md: move entry from Current to Archived. If the index lacks Current/Archived sections, add them following the pattern in /harness:complete
+  - Report all plans archived with a summary
+  - If no completed plans found, report "No completed plans to archive"
+  - This is a batch operation — does not run verification gates or retrospectives (use /harness:complete for individual plans that need those)
 ```
 
 ## Quick Health Mode
