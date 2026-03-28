@@ -8,7 +8,6 @@ import (
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/donovan-yohan/belayer/internal/model"
-	"github.com/donovan-yohan/belayer/internal/pipeline"
 )
 
 type ClimbWorkflowTestSuite struct {
@@ -31,9 +30,56 @@ func TestClimbWorkflowSuite(t *testing.T) {
 
 func defaultInput() model.ClimbInput {
 	return model.ClimbInput{
-		PipelineYAML: []byte(pipeline.DefaultPipelineYAML),
-		WorkDir:      "/tmp/test-workdir",
-		Branch:       "feature/test",
+		PipelineYAML: []byte(`name: test-pipeline
+nodes:
+  - name: plan
+    type: node
+    command: echo test
+    description: create plan
+    input: { type: file, key: design_doc }
+    output: { type: file, path: .belayer/.internal/output/plan.md }
+    on_pass: next
+    on_retry: plan
+    on_fail: stop
+    max_retries: 2
+  - name: implement
+    type: node
+    command: echo test
+    description: write code
+    input: { type: file, key: plan }
+    output: { type: commit }
+    on_pass: next
+    on_retry: self
+    on_fail: stop
+    max_retries: 3
+  - name: review
+    type: gate
+    command: echo test
+    description: review code
+    input: { type: commit }
+    dimensions:
+      - { name: spec_compliance, weight: 0.35, description: match }
+      - { name: test_contracts, weight: 0.3, description: tests }
+      - { name: runtime_correctness, weight: 0.35, description: works }
+    thresholds: { pass: 7.0, retry: 4.0 }
+    output: { type: gate_result }
+    on_pass: next
+    on_retry: implement
+    on_fail: stop
+    max_retries: 2
+  - name: pr-author
+    type: node
+    command: echo test
+    description: create PR
+    input: { type: gate_result, key: review }
+    output: { type: pr }
+    on_pass: stop
+    on_retry: self
+    on_fail: stop
+    max_retries: 2
+`),
+		WorkDir: "/tmp/test-workdir",
+		Branch:  "feature/test",
 	}
 }
 
@@ -46,25 +92,25 @@ func passOutput(nodeName string) *NodeActivityOutput {
 	}
 }
 
-// TestClimb_AllNodesPass: setter, lead, spotter all PASS → ClimbCompleted.
+// TestClimb_AllNodesPass: plan, implement, review all PASS → ClimbCompleted.
 func (s *ClimbWorkflowTestSuite) TestClimb_AllNodesPass() {
 	a := &Activities{}
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "setter"
-	})).Return(passOutput("setter"), nil)
+		return in.Node.Name == "plan"
+	})).Return(passOutput("plan"), nil)
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "lead"
-	})).Return(passOutput("lead"), nil)
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil)
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "spotter"
-	})).Return(passOutput("spotter"), nil)
+		return in.Node.Name == "review"
+	})).Return(passOutput("review"), nil)
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "summit"
-	})).Return(passOutput("summit"), nil)
+		return in.Node.Name == "pr-author"
+	})).Return(passOutput("pr-author"), nil)
 
 	s.env.ExecuteWorkflow(ClimbWorkflow, defaultInput())
 
@@ -76,38 +122,38 @@ func (s *ClimbWorkflowTestSuite) TestClimb_AllNodesPass() {
 	s.Equal(model.ClimbCompleted, result.Status)
 }
 
-// TestClimb_SpotterRetriesToLead: spotter first returns RETRY targeting lead, then PASS → ClimbCompleted.
-func (s *ClimbWorkflowTestSuite) TestClimb_SpotterRetriesToLead() {
+// TestClimb_ReviewRetriesToImplement: review first returns RETRY targeting implement, then PASS → ClimbCompleted.
+func (s *ClimbWorkflowTestSuite) TestClimb_ReviewRetriesToImplement() {
 	a := &Activities{}
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "setter"
-	})).Return(passOutput("setter"), nil)
+		return in.Node.Name == "plan"
+	})).Return(passOutput("plan"), nil)
 
-	// Lead called twice: once initially, once after spotter retry.
+	// Implement called twice: once initially, once after review retry.
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "lead"
-	})).Return(passOutput("lead"), nil).Times(2)
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil).Times(2)
 
-	// Spotter: first call returns RETRY targeting lead.
+	// Review: first call returns RETRY targeting implement.
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "spotter" && in.Attempt == 0
+		return in.Node.Name == "review" && in.Attempt == 0
 	})).Return(&NodeActivityOutput{
 		Result: model.CompletionResult{
 			Outcome:    model.OutcomeRetry,
-			TargetNode: "lead",
+			TargetNode: "implement",
 			Feedback:   "needs more work",
 		},
 	}, nil).Once()
 
-	// Spotter: second call returns PASS.
+	// Review: second call returns PASS.
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "spotter" && in.Attempt == 1
-	})).Return(passOutput("spotter"), nil).Once()
+		return in.Node.Name == "review" && in.Attempt == 1
+	})).Return(passOutput("review"), nil).Once()
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "summit"
-	})).Return(passOutput("summit"), nil)
+		return in.Node.Name == "pr-author"
+	})).Return(passOutput("pr-author"), nil)
 
 	s.env.ExecuteWorkflow(ClimbWorkflow, defaultInput())
 
@@ -119,12 +165,12 @@ func (s *ClimbWorkflowTestSuite) TestClimb_SpotterRetriesToLead() {
 	s.Equal(model.ClimbCompleted, result.Status)
 }
 
-// TestClimb_NodeFails: setter FAILs → ClimbFailed with message containing "setter".
+// TestClimb_NodeFails: plan FAILs → ClimbFailed with message containing "plan".
 func (s *ClimbWorkflowTestSuite) TestClimb_NodeFails() {
 	a := &Activities{}
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "setter"
+		return in.Node.Name == "plan"
 	})).Return(&NodeActivityOutput{
 		Result: model.CompletionResult{
 			Outcome: model.OutcomeFail,
@@ -139,15 +185,16 @@ func (s *ClimbWorkflowTestSuite) TestClimb_NodeFails() {
 	var result model.ClimbOutput
 	s.NoError(s.env.GetWorkflowResult(&result))
 	s.Equal(model.ClimbFailed, result.Status)
-	s.Contains(result.Message, "setter")
+	s.Contains(result.Message, "plan")
 }
 
 func gatePipelineYAML() []byte {
 	return []byte(`
 name: gate-test
 nodes:
-  - name: lead
+  - name: implement
     type: node
+    command: echo test
     description: Write code
     output:
       type: commit
@@ -156,6 +203,7 @@ nodes:
     max_retries: 3
   - name: review
     type: gate
+    command: echo test
     description: Review the code
     input:
       type: commit
@@ -171,10 +219,10 @@ nodes:
       retry: 4.0
     output:
       type: gate_result
-      path: .belayer/output/gate-result.json
-      rationale_path: .belayer/output/rationale.md
+      path: .belayer/.internal/output/gate-result.json
+      rationale_path: .belayer/.internal/output/rationale.md
     on_pass: next
-    on_retry: lead
+    on_retry: implement
     on_fail: stop
     max_retries: 2
 `)
@@ -188,20 +236,20 @@ func gateInput() model.ClimbInput {
 	}
 }
 
-// TestClimb_GatePass: lead PASS → gate PASS → ClimbCompleted.
+// TestClimb_GatePass: implement PASS → gate PASS → ClimbCompleted.
 func (s *ClimbWorkflowTestSuite) TestClimb_GatePass() {
 	a := &Activities{}
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "lead"
-	})).Return(passOutput("lead"), nil)
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil)
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
 		return in.Node.Name == "review"
 	})).Return(&NodeActivityOutput{
 		Result: model.CompletionResult{
 			Outcome:    model.OutcomePass,
-			OutputPath: ".belayer/output/gate-result.json",
+			OutputPath: ".belayer/.internal/output/gate-result.json",
 		},
 	}, nil)
 
@@ -215,14 +263,14 @@ func (s *ClimbWorkflowTestSuite) TestClimb_GatePass() {
 	s.Equal(model.ClimbCompleted, result.Status)
 }
 
-// TestClimb_GateRetryThenPass: gate RETRY → lead retries → gate PASS.
+// TestClimb_GateRetryThenPass: gate RETRY → implement retries → gate PASS.
 func (s *ClimbWorkflowTestSuite) TestClimb_GateRetryThenPass() {
 	a := &Activities{}
 
-	// Lead called twice: initial + after gate retry.
+	// Implement called twice: initial + after gate retry.
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "lead"
-	})).Return(passOutput("lead"), nil).Times(2)
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil).Times(2)
 
 	// Gate: first call RETRY, second call PASS.
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
@@ -230,7 +278,7 @@ func (s *ClimbWorkflowTestSuite) TestClimb_GateRetryThenPass() {
 	})).Return(&NodeActivityOutput{
 		Result: model.CompletionResult{
 			Outcome:    model.OutcomeRetry,
-			TargetNode: "lead",
+			TargetNode: "implement",
 			Feedback:   "Fix the bugs in auth module",
 		},
 	}, nil).Once()
@@ -240,7 +288,7 @@ func (s *ClimbWorkflowTestSuite) TestClimb_GateRetryThenPass() {
 	})).Return(&NodeActivityOutput{
 		Result: model.CompletionResult{
 			Outcome:    model.OutcomePass,
-			OutputPath: ".belayer/output/gate-result.json",
+			OutputPath: ".belayer/.internal/output/gate-result.json",
 		},
 	}, nil).Once()
 
@@ -259,8 +307,8 @@ func (s *ClimbWorkflowTestSuite) TestClimb_GateFail() {
 	a := &Activities{}
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "lead"
-	})).Return(passOutput("lead"), nil)
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil)
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
 		return in.Node.Name == "review"
@@ -281,21 +329,21 @@ func (s *ClimbWorkflowTestSuite) TestClimb_GateFail() {
 	s.Equal(model.ClimbFailed, result.Status)
 }
 
-// TestClimb_MaxRetriesExhausted: spotter always RETRY → eventually ClimbFailed with "max retries".
+// TestClimb_MaxRetriesExhausted: review always RETRY → eventually ClimbFailed with "max retries".
 func (s *ClimbWorkflowTestSuite) TestClimb_MaxRetriesExhausted() {
 	a := &Activities{}
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "setter"
-	})).Return(passOutput("setter"), nil)
+		return in.Node.Name == "plan"
+	})).Return(passOutput("plan"), nil)
 
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "lead"
-	})).Return(passOutput("lead"), nil)
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil)
 
-	// Spotter always retries self (spotter.max_retries == 2 in default pipeline).
+	// Review always retries self (review.max_retries == 2 in default pipeline).
 	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
-		return in.Node.Name == "spotter"
+		return in.Node.Name == "review"
 	})).Return(&NodeActivityOutput{
 		Result: model.CompletionResult{
 			Outcome:  model.OutcomeRetry,
