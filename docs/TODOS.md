@@ -4,17 +4,11 @@ Deferred items from architecture reviews and implementation plans.
 
 ## Active
 
-### P1: Code Restructuring
-- Rename default pipeline nodes in `internal/v3/pipeline/defaults.go` (setter->plan, lead->implement, spotter->review, summit->pr-author)
-- Remove generic `FanOut`/`Per`/`FanIn` from `internal/v3/pipeline/model.go`
-- Update pipeline templates in `internal/v3/pipeline/templates/`
-**Context:** Three-phase architecture (2026-03-25) reframes setter/spotter as multi-repo-only roles. Current default pipeline uses these names incorrectly. Blocked by: documentation round completing first.
-
 ### P2: Multi-repo Runtime
 - Implement setter/spotter as top-level pipeline YAML config
 - Temporal child workflows for per-repo fan-out
 - Runtime enforcement: multi-repo crag without setter/spotter = error
-**Context:** Architecture defined in design doc. Depends on code restructuring (P1) completing first.
+**Context:** Architecture defined in design doc. Depends on code restructuring (P1, completed 2026-03-27).
 
 ### P2: `using-belayer` Skill
 - Create Claude Code / Codex skill that agents load to bootstrap belayer configs
@@ -32,13 +26,13 @@ Deferred items from architecture reviews and implementation plans.
 - Thin SDK libraries (Go, Python, TypeScript) that read `node-context.json` and write completion files
 - Orchestrator-side SDK: submit pipelines, check status, stream events via worker HTTP API
 - Each SDK wraps the file-based completion contract so users don't hand-write JSON
-**Context:** Lowers the barrier for non-Go users to implement belayer nodes. Enables front-end-driven orchestrators. Depends on ExecSpawner + `node-context.json` contract (examples/ extraction refactor). Identified in CEO review 2026-03-26.
+**Context:** Lowers the barrier for non-Go users to implement belayer nodes. Enables front-end-driven orchestrators. Depends on ExecSpawner + `node-context.json` contract. Identified in CEO review 2026-03-26.
 
 ### P3: Boulderer
 - `belayer solo <task>` CLI command
 - Pipeline-dispatched boulderer (nodes can spawn one)
 - Max dispatch limits per problem
-**Context:** Lightweight specialist agent for CI fixups and PR nitpicks. Deferred until lead retry demonstrably fails.
+**Context:** Lightweight specialist agent for CI fixups and PR nitpicks. Deferred until implement retry demonstrably fails.
 
 ### P3: Pipeline Template Marketplace
 - Share and discover pipeline YAML configs
@@ -49,6 +43,6 @@ Deferred items from architecture reviews and implementation plans.
 
 | Issue | Severity | Notes |
 |-------|----------|-------|
-| Schedule reconciliation is a stub | Medium | `internal/v3/intake/schedule.go` logs intent but does not create Temporal schedules |
+| Schedule reconciliation is a stub | Medium | `internal/intake/schedule.go` logs intent but does not create Temporal schedules |
 | Worker `/status` endpoint is a stub | Low | Returns health only -- full workflow listing deferred |
 | `StartSHA` in `NodeActivityInput` never populated | Low | Code-output commit verification guard never fires |

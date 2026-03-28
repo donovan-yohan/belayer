@@ -23,14 +23,11 @@ func findNodeIndex(nodes []pipeline.NodeConfig, name string) int {
 // ClimbWorkflow is the core Temporal workflow that sequences pipeline nodes.
 func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOutput, error) {
 	// 1. Parse pipeline.
-	var pipelineYAML []byte
-	if len(input.PipelineYAML) > 0 {
-		pipelineYAML = input.PipelineYAML
-	} else {
-		pipelineYAML = []byte(pipeline.DefaultPipelineYAML)
+	if len(input.PipelineYAML) == 0 {
+		return nil, fmt.Errorf("pipeline YAML is required (run 'belayer setup --framework' to install one)")
 	}
 
-	cfg, err := pipeline.ParsePipeline(pipelineYAML)
+	cfg, err := pipeline.ParsePipeline(input.PipelineYAML)
 	if err != nil {
 		return nil, fmt.Errorf("parse pipeline: %w", err)
 	}

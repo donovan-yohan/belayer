@@ -19,8 +19,8 @@ func GenerateWorkflowID(pipelineName, source, externalID string) string {
 	return fmt.Sprintf("%s/%s/%s", pipelineName, source, externalID)
 }
 
-// ResolvePipelineYAML returns pipeline YAML bytes and a name by checking known locations,
-// falling back to the built-in default.
+// ResolvePipelineYAML returns pipeline YAML bytes and a name by checking known locations.
+// Returns an error if no pipeline file is found (run 'belayer setup --framework' first).
 func ResolvePipelineYAML(cwd string) ([]byte, string, error) {
 	candidates := []string{
 		filepath.Join(cwd, "belayer-pipeline.yaml"),
@@ -42,12 +42,7 @@ func ResolvePipelineYAML(cwd string) ([]byte, string, error) {
 		return data, cfg.Name, nil
 	}
 
-	// Built-in default.
-	cfg, err := pipeline.ParsePipeline([]byte(pipeline.DefaultPipelineYAML))
-	if err != nil {
-		return nil, "", fmt.Errorf("parse default pipeline: %w", err)
-	}
-	return []byte(pipeline.DefaultPipelineYAML), cfg.Name, nil
+	return nil, "", fmt.Errorf("no pipeline found (checked %s and %s). Run 'belayer setup --framework claude-tmux' to install one", candidates[0], candidates[1])
 }
 
 // CreateGitWorktree creates a new git worktree at worktreeDir on a new branch.

@@ -56,9 +56,6 @@ type NodeConfig struct {
 	OnRetry     string            `yaml:"on_retry" json:"on_retry"`
 	OnFail      string            `yaml:"on_fail" json:"on_fail"`
 	MaxRetries  int               `yaml:"max_retries" json:"max_retries"`
-	FanOut      string            `yaml:"fan_out,omitempty" json:"fan_out,omitempty"`
-	Per         string            `yaml:"per,omitempty" json:"per,omitempty"`
-	FanIn       string            `yaml:"fan_in,omitempty" json:"fan_in,omitempty"`
 }
 
 // InputConfig specifies what a node receives.

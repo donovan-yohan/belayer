@@ -92,13 +92,6 @@ func resolveNodeConfig(workDir, nodeName string) *pipeline.NodeConfig {
 		}
 	}
 
-	// Try the built-in default pipeline.
-	if cfg, err := pipeline.ParsePipeline([]byte(pipeline.DefaultPipelineYAML)); err == nil {
-		if n := cfg.FindNode(nodeName); n != nil {
-			return n
-		}
-	}
-
 	// Generic fallback: treat as a file node with no specific path.
 	return &pipeline.NodeConfig{
 		Name:   nodeName,

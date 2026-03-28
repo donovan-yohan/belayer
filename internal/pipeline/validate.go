@@ -115,9 +115,6 @@ func Validate(cfg *PipelineConfig) error {
 		} else if len(n.Dimensions) > 0 {
 			return fmt.Errorf("node %q: dimensions are only valid on gate nodes", n.Name)
 		}
-		if n.FanOut != "" && n.FanOut != "repos" {
-			return fmt.Errorf("node %q: unknown fan_out value %q", n.Name, n.FanOut)
-		}
 	}
 	// Validate intake configs.
 	validIntakeTypes := map[string]bool{

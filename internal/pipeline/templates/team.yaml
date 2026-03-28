@@ -3,7 +3,7 @@ intake:
   - name: user-session
     type: interactive
 nodes:
-  - name: setter
+  - name: plan
     type: node
     description: |
       You are the setter. You receive a design document and create a detailed
@@ -19,11 +19,11 @@ nodes:
       type: file
       path: .belayer/output/plan.md
     on_pass: lead
-    on_retry: setter
+    on_retry: plan
     on_fail: stop
     max_retries: 2
 
-  - name: lead
+  - name: implement
     type: node
     description: |
       You are the lead. You receive an implementation plan and write the code.
@@ -41,7 +41,7 @@ nodes:
     on_fail: stop
     max_retries: 3
 
-  - name: spotter
+  - name: review
     type: gate
     description: |
       You are the spotter — an adversarial code reviewer. Review the code
@@ -77,11 +77,11 @@ nodes:
       path: .belayer/output/gate-result.json
       rationale_path: .belayer/output/rationale.md
     on_pass: pr-creator
-    on_retry: lead
+    on_retry: implement
     on_fail: stop
     max_retries: 2
 
-  - name: pr-creator
+  - name: pr-author
     type: node
     description: |
       Create a pull request from the implemented changes. Read the commit SHA

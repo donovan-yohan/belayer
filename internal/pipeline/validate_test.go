@@ -294,25 +294,6 @@ func TestValidate_IntakeDuplicateInteractive(t *testing.T) {
 	}
 }
 
-func TestValidate_FanOutValid(t *testing.T) {
-	cfg := validPipeline()
-	cfg.Nodes[0].FanOut = "repos"
-	if err := Validate(cfg); err != nil {
-		t.Errorf("expected fan_out repos to be valid, got: %v", err)
-	}
-}
-
-func TestValidate_FanOutInvalid(t *testing.T) {
-	cfg := validPipeline()
-	cfg.Nodes[0].FanOut = "unknown"
-	err := Validate(cfg)
-	if err == nil {
-		t.Fatal("expected error for unknown fan_out value")
-	}
-	if !strings.Contains(err.Error(), "fan_out") {
-		t.Errorf("error should mention fan_out, got: %v", err)
-	}
-}
 
 func TestValidate_PROutputType(t *testing.T) {
 	cfg := validPipeline()

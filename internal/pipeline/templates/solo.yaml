@@ -3,7 +3,7 @@ intake:
   - name: user-session
     type: interactive
 nodes:
-  - name: lead
+  - name: implement
     type: node
     description: |
       You are the lead. Implement the spec. Write tests. Commit when done.
@@ -13,7 +13,7 @@ nodes:
     on_retry: self
     on_fail: stop
     max_retries: 3
-  - name: spotter
+  - name: review
     type: gate
     description: |
       Review the code for spec compliance and test coverage.
@@ -25,7 +25,7 @@ nodes:
     thresholds: { pass: 7.0, retry: 4.0 }
     output: { type: gate_result }
     on_pass: stop
-    on_retry: lead
+    on_retry: implement
     on_fail: stop
     max_retries: 2
 safety:
