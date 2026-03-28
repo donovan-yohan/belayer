@@ -24,6 +24,7 @@ Standalone Go CLI that orchestrates autonomous coding agents through declarative
 | ADRs | `docs/adrs/` | Architecture decision records |
 | TODOs | `docs/TODOS.md` | Deferred items, P2/P3 backlog, tech debt tracker |
 | Plugins | `docs/PLUGINS.md` | Plugin authoring patterns, invocation mandates, version sync, merge-friendly formats |
+| Review Guidance | `docs/REVIEW_GUIDANCE.md` | Adversarial review config, deployment context, question bank |
 
 ## Key Patterns
 
