@@ -2,6 +2,7 @@
 
 ## Current Designs
 
+- [2026-03-27-code-restructuring-v1-removal-design](2026-03-27-code-restructuring-v1-removal-design.md) — Remove v1 legacy code, flatten v3 to internal/, rename pipeline nodes (2026-03-27)
 - [2026-03-25-three-phase-architecture-design](2026-03-25-three-phase-architecture-design.md) — Three-phase architecture: Explore/Climb/Summit, multi-repo setter/spotter, config hierarchy (2026-03-25)
 
 ## Archived
