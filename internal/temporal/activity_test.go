@@ -3,6 +3,7 @@ package temporal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -137,6 +138,46 @@ func TestPollForCompletion_Timeout(t *testing.T) {
 	}
 }
 
+func TestPollForCompletion_ExitChannelFastFail(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := context.Background()
+
+	// Exit channel fires with error before completion file exists.
+	exitCh := make(chan error, 1)
+	exitCh <- fmt.Errorf("process crashed")
+
+	_, err := pollForCompletion(ctx, workDir, "task-exit", "crash-node", 0, 50*time.Millisecond, exitCh)
+	if err == nil {
+		t.Fatal("expected error from exit channel fast-fail")
+	}
+	if !strings.Contains(err.Error(), "crash-node") {
+		t.Errorf("error should mention node name, got: %v", err)
+	}
+}
+
+func TestPollForCompletion_ExitChannelWithCompletionFile(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := context.Background()
+
+	// Write completion file first.
+	writeCompletionFile(t, workDir, "task-race", "race-node", 0, model.CompletionResult{
+		Outcome: model.OutcomePass,
+		Attempt: 0,
+	})
+
+	// Exit channel fires after file is written — file should win.
+	exitCh := make(chan error, 1)
+	exitCh <- fmt.Errorf("process exited non-zero")
+
+	result, err := pollForCompletion(ctx, workDir, "task-race", "race-node", 0, 50*time.Millisecond, exitCh)
+	if err != nil {
+		t.Fatalf("expected completion file to win over exit error, got: %v", err)
+	}
+	if result.Outcome != model.OutcomePass {
+		t.Errorf("outcome = %q, want PASS", result.Outcome)
+	}
+}
+
 func TestBuildInputPrompt_GateNode(t *testing.T) {
 	node := pipeline.NodeConfig{
 		Name: "review",
@@ -202,9 +243,59 @@ func TestWriteNodeContext_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestWriteNodeContext_GateRoundTrip(t *testing.T) {
+	workDir := t.TempDir()
+	thresholds := pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0}
+	nc := NodeContext{
+		SchemaVersion: 1,
+		TaskID:        "climb-gate",
+		NodeName:      "review",
+		NodeType:      "gate",
+		Attempt:       0,
+		WorkDir:       workDir,
+		Description:   "Review the code",
+		InputPrompt:   "Review the changes",
+		Artifacts:     map[string]string{"implement": "commit-abc"},
+		Dimensions: []pipeline.DimensionConfig{
+			{Name: "correctness", Weight: 0.6, Description: "Does it work?"},
+			{Name: "quality", Weight: 0.4, Description: "Is it clean?"},
+		},
+		Thresholds: &thresholds,
+	}
+
+	if err := writeNodeContext(workDir, nc); err != nil {
+		t.Fatalf("writeNodeContext: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(workDir, ".belayer", ".internal", "input", "node-context.json"))
+	if err != nil {
+		t.Fatalf("read node-context.json: %v", err)
+	}
+
+	var got NodeContext
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion = %d, want 1", got.SchemaVersion)
+	}
+	if len(got.Dimensions) != 2 {
+		t.Fatalf("Dimensions length = %d, want 2", len(got.Dimensions))
+	}
+	if got.Dimensions[0].Name != "correctness" {
+		t.Errorf("Dimensions[0].Name = %q, want correctness", got.Dimensions[0].Name)
+	}
+	if got.Thresholds == nil {
+		t.Fatal("Thresholds should not be nil for gate")
+	}
+	if got.Thresholds.Pass != 7.0 {
+		t.Errorf("Thresholds.Pass = %f, want 7.0", got.Thresholds.Pass)
+	}
+}
+
 func TestProcessGateResult_Pass(t *testing.T) {
 	workDir := t.TempDir()
-	outputDir := filepath.Join(workDir, ".belayer", "output")
+	outputDir := filepath.Join(workDir, ".belayer", ".internal", "output")
 	os.MkdirAll(outputDir, 0o755)
 
 	gateJSON := `{
@@ -231,8 +322,8 @@ func TestProcessGateResult_Pass(t *testing.T) {
 		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
 		Output: pipeline.OutputConfig{
 			Type:          "gate_result",
-			Path:          ".belayer/output/gate-result.json",
-			RationalePath: ".belayer/output/rationale.md",
+			Path:          ".belayer/.internal/output/gate-result.json",
+			RationalePath: ".belayer/.internal/output/rationale.md",
 		},
 	}
 
@@ -247,7 +338,7 @@ func TestProcessGateResult_Pass(t *testing.T) {
 
 func TestProcessGateResult_Retry(t *testing.T) {
 	workDir := t.TempDir()
-	outputDir := filepath.Join(workDir, ".belayer", "output")
+	outputDir := filepath.Join(workDir, ".belayer", ".internal", "output")
 	os.MkdirAll(outputDir, 0o755)
 
 	gateJSON := `{
@@ -274,8 +365,8 @@ func TestProcessGateResult_Retry(t *testing.T) {
 		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
 		Output: pipeline.OutputConfig{
 			Type:          "gate_result",
-			Path:          ".belayer/output/gate-result.json",
-			RationalePath: ".belayer/output/rationale.md",
+			Path:          ".belayer/.internal/output/gate-result.json",
+			RationalePath: ".belayer/.internal/output/rationale.md",
 		},
 	}
 
@@ -293,7 +384,7 @@ func TestProcessGateResult_Retry(t *testing.T) {
 
 func TestProcessGateResult_Fail(t *testing.T) {
 	workDir := t.TempDir()
-	outputDir := filepath.Join(workDir, ".belayer", "output")
+	outputDir := filepath.Join(workDir, ".belayer", ".internal", "output")
 	os.MkdirAll(outputDir, 0o755)
 
 	gateJSON := `{
@@ -320,8 +411,8 @@ func TestProcessGateResult_Fail(t *testing.T) {
 		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
 		Output: pipeline.OutputConfig{
 			Type:          "gate_result",
-			Path:          ".belayer/output/gate-result.json",
-			RationalePath: ".belayer/output/rationale.md",
+			Path:          ".belayer/.internal/output/gate-result.json",
+			RationalePath: ".belayer/.internal/output/rationale.md",
 		},
 	}
 
@@ -336,7 +427,7 @@ func TestProcessGateResult_Fail(t *testing.T) {
 
 func TestProcessGateResult_MissingRationale(t *testing.T) {
 	workDir := t.TempDir()
-	outputDir := filepath.Join(workDir, ".belayer", "output")
+	outputDir := filepath.Join(workDir, ".belayer", ".internal", "output")
 	os.MkdirAll(outputDir, 0o755)
 
 	gateJSON := `{
@@ -358,8 +449,8 @@ func TestProcessGateResult_MissingRationale(t *testing.T) {
 		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
 		Output: pipeline.OutputConfig{
 			Type:          "gate_result",
-			Path:          ".belayer/output/gate-result.json",
-			RationalePath: ".belayer/output/rationale.md",
+			Path:          ".belayer/.internal/output/gate-result.json",
+			RationalePath: ".belayer/.internal/output/rationale.md",
 		},
 	}
 
@@ -384,8 +475,8 @@ func TestProcessGateResult_MissingGateResultJSON(t *testing.T) {
 		Thresholds: pipeline.ThresholdConfig{Pass: 7.0, Retry: 4.0},
 		Output: pipeline.OutputConfig{
 			Type:          "gate_result",
-			Path:          ".belayer/output/gate-result.json",
-			RationalePath: ".belayer/output/rationale.md",
+			Path:          ".belayer/.internal/output/gate-result.json",
+			RationalePath: ".belayer/.internal/output/rationale.md",
 		},
 	}
 

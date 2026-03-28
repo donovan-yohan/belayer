@@ -24,22 +24,16 @@ func TestGenerateWorkflowID_DifferentInputs(t *testing.T) {
 	}
 }
 
-func TestResolvePipelineYAML_Default(t *testing.T) {
-	// Use a temp directory with no pipeline YAML files — should fall back to default.
+func TestResolvePipelineYAML_NoPipeline(t *testing.T) {
+	// Use a temp directory with no pipeline YAML files — should return an error.
 	dir, err := os.MkdirTemp("", "belayer-intake-test-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
 	defer os.RemoveAll(dir)
 
-	data, name, err := intake.ResolvePipelineYAML(dir)
-	if err != nil {
-		t.Fatalf("ResolvePipelineYAML() error = %v", err)
-	}
-	if len(data) == 0 {
-		t.Error("ResolvePipelineYAML() returned empty YAML")
-	}
-	if name == "" {
-		t.Error("ResolvePipelineYAML() returned empty pipeline name")
+	_, _, err = intake.ResolvePipelineYAML(dir)
+	if err == nil {
+		t.Fatal("ResolvePipelineYAML() expected error when no pipeline found, got nil")
 	}
 }

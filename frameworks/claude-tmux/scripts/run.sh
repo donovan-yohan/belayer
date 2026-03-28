@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Belayer claude-tmux framework: gate runner
-# Identical to run-node.sh except it pre-creates the gate output directory.
+# Belayer claude-tmux framework: unified node/gate runner
+# Reads node_type from node-context.json to handle gate-specific setup.
 
 # Dependency checks.
 command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required but not installed. Install with: brew install jq" >&2; exit 1; }
@@ -20,11 +20,14 @@ CONTEXT_FILE="$WORK_DIR/.belayer/.internal/input/node-context.json"
 DESCRIPTION=$(jq -r '.description // empty' "$CONTEXT_FILE")
 [ -n "$DESCRIPTION" ] || { echo "ERROR: description is empty in $CONTEXT_FILE" >&2; exit 1; }
 INPUT_PROMPT=$(jq -r '.input_prompt // empty' "$CONTEXT_FILE")
+NODE_TYPE=$(jq -r '.node_type // "node"' "$CONTEXT_FILE")
 
-# Ensure output directory exists for gate results.
-mkdir -p "$WORK_DIR/.belayer/.internal/output"
+# Gate-specific: ensure output directory exists for gate results.
+if [ "$NODE_TYPE" = "gate" ]; then
+  mkdir -p "$WORK_DIR/.belayer/.internal/output"
+fi
 
-# Write Claude Code Stop hook.
+# Write Claude Code Stop hook to call belayer node-complete.
 HOOKS_DIR="$WORK_DIR/.belayer/.internal"
 mkdir -p "$HOOKS_DIR"
 HOOK_CMD="belayer node-complete --task-id ${TASK_ID} --node ${NODE} --attempt ${ATTEMPT}"
@@ -34,9 +37,11 @@ jq -n --arg cmd "$HOOK_CMD" '{
   }
 }' > "$HOOKS_DIR/hooks.json"
 
+# Ensure tmux session exists.
 SESSION="belayer-v3"
 tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION"
 
+# Create window and launch Claude.
 WINDOW="${NODE}-${TASK_ID:0:8}"
 tmux new-window -t "$SESSION" -n "$WINDOW"
 tmux send-keys -t "$SESSION:$WINDOW" \

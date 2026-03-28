@@ -5,7 +5,7 @@ intake:
 nodes:
   - name: implement
     type: node
-    command: .belayer/scripts/run-node.sh
+    command: .belayer/scripts/run.sh
     description: |
       You are the implementer. You receive a design document and implement
       the feature. Write tests. Commit your changes when done.
@@ -21,7 +21,7 @@ nodes:
 
   - name: review
     type: gate
-    command: .belayer/scripts/run-gate.sh
+    command: .belayer/scripts/run.sh
     description: |
       You are an adversarial code reviewer. Review the code changes for
       spec compliance, test coverage, and runtime correctness.

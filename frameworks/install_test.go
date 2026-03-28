@@ -22,8 +22,8 @@ func TestInstall_BuiltinFramework(t *testing.T) {
 	}
 
 	// Verify scripts were copied.
-	if _, err := os.Stat(filepath.Join(targetDir, "scripts", "run-node.sh")); err != nil {
-		t.Error("scripts/run-node.sh not found after install")
+	if _, err := os.Stat(filepath.Join(targetDir, "scripts", "run.sh")); err != nil {
+		t.Error("scripts/run.sh not found after install")
 	}
 }
 
@@ -79,6 +79,44 @@ func TestList_ContainsClaudeTmux(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("List() = %v, want claude-tmux to be present", names)
+	}
+}
+
+func TestInstall_LocalPath(t *testing.T) {
+	// Create a source framework directory.
+	srcDir := t.TempDir()
+	os.WriteFile(filepath.Join(srcDir, "pipeline.yaml"), []byte("name: custom\nnodes: []\n"), 0o644)
+	os.MkdirAll(filepath.Join(srcDir, "scripts"), 0o755)
+	os.WriteFile(filepath.Join(srcDir, "scripts", "run.sh"), []byte("#!/bin/bash\necho hi\n"), 0o644)
+
+	// Install from local path.
+	targetDir := filepath.Join(t.TempDir(), ".belayer")
+	os.MkdirAll(targetDir, 0o755)
+	err := Install(srcDir, targetDir, false)
+	if err != nil {
+		t.Fatalf("Install local path: %v", err)
+	}
+
+	// Verify pipeline.yaml copied.
+	if _, err := os.Stat(filepath.Join(targetDir, "pipeline.yaml")); err != nil {
+		t.Error("pipeline.yaml not found")
+	}
+
+	// Verify scripts copied with executable permission.
+	info, err := os.Stat(filepath.Join(targetDir, "scripts", "run.sh"))
+	if err != nil {
+		t.Error("scripts/run.sh not found")
+	} else if info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("scripts/run.sh should be executable, got mode %o", info.Mode().Perm())
+	}
+}
+
+func TestInstall_LocalPathMissingPipeline(t *testing.T) {
+	srcDir := t.TempDir() // empty dir, no pipeline.yaml
+	targetDir := t.TempDir()
+	err := Install(srcDir, targetDir, false)
+	if err == nil {
+		t.Fatal("expected error for local path missing pipeline.yaml")
 	}
 }
 
