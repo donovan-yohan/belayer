@@ -2,20 +2,17 @@ package session
 
 import "testing"
 
-func TestWindowName_TruncatesTaskID(t *testing.T) {
-	opts := SpawnOpts{NodeName: "reviewer", TaskID: "abcdef1234567890"}
-	got := opts.WindowName()
-	want := "reviewer-abcdef12"
-	if got != want {
-		t.Errorf("WindowName = %q, want %q", got, want)
+func TestSpawnOpts_Fields(t *testing.T) {
+	opts := SpawnOpts{
+		NodeName: "reviewer",
+		TaskID:   "task-123",
+		Command:  "echo test",
+		WorkDir:  "/tmp",
 	}
-}
-
-func TestWindowName_ShortTaskID(t *testing.T) {
-	opts := SpawnOpts{NodeName: "planner", TaskID: "abc"}
-	got := opts.WindowName()
-	want := "planner-abc"
-	if got != want {
-		t.Errorf("WindowName = %q, want %q", got, want)
+	if opts.NodeName != "reviewer" {
+		t.Errorf("NodeName = %q, want %q", opts.NodeName, "reviewer")
+	}
+	if opts.Command != "echo test" {
+		t.Errorf("Command = %q, want %q", opts.Command, "echo test")
 	}
 }

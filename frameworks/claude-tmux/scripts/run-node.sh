@@ -2,7 +2,12 @@
 set -euo pipefail
 
 # Belayer claude-tmux framework: node runner
-# Reads context from env vars + node-context.json, opens Claude in tmux.
+# Reads context from env vars + node-context.json, writes Claude Code Stop hook, opens Claude in tmux.
+
+# Dependency checks.
+command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required but not installed. Install with: brew install jq" >&2; exit 1; }
+command -v tmux >/dev/null 2>&1 || { echo "ERROR: tmux is required but not installed. Install with: brew install tmux" >&2; exit 1; }
+command -v claude >/dev/null 2>&1 || { echo "ERROR: claude CLI is required but not installed." >&2; exit 1; }
 
 TASK_ID="${BELAYER_TASK_ID:?}"
 NODE="${BELAYER_NODE:?}"
@@ -10,8 +15,11 @@ ATTEMPT="${BELAYER_ATTEMPT:?}"
 WORK_DIR="${BELAYER_WORK_DIR:?}"
 
 CONTEXT_FILE="$WORK_DIR/.belayer/.internal/input/node-context.json"
-DESCRIPTION=$(jq -r '.description' "$CONTEXT_FILE")
-INPUT_PROMPT=$(jq -r '.input_prompt' "$CONTEXT_FILE")
+[ -f "$CONTEXT_FILE" ] || { echo "ERROR: node-context.json not found at $CONTEXT_FILE" >&2; exit 1; }
+
+DESCRIPTION=$(jq -r '.description // empty' "$CONTEXT_FILE")
+[ -n "$DESCRIPTION" ] || { echo "ERROR: description is empty in $CONTEXT_FILE" >&2; exit 1; }
+INPUT_PROMPT=$(jq -r '.input_prompt // empty' "$CONTEXT_FILE")
 
 # Write Claude Code Stop hook to call belayer node-complete.
 HOOKS_DIR="$WORK_DIR/.belayer/.internal"

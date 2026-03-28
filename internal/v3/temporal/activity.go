@@ -34,9 +34,11 @@ type NodeActivityOutput struct {
 }
 
 // NodeContext is the typed contract between belayer core and framework implementations.
+// Serialized to .belayer/.internal/input/node-context.json before each node spawn.
 type NodeContext struct {
-	TaskID      string                     `json:"task_id"`
-	NodeName    string                     `json:"node_name"`
+	SchemaVersion int                        `json:"schema_version"`
+	TaskID        string                     `json:"task_id"`
+	NodeName      string                     `json:"node_name"`
 	NodeType    string                     `json:"node_type"`
 	Attempt     int                        `json:"attempt"`
 	WorkDir     string                     `json:"work_dir"`
@@ -108,6 +110,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		thresholds = &input.Node.Thresholds
 	}
 	nc := NodeContext{
+		SchemaVersion: 1,
 		TaskID:      input.TaskID,
 		NodeName:    input.Node.Name,
 		NodeType:    string(input.Node.EffectiveType()),

@@ -72,7 +72,10 @@ func Install(source, targetDir string, force bool) error {
 		if strings.HasSuffix(path, ".sh") {
 			perm = 0o755
 		}
-		return os.WriteFile(target, data, perm)
+		if err := os.WriteFile(target, data, perm); err != nil {
+			return fmt.Errorf("write %s: %w", target, err)
+		}
+		return nil
 	})
 }
 

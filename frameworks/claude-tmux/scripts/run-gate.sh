@@ -2,7 +2,12 @@
 set -euo pipefail
 
 # Belayer claude-tmux framework: gate runner
-# Same as run-node.sh but ensures gate output directory exists.
+# Identical to run-node.sh except it pre-creates the gate output directory.
+
+# Dependency checks.
+command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required but not installed. Install with: brew install jq" >&2; exit 1; }
+command -v tmux >/dev/null 2>&1 || { echo "ERROR: tmux is required but not installed. Install with: brew install tmux" >&2; exit 1; }
+command -v claude >/dev/null 2>&1 || { echo "ERROR: claude CLI is required but not installed." >&2; exit 1; }
 
 TASK_ID="${BELAYER_TASK_ID:?}"
 NODE="${BELAYER_NODE:?}"
@@ -10,8 +15,11 @@ ATTEMPT="${BELAYER_ATTEMPT:?}"
 WORK_DIR="${BELAYER_WORK_DIR:?}"
 
 CONTEXT_FILE="$WORK_DIR/.belayer/.internal/input/node-context.json"
-DESCRIPTION=$(jq -r '.description' "$CONTEXT_FILE")
-INPUT_PROMPT=$(jq -r '.input_prompt' "$CONTEXT_FILE")
+[ -f "$CONTEXT_FILE" ] || { echo "ERROR: node-context.json not found at $CONTEXT_FILE" >&2; exit 1; }
+
+DESCRIPTION=$(jq -r '.description // empty' "$CONTEXT_FILE")
+[ -n "$DESCRIPTION" ] || { echo "ERROR: description is empty in $CONTEXT_FILE" >&2; exit 1; }
+INPUT_PROMPT=$(jq -r '.input_prompt // empty' "$CONTEXT_FILE")
 
 # Ensure output directory exists for gate results.
 mkdir -p "$WORK_DIR/.belayer/.internal/output"
