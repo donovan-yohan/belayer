@@ -40,7 +40,7 @@ harness-plan docs/design-docs/{file}.md         # Plan from specific design doc
    - **If the context document is a refactor scope:** Skip steps already marked `completed` in the scope doc. Plan only the next batch of actionable steps (up to the next async gate). Use `Refactor Scope:` instead of `Design Doc:` in the plan header.
 
 3.5. **Consult learnings** (if available):
-   - Follow the consultation pattern defined in `_learnings-format.md` § "Consulting Learnings"
+   - Follow the consultation pattern defined in `references/learnings-format.md` § "Consulting Learnings"
    - Match learnings against the modules and areas being planned (extracted from the design document in step 3)
    - Surface relevant learnings so the plan can incorporate their recommendations
    - Record consulted learning IDs for inclusion in the plan header (step 5)
@@ -108,7 +108,7 @@ harness-plan docs/design-docs/{file}.md         # Plan from specific design doc
    -
    ```
 
-6. Update `docs/PLANS.md` — add the new plan to the Active Plans table.
+6. **Verify the exec plan file exists before updating PLANS.md.** Read or glob for `docs/exec-plans/active/{filename}.md` to confirm the file from step 5 was successfully written. Only after confirming the file exists on disk, update `docs/PLANS.md` — add the new plan to the Active Plans table. If the file doesn't exist, report the write failure to the user, retry writing the file, and re-verify before proceeding. Do NOT add an entry to PLANS.md until the file is confirmed on disk (this prevents phantom entries that reference nonexistent plans).
 
 7. Report:
    ```

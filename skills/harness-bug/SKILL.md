@@ -26,10 +26,10 @@ harness-bug login fails after timeout    # With initial description
 2. Read `docs/bug-analyses/index.md` to understand prior investigations. If the directory doesn't exist, create it with an empty index.
 
 2.5. **Check prior learnings** (if available):
-   - Follow the consultation pattern defined in `_learnings-format.md` § "Consulting Learnings"
+   - Follow the consultation pattern defined in `references/learnings-format.md` § "Consulting Learnings"
    - Match learnings against the bug's affected area and symptoms
    - If relevant learnings are found, surface them before starting systematic debugging — they may accelerate diagnosis
-   - Also check for recurrence per the "Recurrence Detection" section in `_learnings-format.md`: if a prior learning's recommendation directly addresses this bug class, note it explicitly
+   - Also check for recurrence per the "Recurrence Detection" section in `references/learnings-format.md`: if a prior learning's recommendation directly addresses this bug class, note it explicitly
    - If LEARNINGS.md doesn't exist or has no matches, skip silently
 
 3. **Invoke `systematic-debugging`** using the Skill tool: `Skill("systematic-debugging")`. Then follow the loaded skill's full debug cycle: reproduce, bisect, hypothesize, verify root cause. You MUST use the Skill tool — do not replicate the debugging methodology from memory.
@@ -74,9 +74,9 @@ harness-bug login fails after timeout    # With initial description
    - These findings directly expand the scope of the fix plan created by `harness-plan`
 
 4.6. **Write learnings from root cause + architecture review:**
-   - Produce one learning per dimension that has actionable findings, using the categories below. Follow the `_learnings-format.md` spec for format, IDs, and scaffold.
-   - Check if `docs/LEARNINGS.md` exists. If not, create it with the scaffold from `_learnings-format.md` § "LEARNINGS.md Scaffold".
-   - Determine the next learning ID: use today's date (`YYYYMMDD`) and a short kebab-case slug from the learning topic. Format: `L-YYYYMMDD-slug`. See `_learnings-format.md` § "ID Format" for details.
+   - Produce one learning per dimension that has actionable findings, using the categories below. Follow the `references/learnings-format.md` spec for format, IDs, and scaffold.
+   - Check if `docs/LEARNINGS.md` exists. If not, create it with the scaffold from `references/learnings-format.md` § "LEARNINGS.md Scaffold".
+   - Determine the next learning ID: use today's date (`YYYYMMDD`) and a short kebab-case slug from the learning topic. Format: `L-YYYYMMDD-slug`. See `references/learnings-format.md` § "ID Format" for details.
 
    | Finding dimension | Learning category |
    |-------------------|-------------------|
