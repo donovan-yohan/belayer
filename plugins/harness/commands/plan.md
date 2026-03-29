@@ -104,6 +104,16 @@ Create a living execution plan from a design document, saved as a versioned arti
    -
    ```
 
+5.5. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "plan" \
+      --plan "docs/exec-plans/active/{filename}" \
+      --design-doc "{design-doc-path}"
+    ```
+
 6. **Verify the exec plan file exists before updating PLANS.md.** Read or glob for `docs/exec-plans/active/{filename}.md` to confirm the file from step 5 was successfully written. Only after confirming the file exists on disk, update `docs/PLANS.md` — add the new plan to the Active Plans table. If the file doesn't exist, report the write failure to the user, retry writing the file, and re-verify before proceeding. Do NOT add an entry to PLANS.md until the file is confirmed on disk (this prevents phantom entries that reference nonexistent plans).
 
 7. Report:

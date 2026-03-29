@@ -150,3 +150,11 @@ Plan archival, prune health check, and PR creation. Run after `/harness:review` 
 
     ### PR: #{number} — {url}
     ```
+
+15. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "complete"
+    ```

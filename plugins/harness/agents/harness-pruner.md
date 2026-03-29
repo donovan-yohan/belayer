@@ -55,6 +55,11 @@ The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md ear
 | **Over-indexed Question Categories** | Question bank categories with zero escape log entries after 5+ reviews have been run (may be wasting review time on non-applicable questions) | info |
 | **Legacy Learning IDs** | `docs/LEARNINGS.md` contains entries using old `L-NNN` sequential format instead of `L-YYYYMMDD-slug` date-slug format | warn |
 | **Legacy Index Table Format** | `docs/design-docs/index.md`, `docs/bug-analyses/index.md`, or `docs/refactor-scopes/index.md` uses markdown table format instead of bullet list format | warn |
+| **Harness Runtime Missing** | `.harness/` or `~/.harness/slug/` not found when CLAUDE.md Documentation Map lists it | warn |
+| **Stale Proposals** | Proposals in `.harness/proposals/` with status `pending` older than 14 days | warn |
+| **Metrics Cold Start** | `.harness/metrics/review-effectiveness.json` has zero agent runs after harness has been active 30+ days | info |
+| **Agent Budget Exceeded** | Agent definition in `.harness/agents/` exceeds 200 lines | warn |
+| **IMPROVEMENTS.md Missing** | `.harness/memory/IMPROVEMENTS.md` doesn't exist but `.harness/` is initialized | error |
 
 ## Audit Process
 
@@ -238,6 +243,35 @@ The current format uses bullet lists (`- [title](file.md) — description (date)
 
 Detection: if the file contains a line matching `^\|.*\|.*\|` (pipe-delimited table row), it uses the legacy format. Flag as **warn**.
 
+### Step 25: Harness Runtime Consistency
+
+If CLAUDE.md Documentation Map includes a `.harness/` entry:
+- Check if `.harness/` exists on the filesystem
+- If missing, flag as **warn** — the map references a directory that doesn't exist
+
+### Step 26: Stale Proposals
+
+If `.harness/proposals/` exists and has files:
+- For each proposal with `Status: pending`, check the date in the filename
+- If older than 14 days, flag as **warn** — proposals should be reviewed promptly
+
+### Step 27: Metrics Cold Start
+
+If `.harness/metrics/review-effectiveness.json` exists:
+- Check if any agent has `runs > 0`
+- If all agents have zero runs and `.harness/manifest.yaml` was created more than 30 days ago, flag as **info** — the evolution system has no data
+
+### Step 28: Agent Line Budget
+
+For each file in `.harness/agents/`:
+- Count lines using `wc -l`
+- If over 200 lines, flag as **warn** — agent definitions should stay focused
+
+### Step 29: IMPROVEMENTS.md Presence
+
+If `.harness/` exists but `.harness/memory/IMPROVEMENTS.md` does not:
+- Flag as **error** — the audit trail is missing
+
 ## Output Format
 
 ```markdown
@@ -328,6 +362,10 @@ When the user approves fixes, apply them in this order:
     2. Convert to bullet list format: `- [title](file.md) — description (date)`
     3. For `docs/design-docs/index.md`: group entries by status under section headers (Current Designs / Archived > Implemented / Superseded / Stale). Read each design doc's frontmatter `status` to determine the correct section.
     4. For `docs/bug-analyses/index.md` and `docs/refactor-scopes/index.md`: flat bullet list (no sections needed)
+
+23. **Stale proposals** — List pending proposals for user review; offer to mark as `rejected`
+24. **Agent budget exceeded** — Suggest running `/harness:evolve` to consolidate checks
+25. **IMPROVEMENTS.md missing** — Recreate from scaffold
 
 For each fix applied, report what was changed.
 

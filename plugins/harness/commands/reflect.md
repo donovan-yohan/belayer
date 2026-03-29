@@ -276,10 +276,21 @@ This phase feeds the self-learning review system. When bugs escape `/harness:rev
     - Questions added to REVIEW_GUIDANCE.md: {N}
     - Categories affected: {list, or "None — no review escapes detected"}
 
+    ### Evolution
+    - {evolve report summary, or "Skipped — no .harness/ runtime"}
+
     ### Retrospective
     - Captured in plan's Outcomes & Retrospective section
 
     ## Next Step
 
     Run `/harness:complete` to archive the plan and create the PR.
+    ```
+
+22. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "reflect"
     ```

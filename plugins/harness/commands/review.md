@@ -323,3 +323,11 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
     - `unique`: no other agent reported the same file+line with similar severity
 
 26. If `HARNESS_DIR` is empty: skip. Review works without `.harness/` — structured output is additive.
+
+27. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "review"
+    ```

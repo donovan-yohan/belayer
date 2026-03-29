@@ -62,6 +62,16 @@ Design through collaborative dialogue, saved as a versioned design document in t
    - Add to the "Current State" bullets if a new pattern was established
    - Add to the "Key Decisions" table if a non-trivial decision was made
 
+5.5. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "brainstorm" \
+      --design-doc "docs/design-docs/{filename}" \
+      --branch "$(git branch --show-current)"
+    ```
+
 6. Guide user to next step:
    ```
    Design saved to: docs/design-docs/{filename}.md

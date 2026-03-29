@@ -19,6 +19,13 @@ Execute a living plan using subagent-driven development with per-task living pla
 
 ### Phase 1: Load Plan
 
+0.1. **Read run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-read-state.sh --harness-dir "$HARNESS_DIR"
+    ```
+    Use the run-state to auto-detect the active plan if no argument was provided.
+
 1. Locate the plan:
    - If a path argument was provided, use it
    - Otherwise, list `docs/exec-plans/active/` and use the most recently modified file
@@ -100,3 +107,10 @@ Execute a living plan using subagent-driven development with per-task living pla
 
    Then `/harness:reflect` → `/harness:complete`.
    ```
+
+6. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "orchestrate"
+    ```
