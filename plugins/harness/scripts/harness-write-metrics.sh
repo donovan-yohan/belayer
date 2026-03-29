@@ -42,7 +42,12 @@ case "$METRIC" in
   plan-accuracy)
     [ -z "$PLAN_SLUG" ] && { echo "Error: --metric plan-accuracy requires --plan-slug" >&2; exit 1; }
     ;;
-  learning-efficacy|phase-costs)
+  learning-efficacy)
+    [ -z "$PLAN_SLUG" ] && { echo "Error: --metric learning-efficacy requires --plan-slug (learning ID)" >&2; exit 1; }
+    ;;
+  phase-costs)
+    echo "Warning: phase-costs metric collection not yet implemented" >&2
+    exit 0
     ;;
   *)
     echo "Error: unknown --metric '$METRIC'. Valid: review-effectiveness, plan-accuracy, learning-efficacy, phase-costs" >&2
@@ -99,20 +104,13 @@ elif metric_type == 'plan-accuracy':
     plan['surprise_entries'] += int(os.environ.get('SURPRISES', '0'))
 
 elif metric_type == 'learning-efficacy':
-    plan_slug = os.environ.get('PLAN_SLUG', '')
-    if plan_slug:
-        learnings = data.setdefault('learnings', {})
-        learning = learnings.setdefault(plan_slug, {
-            'recurrence_count': 0, 'prevented_count': 0, 'scope': 'repo', 'category': ''
-        })
-        learning['recurrence_count'] += int(os.environ.get('DRIFT', '0'))
-        learning['prevented_count'] += int(os.environ.get('SURPRISES', '0'))
-    else:
-        print("Warning: --plan-slug (learning ID) not provided, no data written", file=sys.stderr)
-
-elif metric_type == 'phase-costs':
-    # Phase costs collection not yet implemented. This branch is a no-op.
-    print("Warning: phase-costs metric collection not yet implemented", file=sys.stderr)
+    plan_slug = os.environ['PLAN_SLUG']
+    learnings = data.setdefault('learnings', {})
+    learning = learnings.setdefault(plan_slug, {
+        'recurrence_count': 0, 'prevented_count': 0, 'scope': 'repo', 'category': ''
+    })
+    learning['recurrence_count'] += int(os.environ.get('DRIFT', '0'))
+    learning['prevented_count'] += int(os.environ.get('SURPRISES', '0'))
 
 data['last_updated'] = now
 
