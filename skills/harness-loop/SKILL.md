@@ -6,7 +6,7 @@ description: Use when running the full implementation cycle autonomously after a
 > Generated from Claude plugin command: plugins/harness/commands/loop.md
 > Claude alias: /harness:loop
 
-> **DEPRECATED:** `harness-loop` is deprecated in favor of stateless command composition. Each command (brainstorm, plan, orchestrate, test, review, reflect, complete) is a stateless function that reads inputs from disk and writes outputs to disk. Run `/clear` between commands for context isolation. The `run-state.json` protocol connects them. Loop will be removed in a future version.
+> **DEPRECATED:** `harness-loop` is deprecated in favor of stateless command composition. Each command (brainstorm, plan, orchestrate, review, reflect, complete) is a stateless function that reads inputs from disk and writes outputs to disk. Run `/clear` between commands for context isolation. The `run-state.json` protocol connects them. Loop will be removed in a future version.
 >
 > **Migration:** Instead of `harness-loop`, run each command individually:
 > ```

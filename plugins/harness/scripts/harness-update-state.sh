@@ -27,41 +27,50 @@ STATE_FILE="$HARNESS_DIR/run-state.json"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 if [ -f "$STATE_FILE" ]; then
-  python3 -c "
-import json, sys
-with open('$STATE_FILE') as f:
+  STATE_FILE="$STATE_FILE" PHASE="$PHASE" NOW="$NOW" PLAN="$PLAN" DESIGN_DOC="$DESIGN_DOC" BRANCH="$BRANCH" \
+  python3 - <<'PYEOF'
+import json, os
+state_file = os.environ['STATE_FILE']
+phase = os.environ['PHASE']
+now = os.environ['NOW']
+plan = os.environ.get('PLAN', '')
+design_doc = os.environ.get('DESIGN_DOC', '')
+branch = os.environ.get('BRANCH', '')
+
+with open(state_file) as f:
     state = json.load(f)
-state['phase'] = '$PHASE'
-state['last_updated'] = '$NOW'
-if '$PLAN':
-    state['plan'] = '$PLAN'
-if '$DESIGN_DOC':
-    state['design_doc'] = '$DESIGN_DOC'
-if '$BRANCH':
-    state['branch'] = '$BRANCH'
+state['phase'] = phase
+state['last_updated'] = now
+if plan:
+    state['plan'] = plan
+if design_doc:
+    state['design_doc'] = design_doc
+if branch:
+    state['branch'] = branch
 completed_names = [p['name'] for p in state.get('completed_phases', [])]
-if '$PHASE' not in completed_names:
-    state.setdefault('completed_phases', []).append({'name': '$PHASE', 'completed_at': '$NOW'})
-with open('$STATE_FILE', 'w') as f:
+if phase not in completed_names:
+    state.setdefault('completed_phases', []).append({'name': phase, 'completed_at': now})
+with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
-"
+PYEOF
 else
   BRANCH_VAL="${BRANCH:-$(git branch --show-current 2>/dev/null || echo "")}"
-  python3 -c "
-import json
+  STATE_FILE="$STATE_FILE" PHASE="$PHASE" NOW="$NOW" PLAN="$PLAN" DESIGN_DOC="$DESIGN_DOC" BRANCH_VAL="$BRANCH_VAL" \
+  python3 - <<'PYEOF'
+import json, os
 state = {
     'schema_version': 1,
-    'plan': '$PLAN',
-    'design_doc': '$DESIGN_DOC',
-    'branch': '$BRANCH_VAL',
-    'phase': '$PHASE',
-    'completed_phases': [{'name': '$PHASE', 'completed_at': '$NOW'}],
-    'started_at': '$NOW',
-    'last_updated': '$NOW'
+    'plan': os.environ.get('PLAN', ''),
+    'design_doc': os.environ.get('DESIGN_DOC', ''),
+    'branch': os.environ.get('BRANCH_VAL', ''),
+    'phase': os.environ['PHASE'],
+    'completed_phases': [{'name': os.environ['PHASE'], 'completed_at': os.environ['NOW']}],
+    'started_at': os.environ['NOW'],
+    'last_updated': os.environ['NOW']
 }
-with open('$STATE_FILE', 'w') as f:
+with open(os.environ['STATE_FILE'], 'w') as f:
     json.dump(state, f, indent=2)
-"
+PYEOF
 fi
 
 echo "Updated run-state: phase=$PHASE"

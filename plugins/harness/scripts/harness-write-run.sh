@@ -27,26 +27,31 @@ TIMESTAMP=$(date -u +%Y-%m-%dT%H%M%SZ)
 RUN_FILE="$RUNS_DIR/${TIMESTAMP}-${PHASE}.json"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-python3 -c "
-import json
+DATA_FILE="$DATA_FILE" PHASE="$PHASE" BRANCH="${BRANCH:-unknown}" NOW="$NOW" RUN_FILE="$RUN_FILE" \
+python3 - <<'PYEOF'
+import json, os, sys
 
 data = {}
-data_file = '$DATA_FILE'
+data_file = os.environ.get('DATA_FILE', '')
 if data_file:
     try:
         with open(data_file) as f:
             data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        pass
+    except FileNotFoundError:
+        print(f"Error: --data-file '{data_file}' not found", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: --data-file '{data_file}' is not valid JSON: {e}", file=sys.stderr)
+        sys.exit(1)
 
 record = {
-    'phase': '$PHASE',
-    'branch': '${BRANCH:-unknown}',
-    'timestamp': '$NOW',
+    'phase': os.environ['PHASE'],
+    'branch': os.environ.get('BRANCH', 'unknown'),
+    'timestamp': os.environ['NOW'],
     'data': data
 }
-with open('$RUN_FILE', 'w') as f:
+with open(os.environ['RUN_FILE'], 'w') as f:
     json.dump(record, f, indent=2)
-"
+PYEOF
 
 echo "$RUN_FILE"

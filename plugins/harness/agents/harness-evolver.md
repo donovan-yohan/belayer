@@ -33,10 +33,7 @@ For each signal provided (escape, metric anomaly, universal learning):
 
 4. **Line budget enforcement**: Agent definitions must stay under 200 lines. If the agent is already near the limit, propose consolidating existing checks before adding new ones. A focused agent with 15 precise checks beats a bloated agent with 40 vague ones.
 
-5. **Write the proposal** using the harness-write-proposal.sh script, providing:
-   - The current text (relevant section of the agent definition)
-   - The proposed replacement text
-   - Reasoning that connects the signal to the proposed change
+5. **Output the proposal** in the Output Format below. Do NOT call harness-write-proposal.sh directly — the parent command (`/harness:evolve`) handles writing proposals to disk from your output.
 
 ## Signal Types
 

@@ -2,7 +2,7 @@
 description: Use when running the full implementation cycle autonomously after a brainstorm/bug/refactor session, when user says "loop", "run it all", "implement end to end", or "take it from here"
 ---
 
-> **DEPRECATED:** `/harness:loop` is deprecated in favor of stateless command composition. Each command (brainstorm, plan, orchestrate, test, review, reflect, complete) is a stateless function that reads inputs from disk and writes outputs to disk. Run `/clear` between commands for context isolation. The `run-state.json` protocol connects them. Loop will be removed in a future version.
+> **DEPRECATED:** `/harness:loop` is deprecated in favor of stateless command composition. Each command (brainstorm, plan, orchestrate, review, reflect, complete) is a stateless function that reads inputs from disk and writes outputs to disk. Run `/clear` between commands for context isolation. The `run-state.json` protocol connects them. Loop will be removed in a future version.
 >
 > **Migration:** Instead of `/harness:loop`, run each command individually:
 > ```

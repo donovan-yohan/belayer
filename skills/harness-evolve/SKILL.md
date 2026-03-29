@@ -132,7 +132,7 @@ No .harness/ runtime found. Run harness-init and choose option 1 or 2 to enable 
     ```
     Agent(
       subagent_type="harness:harness-evolver",
-      prompt="Generate evolution proposals for these signals: {signal list}. Read agent definitions from $HARNESS_DIR/agents/. Read metrics from $HARNESS_DIR/metrics/. Write proposals using ${CLAUDE_PLUGIN_ROOT}/scripts/harness-write-proposal.sh."
+      prompt="Generate evolution proposals for these signals: {signal list}. Read agent definitions from $HARNESS_DIR/agents/. Read metrics from $HARNESS_DIR/metrics/. Output proposals in the structured Output Format — do NOT write files directly."
     )
     ```
     </MANDATORY>

@@ -30,6 +30,7 @@ done
 [ -z "$HARNESS_DIR" ] || [ -z "$SLUG" ] && { echo "Error: --harness-dir and --slug required" >&2; exit 1; }
 
 DATE=$(date +%Y-%m-%d)
+mkdir -p "$HARNESS_DIR/proposals"
 PROPOSAL_FILE="$HARNESS_DIR/proposals/${DATE}-${SLUG}.md"
 
 {

@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
-# Scaffold .harness/ directory with empty defaults.
-# Usage: harness-init-runtime.sh --harness-dir <path> [--repo-name <owner/repo>]
+# Scaffold .harness/ directory with default configuration and empty metrics.
+# Usage: harness-init-runtime.sh --harness-dir <path> [--repo-name <owner/repo>] [--force]
 set -euo pipefail
 
 HARNESS_DIR=""
 REPO_NAME=""
+FORCE=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --harness-dir) HARNESS_DIR="$2"; shift 2 ;;
     --repo-name) REPO_NAME="$2"; shift 2 ;;
-    *) echo "Usage: $0 --harness-dir <path> [--repo-name <owner/repo>]" >&2; exit 1 ;;
+    --force) FORCE=true; shift ;;
+    *) echo "Usage: $0 --harness-dir <path> [--repo-name <owner/repo>] [--force]" >&2; exit 1 ;;
   esac
 done
 
 [ -z "$HARNESS_DIR" ] && { echo "Error: --harness-dir required" >&2; exit 1; }
+
+if [ -f "$HARNESS_DIR/manifest.yaml" ] && [ "$FORCE" != "true" ]; then
+  echo "Warning: $HARNESS_DIR already initialized (use --force to overwrite)" >&2
+  exit 0
+fi
 
 mkdir -p "$HARNESS_DIR"/{agents,metrics,memory,proposals,handoffs,runs}
 
