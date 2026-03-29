@@ -98,18 +98,14 @@ No .harness/ runtime found. Run /harness:init and choose option 1 or 2 to enable
    - For each new learning from this session, check if any bugs in this session match existing learning categories (recurrence detection)
    - If a learning's recommendation was supposed to prevent this class of bug but the bug occurred anyway, increment `recurrence_count`
    - If a learning's recommendation was consulted and the relevant bug class did NOT occur, increment `prevented_count`
-   - Use python3 for JSON manipulation:
+   - Use the metrics script for each learning:
      ```bash
-     python3 -c "
-     import json
-     with open('$HARNESS_DIR/metrics/learning-efficacy.json') as f:
-         data = json.load(f)
-     learnings = data.setdefault('learnings', {})
-     # ... update per learning ID ...
-     data['last_updated'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
-     with open('$HARNESS_DIR/metrics/learning-efficacy.json', 'w') as f:
-         json.dump(data, f, indent=2)
-     "
+     bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-write-metrics.sh \
+       --harness-dir "$HARNESS_DIR" \
+       --metric learning-efficacy \
+       --plan-slug "{learning-id}" \
+       --drift {recurrence-increment} \
+       --surprises {prevented-increment}
      ```
 
 ### Phase 3: Agent Evolution Proposals
