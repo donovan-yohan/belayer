@@ -32,7 +32,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[ -z "$HARNESS_DIR" ] || [ -z "$METRIC" ] && { echo "Error: --harness-dir and --metric required" >&2; exit 1; }
+[ -z "$HARNESS_DIR" ] && { echo "Error: --harness-dir required" >&2; exit 1; }
+[ -z "$METRIC" ] && { echo "Error: --metric required" >&2; exit 1; }
 
 # Validate metric type and required secondary args
 case "$METRIC" in

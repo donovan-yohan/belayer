@@ -18,7 +18,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[ -z "$HARNESS_DIR" ] || [ -z "$PHASE" ] && { echo "Error: --harness-dir and --phase required" >&2; exit 1; }
+[ -z "$HARNESS_DIR" ] && { echo "Error: --harness-dir required" >&2; exit 1; }
+[ -z "$PHASE" ] && { echo "Error: --phase required" >&2; exit 1; }
 
 RUNS_DIR="$HARNESS_DIR/runs"
 mkdir -p "$RUNS_DIR"

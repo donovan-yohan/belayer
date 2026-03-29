@@ -27,7 +27,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[ -z "$HARNESS_DIR" ] || [ -z "$SLUG" ] && { echo "Error: --harness-dir and --slug required" >&2; exit 1; }
+[ -z "$HARNESS_DIR" ] && { echo "Error: --harness-dir required" >&2; exit 1; }
+[ -z "$SLUG" ] && { echo "Error: --slug required" >&2; exit 1; }
 
 DATE=$(date +%Y-%m-%d)
 mkdir -p "$HARNESS_DIR/proposals"
