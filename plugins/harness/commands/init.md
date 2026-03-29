@@ -314,6 +314,55 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     what belongs where. A flat "guides/" directory decays into a junk drawer.
     ```
 
+### Phase 2.3: Harness Runtime Scaffold (optional)
+
+8.8. **Offer `.harness/` runtime setup:**
+    ```
+    ## Harness Runtime
+
+    The harness can track metrics, evolve agent definitions, and self-improve
+    across sessions via a `.harness/` directory.
+
+    Options:
+    1. `.harness/` in repo root (committed, team-shared) — recommended
+    2. `~/.harness/{repo-slug}/` global (personal, not committed)
+    3. Skip — use static plugin defaults (can add later with /harness:init)
+
+    Which option? (1/2/3)
+    ```
+
+8.9. **If user chose option 1 or 2:**
+
+    Determine the harness directory path:
+    - Option 1: `HARNESS_DIR=".harness"`
+    - Option 2: `HARNESS_DIR="$HOME/.harness/{repo-slug}"` where repo-slug is derived from `basename $(git rev-parse --show-toplevel)`
+
+    Determine the repo name for manifest:
+    ```bash
+    git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo "local/$(basename $(pwd))"
+    ```
+
+    Run the scaffold script:
+    ```bash
+    bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-init-runtime.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --repo-name "$REPO_NAME"
+    ```
+
+    Copy default agent definitions from plugin to `.harness/agents/`:
+    - Read each agent file in `${CLAUDE_PLUGIN_ROOT}/agents/` (harness-pruner.md, learnings-reviewer.md, harness-evolver.md)
+    - Copy them to `$HARNESS_DIR/agents/` as starting points for evolution
+    - These copies will diverge from the plugin defaults as they evolve
+
+    If option 1: add `.harness/` to the Documentation Map in CLAUDE.md:
+    ```markdown
+    | Harness Runtime | `.harness/` | Agent evolution, metrics, proposals, self-improvement |
+    ```
+
+    If option 1: ensure `.harness/handoffs/`, `.harness/memory/session-history.json`, `.harness/review-results.json`, `.harness/phase-timing.tmp`, and `.harness/run-state.json` are in `.gitignore` (the scaffold script creates `.harness/.gitignore` for this, but also check the repo root `.gitignore`).
+
+8.10. **If user chose option 3:** Skip silently. The harness works without `.harness/` — all commands fall back to plugin defaults.
+
 ### Phase 3: Discover Extra Categories
 
 14. Scan the repository for extra domain signals:
@@ -472,6 +521,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
     - docs/design-docs/index.md
     - docs/design-docs/core-beliefs.md
     - {any discovered Tier 2 files}
+    - .harness/ (if opted in: manifest.yaml, config.yaml, agents/, metrics/, memory/)
 
     ### Next Steps
     - `/harness:brainstorm` — start a new feature design
