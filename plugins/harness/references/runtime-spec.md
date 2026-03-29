@@ -112,14 +112,15 @@ review:
       "completion_date": null
     }
   },
-  "aggregate": {
-    "avg_drift_rate": 0,
-    "avg_surprise_rate": 0,
-    "avg_completion_rate": 0
-  },
   "last_updated": null
 }
 ```
+
+<!-- TODO: Add an "aggregate" block (avg_drift_rate, avg_surprise_rate,
+     avg_completion_rate) when the evolver needs cross-plan trend signals
+     to inform evolution proposals. Requires recomputation after each
+     plan-accuracy update in harness-write-metrics.sh. Not needed until
+     there are 3+ completed plans to compare against. -->
 
 ### learning-efficacy.json
 

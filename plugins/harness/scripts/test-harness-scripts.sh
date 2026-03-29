@@ -57,6 +57,17 @@ assert_contains() {
   fi
 }
 
+run_script() {
+  local desc="$1"; shift
+  if "$@" >/dev/null 2>&1; then
+    return 0
+  else
+    echo "  FAIL (setup): $desc — script exited non-zero"
+    FAIL=$((FAIL+1))
+    return 1
+  fi
+}
+
 # ─── Test: harness-resolve-dir.sh ───
 echo "Testing harness-resolve-dir.sh"
 
@@ -77,7 +88,7 @@ assert_eq "with .harness/ returns path" "$RESOLVE_DIR/.harness" "$RESULT"
 echo "Testing harness-init-runtime.sh"
 
 INIT_DIR="$TEST_DIR/init-test/.harness"
-"$SCRIPT_DIR/harness-init-runtime.sh" --harness-dir "$INIT_DIR" --repo-name "test/repo" >/dev/null
+run_script "init harness dir" "$SCRIPT_DIR/harness-init-runtime.sh" --harness-dir "$INIT_DIR" --repo-name "test/repo" || { echo "Skipping remaining init tests"; }
 
 assert_dir_exists "creates agents/" "$INIT_DIR/agents"
 assert_dir_exists "creates metrics/" "$INIT_DIR/metrics"
@@ -106,13 +117,13 @@ RESULT=$("$SCRIPT_DIR/harness-read-state.sh" --harness-dir "$STATE_DIR")
 assert_eq "read nonexistent state returns empty" "" "$RESULT"
 
 # Create state
-"$SCRIPT_DIR/harness-update-state.sh" --harness-dir "$STATE_DIR" --phase "brainstorm" --plan "test-plan.md" --branch "test-branch" >/dev/null
+run_script "create state" "$SCRIPT_DIR/harness-update-state.sh" --harness-dir "$STATE_DIR" --phase "brainstorm" --plan "test-plan.md" --branch "test-branch"
 assert_file_exists "creates run-state.json" "$STATE_DIR/run-state.json"
 assert_contains "state has phase" "$STATE_DIR/run-state.json" '"phase": "brainstorm"'
 assert_contains "state has plan" "$STATE_DIR/run-state.json" "test-plan.md"
 
 # Update state
-"$SCRIPT_DIR/harness-update-state.sh" --harness-dir "$STATE_DIR" --phase "plan" >/dev/null
+run_script "update state" "$SCRIPT_DIR/harness-update-state.sh" --harness-dir "$STATE_DIR" --phase "plan"
 assert_contains "updated phase" "$STATE_DIR/run-state.json" '"phase": "plan"'
 
 # Verify both phases in completed_phases
@@ -123,11 +134,28 @@ assert_eq "two completed phases" "2" "$COMPLETED_COUNT"
 echo "Testing harness-write-metrics.sh"
 
 # Use the init-test .harness dir which has metrics files
-"$SCRIPT_DIR/harness-write-metrics.sh" --harness-dir "$INIT_DIR" --metric "review-effectiveness" --agent "code-reviewer" --findings 3 --false-pos 1 --unique 2 >/dev/null
+run_script "write review metrics" "$SCRIPT_DIR/harness-write-metrics.sh" --harness-dir "$INIT_DIR" --metric "review-effectiveness" --agent "code-reviewer" --findings 3 --false-pos 1 --unique 2
 assert_contains "metrics updated" "$INIT_DIR/metrics/review-effectiveness.json" '"code-reviewer"'
 
 RUNS=$(python3 -c "import json; d=json.load(open('$INIT_DIR/metrics/review-effectiveness.json')); print(d['agents']['code-reviewer']['runs'])")
 assert_eq "agent runs incremented" "1" "$RUNS"
+
+# plan-accuracy metric path
+run_script "write plan-accuracy metrics" "$SCRIPT_DIR/harness-write-metrics.sh" --harness-dir "$INIT_DIR" --metric "plan-accuracy" --plan-slug "test-plan" --tasks-planned 10 --tasks-completed 7 --drift 2 --surprises 1
+assert_contains "plan entry created" "$INIT_DIR/metrics/plan-accuracy.json" '"test-plan"'
+PLANNED=$(python3 -c "import json; d=json.load(open('$INIT_DIR/metrics/plan-accuracy.json')); print(d['plans']['test-plan']['tasks_planned'])")
+assert_eq "tasks_planned recorded" "10" "$PLANNED"
+DRIFT=$(python3 -c "import json; d=json.load(open('$INIT_DIR/metrics/plan-accuracy.json')); print(d['plans']['test-plan']['drift_entries'])")
+assert_eq "drift recorded" "2" "$DRIFT"
+
+# plan-accuracy validation: missing --plan-slug should fail
+if "$SCRIPT_DIR/harness-write-metrics.sh" --harness-dir "$INIT_DIR" --metric "plan-accuracy" 2>/dev/null; then
+  echo "  FAIL: plan-accuracy without --plan-slug should exit non-zero"
+  FAIL=$((FAIL+1))
+else
+  echo "  PASS: plan-accuracy without --plan-slug rejected"
+  PASS=$((PASS+1))
+fi
 
 # ─── Test: harness-write-proposal.sh ───
 echo "Testing harness-write-proposal.sh"
