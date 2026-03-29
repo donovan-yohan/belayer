@@ -6,6 +6,14 @@ description: Use when running the full implementation cycle autonomously after a
 > Generated from Claude plugin command: plugins/harness/commands/loop.md
 > Claude alias: /harness:loop
 
+> **DEPRECATED:** `harness-loop` is deprecated in favor of stateless command composition. Each command (brainstorm, plan, orchestrate, test, review, reflect, complete) is a stateless function that reads inputs from disk and writes outputs to disk. Run `/clear` between commands for context isolation. The `run-state.json` protocol connects them. Loop will be removed in a future version.
+>
+> **Migration:** Instead of `harness-loop`, run each command individually:
+> ```
+> harness-brainstorm → /clear → harness-plan → /clear → harness-orchestrate → /clear → harness-review → /clear → harness-reflect → /clear → harness-complete
+> ```
+> For autonomous execution, use a belayer pipeline YAML with one node per command.
+
 # Loop
 
 Autonomous end-to-end execution: plan, orchestrate, review, fix, reflect, and complete — with no user checkpoints. Surfaces a decision summary at the end.

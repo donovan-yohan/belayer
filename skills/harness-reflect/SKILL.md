@@ -183,6 +183,28 @@ This phase feeds the self-learning review system. When bugs escape `harness-revi
    - Questions added/refined
    - Categories affected
 
+### Phase 5.8: Evolve Trigger
+
+14.12. Resolve the harness runtime directory:
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    ```
+
+14.13. If `HARNESS_DIR` is not empty:
+    - Invoke `harness-evolve` using the Skill tool: `Skill("harness-evolve")`. Follow the loaded skill's full process.
+
+    <MANDATORY>
+    You MUST use the Skill tool to invoke `harness-evolve`. Do NOT classify learnings or generate proposals inline — the evolve command has the persistence script integration, evolver agent dispatch, and auto-apply safety checks that prevent both under-evolution and over-evolution.
+    </MANDATORY>
+
+14.14. If `HARNESS_DIR` is empty: skip silently. Repos without `.harness/` work exactly as before — backward compatible.
+
+14.15. Include evolve results in the Report output (append after the Review Escape Mining section):
+    ```
+    ### Evolution
+    - {evolve report summary, or "Skipped — no .harness/ runtime"}
+    ```
+
 ### Phase 6: Outcomes & Retrospective
 
 15. Ask user for their perspective:
@@ -258,10 +280,21 @@ This phase feeds the self-learning review system. When bugs escape `harness-revi
     - Questions added to REVIEW_GUIDANCE.md: {N}
     - Categories affected: {list, or "None — no review escapes detected"}
 
+    ### Evolution
+    - {evolve report summary, or "Skipped — no .harness/ runtime"}
+
     ### Retrospective
     - Captured in plan's Outcomes & Retrospective section
 
     ## Next Step
 
     Run `harness-complete` to archive the plan and create the PR.
+    ```
+
+22. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "reflect"
     ```
