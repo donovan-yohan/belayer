@@ -96,6 +96,32 @@ harness-complete                # Complete most recent active plan
      - Update its Status column to "Implemented"
    - Status badge vocabulary for the index: `Current` | `Implemented` | `Superseded` | `Stale`
 
+### Phase 5.7: Evolution Summary
+
+11.6. Resolve the harness runtime directory:
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    ```
+
+11.7. If `HARNESS_DIR` is not empty, check for proposals from this session:
+    - List files in `$HARNESS_DIR/proposals/` matching today's date prefix
+    - For each proposal, read its status, scope, signal, and agent
+
+11.8. If proposals exist, include them in the PR description (Phase 7). Add a "Harness Evolution" section to the PR body:
+    ```markdown
+    ## Harness Evolution
+
+    | Proposal | Agent | Signal | Scope | Status |
+    |----------|-------|--------|-------|--------|
+    | {slug} | {agent} | {signal} | {scope} | {applied/pending} |
+
+    **Auto-applied ({N}):** These proposals met all safety criteria (escape-sourced, additive, 5+ agent runs) and were applied automatically.
+
+    **Pending review ({N}):** These proposals need human review before applying.
+    ```
+
+11.9. If no proposals or no `.harness/`: skip. The PR is created normally.
+
 ### Phase 6: Prune Health Check
 
 12. Execute `harness-prune` inline to verify docs health after all updates. Report any issues.
@@ -127,4 +153,12 @@ harness-complete                # Complete most recent active plan
     ### Prune Health: {HEALTHY | NEEDS ATTENTION}
 
     ### PR: #{number} — {url}
+    ```
+
+15. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "complete"
     ```

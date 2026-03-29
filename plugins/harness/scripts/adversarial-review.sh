@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # adversarial-review.sh — Context-isolated adversarial production review
 #
-# Wraps `claude --bare -p` as a completely separate process with no conversation
+# Wraps `claude -p` as a completely separate process with no conversation
 # context, no plugins, no hooks. The reviewer sees only the diff and a targeted
 # adversarial prompt. Output is structured JSON validated against a schema.
 #
@@ -189,18 +189,17 @@ RAW_OUTPUT=""
 EXIT_CODE=0
 
 # Strip CLAUDECODE env var to avoid nesting detection
-# Use --bare for clean isolation (no hooks, plugins, CLAUDE.md, auto-memory)
 # Use --no-session-persistence so nothing persists
 # Use --json-schema for structured output validation
 # Use --allowedTools "Read" for read-only (no writes)
 if [[ "$VERBOSE" == "true" ]]; then
-  echo "--- adversarial-review: invoking claude --bare -p ---" >&2
+  echo "--- adversarial-review: invoking claude -p ---" >&2
   echo "    model: $MODEL | effort: $EFFORT | turns: $MAX_TURNS | budget: \$$MAX_BUDGET" >&2
 fi
 
 RAW_OUTPUT=$(
   timeout "${TIMEOUT}" env -u CLAUDECODE \
-    "$CLAUDE_BIN" --bare \
+    "$CLAUDE_BIN" \
     -p "$(cat "$COMBINED_INPUT")" \
     --system-prompt-file "$PROMPT_FILE" \
     --output-format json \
@@ -219,7 +218,7 @@ RAW_OUTPUT=$(
 if [[ $EXIT_CODE -eq 124 ]]; then
   # timeout(1) returns 124 on timeout
   echo "{\"verdict\":\"SKIP\",\"reason\":\"timeout after ${TIMEOUT}s\",\"findings\":[],\"summary\":\"Adversarial review timed out.\"}"
-  cleanup
+  rm -f "$SCHEMA_FILE" "$COMBINED_INPUT" "$STDERR_FILE" "$DIFF_TEMP" 2>/dev/null
   exit 4
 fi
 

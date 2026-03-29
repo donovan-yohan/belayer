@@ -8,6 +8,7 @@
 
 ### Implemented
 
+- [2026-03-28-self-improving-harness-runtime-design](2026-03-28-self-improving-harness-runtime-design.md) — Self-improving .harness/ runtime: agent evolution, metrics-driven self-modification, stateless command protocol, retroactive bug tracing (2026-03-28)
 - [2026-03-27-code-restructuring-v1-removal-design](2026-03-27-code-restructuring-v1-removal-design.md) — Remove v1 legacy code, flatten v3 to internal/, rename pipeline nodes (2026-03-27)
 - [2026-03-26-exec-spawner-framework-scaffolding-design](2026-03-26-exec-spawner-framework-scaffolding-design.md) — Decouple node spawning from core, framework scaffolding via `belayer setup`, node protocol (2026-03-26)
 - [2026-03-24-bug-architecture-review-design](2026-03-24-bug-architecture-review-design.md) — Architecture review step in bug flow + learnings enforcement across harness lifecycle (2026-03-24)

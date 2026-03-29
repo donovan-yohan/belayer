@@ -1,14 +1,15 @@
 {
   "name": "harness",
-  "version": "4.0.0",
-  "description": "3-tier documentation system with learning persistence, doc lifecycle management, and health scoring. Brainstorm, plan, orchestrate, review, reflect, complete with pr-review-toolkit agents and superpowers SDD delegation.",
+  "version": "5.0.1",
+  "description": "Self-improving documentation system with agent evolution, metrics-driven self-modification, and stateless command protocol. Brainstorm, plan, orchestrate, evolve, review, reflect, complete.",
   "author": {
     "name": "donovanyohan"
   },
-  "keywords": ["documentation", "claude-md", "planning", "brainstorm", "bug", "refactor", "strangler-fig", "orchestrate", "batch", "maintenance", "reflect", "loop", "autonomous", "learnings", "frontmatter", "lifecycle", "health-score"],
+  "keywords": ["documentation", "claude-md", "planning", "brainstorm", "bug", "refactor", "strangler-fig", "orchestrate", "batch", "maintenance", "reflect", "autonomous", "learnings", "frontmatter", "lifecycle", "health-score", "evolve", "self-improving", "metrics", "runtime"],
   "agents": [
     "./agents/harness-pruner.md",
-    "./agents/learnings-reviewer.md"
+    "./agents/learnings-reviewer.md",
+    "./agents/harness-evolver.md"
   ],
   "commands": [
     "./commands/init.md",
@@ -20,10 +21,10 @@
     "./commands/orchestrate.md",
     "./commands/batch.md",
     "./commands/review.md",
+    "./commands/evolve.md",
     "./commands/complete.md",
     "./commands/reflect.md",
-    "./commands/prune.md",
-    "./commands/loop.md"
+    "./commands/prune.md"
   ],
   "skills": ["./skills/strangler-fig"]
 }

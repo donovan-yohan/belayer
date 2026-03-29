@@ -1,6 +1,6 @@
 # Learnings Format Reference
 
-Shared format spec for LEARNINGS.md entries and design doc frontmatter. Referenced by `init.md`, `brainstorm.md`, `bug.md`, `plan.md`, `reflect.md`, `complete.md`, and any command that reads or writes learnings.
+Shared format spec for LEARNINGS.md entries and design doc frontmatter. Referenced by `commands/init.md`, `commands/brainstorm.md`, `commands/bug.md`, `commands/plan.md`, `commands/reflect.md`, `commands/complete.md`, and any command that reads or writes learnings.
 
 ---
 
@@ -12,6 +12,7 @@ Each learning is an H3 header followed by YAML-style metadata lines, then prose:
 ### L-YYYYMMDD-slug: {one-line summary}
 - status: active
 - category: {category}
+- scope: {repo|universal}                    # NEW: classification for evolution
 - source: {command} {date}
 - branch: {branch}
 
@@ -38,6 +39,20 @@ Each learning is an H3 header followed by YAML-style metadata lines, then prose:
 | `debugging` | Diagnostic techniques, failure modes |
 | `performance` | Latency, throughput, resource usage |
 | `review-escape` | Issues that escaped code review, missed by review agents |
+
+### Scope Vocabulary
+
+| Value | Use for |
+|-------|---------|
+| `repo` | References specific file paths, module names, project-specific concepts, or domain-specific patterns |
+| `universal` | Describes general patterns without project-specific references; actionable without project context |
+
+Default to `repo` (conservative). Only promote to `universal` when ALL of:
+- Contains zero project-specific references (file paths, module names, domain concepts)
+- Matches a known general pattern category (error handling, testing strategy, review methodology, agent coordination, security, performance)
+- The recommendation is actionable without project-specific context
+
+When the `scope` field is absent (legacy entries), treat as `repo`.
 
 ### ID Format
 

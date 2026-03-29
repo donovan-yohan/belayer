@@ -21,6 +21,7 @@ Execution plans for active and completed work.
 
 | Plan | Completed | Topic |
 |------|-----------|-------|
+| [Self-Improving Harness Runtime (M1)](exec-plans/completed/2026-03-28-self-improving-harness-runtime.md) | 2026-03-28 | .harness/ runtime, agent evolution, metrics, scope classification, stateless command protocol |
 | [Code Restructuring: V1 Removal](exec-plans/completed/2026-03-27-code-restructuring-v1-removal.md) | 2026-03-27 | Remove v1 legacy code, flatten internal/v3/, rename pipeline nodes, fix deferred items |
 | [ExecSpawner + Framework Scaffolding](exec-plans/completed/2026-03-26-exec-spawner-framework-scaffolding.md) | 2026-03-26 | Decouple node spawning, framework model, belayer setup, claude-tmux |
 | [Three-Phase Architecture Docs](exec-plans/completed/2026-03-25-three-phase-architecture-docs.md) | 2026-03-25 | Explore/Climb/Summit architecture docs, config hierarchy, pipeline examples, competitive positioning |

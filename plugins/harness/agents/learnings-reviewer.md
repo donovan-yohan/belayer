@@ -1,6 +1,7 @@
 ---
 name: learnings-reviewer
 description: Use during /harness:review Phase 4 to check code changes against active learnings from docs/LEARNINGS.md for violations
+color: cyan
 ---
 
 # Learnings Reviewer

@@ -1,6 +1,7 @@
 ---
 name: harness-pruner
 description: Use when auditing documentation health, finding stale or orphaned guides, checking CLAUDE.md bloat, or when /harness:prune is invoked
+color: yellow
 ---
 
 # Harness Documentation Pruner
@@ -31,9 +32,14 @@ The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md ear
 | **Orphaned Tier 2 Files** | docs/*.md files not referenced in CLAUDE.md Documentation Map | warn |
 | **Orphaned Tier 3 Files** | Files in docs/design-docs/ not in any index or Deep Docs table | warn |
 | **Stale Tier 2/3 Docs** | Doc files not modified in 90+ days (info) or 180+ days (warn) | info/warn |
-| **Stale Active Plans** | Plans in docs/exec-plans/active/ older than 30 days | warn |
+| **Completed Plan Not Archived** | Plans in docs/exec-plans/active/ with 100% tasks checked off | warn |
+| **Completed Plan Header in Active** | Plans in docs/exec-plans/active/ with Status header value exactly "Completed" or "Complete" (case-insensitive; "Incomplete" does not match) | error |
+| **Plan Header/Checkbox Mismatch** | Plan Status header disagrees with checkbox completion state (e.g., Status exactly "Active" but all tasks ✓) | warn |
+| **Abandoned Plan** | Plans in docs/exec-plans/active/ with 0% tasks done and older than 14 days | warn |
+| **Stale Active Plans** | Plans in docs/exec-plans/active/ older than 30 days (age-based fallback) | warn |
 | **Missing Index Entries** | Files in docs/design-docs/ not listed in docs/design-docs/index.md | warn |
-| **PLANS.md Drift** | Active Plans table doesn't match actual docs/exec-plans/active/ contents | warn |
+| **PLANS.md Phantom Entry** | Entry in PLANS.md Active table with no corresponding file in docs/exec-plans/active/ | error |
+| **PLANS.md Undocumented Plan** | File in docs/exec-plans/active/ not listed in PLANS.md Active table | warn |
 | **Tier 2 Deep Docs Validity** | Deep Docs tables in Tier 2 files reference files that exist | error |
 | **Broken Cross-References** | Doc files referencing other files that don't exist | error |
 | **Code Map Ghost Paths** | ARCHITECTURE.md Code Map lists directories/files that don't exist on filesystem | error |
@@ -49,6 +55,11 @@ The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md ear
 | **Over-indexed Question Categories** | Question bank categories with zero escape log entries after 5+ reviews have been run (may be wasting review time on non-applicable questions) | info |
 | **Legacy Learning IDs** | `docs/LEARNINGS.md` contains entries using old `L-NNN` sequential format instead of `L-YYYYMMDD-slug` date-slug format | warn |
 | **Legacy Index Table Format** | `docs/design-docs/index.md`, `docs/bug-analyses/index.md`, or `docs/refactor-scopes/index.md` uses markdown table format instead of bullet list format | warn |
+| **Harness Runtime Missing** | `.harness/` or `~/.harness/slug/` not found when CLAUDE.md Documentation Map lists it | warn |
+| **Stale Proposals** | Proposals in `.harness/proposals/` with status `pending` older than 14 days | warn |
+| **Metrics Cold Start** | `.harness/metrics/review-effectiveness.json` has zero agent runs after harness has been active 30+ days | info |
+| **Agent Budget Exceeded** | Agent definition in `.harness/agents/` exceeds 200 lines | warn |
+| **IMPROVEMENTS.md Missing** | `.harness/memory/IMPROVEMENTS.md` doesn't exist but `.harness/` is initialized | error |
 
 ## Audit Process
 
@@ -111,9 +122,30 @@ Flag files not modified in:
 - 90+ days → info severity
 - 180+ days → warn severity
 
-### Step 8: Stale Active Plans
+### Step 8: Active Plan Health
 
-List files in docs/exec-plans/active/. For each, extract the date from the filename (YYYY-MM-DD prefix) or check git log. Flag plans older than 30 days as **warn** — they may need to be completed (/harness:complete) or updated.
+List files in docs/exec-plans/active/. For each plan:
+
+1. **Read the plan content.** Extract:
+   - The `Status` header line (e.g., `> **Status**: Active`). To get the status value, extract the text after `> **Status**:`, trim surrounding whitespace, and compare it case-insensitively against exact tokens (e.g., `complete`, `completed`, `active`). Use exact value matching — do NOT use substring matching. "Incomplete" must NOT match "Complete", and "Inactive" must NOT match "Active".
+   - The `## Progress` section — count `- [x]` (done) vs `- [ ]` (pending) checkboxes
+   - The plan's age from filename date prefix (YYYY-MM-DD) or git log
+
+2. **Compute completion ratio:** `done / (done + pending)`. If no checkboxes found, treat as 0%.
+
+3. **Apply classification heuristics** (in priority order — report the first match):
+
+   | Condition | Severity | Label |
+   |-----------|----------|-------|
+   | Status header value is exactly "Completed" or "Complete" (case-insensitive; do not treat "Incomplete" or other variants as complete) AND completion < 100% | **error** | `completed plan in active/ with incomplete tasks` — header says done but tasks remain |
+   | Status header value is exactly "Completed" or "Complete" (case-insensitive; do not treat "Incomplete" or other variants as complete) AND completion = 100% | **error** | `completed plan in active/` — should be in completed/ |
+   | Status header value is exactly "Active" (case-insensitive) AND completion = 100% | **warn** | `header/checkbox mismatch` — header says Active but all tasks done, run /harness:complete |
+   | Completion ratio = 100% (any other header) | **warn** | `completed plan not archived` — all tasks ✓, run /harness:complete |
+   | Completion ratio = 0% AND age > 14 days | **warn** | `possibly abandoned` — no progress in 14+ days |
+   | Completion ratio > 0% AND < 100% AND age > 30 days | **warn** | `stale plan` — partial progress, not updated in 30+ days |
+
+4. **Check for supersession signals** (apply independently of above):
+   - If the plan's `Design Doc:` header references a file that no longer exists, flag as **warn** `possibly superseded` — the design doc was deleted or renamed.
 
 ### Step 9: Missing Index Entries
 
@@ -125,7 +157,7 @@ Read docs/design-docs/index.md. Compare the list of files referenced there again
 
 Read docs/PLANS.md (if it exists). Extract the Active Plans table. Compare against actual files in docs/exec-plans/active/. Flag:
 - Plans in exec-plans/active/ not listed in PLANS.md → **warn** (undocumented active plan)
-- Plans in PLANS.md Active table but not in exec-plans/active/ → **warn** (stale table entry)
+- Plans in PLANS.md Active table but no corresponding file in exec-plans/active/ → **error** (phantom entry — PLANS.md references a plan that doesn't exist on disk. This typically happens when a design doc is logged to PLANS.md before /harness:plan creates the exec plan file.)
 
 ### Step 11: Tier 2 Deep Docs Validity
 
@@ -211,6 +243,35 @@ The current format uses bullet lists (`- [title](file.md) — description (date)
 
 Detection: if the file contains a line matching `^\|.*\|.*\|` (pipe-delimited table row), it uses the legacy format. Flag as **warn**.
 
+### Step 25: Harness Runtime Consistency
+
+If CLAUDE.md Documentation Map includes a `.harness/` entry:
+- Check if `.harness/` exists on the filesystem
+- If missing, flag as **warn** — the map references a directory that doesn't exist
+
+### Step 26: Stale Proposals
+
+If `.harness/proposals/` exists and has files:
+- For each proposal with `Status: pending`, check the date in the filename
+- If older than 14 days, flag as **warn** — proposals should be reviewed promptly
+
+### Step 27: Metrics Cold Start
+
+If `.harness/metrics/review-effectiveness.json` exists:
+- Check if any agent has `runs > 0`
+- If all agents have zero runs and `.harness/manifest.yaml` was created more than 30 days ago, flag as **info** — the evolution system has no data
+
+### Step 28: Agent Line Budget
+
+For each file in `.harness/agents/`:
+- Count lines using `wc -l`
+- If over 200 lines, flag as **warn** — agent definitions should stay focused
+
+### Step 29: IMPROVEMENTS.md Presence
+
+If `.harness/` exists but `.harness/memory/IMPROVEMENTS.md` does not:
+- Flag as **error** — the audit trail is missing
+
 ## Output Format
 
 ```markdown
@@ -229,13 +290,18 @@ Detection: if the file contains a line matching `^\|.*\|.*\|` (pipe-delimited ta
 | error | Tier 2 Deep Docs references missing file | docs/DESIGN.md → design-docs/missing.md | Remove entry or create file |
 | error | Broken index link | docs/design-docs/index.md → missing.md | Remove entry or create file |
 | error | Code Map ghost path | docs/ARCHITECTURE.md → internal/tui/ | Remove from Code Map |
+| error | Completed plan header in active/ | docs/exec-plans/active/2025-... (Status: Complete) | Move to completed/ or run /harness:complete |
+| error | PLANS.md phantom entry | docs/PLANS.md → exec-plans/active/missing.md | Remove entry from Active Plans table |
 | warn | CLAUDE.md is {N} lines (limit: 120) | CLAUDE.md | Extract sections to Tier 2 summaries |
 | warn | Documentation Map missing "When to look here" column | CLAUDE.md | Run /harness:init to migrate to 3-tier |
 | warn | Orphaned Tier 2 file | docs/SECURITY.md | Add to Documentation Map or delete |
 | warn | Orphaned Tier 3 file | docs/design-docs/old-topic.md | Add to index.md or delete |
-| warn | Stale plan (45 days) | docs/exec-plans/active/2025-... | Run /harness:complete or update |
+| warn | Completed plan not archived (8/8 tasks ✓) | docs/exec-plans/active/2025-... | Run /harness:complete or /harness:prune --archive-completed |
+| warn | Plan header/checkbox mismatch | docs/exec-plans/active/2025-... | Update Status header to match task state |
+| warn | Possibly abandoned (0% done, 21 days) | docs/exec-plans/active/2025-... | Update plan or remove if superseded |
+| warn | Stale plan (45 days, 3/8 tasks ✓) | docs/exec-plans/active/2025-... | Run /harness:complete or update |
 | warn | Missing index entry | docs/design-docs/new-topic.md | Add to docs/design-docs/index.md |
-| warn | PLANS.md drift | docs/PLANS.md | Sync Active Plans table with exec-plans/active/ |
+| warn | PLANS.md undocumented plan | exec-plans/active/2025-... | Add to PLANS.md Active Plans table |
 | warn | Legacy learning ID | docs/LEARNINGS.md L-007 | Migrate to L-20260321-resolve-model-conflicts |
 | warn | Legacy index table format | docs/design-docs/index.md | Convert table to bullet list format |
 | info | Stale Tier 2 doc (95 days) | docs/ARCHITECTURE.md | Review and update |
@@ -268,32 +334,38 @@ When the user approves fixes, apply them in this order:
 1. **Code Map ghost paths first** — Remove nonexistent paths from ARCHITECTURE.md Code Map (highest danger: confident docs about nonexistent code)
 2. **Broken links** — Remove broken entries from Documentation Map and index files, or create stub files
 3. **Missing index entries** — Add missing files to docs/design-docs/index.md with description
-4. **PLANS.md drift** — Sync Active Plans table with actual docs/exec-plans/active/ contents
-5. **PLANS.md ghost features** — Remove or annotate references to deleted modules
-6. **Tier 2 Deep Docs** — Fix or remove invalid Deep Docs table entries in Tier 2 summary files
-7. **Design doc supersession** — Add Current/Archived separation and "superseded by" markers to index
-8. **Orphaned Tier 2 files** — Ask user: add to Documentation Map or delete?
-9. **Orphaned Tier 3 files** — Ask user: add to docs/design-docs/index.md or delete?
-10. **CLAUDE.md bloat** — Identify extractable sections and offer to extract to Tier 2 summary files
-11. **Documentation Map format** — Offer to run /harness:init to migrate v1 map to 3-tier format
-12. **Missing frontmatter** — Read the design doc; infer status from context (if listed in index Archived section → `implemented`; if newer doc on same topic exists → `superseded`; otherwise → `current`). Infer `created` from filename date prefix. Add frontmatter block at file top.
-13. **Frontmatter status consistency** — Update `status` field and fill in `supersedes` or `implemented-by` references as needed.
-14. **Index status badges** — If the index uses a legacy table format, migrate it to bullet list format (`- [title](file.md) — description (date)`) with section headers (Current Designs / Archived > Implemented / Superseded / Stale). Move each entry to the section matching its frontmatter `status`. If already using bullet list format, just move misplaced entries to the correct section.
-15. **Stale plans** — Offer to run /harness:complete for each stale plan
-16. **Review guidance missing** — Create `docs/REVIEW_GUIDANCE.md` from the default scaffold. Read the harness plugin's `references/adversarial-review-prompt.md` for the default question bank. Analyze the repo to pre-populate deployment context.
-17. **Review guidance empty context** — Analyze the repo (Dockerfile, CI config, database drivers, deployment manifests) and suggest deployment context values for the user to confirm.
-18. **Orphaned escape log entries** — For each orphaned entry, add the question from the "Question Added" column to the matching category in the Adversarial Question Bank. If no matching category exists, create one.
-19. **Legacy learning IDs** — For each `L-NNN` entry in LEARNINGS.md:
+4. **PLANS.md phantom entries** — Remove entries from Active Plans table that reference nonexistent exec plan files
+5. **PLANS.md undocumented plans** — Add missing entries for exec plan files not listed in PLANS.md
+6. **PLANS.md ghost features** — Remove or annotate references to deleted modules
+7. **Tier 2 Deep Docs** — Fix or remove invalid Deep Docs table entries in Tier 2 summary files
+8. **Completed plans** — For plans flagged as "completed plan not archived" or "completed plan header in active/": move from active/ to completed/, update PLANS.md, set source design doc frontmatter `status: implemented` and `implemented-by: docs/exec-plans/completed/{file}`. This is the lightweight batch path — does not run verification gates or retrospectives (suggest /harness:complete for plans that need those).
+9. **Design doc supersession** — Add Current/Archived separation and "superseded by" markers to index
+10. **Orphaned Tier 2 files** — Ask user: add to Documentation Map or delete?
+11. **Orphaned Tier 3 files** — Ask user: add to docs/design-docs/index.md or delete?
+12. **CLAUDE.md bloat** — Identify extractable sections and offer to extract to Tier 2 summary files
+13. **Documentation Map format** — Offer to run /harness:init to migrate v1 map to 3-tier format
+14. **Missing frontmatter** — Read the design doc; infer status from context (if listed in index Archived section → `implemented`; if newer doc on same topic exists → `superseded`; otherwise → `current`). Infer `created` from filename date prefix. Add frontmatter block at file top.
+15. **Frontmatter status consistency** — Update `status` field and fill in `supersedes` or `implemented-by` references as needed.
+16. **Index status badges** — If the index uses a legacy table format, migrate it to bullet list format (`- [title](file.md) — description (date)`) with section headers (Current Designs / Archived > Implemented / Superseded / Stale). Move each entry to the section matching its frontmatter `status`. If already using bullet list format, just move misplaced entries to the correct section.
+17. **Stale/abandoned plans** — Offer to run /harness:complete for stale plans, or delete abandoned plans after user confirmation
+18. **Review guidance missing** — Create `docs/REVIEW_GUIDANCE.md` from the default scaffold. Read the harness plugin's `references/adversarial-review-prompt.md` for the default question bank. Analyze the repo to pre-populate deployment context.
+19. **Review guidance empty context** — Analyze the repo (Dockerfile, CI config, database drivers, deployment manifests) and suggest deployment context values for the user to confirm.
+20. **Orphaned escape log entries** — For each orphaned entry, add the question from the "Question Added" column to the matching category in the Adversarial Question Bank. If no matching category exists, create one.
+21. **Legacy learning IDs** — For each `L-NNN` entry in LEARNINGS.md:
     1. Read the entry's `source:` line to extract the date (e.g., `source: /harness:reflect 2026-03-21` → `20260321`)
     2. Derive a slug from the entry title: take 2-4 key words, lowercase, join with hyphens
     3. Rename the H3 header from `### L-NNN: {title}` to `### L-YYYYMMDD-slug: {title}`
     4. Search all `.md` files under `docs/` for references to the old ID (e.g., `L-007` in `consulted-learnings` frontmatter) and update them to the new ID
     5. Do NOT modify files under `docs/exec-plans/completed/` — those are archival records
-20. **Legacy index table format** — For each index file using table format:
+22. **Legacy index table format** — For each index file using table format:
     1. Parse each table row to extract: link text, file path, description, date, and status (if present)
     2. Convert to bullet list format: `- [title](file.md) — description (date)`
     3. For `docs/design-docs/index.md`: group entries by status under section headers (Current Designs / Archived > Implemented / Superseded / Stale). Read each design doc's frontmatter `status` to determine the correct section.
     4. For `docs/bug-analyses/index.md` and `docs/refactor-scopes/index.md`: flat bullet list (no sections needed)
+
+23. **Stale proposals** — List pending proposals for user review; offer to mark as `rejected`
+24. **Agent budget exceeded** — Suggest running `/harness:evolve` to consolidate checks
+25. **IMPROVEMENTS.md missing** — Recreate from scaffold
 
 For each fix applied, report what was changed.
 

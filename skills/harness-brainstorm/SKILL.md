@@ -26,9 +26,9 @@ harness-brainstorm add user auth      # Brainstorm with initial topic
 2. Read `docs/DESIGN.md` and `docs/design-docs/index.md` to understand existing design context. This grounds the brainstorming in what already exists.
 
 2.5. **Surface past learnings** (if available):
-   - Follow the consultation pattern defined in `_learnings-format.md` § "Consulting Learnings"
+   - Follow the consultation pattern defined in `references/learnings-format.md` § "Consulting Learnings"
    - Match learnings against the brainstorm topic
-   - Surface the top 3 most relevant learnings before starting the brainstorm dialogue (using the output format from `_learnings-format.md`)
+   - Surface the top 3 most relevant learnings before starting the brainstorm dialogue (using the output format from `references/learnings-format.md`)
    - Record the IDs of consulted learnings for inclusion in the design doc frontmatter (step 3's HARNESS_OVERRIDES `consulted-learnings` field)
    - If LEARNINGS.md doesn't exist or has no active learnings, skip silently
 
@@ -56,14 +56,25 @@ harness-brainstorm add user auth      # Brainstorm with initial topic
      Insert this frontmatter block at the very top of the file, before the H1 title. The `branch` field must be the actual current git branch, not a placeholder.
    </HARNESS_OVERRIDES>
 
-4. After the design doc is written, update `docs/design-docs/index.md` — append a line under **Current Designs**:
+4. **You MUST update `docs/design-docs/index.md`** immediately after writing the design doc — this is not optional. Append a line under **Current Designs**:
    ```markdown
    - [{date}-{name}-design]({date}-{name}-design.md) — {one-line purpose} ({date})
    ```
+   After writing the entry, **read back `docs/design-docs/index.md`** and verify the new entry appears. If the entry is missing after read-back, write it again and re-verify. If the index file doesn't exist, create it with a `## Current Designs` header and the entry. Skipping this step is the #1 cause of orphaned design docs.
 
 5. If the design introduces new principles, patterns, or significant decisions, update `docs/DESIGN.md`:
    - Add to the "Current State" bullets if a new pattern was established
    - Add to the "Key Decisions" table if a non-trivial decision was made
+
+5.5. **Update run-state** (if `.harness/` runtime exists):
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "brainstorm" \
+      --design-doc "docs/design-docs/{filename}" \
+      --branch "$(git branch --show-current)"
+    ```
 
 6. Guide user to next step:
    ```
