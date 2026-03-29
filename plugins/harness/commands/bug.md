@@ -87,6 +87,71 @@ Investigate a bug through systematic debugging, saved as a versioned bug analysi
    - Each learning must be forward-looking: "When doing X, always check Y because Z." Not just "X was broken because of Y."
    - Source field: `/harness:bug {YYYY-MM-DD}`
 
+4.7. **Retroactive harness trace** (if `.harness/` runtime exists):
+
+    This is the fitness function for the self-improving harness. When a bug is investigated, trace it back to the harness run that should have caught it.
+
+    a. Resolve the harness runtime directory:
+       ```bash
+       HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+       ```
+       If empty, skip this phase silently.
+
+    b. **Identify the originating run**: Search `.harness/runs/` for the most recent run records on the branch where the bug was introduced. Cross-reference with git blame on the buggy code to find the commit, then match that commit's date/branch against run records.
+
+    c. **Trace the review that missed it**: Read the run record to find if a review phase ran. If yes:
+       - Read the review-results.json from that period (if still available in runs/)
+       - Determine which review agents ran and what they reported
+       - Identify: did any agent flag the area but the finding was dismissed? Or did no agent flag it at all?
+
+    d. **Write retroactive review escape**: If the bug should have been caught by review:
+       - Add an entry to `docs/REVIEW_GUIDANCE.md` Escape Log:
+         ```markdown
+         | {date} | {bug description} | retroactive-trace | {category} | {question} |
+         ```
+       - Formulate the "what breaks?" question that would catch this bug class
+       - Add the question to the appropriate Adversarial Question Bank category
+
+    e. **Update metrics retroactively**: If the originating run and agent are identified:
+       ```bash
+       bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-write-metrics.sh \
+         --harness-dir "$HARNESS_DIR" \
+         --metric "review-effectiveness" \
+         --agent "{agent-that-missed}" \
+         --false-pos 0 \
+         --findings 0 \
+         --unique 0
+       ```
+       Note: This increments runs without incrementing findings, worsening the agent's effectiveness ratio. This is intentional — the agent ran but missed the bug.
+
+    f. **Write retroactive learning** with category `review-escape`:
+       ```markdown
+       ### L-{YYYYMMDD}-{slug}: {what the review missed}
+       - status: active
+       - category: review-escape
+       - scope: {repo|universal}
+       - source: /harness:bug {YYYY-MM-DD} (retroactive trace)
+       - branch: {current branch}
+
+       {What the review should have checked. Actionable recommendation.}
+
+       ---
+       ```
+
+    g. Append to the bug analysis document under a new section:
+       ```markdown
+       ## Harness Trace
+
+       - **Originating run:** {run record path or "not found"}
+       - **Review ran:** {yes/no}
+       - **Agents that ran:** {list}
+       - **Escape category:** {category}
+       - **Retroactive question added:** {yes/no — question text}
+       - **Metric impact:** {agent effectiveness ratio before → after}
+       ```
+
+    If the originating run cannot be identified (no `.harness/runs/` data for the relevant period), note this in the Harness Trace section as "Insufficient run history — harness trace unavailable" and skip substeps c-f.
+
 5. Update `docs/bug-analyses/index.md` — append a line:
     ```markdown
     - [{date}-{name}-bug-analysis]({date}-{name}-bug-analysis.md) — {one-line summary} ({date})
