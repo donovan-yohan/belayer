@@ -156,7 +156,14 @@ No .harness/ runtime found. Run harness-init and choose option 1 or 2 to enable 
     - The change is additive (adds a check, doesn't remove one)
     - The agent has run N+ times where N = `evolve.min_runs_for_auto` (default: 5)
 
-14. For eligible proposals:
+14. **Before applying any changes**, snapshot the current metrics to enable rollback comparison:
+    ```bash
+    cp "$HARNESS_DIR/metrics/review-effectiveness.json" \
+       "$HARNESS_DIR/metrics/pre-change-snapshot.json"
+    ```
+    This snapshot is overwritten each evolve session. Phase 5 compares current metrics against it.
+
+15. For eligible proposals:
     - Read the agent definition from `$HARNESS_DIR/agents/{agent}.md`
     - Apply the proposed change
     - Update the proposal status from `pending` to `applied`
@@ -176,12 +183,14 @@ No .harness/ runtime found. Run harness-init and choose option 1 or 2 to enable 
       ---
       ```
 
-15. For non-eligible proposals: leave status as `pending`. These will be surfaced in the PR description by `harness-complete`.
+16. For non-eligible proposals: leave status as `pending`. These will be surfaced in the PR description by `harness-complete`.
 
 ### Phase 5: Auto-Rollback Check
 
-16. Read `$HARNESS_DIR/memory/IMPROVEMENTS.md`. For each auto-applied change from previous sessions (not the current session):
-    - Check if the agent's metrics worsened after the change was applied:
+17. Check if `$HARNESS_DIR/metrics/pre-change-snapshot.json` exists (written in Phase 4 step 14). If it doesn't exist, skip this phase — no changes were applied to roll back.
+
+18. Read `$HARNESS_DIR/memory/IMPROVEMENTS.md`. For each auto-applied change from previous sessions (not the current session):
+    - Compare current `$HARNESS_DIR/metrics/review-effectiveness.json` against `pre-change-snapshot.json`:
       - False positive rate increased by more than 20%
       - Unique catches decreased
     - If metrics worsened, auto-revert:
@@ -190,11 +199,11 @@ No .harness/ runtime found. Run harness-init and choose option 1 or 2 to enable 
       - Update the proposal status to `rolled-back`
       - Log a new IMPROVEMENTS.md entry explaining the rollback
 
-17. This phase only runs when there are at least 2 post-change review runs to compare against. Skip if insufficient data.
+19. This phase only runs when there are at least 2 post-change review runs to compare against the snapshot. Skip if insufficient data.
 
 ### Phase 6: Write Run Record
 
-18. Write a run record for this evolve session:
+20. Write a run record for this evolve session:
     ```bash
     bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-write-run.sh \
       --harness-dir "$HARNESS_DIR" \
@@ -204,7 +213,7 @@ No .harness/ runtime found. Run harness-init and choose option 1 or 2 to enable 
 
 ### Report
 
-19. Output:
+21. Output:
     ```
     ## Evolve Complete
 

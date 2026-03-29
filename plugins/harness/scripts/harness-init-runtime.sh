@@ -20,7 +20,15 @@ done
 
 if [ -f "$HARNESS_DIR/manifest.yaml" ] && [ "$FORCE" != "true" ]; then
   echo "Warning: $HARNESS_DIR already initialized (use --force to overwrite)" >&2
-  exit 0
+  exit 1
+fi
+
+# If --force and manifest exists, back up existing config before overwriting
+if [ "$FORCE" = "true" ] && [ -f "$HARNESS_DIR/manifest.yaml" ]; then
+  BACKUP_TS=$(date -u +%Y%m%dT%H%M%SZ)
+  cp "$HARNESS_DIR/manifest.yaml" "$HARNESS_DIR/manifest.yaml.bak.$BACKUP_TS"
+  [ -f "$HARNESS_DIR/config.yaml" ] && cp "$HARNESS_DIR/config.yaml" "$HARNESS_DIR/config.yaml.bak.$BACKUP_TS"
+  echo "Backed up existing config to manifest.yaml.bak.$BACKUP_TS" >&2
 fi
 
 mkdir -p "$HARNESS_DIR"/{agents,metrics,memory,proposals,handoffs,runs}
@@ -66,15 +74,38 @@ review:
   evaluator: true
 EOF
 
-# Empty metrics files
-for metric in review-effectiveness plan-accuracy learning-efficacy phase-costs; do
-  cat > "$HARNESS_DIR/metrics/$metric.json" <<METRICEOF
+# Metrics files — initialized with type-specific keys so callers never see a missing key
+cat > "$HARNESS_DIR/metrics/review-effectiveness.json" <<'METRICEOF'
 {
   "schema_version": 1,
-  "last_updated": null
+  "last_updated": null,
+  "agents": {}
 }
 METRICEOF
-done
+
+cat > "$HARNESS_DIR/metrics/plan-accuracy.json" <<'METRICEOF'
+{
+  "schema_version": 1,
+  "last_updated": null,
+  "plans": {}
+}
+METRICEOF
+
+cat > "$HARNESS_DIR/metrics/learning-efficacy.json" <<'METRICEOF'
+{
+  "schema_version": 1,
+  "last_updated": null,
+  "learnings": {}
+}
+METRICEOF
+
+cat > "$HARNESS_DIR/metrics/phase-costs.json" <<'METRICEOF'
+{
+  "schema_version": 1,
+  "last_updated": null,
+  "phases": {}
+}
+METRICEOF
 
 # IMPROVEMENTS.md
 cat > "$HARNESS_DIR/memory/IMPROVEMENTS.md" <<'EOF'

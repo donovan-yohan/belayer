@@ -17,4 +17,6 @@ STATE_FILE="$HARNESS_DIR/run-state.json"
 
 if [ -f "$STATE_FILE" ]; then
   cat "$STATE_FILE"
+else
+  echo '{"phase": "none"}'
 fi

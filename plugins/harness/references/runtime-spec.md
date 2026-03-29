@@ -89,14 +89,15 @@ review:
       "findings": 0,
       "false_positives": 0,
       "unique_catches": 0,
-      "last_run": null,
-      "disabled": false,
-      "disable_reason": null
+      "last_run": null
     }
   },
   "last_updated": null
 }
 ```
+
+<!-- NOTE: Agent disabling (disabled/disable_reason fields) is not yet implemented.
+     Add those fields when the disable-agent feature is built. -->
 
 ### plan-accuracy.json
 
@@ -129,18 +130,19 @@ review:
   "schema_version": 1,
   "learnings": {
     "<learning-id>": {
-      "created": "YYYY-MM-DD",
       "category": "review-escape",
       "scope": "universal",
       "recurrence_count": 0,
-      "last_recurrence": null,
-      "prevented_count": 0,
-      "last_prevented": null
+      "prevented_count": 0
     }
   },
   "last_updated": null
 }
 ```
+
+<!-- NOTE: schema_version is reserved for future migration use (not validated at runtime).
+     created/last_recurrence/last_prevented are not currently set by any script —
+     add them back when the learning lifecycle tracking feature is implemented. -->
 
 ### phase-costs.json
 
@@ -174,7 +176,7 @@ Written by `/harness:review`, consumed by `/harness:evolve`.
       "findings": [
         {
           "text": "description",
-          "severity": "medium",
+          "severity": "critical | high | medium | low | info",
           "file": "path/to/file.go",
           "line": 47,
           "accepted": true,

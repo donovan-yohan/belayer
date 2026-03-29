@@ -5,7 +5,7 @@ Claude Code plugin for structured documentation lifecycle management. Transforms
 ## Workflow
 
 ```
-brainstorm -> plan -> orchestrate -> review -> reflect -> complete
+brainstorm -> plan -> orchestrate -> review -> reflect -> evolve -> complete
 ```
 
 | Command | Purpose |
@@ -19,13 +19,14 @@ brainstorm -> plan -> orchestrate -> review -> reflect -> complete
 | `/harness:batch` | Execute plans via worktree-isolated parallel batch |
 | `/harness:review` | Quality review with adversarial code review |
 | `/harness:reflect` | Capture learnings and update docs |
+| `/harness:evolve` | Classify learnings, update metrics, and propose agent evolution based on review evidence |
 | `/harness:complete` | Archive plan, update docs, create PR |
 | `/harness:prune` | Audit docs for staleness, broken links, bloat |
-| `/harness:loop` | Run full implementation cycle autonomously |
 
 ## Agents
 
 - **harness-pruner** - Audits documentation health, finds stale/orphaned guides, checks CLAUDE.md bloat
+- **harness-evolver** - Generates agent evolution proposals from signals (escapes, metric anomalies, universal learnings)
 - **learnings-reviewer** - Checks code changes against accumulated project learnings for violations
 
 ## Skills

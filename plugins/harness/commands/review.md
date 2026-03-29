@@ -245,6 +245,52 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
 22. If user chooses to fix now, apply fixes and re-run verification.
 
+### Phase 8: Structured Output (if .harness/ exists)
+
+24. Resolve the harness runtime directory:
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    ```
+
+25. If `HARNESS_DIR` is not empty, write structured review results for `/harness:evolve` consumption:
+
+    Build a JSON object from the review cycle results:
+    - For each agent that ran: record `ran`, `findings` (with text, severity, file, line, accepted, unique), and `verdict`
+    - Record `overall_verdict` and `cycles_run`
+    - Write to `$HARNESS_DIR/review-results.json`
+
+    Use python3 to write the JSON. The template below shows the structure — populate all placeholder values (`{PASS|FAIL}`, `{N}`, agent entries) with actual values from the review cycle before running:
+    ```bash
+    python3 -c "
+    import json
+    results = {
+        'schema_version': 1,
+        'session_date': '$(date +%Y-%m-%d)',
+        'branch': '$(git branch --show-current)',
+        'agents': {
+            # Populated from review cycle results
+        },
+        'overall_verdict': '{PASS|FAIL}',
+        'cycles_run': {N}
+    }
+    with open('$HARNESS_DIR/review-results.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    "
+    ```
+
+    To determine `accepted` and `unique` for each finding:
+    - `accepted`: the finding led to a code change (check if the fix commit touched the flagged file/line)
+    - `unique`: no other agent reported the same file+line with similar severity
+
+26. If `HARNESS_DIR` is empty: skip. Review works without `.harness/` — structured output is additive.
+
+27. **Update run-state** (if `.harness/` runtime exists, reuse `$HARNESS_DIR` from step 24):
+    ```bash
+    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
+      --harness-dir "$HARNESS_DIR" \
+      --phase "review"
+    ```
+
 ### Report
 
 23. Output:
@@ -283,51 +329,4 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
     ## Next Step
 
     Run `/harness:complete` to archive the plan and commit all changes.
-    ```
-
-### Phase 8: Structured Output (if .harness/ exists)
-
-24. Resolve the harness runtime directory:
-    ```bash
-    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
-    ```
-
-25. If `HARNESS_DIR` is not empty, write structured review results for `/harness:evolve` consumption:
-
-    Build a JSON object from the review cycle results:
-    - For each agent that ran: record `ran`, `findings` (with text, severity, file, line, accepted, unique), and `verdict`
-    - Record `overall_verdict` and `cycles_run`
-    - Write to `$HARNESS_DIR/review-results.json`
-
-    Use python3 to write the JSON:
-    ```bash
-    python3 -c "
-    import json
-    results = {
-        'schema_version': 1,
-        'session_date': '$(date +%Y-%m-%d)',
-        'branch': '$(git branch --show-current)',
-        'agents': {
-            # Populated from review cycle results
-        },
-        'overall_verdict': '{PASS|FAIL}',
-        'cycles_run': {N}
-    }
-    with open('$HARNESS_DIR/review-results.json', 'w') as f:
-        json.dump(results, f, indent=2)
-    "
-    ```
-
-    To determine `accepted` and `unique` for each finding:
-    - `accepted`: the finding led to a code change (check if the fix commit touched the flagged file/line)
-    - `unique`: no other agent reported the same file+line with similar severity
-
-26. If `HARNESS_DIR` is empty: skip. Review works without `.harness/` — structured output is additive.
-
-27. **Update run-state** (if `.harness/` runtime exists):
-    ```bash
-    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
-    [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
-      --harness-dir "$HARNESS_DIR" \
-      --phase "review"
     ```

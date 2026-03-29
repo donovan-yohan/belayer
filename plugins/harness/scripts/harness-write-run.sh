@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Write a timestamped run record to .harness/runs/
-# Usage: harness-write-run.sh --harness-dir <path> --phase <phase> --branch <branch> [--data-file <path>]
+# Usage: harness-write-run.sh --harness-dir <path> --phase <phase> [--branch <branch>] [--data-file <path>]
 set -euo pipefail
 
 HARNESS_DIR=""
@@ -24,9 +24,11 @@ done
 RUNS_DIR="$HARNESS_DIR/runs"
 mkdir -p "$RUNS_DIR"
 
-TIMESTAMP=$(date -u +%Y-%m-%dT%H%M%SZ)
+# Compute timestamp once to ensure TIMESTAMP and NOW refer to the same instant
+_TS_RAW=$(date -u +%Y-%m-%dT%H%M%SZ)
+TIMESTAMP="$_TS_RAW"
+NOW=$(echo "$_TS_RAW" | sed 's/T\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)Z$/T\1:\2:\3Z/')
 RUN_FILE="$RUNS_DIR/${TIMESTAMP}-${PHASE}.json"
-NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 DATA_FILE="$DATA_FILE" PHASE="$PHASE" BRANCH="${BRANCH:-unknown}" NOW="$NOW" RUN_FILE="$RUN_FILE" \
 python3 - <<'PYEOF'

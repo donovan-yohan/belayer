@@ -30,6 +30,12 @@ done
 [ -z "$HARNESS_DIR" ] && { echo "Error: --harness-dir required" >&2; exit 1; }
 [ -z "$SLUG" ] && { echo "Error: --slug required" >&2; exit 1; }
 
+# Validate --scope against allowed values
+case "$SCOPE" in
+  repo|universal) ;;
+  *) echo "Error: --scope '$SCOPE' is not valid. Allowed: repo, universal" >&2; exit 1 ;;
+esac
+
 DATE=$(date +%Y-%m-%d)
 mkdir -p "$HARNESS_DIR/proposals"
 PROPOSAL_FILE="$HARNESS_DIR/proposals/${DATE}-${SLUG}.md"
@@ -45,15 +51,27 @@ PROPOSAL_FILE="$HARNESS_DIR/proposals/${DATE}-${SLUG}.md"
   echo ""
   echo "## Current"
   echo ""
-  [ -f "$CURRENT_FILE" ] && cat "$CURRENT_FILE" || echo "(no current text provided)"
+  if [ -f "$CURRENT_FILE" ]; then
+    cat "$CURRENT_FILE"
+  else
+    echo "(no current text provided)"
+  fi
   echo ""
   echo "## Proposed"
   echo ""
-  [ -f "$PROPOSED_FILE" ] && cat "$PROPOSED_FILE" || echo "(no proposed text provided)"
+  if [ -f "$PROPOSED_FILE" ]; then
+    cat "$PROPOSED_FILE"
+  else
+    echo "(no proposed text provided)"
+  fi
   echo ""
   echo "## Reasoning"
   echo ""
-  [ -f "$REASONING_FILE" ] && cat "$REASONING_FILE" || echo "(no reasoning provided)"
+  if [ -f "$REASONING_FILE" ]; then
+    cat "$REASONING_FILE"
+  else
+    echo "(no reasoning provided)"
+  fi
 } > "$PROPOSAL_FILE"
 
 echo "$PROPOSAL_FILE"

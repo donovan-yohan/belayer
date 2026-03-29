@@ -5,7 +5,7 @@
   "author": {
     "name": "donovanyohan"
   },
-  "keywords": ["documentation", "claude-md", "planning", "brainstorm", "bug", "refactor", "strangler-fig", "orchestrate", "batch", "maintenance", "reflect", "loop", "autonomous", "learnings", "frontmatter", "lifecycle", "health-score", "evolve", "self-improving", "metrics", "runtime"],
+  "keywords": ["documentation", "claude-md", "planning", "brainstorm", "bug", "refactor", "strangler-fig", "orchestrate", "batch", "maintenance", "reflect", "autonomous", "learnings", "frontmatter", "lifecycle", "health-score", "evolve", "self-improving", "metrics", "runtime"],
   "agents": [
     "./agents/harness-pruner.md",
     "./agents/learnings-reviewer.md",
@@ -24,8 +24,7 @@
     "./commands/evolve.md",
     "./commands/complete.md",
     "./commands/reflect.md",
-    "./commands/prune.md",
-    "./commands/loop.md"
+    "./commands/prune.md"
   ],
   "skills": ["./skills/strangler-fig"]
 }

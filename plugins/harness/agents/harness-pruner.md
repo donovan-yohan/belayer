@@ -33,8 +33,8 @@ The principle: CLAUDE.md is a **map**, not a manual. Every line in CLAUDE.md ear
 | **Orphaned Tier 3 Files** | Files in docs/design-docs/ not in any index or Deep Docs table | warn |
 | **Stale Tier 2/3 Docs** | Doc files not modified in 90+ days (info) or 180+ days (warn) | info/warn |
 | **Completed Plan Not Archived** | Plans in docs/exec-plans/active/ with 100% tasks checked off | warn |
-| **Completed Plan Header in Active** | Plans in docs/exec-plans/active/ with Status header showing "Completed" or "Complete" | error |
-| **Plan Header/Checkbox Mismatch** | Plan Status header disagrees with checkbox completion state (e.g., "Active" header but all tasks ✓) | warn |
+| **Completed Plan Header in Active** | Plans in docs/exec-plans/active/ with Status header value exactly "Completed" or "Complete" (case-insensitive; "Incomplete" does not match) | error |
+| **Plan Header/Checkbox Mismatch** | Plan Status header disagrees with checkbox completion state (e.g., Status exactly "Active" but all tasks ✓) | warn |
 | **Abandoned Plan** | Plans in docs/exec-plans/active/ with 0% tasks done and older than 14 days | warn |
 | **Stale Active Plans** | Plans in docs/exec-plans/active/ older than 30 days (age-based fallback) | warn |
 | **Missing Index Entries** | Files in docs/design-docs/ not listed in docs/design-docs/index.md | warn |
@@ -127,7 +127,7 @@ Flag files not modified in:
 List files in docs/exec-plans/active/. For each plan:
 
 1. **Read the plan content.** Extract:
-   - The `Status` header line (e.g., `> **Status**: Active`)
+   - The `Status` header line (e.g., `> **Status**: Active`). To get the status value, extract the text after `> **Status**:`, trim surrounding whitespace, and compare it case-insensitively against exact tokens (e.g., `complete`, `completed`, `active`). Use exact value matching — do NOT use substring matching. "Incomplete" must NOT match "Complete", and "Inactive" must NOT match "Active".
    - The `## Progress` section — count `- [x]` (done) vs `- [ ]` (pending) checkboxes
    - The plan's age from filename date prefix (YYYY-MM-DD) or git log
 
@@ -137,9 +137,9 @@ List files in docs/exec-plans/active/. For each plan:
 
    | Condition | Severity | Label |
    |-----------|----------|-------|
-   | Status header contains "Completed"/"Complete" AND completion < 100% | **error** | `completed plan in active/ with incomplete tasks` — header says done but tasks remain |
-   | Status header contains "Completed"/"Complete" AND completion = 100% | **error** | `completed plan in active/` — should be in completed/ |
-   | Status header says "Active" AND completion = 100% | **warn** | `header/checkbox mismatch` — header says Active but all tasks done, run /harness:complete |
+   | Status header value is exactly "Completed" or "Complete" (case-insensitive; do not treat "Incomplete" or other variants as complete) AND completion < 100% | **error** | `completed plan in active/ with incomplete tasks` — header says done but tasks remain |
+   | Status header value is exactly "Completed" or "Complete" (case-insensitive; do not treat "Incomplete" or other variants as complete) AND completion = 100% | **error** | `completed plan in active/` — should be in completed/ |
+   | Status header value is exactly "Active" (case-insensitive) AND completion = 100% | **warn** | `header/checkbox mismatch` — header says Active but all tasks done, run /harness:complete |
    | Completion ratio = 100% (any other header) | **warn** | `completed plan not archived` — all tasks ✓, run /harness:complete |
    | Completion ratio = 0% AND age > 14 days | **warn** | `possibly abandoned` — no progress in 14+ days |
    | Completion ratio > 0% AND < 100% AND age > 30 days | **warn** | `stale plan` — partial progress, not updated in 30+ days |

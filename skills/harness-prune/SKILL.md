@@ -85,7 +85,7 @@ prompt: |
   If --archive-completed flag:
   - Scan docs/exec-plans/active/ for plans that are complete:
     - 100% of Progress checkboxes are [x], OR
-    - Status header contains "Completed" or "Complete"
+    - Status header value is exactly "Complete" or "Completed" (case-insensitive; do not treat "Incomplete" or other variants as complete)
   - For each completed plan found:
     1. Update Status header to "Completed" with today's date
     2. Move file from docs/exec-plans/active/ to docs/exec-plans/completed/
