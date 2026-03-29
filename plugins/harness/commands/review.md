@@ -48,6 +48,27 @@ Optional: The **adr** plugin enables architecture compliance checking in Phase 6
 
 3. **Apply `superpowers:verification-before-completion`** using the Skill tool: `Skill("superpowers:verification-before-completion")`. Follow the loaded skill to run the project's verification commands (tests, build, lint, typecheck) BEFORE starting review. If verification fails, STOP and fix first. Do not review broken code.
 
+### Phase 2.5: Evaluator Pass (optional)
+
+3.1. Resolve the harness runtime directory:
+   ```bash
+   HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+   ```
+
+3.2. If `HARNESS_DIR` is not empty AND `$HARNESS_DIR/agents/evaluator.md` exists:
+   - Read `$HARNESS_DIR/config.yaml`. Check `review.evaluator` is `true`.
+   - If enabled, read `$HARNESS_DIR/agents/evaluator.md` — this is the repo-specific evaluator agent definition (independent from the code-review agents, following the GAN pattern from the Anthropic article).
+   - Run the evaluator as a separate Agent with the diff from Phase 1:
+     ```
+     Agent(
+       subagent_type="general-purpose",
+       prompt="{evaluator.md content}\n\nReview this diff:\n{diff}\n\nReturn findings in structured format: severity, title, location, scenario, impact, fix."
+     )
+     ```
+   - Evaluator findings feed into Phase 4 review loop alongside adversarial findings.
+
+3.3. If `HARNESS_DIR` is empty or `evaluator.md` doesn't exist: skip silently. The evaluator is opt-in.
+
 ### Phase 3: Adversarial Production Review
 
 Context-isolated adversarial review using the bundled `scripts/adversarial-review.sh` script. This invokes `claude --bare -p` as a **completely separate OS process** — no conversation context, no plugins, no hooks, no shared state. The reviewer sees only the diff and a targeted adversarial prompt. Output is structured JSON validated against a schema.
@@ -263,3 +284,42 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
     Run `/harness:complete` to archive the plan and commit all changes.
     ```
+
+### Phase 8: Structured Output (if .harness/ exists)
+
+24. Resolve the harness runtime directory:
+    ```bash
+    HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
+    ```
+
+25. If `HARNESS_DIR` is not empty, write structured review results for `/harness:evolve` consumption:
+
+    Build a JSON object from the review cycle results:
+    - For each agent that ran: record `ran`, `findings` (with text, severity, file, line, accepted, unique), and `verdict`
+    - Record `overall_verdict` and `cycles_run`
+    - Write to `$HARNESS_DIR/review-results.json`
+
+    Use python3 to write the JSON:
+    ```bash
+    python3 -c "
+    import json
+    results = {
+        'schema_version': 1,
+        'session_date': '$(date +%Y-%m-%d)',
+        'branch': '$(git branch --show-current)',
+        'agents': {
+            # Populated from review cycle results
+        },
+        'overall_verdict': '{PASS|FAIL}',
+        'cycles_run': {N}
+    }
+    with open('$HARNESS_DIR/review-results.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    "
+    ```
+
+    To determine `accepted` and `unique` for each finding:
+    - `accepted`: the finding led to a code change (check if the fix commit touched the flagged file/line)
+    - `unique`: no other agent reported the same file+line with similar severity
+
+26. If `HARNESS_DIR` is empty: skip. Review works without `.harness/` — structured output is additive.
