@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "description": "Self-improving documentation system with agent evolution, metrics-driven self-modification, and stateless command protocol. Brainstorm, plan, orchestrate, evolve, review, reflect, complete.",
   "author": {
     "name": "donovanyohan"
