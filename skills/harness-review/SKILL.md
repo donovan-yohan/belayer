@@ -75,7 +75,7 @@ Optional: The **adr** plugin enables architecture compliance checking in Phase 6
 
 ### Phase 3: Adversarial Production Review
 
-Context-isolated adversarial review using the bundled `scripts/adversarial-review.sh` script. This invokes `claude --bare -p` as a **completely separate OS process** — no conversation context, no plugins, no hooks, no shared state. The reviewer sees only the diff and a targeted adversarial prompt. Output is structured JSON validated against a schema.
+Context-isolated adversarial review using the bundled `scripts/adversarial-review.sh` script. This invokes `claude -p` as a **completely separate OS process** — no conversation context, no plugins, no hooks, no shared state. The reviewer sees only the diff and a targeted adversarial prompt. Output is structured JSON validated against a schema.
 
 4. Check if `docs/REVIEW_GUIDANCE.md` exists. If it does not exist, generate it now using the default scaffold (see `harness-init` Phase 2 step 8.7 for the scaffold template, or read `references/adversarial-review-prompt.md` for the default question bank). Commit it:
    ```bash
@@ -115,7 +115,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
    git diff HEAD~{N} > "$ADVERSARIAL_DIFF"
    ```
 
-9. **Run the adversarial review script.** The script handles process isolation (`env -u CLAUDECODE`), `--bare` mode, `--json-schema` validation, temp file management, timeouts, and error handling. All of that complexity lives in the script, not here.
+9. **Run the adversarial review script.** The script handles process isolation (`env -u CLAUDECODE`), `--json-schema` validation, temp file management, timeouts, and error handling. All of that complexity lives in the script, not here.
    ```bash
    ${CLAUDE_PLUGIN_ROOT}/scripts/adversarial-review.sh \
      --prompt-file "$ADVERSARIAL_PROMPT" \
