@@ -4,8 +4,9 @@ package pipeline
 type NodeType string
 
 const (
-	NodeTypeNode NodeType = "node"
-	NodeTypeGate NodeType = "gate"
+	NodeTypeNode  NodeType = "node"
+	NodeTypeGate  NodeType = "gate"
+	NodeTypeAgent NodeType = "agent"
 )
 
 // DimensionConfig defines a scoring dimension for a gate node.
@@ -26,6 +27,7 @@ type ThresholdConfig struct {
 type IntakeConfig struct {
 	Name   string            `yaml:"name" json:"name"`
 	Type   string            `yaml:"type" json:"type"`
+	Check  string            `yaml:"check,omitempty" json:"check,omitempty"`
 	Config map[string]string `yaml:"config,omitempty" json:"config,omitempty"`
 }
 
@@ -47,6 +49,8 @@ type NodeConfig struct {
 	Name        string            `yaml:"name" json:"name"`
 	Type        NodeType          `yaml:"type,omitempty" json:"type,omitempty"`
 	Command     string            `yaml:"command,omitempty" json:"command,omitempty"`
+	Vendor      string            `yaml:"vendor,omitempty" json:"vendor,omitempty"`
+	Prompt      string            `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 	Description string            `yaml:"description" json:"description"`
 	Input       InputConfig       `yaml:"input" json:"input"`
 	Output      OutputConfig      `yaml:"output" json:"output"`
@@ -74,8 +78,14 @@ type OutputConfig struct {
 }
 
 // IsGate returns true if this node is a gate type.
+// Agent nodes with dimensions are also treated as gates for scoring purposes.
 func (n *NodeConfig) IsGate() bool {
-	return n.Type == NodeTypeGate
+	return n.Type == NodeTypeGate || (n.Type == NodeTypeAgent && len(n.Dimensions) > 0)
+}
+
+// IsAgent returns true if this node uses a vendor agent.
+func (n *NodeConfig) IsAgent() bool {
+	return n.Type == NodeTypeAgent
 }
 
 // EffectiveType returns the node's type, defaulting to "node".

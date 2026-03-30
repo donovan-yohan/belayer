@@ -170,7 +170,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
 ### Phase 4: Review Loop
 
-13. Set `cycle = 1`, `max_cycles = 3`, `failing_agents = all 6 review agents`.
+13. Set `cycle = 1`, `max_cycles = 3`, `failing_agents = all 4 review agents`.
 
 14. **Review cycle loop** — repeat until all pass or `cycle > max_cycles`:
 
@@ -180,9 +180,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
    |-------|----------------|-------|
    | Code Reviewer | `pr-review-toolkit:code-reviewer` | Code quality, bugs, logic errors, CLAUDE.md adherence |
    | Silent Failure Hunter | `pr-review-toolkit:silent-failure-hunter` | Silent failures, error handling, inappropriate fallbacks |
-   | Test Analyzer | `pr-review-toolkit:pr-test-analyzer` | Test coverage completeness, missing edge cases |
    | Type Design Analyzer | `pr-review-toolkit:type-design-analyzer` | Type design, encapsulation, invariant expression |
-   | Comment Analyzer | `pr-review-toolkit:comment-analyzer` | Comment accuracy, staleness, maintainability |
    | Learnings Reviewer | `harness:learnings-reviewer` | Checks diff against active learnings for violations |
 
    Each agent prompt should include:
@@ -195,7 +193,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
    c. Determine pass/fail for each agent:
       - **PASS**: No critical or important issues reported
-      - **FAIL**: Critical or important issues found (code-reviewer confidence ≥80, test-analyzer criticality ≥7, type-design-analyzer ratings ≤4, silent-failure-hunter CRITICAL/HIGH, comment-analyzer Critical Issues, learnings-reviewer FAIL verdict)
+      - **FAIL**: Critical or important issues found (code-reviewer confidence ≥80, type-design-analyzer ratings ≤4, silent-failure-hunter CRITICAL/HIGH, learnings-reviewer FAIL verdict)
 
    d. If all pass → exit loop.
 
@@ -211,30 +209,20 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
    - If all passed: review is green
    - If max cycles reached with failures remaining: note unresolved issues
 
-### Phase 5: Code Simplification
+### Phase 5: ADR Compliance
 
-16. Spawn the code-simplifier agent using the Agent tool with `subagent_type: "pr-review-toolkit:code-simplifier"`, scoped to the changed files. This agent modifies code directly — let it make improvements.
+16. Check if `docs/ARCHITECTURE.md` exists AND the `adr` plugin is available (i.e., `/adr:review` is a recognized command).
 
-17. If the simplifier made changes, commit and re-run verification:
-   ```bash
-   git add {changed files}
-   git commit -m "refactor: simplify code from review"
-   ```
-
-### Phase 6: ADR Compliance
-
-18. Check if `docs/ARCHITECTURE.md` exists AND the `adr` plugin is available (i.e., `/adr:review` is a recognized command).
-
-19. **If both exist:**
+17. **If both exist:**
     - Run `/adr:review` against the diff from Phase 1
     - Report any CRITICAL or WARNING violations
     - If the diff introduces new architectural patterns that aren't covered by existing ADRs, note them for `harness-reflect` — do NOT create new ADRs during review. The bar for flagging is high: only note patterns that represent genuinely new architectural decisions, not routine implementation choices.
 
-20. **If either is missing:** Skip silently — not every project uses ADRs or has the adr plugin installed.
+18. **If either is missing:** Skip silently — not every project uses ADRs or has the adr plugin installed.
 
-### Phase 7: Resolution
+### Phase 6: Resolution
 
-21. If unresolved issues remain after max cycles:
+19. If unresolved issues remain after max cycles:
     - Present options:
       ```
       ## Review: {N} unresolved issues after {max_cycles} cycles
@@ -247,16 +235,16 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
       Which approach?
       ```
 
-22. If user chooses to fix now, apply fixes and re-run verification.
+20. If user chooses to fix now, apply fixes and re-run verification.
 
-### Phase 8: Structured Output (if .harness/ exists)
+### Phase 7: Structured Output (if .harness/ exists)
 
-24. Resolve the harness runtime directory:
+21. Resolve the harness runtime directory:
     ```bash
     HARNESS_DIR=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-resolve-dir.sh --repo-root .)
     ```
 
-25. If `HARNESS_DIR` is not empty, write structured review results for `harness-evolve` consumption:
+22. If `HARNESS_DIR` is not empty, write structured review results for `harness-evolve` consumption:
 
     Build a JSON object from the review cycle results:
     - For each agent that ran: record `ran`, `findings` (with text, severity, file, line, accepted, unique), and `verdict`
@@ -286,9 +274,9 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
     - `accepted`: the finding led to a code change (check if the fix commit touched the flagged file/line)
     - `unique`: no other agent reported the same file+line with similar severity
 
-26. If `HARNESS_DIR` is empty: skip. Review works without `.harness/` — structured output is additive.
+23. If `HARNESS_DIR` is empty: skip. Review works without `.harness/` — structured output is additive.
 
-27. **Update run-state** (if `.harness/` runtime exists, reuse `$HARNESS_DIR` from step 24):
+24. **Update run-state** (if `.harness/` runtime exists, reuse `$HARNESS_DIR` from step 21):
     ```bash
     [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
       --harness-dir "$HARNESS_DIR" \
@@ -297,7 +285,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
 ### Report
 
-28. Output:
+25. Output:
     ```
     ## Review Complete
 
@@ -305,8 +293,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
     **Verification:** {passing — with evidence}
     **Adversarial review:** {PASS | FAIL — N findings (breakdown by severity) | skipped}
     **Review cycles:** {N} of {max_cycles}
-    **Agents:** {passed}/6 passed
-    **Simplification:** {changes made | no changes needed}
+    **Agents:** {passed}/4 passed
     **ADR compliance:** {N violations | compliant | skipped}
 
     ### Adversarial Review Findings
@@ -322,9 +309,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
     |-------|--------|-------------|-----------------|
     | code-reviewer | pass | 2 | 2 |
     | silent-failure-hunter | pass | 1 | 1 |
-    | pr-test-analyzer | pass | 0 | 0 |
     | type-design-analyzer | pass | 0 | 0 |
-    | comment-analyzer | fail | 3 | 1 |
     | learnings-reviewer | pass | 0 | 0 |
 
     ### Unresolved Issues

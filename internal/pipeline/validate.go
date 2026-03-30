@@ -39,13 +39,26 @@ func Validate(cfg *PipelineConfig) error {
 		"pr":          true,
 	}
 	validNodeTypes := map[NodeType]bool{
-		"":           true,
-		NodeTypeNode: true,
-		NodeTypeGate: true,
+		"":            true,
+		NodeTypeNode:  true,
+		NodeTypeGate:  true,
+		NodeTypeAgent: true,
 	}
 	for _, n := range cfg.Nodes {
 		if !validNodeTypes[n.Type] {
 			return fmt.Errorf("node %q: unknown type %q (must be \"node\" or \"gate\")", n.Name, n.Type)
+		}
+		// Agent node validation: vendor and prompt required, command mutually exclusive.
+		if n.Type == NodeTypeAgent {
+			if n.Vendor == "" {
+				return fmt.Errorf("agent %q: vendor is required (e.g. claude, codex)", n.Name)
+			}
+			if n.Prompt == "" {
+				return fmt.Errorf("agent %q: prompt is required", n.Name)
+			}
+			if n.Command != "" {
+				return fmt.Errorf("agent %q: command and vendor are mutually exclusive — use one or the other", n.Name)
+			}
 		}
 		if n.Output.Type == "" {
 			return fmt.Errorf("node %q: output.type is required", n.Name)
@@ -59,11 +72,12 @@ func Validate(cfg *PipelineConfig) error {
 			return fmt.Errorf("node %q: output.type must be one of [%s], got %q", n.Name, strings.Join(valid, ", "), n.Output.Type)
 		}
 		// Enforce consistency between node type and output type.
+		// Gate nodes and agent nodes with dimensions both produce gate_result.
 		if n.IsGate() && n.Output.Type != "gate_result" {
 			return fmt.Errorf("gate %q: output.type must be \"gate_result\", got %q", n.Name, n.Output.Type)
 		}
 		if !n.IsGate() && n.Output.Type == "gate_result" {
-			return fmt.Errorf("node %q: output.type \"gate_result\" is only valid on gate nodes", n.Name)
+			return fmt.Errorf("node %q: output.type \"gate_result\" is only valid on gate or agent nodes with dimensions", n.Name)
 		}
 		for _, ref := range []struct {
 			field string
@@ -112,14 +126,15 @@ func Validate(cfg *PipelineConfig) error {
 			if n.Thresholds.Retry >= n.Thresholds.Pass {
 				return fmt.Errorf("gate %q: thresholds.retry (%.1f) must be less than thresholds.pass (%.1f)", n.Name, n.Thresholds.Retry, n.Thresholds.Pass)
 			}
-		} else if len(n.Dimensions) > 0 {
-			return fmt.Errorf("node %q: dimensions are only valid on gate nodes", n.Name)
+		} else if len(n.Dimensions) > 0 && n.Type != NodeTypeAgent {
+			return fmt.Errorf("node %q: dimensions are only valid on gate or agent nodes", n.Name)
 		}
 	}
 	// Validate intake configs.
 	validIntakeTypes := map[string]bool{
 		"jira":        true,
 		"interactive": true,
+		"trigger":     true,
 	}
 	intakeNames := make(map[string]bool)
 	interactiveCount := 0

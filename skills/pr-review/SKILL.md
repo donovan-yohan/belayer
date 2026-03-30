@@ -62,16 +62,13 @@ Get the diff against the PR's actual target branch:
 git diff "$BASE"...HEAD
 ```
 
-Spawn **all 6 pr-review-toolkit agents in parallel** using the Agent tool with `subagent_type` set to the fully qualified agent name. Each agent covers a distinct review dimension:
+Spawn **all 3 pr-review-toolkit agents in parallel** using the Agent tool with `subagent_type` set to the fully qualified agent name. Each agent covers a distinct review dimension:
 
 | Agent (`subagent_type`) | Focus |
 |-------|-------|
 | `pr-review-toolkit:code-reviewer` | Code quality, bugs, logic errors, CLAUDE.md/style guide adherence |
 | `pr-review-toolkit:silent-failure-hunter` | Silent failures, inadequate error handling, inappropriate fallbacks |
-| `pr-review-toolkit:pr-test-analyzer` | Test coverage completeness, missing edge cases |
 | `pr-review-toolkit:type-design-analyzer` | Type design quality, encapsulation, invariant expression |
-| `pr-review-toolkit:comment-analyzer` | Comment accuracy, staleness, long-term maintainability |
-| `pr-review-toolkit:code-simplifier` | Unnecessary complexity, DRY violations, code smells |
 
 <MANDATORY>
 You MUST use the `subagent_type` parameter when spawning each agent. Example:
@@ -81,7 +78,7 @@ Agent(subagent_type="pr-review-toolkit:code-reviewer", prompt="Review PR #N...",
 Do NOT spawn generic agents with descriptions like "Code reviewer agent". The `subagent_type` parameter loads the agent's specialized system prompt — without it, the agent runs as a generic model with no review methodology.
 </MANDATORY>
 
-**All 6 agents run concurrently.** Wait for all to complete before proceeding.
+**All 3 agents run concurrently.** Wait for all to complete before proceeding.
 
 ### 4. Aggregate and Post Results
 
@@ -93,7 +90,7 @@ cat > /tmp/review.json << 'TEMPLATE'
 {
   "event": "COMMENT",
   "commit_id": "<HEAD commit SHA>",
-  "body": "## PR Review Summary\n\n**Agents run:** code-reviewer, silent-failure-hunter, pr-test-analyzer, type-design-analyzer, comment-analyzer, code-simplifier\n\n<high-level summary>",
+  "body": "## PR Review Summary\n\n**Agents run:** code-reviewer, silent-failure-hunter, type-design-analyzer\n\n<high-level summary>",
   "comments": [
     {
       "path": "<file>",
@@ -139,7 +136,7 @@ Summarize:
 ## Review Complete
 
 **PR:** #<number> - <title>
-**Agents:** 6/6 completed
+**Agents:** 3/3 completed
 **Findings:** N total across all agents
 **ADR:** {N violations | compliant | skipped}
 
@@ -153,4 +150,4 @@ Review comments posted inline on the PR.
 | Running without pr-review-toolkit | Install: `/plugins add pr-review-toolkit` |
 | Diffing against repo default branch | Always use the PR's `baseRefName` — the PR may target `develop`, `release/*`, etc. |
 | Posting a single summary comment | Use inline review comments on specific lines so feedback is actionable |
-| Running agents sequentially | All 6 agents are independent — run them in parallel |
+| Running agents sequentially | All 3 agents are independent — run them in parallel |
