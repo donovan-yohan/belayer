@@ -2,8 +2,8 @@
 
 Foundational thinking behind belayer's architecture. This document captures the WHY, not the HOW. Reference this when brainstorming new features, evaluating competing approaches, or explaining belayer's position in the agentic coding space.
 
-Status: `active` — last updated 2026-03-29
-Source: Slate binary analysis session + adversarial review debate
+Status: `active` — last updated 2026-03-30
+Source: Slate binary analysis session + adversarial review debate + carabiner separation + contracts refinement
 
 ---
 
@@ -13,15 +13,58 @@ Agent, Harness, and Orchestrator are separate concerns. Belayer is the Orchestra
 
 **Agent** = raw model capability. Claude, Codex, Slate, Gemini, whatever comes next. The agent reads code, writes code, runs commands, solves problems. Agent capability is improving rapidly. Belayer does not own this. Belayer does not compete with agents.
 
-**Harness** = memory and code context. AGENTS.md, CLAUDE.md, embedded docs, project-specific knowledge that makes an agent effective in a specific codebase. Today this might be a documentation map with .md files. Tomorrow models might just read the code directly. The need for a harness may drop toward zero as agents improve. Belayer has a harness plugin but harness is not belayer's core identity.
+**Harness** = memory and code context. AGENTS.md, CLAUDE.md, quality patterns, domain knowledge that makes an agent effective in a specific codebase. This is **carabiner** (separate repo: github.com/donovan-yohan/carabiner). Belayer does not own the harness. Carabiner does not own orchestration. Frameworks compose both.
 
-**Orchestrator** = the layer responsible for getting work done end-to-end. Three sub-concerns:
+**Orchestrator** = the layer responsible for getting work done end-to-end. Three concerns connected by two contracts:
 
-- **Intake**: How work gets from idea to agent-ready specification. Scoping, planning, design docs.
-- **Implementation**: Prompting the agent to do the work. Often a single-node passthrough.
-- **Output**: Everything after code is written. Review, quality gates, PR creation, deployment.
+- **Intake**: How work gets from idea to agent-ready specification. Scoping, planning, design docs. Any tool can do intake (gstack /office-hours, a Jira board, a human writing a spec).
+- **Implementation**: The full build loop from design to ready-to-ship. Code, tests, review, fix, PR, resolve comments. Gates live INSIDE implementation as self-resolving loops. The agent owns the entire journey from "here's a design" to "this is ready to ship."
+- **Output**: Shipping and verifying. Is the risk level acceptable? Merge. Watch CI. Run canary. Monitor production. Roll back if something breaks. Output is the ops concern, not the dev concern.
 
 Belayer IS the orchestrator. It survives agent improvements because it doesn't compete with agents. If Claude gets better at coding, belayer benefits. If Codex gets better at review, belayer benefits. Belayer orchestrates when and how agents are invoked, not what they do.
+
+---
+
+## Two Contracts
+
+The three phases connect through two contracts. These are belayer's only opinions about workflow. Everything else is framework-specific.
+
+**Trigger contract** (Intake → Implementation): "Here's an artifact. Is it ready to build?"
+
+A framework-defined script receives an artifact path, validates it meets readiness criteria, and returns exit 0 (ready) or exit 1 (not ready). What "ready" means is the framework's decision. For gstack, it might mean an APPROVED design doc. For a trunk-based workflow, it might mean a ticket moved to "Ready." For a solo dev, it might mean `belayer submit --spec design.md`.
+
+**Ready-to-ship contract** (Implementation → Output): "Implementation is done. Here's what to ship."
+
+Implementation declares ready-to-ship when its internal loops (code, review, fix, resolve) are complete. What "ready-to-ship" means is the framework's decision. For gstack, it might mean a PR that passed review. For trunk-based, it might mean tests pass on main. For a package, it might mean a build artifact exists.
+
+Both contracts are the same shape: a shell script that receives structured input, returns a structured result. Belayer doesn't care what runs inside. The framework defines that.
+
+**What belayer does NOT opine on:**
+- What tool does intake (gstack, Jira, a human)
+- What agent implements (Claude, Codex, Slate)
+- What review tool gates quality (codex challenge, gstack /review, a custom linter)
+- What "ship" means (PR, trunk push, package publish, container deploy)
+
+**What belayer DOES opine on:**
+- Nodes execute commands and produce outcomes (PASS/RETRY/FAIL)
+- Gates produce numeric scores with rationale, routed by YAML thresholds
+- The trigger contract connects intake to implementation
+- The ready-to-ship contract connects implementation to output
+
+---
+
+## Gates Are Implementation Primitives
+
+Gates are NOT phase boundaries. They live inside implementation as self-resolving loops.
+
+```
+Implementation:
+  implement → review (gate) → FAIL → implement (retry) → review → PASS → ship
+```
+
+The agent writes code, the gate catches issues, the agent fixes them, the gate passes. All within implementation. By the time work reaches output, the code quality question is settled. Output's question is operational: "can we safely ship this?"
+
+This means output doesn't need adversarial code review. It needs risk assessment, CI verification, canary monitoring. Different concern, different tools.
 
 ---
 
@@ -31,9 +74,9 @@ Belayer IS the orchestrator. It survives agent improvements because it doesn't c
 
 **Implementation** (lower value, decreasing over time): For most tasks, implementation is one prompt to one agent. The trend is toward LESS orchestration of implementation, not more. Models are learning to self-plan, self-review, self-correct. Don't force ceremony on simple tasks. The pipeline is valuable for complex multi-step work, but the single-node passthrough should be the default, not the exception.
 
-**Output** (high value, undersolved): The space between "code is written" and "PR is approved" is poorly served. Is this code safe to merge? Does it actually solve the stated problem? Should a human look at this, or can it be auto-merged? This is where adversarial review, quality gates, and deployment confidence live. Deterministic pipeline rigidity is a FEATURE here, not a bug.
+**Output** (high value, undersolved): The space between "ready to ship" and "safely running in production" is poorly served. Should this auto-merge or wait for a human? Is CI green? Did the deploy succeed? Is the canary healthy? This is the ops concern. Deterministic pipeline rigidity is a FEATURE here.
 
-**The refined pitch**: Belayer handles what happens before and after agents code. Before: turning ideas into agent-ready work. After: verifying that work is trustworthy enough to ship. In between, use whatever agent you want.
+**The refined pitch**: Belayer handles the transitions. The trigger contract gets work from intake to implementation. The ready-to-ship contract gets work from implementation to output. The phases themselves use whatever tools the framework wires up.
 
 ---
 
@@ -68,25 +111,13 @@ If the orchestrator tries to dictate implementation details, it becomes a rigid 
 
 ---
 
-## The Learning Loop: Belayer's One Harness Opinion
+## The Learning Loop Lives in the Harness, Not the Orchestrator
 
-Belayer is orchestration-only with ONE exception: quality pattern memory.
+Quality pattern memory (the flywheel where every failed gate makes future runs better) is a harness concern, not an orchestration concern. It belongs to **carabiner**, not belayer.
 
-When gates fail, belayer captures WHY and prevents recurrence. This is NOT codebase knowledge. It is quality knowledge: what makes work fail review in this repo.
+Belayer's gate nodes produce structured failure output (gate-result.json + rationale.md). What happens with that output is the framework's decision. A framework that uses carabiner calls `carabiner quality record` on gate failure and `carabiner quality check` before implementation. A framework without carabiner just retries.
 
-| Harness knowledge (NOT this) | Quality pattern knowledge (THIS) |
-|---|---|
-| "The auth module uses JWT" | "Auth route changes must update middleware registry, 3 PRs failed for this" |
-| "We use React with TypeScript" | "New components without Storybook stories fail review 80% of the time" |
-| "Deploy target is AWS" | "PRs touching infra without updating Terraform get kicked back" |
-
-The harness tells agents how the code works. The learning loop tells the orchestrator what patterns of work succeed or fail. The agent doesn't need this knowledge (it's competent at coding). The orchestrator needs it to set up the right conditions.
-
-Without learning loop: "Implement design.md"
-
-With learning loop: "Implement design.md. Quality notes from past reviews in this repo: (1) auth changes require middleware registry updates, (2) new React components need Storybook stories, (3) database migrations must include rollback scripts."
-
-This creates a flywheel no single-agent tool has: every failed gate makes future runs better. Agents are ephemeral (fresh session each time). Harnesses are manually maintained. Quality patterns are orchestration-level knowledge that belongs to belayer.
+This separation matters because quality patterns are repo knowledge ("auth routes need middleware registry updates"), and belayer explicitly does not own repo knowledge. The orchestrator just knows: something failed, route to retry. The harness knows WHY it failed and prevents recurrence.
 
 ---
 
@@ -115,15 +146,16 @@ Learnings are repo-level knowledge but gate results happen on branches. With mul
 ## What Belayer Is Not
 
 - Not an agent (doesn't read/write code)
-- Not a harness (doesn't own codebase knowledge, except quality patterns)
+- Not a harness (doesn't own codebase knowledge — that's carabiner)
 - Not competing with Claude Code, Codex, or Slate (sits above them)
 - Not a task decomposition tree (doesn't dictate how agents work)
 - Not an episode compression system (intentionally avoids the problem)
+- Not prescriptive about what "ready" or "ship" means (frameworks define that)
 
 ## What Belayer Is
 
 - The orchestration layer between idea and shipped code
+- Two contracts (trigger + ready-to-ship) connecting three phases
 - A pipeline runner that enforces context boundaries deterministically
-- A quality pattern memory that makes every agent smarter about THIS repo over time
 - Agent-agnostic: swap Claude for Codex for Gemini per-node
 - The substrate for agentic work in a repo

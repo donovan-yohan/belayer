@@ -1,6 +1,6 @@
 # belayer
 
-Standalone Go CLI that orchestrates autonomous coding agents through declarative YAML pipelines. Three phases: **Explore** (intake via spec.md), **Climb** (per-repo implementation pipeline + PR), **Summit** (post-merge monitoring). Multi-repo adds setter (fan-out) and spotter (fan-in) as additive coordination layers.
+Standalone Go CLI that orchestrates autonomous coding agents through declarative YAML pipelines. Pure orchestration layer — not an agent, not a harness. Three phases: **Explore** (intake — idea to spec), **Climb** (implementation — agent does the work), **Summit** (output — review, gates, PR). Agent-agnostic — works with Claude, Codex, or any agent that can run in a shell.
 
 ## Quick Reference
 
@@ -24,7 +24,6 @@ Standalone Go CLI that orchestrates autonomous coding agents through declarative
 | Design Docs | `docs/design-docs/` | Feature brainstorm outputs and design decisions |
 | ADRs | `docs/adrs/` | Architecture decision records |
 | TODOs | `docs/TODOS.md` | Deferred items, P2/P3 backlog, tech debt tracker |
-| Plugins | `docs/PLUGINS.md` | Plugin authoring patterns, invocation mandates, version sync, merge-friendly formats |
 | Review Guidance | `docs/REVIEW_GUIDANCE.md` | Adversarial review config, deployment context, question bank |
 
 ## Key Patterns
@@ -34,21 +33,11 @@ Standalone Go CLI that orchestrates autonomous coding agents through declarative
 - **Node protocol**: Core writes `node-context.json` before spawning. Framework commands read it for context. Commands write completion files when done.
 - **ExecSpawner**: Core spawner execs `command:` from YAML via `sh -c`. Returns exit channel for fast-fail. Context-aware (kills process on cancellation).
 - **Score-then-route**: Gate nodes produce structured scores; Go code computes weighted average; YAML thresholds route PASS/RETRY/FAIL. Anti-gaming by design.
-- **Three-phase model**: Explore (intake) -> Climb (implementation) -> Summit (output). Multi-repo adds setter (fan-out) + spotter (fan-in) as additive layers.
-- **Plugin version sync**: When modifying `plugins/*/`, bump version in all 3 locations: `plugin.json`, `registry.go` constant, and `agentassets_test.go` `TestPluginVersion`
+- **Three-phase model**: Explore (intake — idea to spec) → Climb (implementation — agent does the work) → Summit (output — review, gates, PR). Belayer is orchestration-only.
 - **New output types**: Adding a pipeline output type requires updates in: `validate.go` (validOutputTypes map), `model.go` (OutputConfig comment), and `outcome/detect.go` (typeDefault switch). Missing `detect.go` causes silent false-positive outcomes.
 
-## Plugin Development
+## gstack
 
-When editing files under `plugins/*/`, you MUST use `plugin-dev` skills before making changes. See `docs/PLUGINS.md` for full patterns (invocation mandates, MANDATORY blocks, merge-friendly formats, version sync).
-
-## Workflow
-
-> brainstorm -> plan -> orchestrate -> complete
-
-| Step | Command | Purpose |
-|------|---------|---------|
-| 1 | `/harness:brainstorm` | Design through collaborative dialogue |
-| 2 | `/harness:plan` | Create living implementation plan |
-| 3 | `/harness:orchestrate` | Execute with agent teams + micro-reflects |
-| 4 | `/harness:complete` | Reflect, review, and create PR |
+- Use `/browse` from gstack for ALL web browsing — never use `mcp__claude-in-chrome__*` tools
+- Available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-design-review, /design-consultation, /design-shotgun, /design-html, /review, /ship, /land-and-deploy, /canary, /benchmark, /browse, /connect-chrome, /qa, /qa-only, /design-review, /setup-browser-cookies, /setup-deploy, /retro, /investigate, /document-release, /codex, /cso, /autoplan, /careful, /freeze, /guard, /unfreeze, /gstack-upgrade, /learn
+- If gstack skills aren't working, run `cd .claude/skills/gstack && ./setup` to rebuild
