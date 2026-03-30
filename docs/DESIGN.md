@@ -26,6 +26,27 @@ Core writes `.belayer/.internal/input/node-context.json` before spawning. Framew
 
 Gate nodes produce structured scores per dimension. Deterministic Go code computes weighted average. YAML thresholds route PASS/RETRY/FAIL. The rationale.md is mandatory as an anti-gaming measure -- no score without explanation.
 
+## Agent Nodes
+
+Agent nodes (`type: agent`) replace shell scripts with vendor + prompt in YAML. Belayer resolves the vendor to the right CLI command. `command:` still works for custom scripts.
+
+```yaml
+- name: implement
+  type: agent
+  vendor: claude
+  prompt: "Implement the design specification at %{INPUT}"
+```
+
+Vendor map: `claude` → `claude -p --dangerously-skip-permissions --output-format stream-json`, `codex` → `codex exec -s read-only --json`. Gate nodes auto-append `--json-schema` (claude) or `--output-schema` (codex) with dimensions from the YAML.
+
+## Two Contracts
+
+Belayer's only opinions about workflow:
+- **Trigger contract** (Intake → Implementation): framework script validates "is this artifact ready to build?"
+- **Ready-to-ship contract** (Implementation → Output): implementation declares "ready to ship"
+
+Both are shell scripts returning exit 0 (ready) or exit 1 (not ready). What "ready" means is the framework's decision.
+
 ## Validation Pipeline
 
 Validation flows through four layers. See [review-loops-test-infra-design](design-docs/2026-03-16-review-loops-test-infra-design.md) for full design.
