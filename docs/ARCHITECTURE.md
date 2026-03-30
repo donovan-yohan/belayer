@@ -84,6 +84,7 @@ Belayer uses climbing metaphors and a three-phase model:
 | Temporal | `internal/temporal/` | ClimbWorkflow, NodeActivity (spawn + heartbeat + poll completion + node-context.json) |
 | Intake | `internal/intake/` | Intake adapter interface, SubmitSpec, bridge function, Jira adapter, schedule reconciliation |
 | Plugins | `internal/plugins/` | Claude Code marketplace registration: writes to `~/.claude/plugins/` registry files during `belayer init`, Codex skill generation |
+| Vendor | `internal/vendor/` | Agent CLI resolution: vendor registry, command builder, %{VAR} interpolation, gate schema generation |
 | Frameworks | `frameworks/` | Built-in framework templates (embed.FS), Install/List/EnsureInternalDir |
 
 ## Data Flow
@@ -126,6 +127,9 @@ Belayer uses an Activity-per-Node model. Each pipeline node is a Temporal Activi
 ### Key Concepts
 
 - **Two pipeline primitives**: Nodes (constructive — produce artifacts) and Gates (adversarial — evaluate artifacts with multi-dimensional scoring)
+- **Agent nodes**: Pipeline nodes with `type: agent` + `vendor` + `prompt`. Belayer resolves the vendor to a CLI command (claude -p, codex exec) with structured output schema for gate nodes. No shell scripts needed.
+- **Vendor resolution**: `internal/vendor/` maps vendor names to CLI invocations. Claude uses `--json-schema` (inline), Codex uses `--output-schema` (temp file). Gate nodes auto-generate JSON Schema from YAML dimensions.
+- **%{VAR} interpolation**: Belayer variables use `%{INPUT}`, `%{WORK_DIR}` syntax to avoid clashing with shell `$VAR` and agent skill invocations like `$review`.
 - **Activity Per Node**: Each pipeline node/gate = one Temporal Activity. Simplest model.
 - **File-based completion**: Node commands write `.belayer/.internal/completion/<id>-<node>-attempt-<N>.json` when done (via `belayer node-complete` or directly)
 - **Node protocol**: `NodeActivity` writes `.belayer/.internal/input/node-context.json` before spawning. The framework command reads it for context.

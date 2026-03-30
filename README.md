@@ -100,10 +100,11 @@ Neither changes how work happens inside a repo.
 
 ## Frameworks
 
-A framework is a directory with `pipeline.yaml` + scripts. Belayer ships `claude-tmux` as the first built-in:
+A framework is a directory with `pipeline.yaml` + scripts. Belayer ships two built-in frameworks:
 
 ```bash
-belayer setup --framework claude-tmux        # built-in
+belayer setup --framework claude-tmux        # interactive tmux sessions
+belayer setup --framework gstack             # headless: claude implements, codex reviews
 belayer setup --framework ./my-framework     # custom
 ```
 
@@ -163,19 +164,10 @@ go test ./...
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code map and [docs/DESIGN.md](docs/DESIGN.md) for design patterns.
 
-## Claude Code Plugins
+## Companion Tools
 
-This repo ships three Claude Code plugins:
-
-- **harness** — 3-tier documentation system with living execution plans
-- **pr** — Pull request lifecycle management
-- **explorer** — Submit specs into the belayer pipeline
-
-Install in other projects:
-```bash
-claude plugin add donovan-yohan/belayer --path plugins/harness
-claude plugin add donovan-yohan/belayer --path plugins/pr
-```
+- **[carabiner](https://github.com/donovan-yohan/carabiner)** — Agent-agnostic harness for quality patterns and domain knowledge
+- **gstack** — vendored in `.claude/skills/gstack/`, provides /review, /ship, /office-hours, and 25+ other skills
 
 ## License
 

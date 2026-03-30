@@ -2,6 +2,7 @@
 
 ## Current Designs
 
+- [2026-03-29-quality-learning-loop-claude-codex-design](2026-03-29-quality-learning-loop-claude-codex-design.md) — Quality learning loop + claude-codex framework: carabiner quality patterns, agent nodes, gate-failure flywheel (2026-03-29)
 - [2026-03-25-three-phase-architecture-design](2026-03-25-three-phase-architecture-design.md) — Three-phase architecture: Explore/Climb/Summit, multi-repo setter/spotter, config hierarchy (2026-03-25)
 
 ## Archived
@@ -33,6 +34,7 @@
 
 ### Superseded
 
+- [2026-03-29-adversarial-review-system-design](2026-03-29-adversarial-review-system-design.md) — Validate/Review split + blinded protocol for harness plugin (2026-03-29, superseded by carabiner separation)
 - [2026-03-09-manage-session-context](2026-03-09-manage-session-context.md) — Manage session context design (historical draft) (2026-03-09)
 - [2026-03-09-mail-system-design](2026-03-09-mail-system-design.md) — Beads-backed inter-agent mail system with tmux send-keys delivery (2026-03-09)
 - [2026-03-07-belayer-manage-design](2026-03-07-belayer-manage-design.md) — Goal 5: Belayer manage — interactive agent session for task creation (2026-03-07)
