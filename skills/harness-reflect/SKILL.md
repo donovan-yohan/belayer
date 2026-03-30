@@ -191,10 +191,10 @@ This phase feeds the self-learning review system. When bugs escape `harness-revi
     ```
 
 14.13. If `HARNESS_DIR` is not empty:
-    - Invoke `harness-evolve` using the Skill tool: `Skill("harness-evolve")`. Follow the loaded skill's full process.
+    - Invoke `harness-evolve` as a command and follow its full process.
 
     <MANDATORY>
-    You MUST use the Skill tool to invoke `harness-evolve`. Do NOT classify learnings or generate proposals inline — the evolve command has the persistence script integration, evolver agent dispatch, and auto-apply safety checks that prevent both under-evolution and over-evolution.
+    You MUST invoke `harness-evolve` (do not inline its behavior). Do NOT classify learnings or generate proposals inline — the evolve command has the persistence script integration, evolver agent dispatch, and auto-apply safety checks that prevent both under-evolution and over-evolution.
     </MANDATORY>
 
 14.14. If `HARNESS_DIR` is empty: skip silently. Repos without `.harness/` work exactly as before — backward compatible.

@@ -72,7 +72,7 @@ harness-brainstorm add user auth      # Brainstorm with initial topic
     [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
       --harness-dir "$HARNESS_DIR" \
       --phase "brainstorm" \
-      --design-doc "docs/design-docs/{filename}" \
+      --design-doc "docs/design-docs/{filename}.md" \
       --branch "$(git branch --show-current)"
     ```
 

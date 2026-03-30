@@ -84,7 +84,7 @@ else:
         'last_updated': now,
     }
 
-# Non-atomic write: write to temp file then rename to avoid truncation on failure
+# Atomic write: write to temp file then rename to avoid truncation on failure
 tmp_file = state_file + '.tmp'
 try:
     with open(tmp_file, 'w') as f:

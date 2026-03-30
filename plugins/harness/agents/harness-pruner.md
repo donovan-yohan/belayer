@@ -230,7 +230,7 @@ If `docs/LEARNINGS.md` exists, scan H3 headers for the old sequential ID pattern
 
 - If any `L-NNN` entries are found, flag as **warn** per entry
 - To determine the migration target ID: read each entry's `source:` metadata line to extract the date, then derive a slug from the entry title (2-4 word kebab-case summary)
-- Example: `### L-007: Resolve model conflicts before planning` with `source: /harness:loop 2026-03-21` → `### L-20260321-resolve-model-conflicts: Resolve model conflicts before planning`
+- Example: `### L-007: Resolve model conflicts before planning` with `source: /harness:reflect 2026-03-21` → `### L-20260321-resolve-model-conflicts: Resolve model conflicts before planning`
 
 ### Step 24: Legacy Index Table Format
 

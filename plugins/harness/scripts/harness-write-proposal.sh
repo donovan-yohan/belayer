@@ -53,6 +53,9 @@ PROPOSAL_FILE="$HARNESS_DIR/proposals/${DATE}-${SLUG}.md"
   echo ""
   if [ -f "$CURRENT_FILE" ]; then
     cat "$CURRENT_FILE"
+  elif [ -n "$CURRENT_FILE" ]; then
+    echo "Warning: --current-file '$CURRENT_FILE' not found, using placeholder" >&2
+    echo "(no current text provided)"
   else
     echo "(no current text provided)"
   fi
@@ -61,6 +64,9 @@ PROPOSAL_FILE="$HARNESS_DIR/proposals/${DATE}-${SLUG}.md"
   echo ""
   if [ -f "$PROPOSED_FILE" ]; then
     cat "$PROPOSED_FILE"
+  elif [ -n "$PROPOSED_FILE" ]; then
+    echo "Warning: --proposed-file '$PROPOSED_FILE' not found, using placeholder" >&2
+    echo "(no proposed text provided)"
   else
     echo "(no proposed text provided)"
   fi
@@ -69,6 +75,9 @@ PROPOSAL_FILE="$HARNESS_DIR/proposals/${DATE}-${SLUG}.md"
   echo ""
   if [ -f "$REASONING_FILE" ]; then
     cat "$REASONING_FILE"
+  elif [ -n "$REASONING_FILE" ]; then
+    echo "Warning: --reasoning-file '$REASONING_FILE' not found, using placeholder" >&2
+    echo "(no reasoning provided)"
   else
     echo "(no reasoning provided)"
   fi

@@ -25,9 +25,9 @@ RUNS_DIR="$HARNESS_DIR/runs"
 mkdir -p "$RUNS_DIR"
 
 # Compute timestamp once to ensure TIMESTAMP and NOW refer to the same instant
-_TS_RAW=$(date -u +%Y-%m-%dT%H%M%SZ)
-TIMESTAMP="$_TS_RAW"
-NOW=$(echo "$_TS_RAW" | sed 's/T\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)Z$/T\1:\2:\3Z/')
+EPOCH=$(date +%s)
+TIMESTAMP=$(date -u -r "$EPOCH" +%Y-%m-%dT%H%M%SZ 2>/dev/null || date -u -d "@$EPOCH" +%Y-%m-%dT%H%M%SZ)
+NOW=$(date -u -r "$EPOCH" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$EPOCH" +%Y-%m-%dT%H:%M:%SZ)
 RUN_FILE="$RUNS_DIR/${TIMESTAMP}-${PHASE}.json"
 
 DATA_FILE="$DATA_FILE" PHASE="$PHASE" BRANCH="${BRANCH:-unknown}" NOW="$NOW" RUN_FILE="$RUN_FILE" \
@@ -53,8 +53,16 @@ record = {
     'timestamp': os.environ['NOW'],
     'data': data
 }
-with open(os.environ['RUN_FILE'], 'w') as f:
-    json.dump(record, f, indent=2)
+tmp_file = os.environ['RUN_FILE'] + '.tmp'
+try:
+    with open(tmp_file, 'w') as f:
+        json.dump(record, f, indent=2)
+    os.rename(tmp_file, os.environ['RUN_FILE'])
+except OSError as e:
+    print(f"Error: failed to write run record: {e}", file=sys.stderr)
+    try: os.unlink(tmp_file)
+    except OSError: pass
+    sys.exit(1)
 PYEOF
 
 echo "$RUN_FILE"

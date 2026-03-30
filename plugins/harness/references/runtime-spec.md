@@ -96,8 +96,9 @@ review:
 }
 ```
 
-<!-- NOTE: Agent disabling (disabled/disable_reason fields) is not yet implemented.
-     Add those fields when the disable-agent feature is built. -->
+<!-- NOTE: Agent disabling (disabled/disable_reason fields) is planned but not yet implemented.
+     The write-metrics script does not write these fields. Add them to both the spec and script
+     when the disable-agent feature is built. -->
 
 ### plan-accuracy.json
 

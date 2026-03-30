@@ -99,7 +99,7 @@ prompt: |
 
 ## Quick Health Mode
 
-When invoked from a health-check context (e.g., from `harness-loop` at session start), prune can run in quick mode:
+When invoked from a health-check context (e.g., at session start), prune can run in quick mode:
 
 ```
 harness-prune --quick
