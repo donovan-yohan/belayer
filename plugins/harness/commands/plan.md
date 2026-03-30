@@ -110,7 +110,7 @@ Create a living execution plan from a design document, saved as a versioned arti
     [ -n "$HARNESS_DIR" ] && bash ${CLAUDE_PLUGIN_ROOT}/scripts/harness-update-state.sh \
       --harness-dir "$HARNESS_DIR" \
       --phase "plan" \
-      --plan "docs/exec-plans/active/{filename}" \
+      --plan "docs/exec-plans/active/{filename}.md" \
       --design-doc "{design-doc-path}"
     ```
 

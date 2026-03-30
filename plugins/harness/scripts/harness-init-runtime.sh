@@ -27,7 +27,7 @@ fi
 if [ "$FORCE" = "true" ] && [ -f "$HARNESS_DIR/manifest.yaml" ]; then
   BACKUP_TS=$(date -u +%Y%m%dT%H%M%SZ)
   cp "$HARNESS_DIR/manifest.yaml" "$HARNESS_DIR/manifest.yaml.bak.$BACKUP_TS"
-  [ -f "$HARNESS_DIR/config.yaml" ] && cp "$HARNESS_DIR/config.yaml" "$HARNESS_DIR/config.yaml.bak.$BACKUP_TS"
+  [ -f "$HARNESS_DIR/config.yaml" ] && cp "$HARNESS_DIR/config.yaml" "$HARNESS_DIR/config.yaml.bak.$BACKUP_TS" || true
   echo "Backed up existing config to manifest.yaml.bak.$BACKUP_TS" >&2
 fi
 
@@ -120,6 +120,7 @@ EOF
 cat > "$HARNESS_DIR/.gitignore" <<'EOF'
 handoffs/
 memory/session-history.json
+metrics/pre-change-snapshot.json
 review-results.json
 phase-timing.tmp
 run-state.json

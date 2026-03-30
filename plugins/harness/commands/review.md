@@ -293,7 +293,7 @@ Context-isolated adversarial review using the bundled `scripts/adversarial-revie
 
 ### Report
 
-23. Output:
+28. Output:
     ```
     ## Review Complete
 

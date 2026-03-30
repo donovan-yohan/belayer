@@ -12,6 +12,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [ ! -d "$REPO_ROOT" ]; then
+  echo "Error: --repo-root '$REPO_ROOT' is not a directory" >&2
+  exit 1
+fi
+
 REPO_SLUG=$(basename "$(cd "$REPO_ROOT" && git rev-parse --show-toplevel 2>/dev/null || echo "$REPO_ROOT")")
 
 # Tier 1: repo-local

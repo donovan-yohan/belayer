@@ -339,7 +339,7 @@ Transform a monolithic CLAUDE.md into a 3-tier progressive disclosure documentat
 
     Determine the repo name for manifest:
     ```bash
-    git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo "local/$(basename $(pwd))"
+    REPO_NAME=$(git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||' || echo "local/$(basename $(pwd))")
     ```
 
     Run the scaffold script:

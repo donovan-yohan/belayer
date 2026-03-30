@@ -98,7 +98,7 @@ if metric_type == 'review-effectiveness':
     agents = data.setdefault('agents', {})
     agent = agents.setdefault(agent_name, {
         'runs': 0, 'findings': 0, 'false_positives': 0,
-        'unique_catches': 0, 'last_run': None, 'disabled': False, 'disable_reason': None
+        'unique_catches': 0, 'last_run': None
     })
     # All fields below are ACCUMULATIVE (incremented on each call)
     agent['runs'] += 1
@@ -141,7 +141,7 @@ elif metric_type == 'learning-efficacy':
 
 data['last_updated'] = now
 
-# Non-atomic write: write to temp file then rename to avoid truncation on failure
+# Atomic write: write to temp file then rename to avoid truncation on failure
 tmp_file = metrics_file + '.tmp'
 try:
     with open(tmp_file, 'w') as f:

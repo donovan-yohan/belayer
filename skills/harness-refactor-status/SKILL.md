@@ -71,6 +71,6 @@ harness-refactor-status docs/refactor-scopes/{file}.md         # Check specific 
    ```
    ## Next Steps
 
-   Run `harness-loop docs/refactor-scopes/{scope}/{goal}-design.md` to execute the next goal.
-   Or run `harness-loop docs/refactor-scopes/{date}-{scope}-refactor-scope.md` to execute all remaining goals.
+   Run `harness-plan` with the goal design doc to execute the next goal.
+   Or run `harness-plan` with the scope doc to create an execution plan for all remaining goals.
    ```

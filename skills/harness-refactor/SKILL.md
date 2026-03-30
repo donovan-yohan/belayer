@@ -117,11 +117,11 @@ harness-refactor extract auth from UserController   # With initial target
 
    ## Next Steps
 
-   1. `harness-loop docs/refactor-scopes/{date}-{scope}-refactor-scope.md` — Execute all goals with full pipeline per goal
-   2. `harness-loop docs/refactor-scopes/{scope}/{goal}-design.md` — Execute a single goal
+   1. `harness-plan` — Create an execution plan for all goals
+   2. `harness-plan` with a single goal design doc — Execute a single goal
    3. `harness-refactor-status` — Check progress between sessions
 
-   Run `harness-loop docs/refactor-scopes/{date}-{scope}-refactor-scope.md` to begin.
+   Run `harness-plan` to begin.
    ```
 
-**IMPORTANT:** When the strangler-fig skill transitions to output, do NOT invoke writing-plans directly. Instead, output the Next Steps above and let the user invoke `harness-loop` or `harness-plan`.
+**IMPORTANT:** When the strangler-fig skill transitions to output, do NOT invoke writing-plans directly. Instead, output the Next Steps above and let the user invoke `harness-plan`.
