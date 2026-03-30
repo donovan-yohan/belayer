@@ -16,6 +16,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/pipeline"
 	"github.com/donovan-yohan/belayer/internal/session"
+	"github.com/donovan-yohan/belayer/internal/vendor"
 )
 
 // NodeActivityInput is the input to the NodeActivity.
@@ -126,14 +127,39 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		return nil, fmt.Errorf("write node context: %w", err)
 	}
 
-	// 5. Spawn session.
+	// 5. Resolve command: agent nodes use vendor resolution, others use command field.
+	command := input.Node.Command
+	var vendorCleanup func()
+	if input.Node.IsAgent() {
+		vars := map[string]string{
+			"INPUT":    inputPrompt,
+			"WORK_DIR": input.WorkDir,
+		}
+		// Add artifact paths as variables.
+		for k, v := range input.Artifacts {
+			vars[strings.ToUpper(k)] = v
+		}
+		prompt := vendor.Interpolate(input.Node.Prompt, vars)
+		var err error
+		command, vendorCleanup, err = vendor.BuildCommand(
+			input.Node.Vendor,
+			prompt,
+			input.WorkDir,
+			input.Node.IsGate(),
+			input.Node.Dimensions,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("resolve agent command for %q: %w", input.Node.Name, err)
+		}
+	}
+
 	opts := session.SpawnOpts{
 		NodeName:    input.Node.Name,
 		TaskID:      input.TaskID,
 		Attempt:     input.Attempt,
 		WorkDir:     input.WorkDir,
 		Description: input.Node.Description,
-		Command:     input.Node.Command,
+		Command:     command,
 		InputPrompt: inputPrompt,
 	}
 	exitCh, err := a.Spawner.Spawn(ctx, opts)
@@ -143,6 +169,12 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 
 	// 6. Poll for completion file with heartbeats, checking exit channel.
 	result, err := pollForCompletion(ctx, input.WorkDir, input.TaskID, input.Node.Name, input.Attempt, 5*time.Second, exitCh)
+
+	// Clean up vendor temp files (e.g., codex schema file) regardless of outcome.
+	if vendorCleanup != nil {
+		vendorCleanup()
+	}
+
 	if err != nil {
 		return nil, err
 	}
