@@ -17,6 +17,7 @@ Standalone Go CLI that orchestrates autonomous coding agents through declarative
 |----------|------|-------------------|
 | Architecture | `docs/ARCHITECTURE.md` | Module boundaries, data flow, pipeline engine |
 | Design | `docs/DESIGN.md` | Patterns, framework model, agentic node contracts |
+| Philosophy | `docs/PHILOSOPHY.md` | Three roles separation, H-as-feature, orchestration-only identity, learning loop rationale |
 | Quality | `docs/QUALITY.md` | Test runner, test files, isolation patterns |
 | Plans | `docs/PLANS.md` | Active work, completed plans, tech debt |
 | Learnings | `docs/LEARNINGS.md` | Past learnings, corrections, patterns discovered across sessions |
