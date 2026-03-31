@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,9 +55,15 @@ Examples:
 				return fmt.Errorf("spec is empty")
 			}
 
+			// Generate a stable ExternalID from spec content hash so retries
+			// produce the same workflow ID (Temporal deduplicates).
+			hash := sha256.Sum256([]byte(spec))
+			externalID := "submit-" + hex.EncodeToString(hash[:8])
+
 			payload := intake.SubmitSpec{
-				Spec:   spec,
-				Source: "submit",
+				Spec:       spec,
+				Source:     "submit",
+				ExternalID: externalID,
 			}
 			if designFile != "" {
 				payload.Metadata = map[string]string{"design_file": designFile}

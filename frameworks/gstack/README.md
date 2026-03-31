@@ -113,3 +113,16 @@ Any agent with gstack skills can fill any role.
 ```bash
 belayer setup --framework gstack
 ```
+
+## Intake
+
+The intake trigger (`check-ready.sh`) looks for design docs with **both** fields:
+
+```
+Status: APPROVED
+Pipeline: ready
+```
+
+`Status: APPROVED` means "I like this design." `Pipeline: ready` means "build it now." The poller requires both. Old approved docs without `Pipeline: ready` are ignored.
+
+To submit manually without the poller: `belayer submit --file <design-doc>`
