@@ -3,6 +3,7 @@ package temporal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/pipeline"
+	"github.com/donovan-yohan/belayer/internal/session"
 )
 
 // --- helpers ---
@@ -129,7 +131,7 @@ func TestPollForCompletion_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := pollForCompletion(ctx, workDir, "task-xyz", "coder", 1, 50*time.Millisecond, nil)
+	_, _, err := pollForCompletion(ctx, workDir, "task-xyz", "coder", 1, 50*time.Millisecond, nil)
 	if err == nil {
 		t.Fatal("expected context error, got nil")
 	}
@@ -143,15 +145,18 @@ func TestPollForCompletion_ExitChannelFastFail(t *testing.T) {
 	ctx := context.Background()
 
 	// Exit channel fires with error before completion file exists.
-	exitCh := make(chan error, 1)
-	exitCh <- fmt.Errorf("process crashed")
+	exitCh := make(chan session.SpawnResult, 1)
+	exitCh <- session.SpawnResult{Error: fmt.Errorf("process crashed")}
 
-	_, err := pollForCompletion(ctx, workDir, "task-exit", "crash-node", 0, 50*time.Millisecond, exitCh)
+	_, spawnResult, err := pollForCompletion(ctx, workDir, "task-exit", "crash-node", 0, 50*time.Millisecond, exitCh)
 	if err == nil {
-		t.Fatal("expected error from exit channel fast-fail")
+		t.Fatal("expected errNoCompletionFile from exit channel fast-fail")
 	}
-	if !strings.Contains(err.Error(), "crash-node") {
-		t.Errorf("error should mention node name, got: %v", err)
+	if !errors.Is(err, errNoCompletionFile) {
+		t.Errorf("expected errNoCompletionFile, got: %v", err)
+	}
+	if spawnResult.Error == nil {
+		t.Error("expected SpawnResult.Error to be set")
 	}
 }
 
@@ -166,15 +171,35 @@ func TestPollForCompletion_ExitChannelWithCompletionFile(t *testing.T) {
 	})
 
 	// Exit channel fires after file is written — file should win.
-	exitCh := make(chan error, 1)
-	exitCh <- fmt.Errorf("process exited non-zero")
+	exitCh := make(chan session.SpawnResult, 1)
+	exitCh <- session.SpawnResult{Error: fmt.Errorf("process exited non-zero")}
 
-	result, err := pollForCompletion(ctx, workDir, "task-race", "race-node", 0, 50*time.Millisecond, exitCh)
+	result, _, err := pollForCompletion(ctx, workDir, "task-race", "race-node", 0, 50*time.Millisecond, exitCh)
 	if err != nil {
 		t.Fatalf("expected completion file to win over exit error, got: %v", err)
 	}
 	if result.Outcome != model.OutcomePass {
 		t.Errorf("outcome = %q, want PASS", result.Outcome)
+	}
+}
+
+func TestPollForCompletion_CleanExitNoFile(t *testing.T) {
+	workDir := t.TempDir()
+	ctx := context.Background()
+
+	// Clean exit (nil error), no completion file.
+	exitCh := make(chan session.SpawnResult, 1)
+	exitCh <- session.SpawnResult{Error: nil, Stdout: []byte("output")}
+
+	_, spawnResult, err := pollForCompletion(ctx, workDir, "task-clean", "agent-node", 0, 50*time.Millisecond, exitCh)
+	if !errors.Is(err, errNoCompletionFile) {
+		t.Fatalf("expected errNoCompletionFile, got: %v", err)
+	}
+	if spawnResult.Error != nil {
+		t.Errorf("expected nil SpawnResult.Error for clean exit, got: %v", spawnResult.Error)
+	}
+	if string(spawnResult.Stdout) != "output" {
+		t.Errorf("expected stdout to be passed through, got: %q", spawnResult.Stdout)
 	}
 }
 
