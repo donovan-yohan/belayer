@@ -127,10 +127,37 @@ func cleanupWorktree(ctx context.Context, repoDir, worktreeDir, branch string) {
 	}
 }
 
+// temporalProcess bundles the child process and its log file for coordinated cleanup.
+type temporalProcess struct {
+	cmd     *exec.Cmd
+	logFile *os.File
+}
+
+// shutdown gracefully stops the Temporal dev server: SIGINT, wait with timeout, kill if needed.
+func (tp *temporalProcess) shutdown() {
+	if tp == nil || tp.cmd == nil || tp.cmd.Process == nil {
+		return
+	}
+	_ = tp.cmd.Process.Signal(os.Interrupt)
+	done := make(chan error, 1)
+	go func() { done <- tp.cmd.Wait() }()
+	select {
+	case <-time.After(5 * time.Second):
+		_ = tp.cmd.Process.Kill()
+		<-done // reap after kill
+	case <-done:
+	}
+	if tp.logFile != nil {
+		tp.logFile.Close()
+	}
+}
+
 // ensureTemporal checks if Temporal is running and starts it if not.
-// Returns the child process (for cleanup) or nil if Temporal was already running.
-func ensureTemporal(workDir string) (*exec.Cmd, error) {
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:7233", 2*time.Second)
+// Returns a temporalProcess for cleanup, or nil if Temporal was already running.
+func ensureTemporal(workDir string) (*temporalProcess, error) {
+	// Probe localhost (not 127.0.0.1) to match the SDK's default dial target,
+	// which may resolve to IPv6 ::1 on some systems.
+	conn, err := net.DialTimeout("tcp", "localhost:7233", 2*time.Second)
 	if err == nil {
 		conn.Close()
 		return nil, nil // already running
@@ -158,12 +185,15 @@ func ensureTemporal(workDir string) (*exec.Cmd, error) {
 
 	for i := 0; i < 30; i++ {
 		time.Sleep(500 * time.Millisecond)
-		if conn, err := net.DialTimeout("tcp", "127.0.0.1:7233", 500*time.Millisecond); err == nil {
+		if conn, err := net.DialTimeout("tcp", "localhost:7233", 500*time.Millisecond); err == nil {
 			conn.Close()
-			return cmd, nil
+			return &temporalProcess{cmd: cmd, logFile: logFile}, nil
 		}
 	}
-	cmd.Process.Kill()
+	// Timeout: kill, reap, close log.
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	logFile.Close()
 	return nil, fmt.Errorf("Temporal failed to start within 15s. Check %s/temporal.log", logDir)
 }
 
@@ -177,12 +207,12 @@ func runWorker(workDir string) error {
 	}
 
 	// Auto-start Temporal if not running.
-	temporalCmd, err := ensureTemporal(workDir)
+	tp, err := ensureTemporal(workDir)
 	if err != nil {
 		return err
 	}
-	if temporalCmd != nil {
-		defer temporalCmd.Process.Signal(os.Interrupt)
+	if tp != nil {
+		defer tp.shutdown()
 		fmt.Println("Started Temporal dev server (auto)")
 	}
 

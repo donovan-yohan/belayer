@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/donovan-yohan/belayer/internal/intake"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -51,12 +53,12 @@ Examples:
 				return fmt.Errorf("spec is empty")
 			}
 
-			payload := map[string]interface{}{
-				"spec":   spec,
-				"source": "submit",
+			payload := intake.SubmitSpec{
+				Spec:   spec,
+				Source: "submit",
 			}
 			if designFile != "" {
-				payload["metadata"] = map[string]string{"design_file": designFile}
+				payload.Metadata = map[string]string{"design_file": designFile}
 			}
 			body, err := json.Marshal(payload)
 			if err != nil {
@@ -70,7 +72,7 @@ Examples:
 				bytes.NewReader(body),
 			)
 			if err != nil {
-				return fmt.Errorf("belayer worker is not running. Start it with: belayer worker")
+				return fmt.Errorf("belayer worker is not running. Start it with: belayer worker\n  (cause: %w)", err)
 			}
 			defer resp.Body.Close()
 
