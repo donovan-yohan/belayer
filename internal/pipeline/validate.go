@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 )
@@ -59,6 +60,19 @@ func Validate(cfg *PipelineConfig) error {
 			if n.Command != "" {
 				return fmt.Errorf("agent %q: command and vendor are mutually exclusive — use one or the other", n.Name)
 			}
+		}
+		// Non-agent nodes with vendor: validate prompt and command exclusivity.
+		if n.Vendor != "" && n.Type != NodeTypeAgent {
+			if n.Prompt == "" {
+				return fmt.Errorf("node %q has vendor %q but no prompt", n.Name, n.Vendor)
+			}
+			if n.Command != "" {
+				return fmt.Errorf("node %q: command and vendor are mutually exclusive", n.Name)
+			}
+		}
+		// Warn if a gate prompt does not include %{INPUT} (rubric injection point).
+		if n.IsGate() && n.Prompt != "" && !strings.Contains(n.Prompt, "%{INPUT}") {
+			fmt.Fprintf(os.Stderr, "warning: gate %q prompt does not contain %%{INPUT} — gate rubric may not be injected\n", n.Name)
 		}
 		if n.Output.Type == "" {
 			return fmt.Errorf("node %q: output.type is required", n.Name)
