@@ -101,8 +101,9 @@ func startWorkflow(ctx context.Context, tc client.Client, input startWorkflowInp
 	}
 	run, err := tc.ExecuteWorkflow(ctx, opts, beltemporal.ClimbWorkflow, climbInput)
 	if err != nil {
-		// Best-effort cleanup of worktree and branch on failure.
-		cleanupWorktree(ctx, input.WorkDir, worktreeDir, branch)
+		// Best-effort cleanup. Use background context since the request context may
+		// have been the reason for the failure (canceled/timed out).
+		cleanupWorktree(context.Background(), input.WorkDir, worktreeDir, branch)
 		return nil, fmt.Errorf("start workflow: %w", err)
 	}
 
@@ -282,7 +283,8 @@ func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []b
 func startIntakePoller(ctx context.Context, tc client.Client, workDir string, checks []string, maxConcurrent int, pipelineYAML []byte, pipelineName string) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	disabled := make(map[int]bool)
+	failures := make(map[int]int)  // consecutive failure count per check
+	const maxConsecutiveFailures = 5
 
 	for {
 		select {
@@ -302,15 +304,20 @@ func startIntakePoller(ctx context.Context, tc client.Client, workDir string, ch
 			}
 
 			for i, check := range checks {
-				if disabled[i] {
-					continue
+				if failures[i] >= maxConsecutiveFailures {
+					continue // disabled after repeated failures
 				}
 				artifactPath, err := runIntakeCheck(ctx, workDir, check)
 				if err != nil {
-					log.Printf("intake poller: check %q disabled: %v", check, err)
-					disabled[i] = true
+					failures[i]++
+					if failures[i] >= maxConsecutiveFailures {
+						log.Printf("intake poller: check %q disabled after %d consecutive failures: %v", check, failures[i], err)
+					} else {
+						log.Printf("intake poller: check %q failed (%d/%d): %v", check, failures[i], maxConsecutiveFailures, err)
+					}
 					continue
 				}
+				failures[i] = 0 // reset on success
 				if artifactPath == "" {
 					continue // No approved doc found.
 				}
