@@ -12,13 +12,36 @@ import (
 	"time"
 )
 
+// maxStdoutCapture is the maximum bytes captured from stdout for gate nodes.
+// Prevents unbounded memory growth from broken or malicious agent output.
+const maxStdoutCapture = 10 * 1024 * 1024 // 10 MB
+
+// limitedBuffer captures up to maxStdoutCapture bytes, silently discarding the rest.
+type limitedBuffer struct {
+	buf bytes.Buffer
+}
+
+func (lb *limitedBuffer) Write(p []byte) (int, error) {
+	remaining := maxStdoutCapture - lb.buf.Len()
+	if remaining <= 0 {
+		return len(p), nil // accept but discard
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	lb.buf.Write(p)
+	return len(p), nil
+}
+
+func (lb *limitedBuffer) Bytes() []byte { return lb.buf.Bytes() }
+
 // ExecSpawner implements Spawner by executing a shell command.
 type ExecSpawner struct{}
 
 // Spawn executes opts.Command via sh -c in the background. It sets BELAYER_*
-// environment variables and returns a channel that receives an error if the
-// process exits non-zero.
-func (e *ExecSpawner) Spawn(ctx context.Context, opts SpawnOpts) (<-chan error, error) {
+// environment variables and returns a channel that receives a SpawnResult
+// when the process exits.
+func (e *ExecSpawner) Spawn(ctx context.Context, opts SpawnOpts) (<-chan SpawnResult, error) {
 	if opts.Command == "" {
 		return nil, fmt.Errorf("node %q: command is empty", opts.NodeName)
 	}
@@ -38,24 +61,39 @@ func (e *ExecSpawner) Spawn(ctx context.Context, opts SpawnOpts) (<-chan error, 
 	)
 
 	var stderrBuf bytes.Buffer
-	cmd.Stdout = os.Stdout
+	var stdoutBuf limitedBuffer
+
+	if opts.CaptureStdout {
+		cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
+	} else {
+		cmd.Stdout = os.Stdout
+	}
 	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start command for node %q: %w", opts.NodeName, err)
 	}
 
-	exitCh := make(chan error, 1)
+	exitCh := make(chan SpawnResult, 1)
 	go func() {
 		err := cmd.Wait()
+		var exitErr error
 		if err != nil {
 			stderr := strings.TrimSpace(stderrBuf.String())
 			if stderr != "" {
-				exitCh <- fmt.Errorf("node %q command exited: %w\nstderr: %s", opts.NodeName, err, stderr)
+				exitErr = fmt.Errorf("node %q command exited: %w\nstderr: %s", opts.NodeName, err, stderr)
 			} else {
-				exitCh <- fmt.Errorf("node %q command exited: %w", opts.NodeName, err)
+				exitErr = fmt.Errorf("node %q command exited: %w", opts.NodeName, err)
 			}
 		}
+		result := SpawnResult{
+			Error:  exitErr,
+			Stderr: stderrBuf.Bytes(),
+		}
+		if opts.CaptureStdout {
+			result.Stdout = stdoutBuf.Bytes()
+		}
+		exitCh <- result
 		close(exitCh)
 	}()
 

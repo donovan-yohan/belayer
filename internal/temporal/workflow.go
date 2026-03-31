@@ -40,6 +40,15 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 	nodeOutputs := make(map[string]string)
 	retryCount := make(map[string]int)
 
+	// Register workflow query handler for observability.
+	var currentNode string
+	var currentAttempt int
+	if err := workflow.SetQueryHandler(ctx, "status", func() (string, error) {
+		return fmt.Sprintf("node=%s attempt=%d", currentNode, currentAttempt), nil
+	}); err != nil {
+		workflow.GetLogger(ctx).Warn("failed to register status query handler", "error", err)
+	}
+
 	// 3. Seed design_doc artifact.
 	if input.DesignFile != "" {
 		artifacts["design_doc"] = input.DesignFile
@@ -69,6 +78,17 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 
 	for nodeIdx < len(cfg.Nodes) {
 		node := cfg.Nodes[nodeIdx]
+
+		// Update observability state.
+		currentNode = node.Name
+		currentAttempt = retryCount[node.Name]
+
+		// Set search attributes for Temporal Web UI visibility.
+		if err := workflow.UpsertSearchAttributes(ctx, map[string]interface{}{
+			"CurrentNode": node.Name,
+		}); err != nil {
+			workflow.GetLogger(ctx).Warn("search attributes not registered (non-fatal)", "error", err)
+		}
 
 		actInput := NodeActivityInput{
 			Node:      node,

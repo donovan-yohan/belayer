@@ -14,7 +14,7 @@ Define your pipeline in YAML, install a framework (belayer setup --framework),
 and belayer handles execution via Temporal workflows.
 
 Getting started:
-  belayer setup --framework claude-tmux   Install a framework
+  belayer setup --framework gstack        Install a framework
   belayer climb "description"             Start a pipeline run
   belayer status                          Check pipeline progress`,
 	}

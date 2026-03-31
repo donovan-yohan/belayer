@@ -1,18 +1,25 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
 	"github.com/donovan-yohan/belayer/internal/intake"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/pipeline"
 	"github.com/donovan-yohan/belayer/internal/session"
 	beltemporal "github.com/donovan-yohan/belayer/internal/temporal"
 )
@@ -41,6 +48,82 @@ Start this BEFORE running 'belayer start' or 'belayer climb'.`,
 	return cmd
 }
 
+// startWorkflowInput holds the parameters for starting a pipeline workflow.
+type startWorkflowInput struct {
+	Spec         string
+	Source       string
+	ExternalID   string
+	DesignFile   string
+	PipelineName string
+	PipelineYAML []byte
+	WorkDir      string
+	Repos        []string
+}
+
+// startWorkflowOutput holds the result of starting a workflow.
+type startWorkflowOutput struct {
+	WorkflowID string
+	RunID      string
+}
+
+// startWorkflow creates a worktree and starts a Climb workflow. Shared by the HTTP
+// handler and intake poller to avoid duplicating the workflow-starting logic.
+func startWorkflow(ctx context.Context, tc client.Client, input startWorkflowInput) (*startWorkflowOutput, error) {
+	if input.Spec == "" {
+		return nil, fmt.Errorf("spec is required")
+	}
+
+	ts := time.Now().UnixMilli()
+	branchSlug := intake.GenerateBranchSlug(input.Spec)
+	branch := fmt.Sprintf("belayer/%s-%d", branchSlug, ts)
+	worktreeDir := filepath.Join(input.WorkDir, ".belayer", "worktrees", fmt.Sprintf("%d", ts))
+	if err := intake.CreateGitWorktree(input.WorkDir, worktreeDir, branch); err != nil {
+		return nil, fmt.Errorf("worktree error: %w", err)
+	}
+
+	externalID := input.ExternalID
+	if externalID == "" {
+		externalID = fmt.Sprintf("%d", ts)
+	}
+	workflowID := intake.GenerateWorkflowID(input.PipelineName, input.Source, externalID)
+	climbInput := model.ClimbInput{
+		Description:  input.Spec,
+		DesignFile:   input.DesignFile,
+		PipelineYAML: input.PipelineYAML,
+		WorkDir:      worktreeDir,
+		Branch:       branch,
+		Repos:        input.Repos,
+	}
+
+	opts := client.StartWorkflowOptions{
+		ID:        workflowID,
+		TaskQueue: beltemporal.TaskQueueName,
+	}
+	run, err := tc.ExecuteWorkflow(ctx, opts, beltemporal.ClimbWorkflow, climbInput)
+	if err != nil {
+		// Best-effort cleanup. Use background context since the request context may
+		// have been the reason for the failure (canceled/timed out).
+		cleanupWorktree(context.Background(), input.WorkDir, worktreeDir, branch)
+		return nil, fmt.Errorf("start workflow: %w", err)
+	}
+
+	return &startWorkflowOutput{WorkflowID: run.GetID(), RunID: run.GetRunID()}, nil
+}
+
+// cleanupWorktree removes a git worktree and its branch on best-effort basis.
+func cleanupWorktree(ctx context.Context, repoDir, worktreeDir, branch string) {
+	_ = os.RemoveAll(worktreeDir)
+	for _, args := range [][]string{
+		{"-C", repoDir, "worktree", "remove", "--force", worktreeDir},
+		{"-C", repoDir, "branch", "-D", branch},
+	} {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("git cleanup %v failed: %v (%s)", args, err, strings.TrimSpace(string(out)))
+		}
+	}
+}
+
 func runWorker(workDir string) error {
 	if workDir == "" {
 		var err error
@@ -64,14 +147,41 @@ func runWorker(workDir string) error {
 	w.RegisterWorkflow(beltemporal.ClimbWorkflow)
 	w.RegisterActivity(activities)
 
+	// Resolve pipeline for intake poller.
+	pipelineYAML, pipelineName, pipelineErr := intake.ResolvePipelineYAML(workDir)
+	if pipelineErr != nil {
+		log.Printf("Pipeline not found in %s: %v (intake poller disabled, HTTP handler will re-resolve per request)", workDir, pipelineErr)
+	}
+	var intakeChecks []string
+	var maxConcurrent int
+	if len(pipelineYAML) > 0 {
+		if cfg, err := pipeline.ParsePipeline(pipelineYAML); err == nil {
+			for _, ic := range cfg.Intake {
+				if ic.Type == "trigger" && ic.Check != "" {
+					intakeChecks = append(intakeChecks, ic.Check)
+				}
+			}
+			maxConcurrent = cfg.Safety.MaxConcurrentRuns
+			if maxConcurrent == 0 {
+				maxConcurrent = 3
+			}
+		}
+	}
+
+	// Start intake poller if triggers exist.
+	if len(intakeChecks) > 0 {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go startIntakePoller(ctx, c, workDir, intakeChecks, maxConcurrent, pipelineYAML, pipelineName)
+	}
+
 	// Start HTTP API server for submit/status tools.
 	httpErrCh := make(chan error, 1)
 	go func() {
-		httpErrCh <- startHTTPAPI(c, workDir)
+		httpErrCh <- startHTTPAPI(c, workDir, pipelineYAML, pipelineName)
 	}()
 
 	// Fail fast if the HTTP API can't bind (e.g., port already in use).
-	// Give it a moment to start, then check for errors.
 	select {
 	case err := <-httpErrCh:
 		return fmt.Errorf("HTTP API failed to start: %w", err)
@@ -83,13 +193,16 @@ func runWorker(workDir string) error {
 	fmt.Printf("  Task queue: %s\n", beltemporal.TaskQueueName)
 	fmt.Printf("  Work dir:   %s\n", workDir)
 	fmt.Printf("  HTTP API:   http://127.0.0.1:%d\n", workerHTTPPort)
+	if len(intakeChecks) > 0 {
+		fmt.Printf("  Intake:     %d trigger(s) polling every 30s\n", len(intakeChecks))
+	}
 	fmt.Printf("\nWaiting for pipeline runs... (Ctrl+C to stop)\n")
 
 	return w.Run(worker.InterruptCh())
 }
 
 // startHTTPAPI runs the HTTP API server for submit/status tool calls.
-func startHTTPAPI(temporalClient client.Client, workDir string) error {
+func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []byte, pipelineName string) error {
 	mux := http.NewServeMux()
 
 	// POST /start — accepts SubmitSpec JSON, starts a ClimbWorkflow, returns workflow ID.
@@ -104,7 +217,6 @@ func startHTTPAPI(temporalClient client.Client, workDir string) error {
 			http.Error(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Backfill defaults before validation.
 		if spec.Source == "" {
 			spec.Source = "interactive"
 		}
@@ -113,58 +225,39 @@ func startHTTPAPI(temporalClient client.Client, workDir string) error {
 			return
 		}
 
-		// Resolve pipeline YAML.
-		pipelineYAML, pipelineName, err := intake.ResolvePipelineYAML(workDir)
-		if err != nil {
-			http.Error(w, "Pipeline error: "+err.Error(), http.StatusBadRequest)
-			return
+		resolvedYAML := pipelineYAML
+		resolvedName := pipelineName
+		if len(resolvedYAML) == 0 {
+			var err error
+			resolvedYAML, resolvedName, err = intake.ResolvePipelineYAML(workDir)
+			if err != nil {
+				http.Error(w, "Pipeline error: "+err.Error(), http.StatusBadRequest)
+				return
+			}
 		}
 		if spec.PipelineName == "" {
-			spec.PipelineName = pipelineName
-		}
-		if spec.ExternalID == "" {
-			spec.ExternalID = fmt.Sprintf("submit-%d", time.Now().UnixMilli())
+			spec.PipelineName = resolvedName
 		}
 
-		// Generate deterministic workflow ID and shared timestamp.
-		workflowID := intake.GenerateWorkflowID(spec.PipelineName, spec.Source, spec.ExternalID)
-		ts := time.Now().UnixMilli()
-
-		// Create worktree and branch using a shared timestamp.
-		// Note: LEARNINGS.md recommends run-ID-based naming, but the worktree must
-		// be created BEFORE the workflow starts (WorkDir is part of ClimbInput),
-		// so we use a timestamp instead — intentional deviation.
-		branchSlug := intake.GenerateBranchSlug(spec.Spec)
-		branch := fmt.Sprintf("belayer/%s-%d", branchSlug, ts)
-		worktreeDir := fmt.Sprintf("%s/.belayer/worktrees/%d", workDir, ts)
-		if err := intake.CreateGitWorktree(workDir, worktreeDir, branch); err != nil {
-			http.Error(w, "Worktree error: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Build ClimbInput and start workflow.
-		climbInput := model.ClimbInput{
-			Description:  spec.Spec,
-			PipelineYAML: pipelineYAML,
-			WorkDir:      worktreeDir,
-			Branch:       branch,
+		out, err := startWorkflow(r.Context(), temporalClient, startWorkflowInput{
+			Spec:         spec.Spec,
+			Source:       spec.Source,
+			ExternalID:   spec.ExternalID,
+			DesignFile:   spec.Metadata["design_file"],
+			PipelineName: spec.PipelineName,
+			PipelineYAML: resolvedYAML,
+			WorkDir:      workDir,
 			Repos:        spec.Repos,
-		}
-
-		opts := client.StartWorkflowOptions{
-			ID:        workflowID,
-			TaskQueue: beltemporal.TaskQueueName,
-		}
-		run, err := temporalClient.ExecuteWorkflow(r.Context(), opts, beltemporal.ClimbWorkflow, climbInput)
+		})
 		if err != nil {
-			http.Error(w, "Failed to start workflow: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"workflow_id": run.GetID(),
-			"run_id":      run.GetRunID(),
+			"workflow_id": out.WorkflowID,
+			"run_id":      out.RunID,
 		})
 	})
 
@@ -182,4 +275,116 @@ func startHTTPAPI(temporalClient client.Client, workDir string) error {
 		Handler: mux,
 	}
 	return server.ListenAndServe()
+}
+
+// startIntakePoller polls intake trigger scripts and starts workflows when
+// APPROVED design docs are found. Consume-after-confirm: the doc is only
+// marked consumed after the workflow starts successfully.
+func startIntakePoller(ctx context.Context, tc client.Client, workDir string, checks []string, maxConcurrent int, pipelineYAML []byte, pipelineName string) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	failures := make(map[int]int)  // consecutive failure count per check
+	const maxConsecutiveFailures = 5
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Check active workflow count using Temporal visibility.
+			count, err := tc.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{
+				Query: fmt.Sprintf("TaskQueue='%s' AND ExecutionStatus='Running'", beltemporal.TaskQueueName),
+			})
+			if err != nil {
+				log.Printf("intake poller: count workflows failed: %v", err)
+				continue
+			}
+			if count.Count >= int64(maxConcurrent) {
+				continue
+			}
+
+			for i, check := range checks {
+				if failures[i] >= maxConsecutiveFailures {
+					continue // disabled after repeated failures
+				}
+				artifactPath, err := runIntakeCheck(ctx, workDir, check)
+				if err != nil {
+					failures[i]++
+					if failures[i] >= maxConsecutiveFailures {
+						log.Printf("intake poller: check %q disabled after %d consecutive failures: %v", check, failures[i], err)
+					} else {
+						log.Printf("intake poller: check %q failed (%d/%d): %v", check, failures[i], maxConsecutiveFailures, err)
+					}
+					continue
+				}
+				failures[i] = 0 // reset on success
+				if artifactPath == "" {
+					continue // No approved doc found.
+				}
+
+				// Read the design doc content.
+				specData, err := os.ReadFile(artifactPath)
+				if err != nil {
+					log.Printf("intake poller: read artifact %q: %v", artifactPath, err)
+					continue
+				}
+
+				// Start workflow (consume-after-confirm).
+				// Use artifact basename as ExternalID for idempotent workflow IDs.
+				// If the same doc triggers twice (crash between start and consume),
+				// Temporal rejects the duplicate workflow ID.
+				out, err := startWorkflow(ctx, tc, startWorkflowInput{
+					Spec:         string(specData),
+					Source:       "trigger",
+					ExternalID:   filepath.Base(artifactPath),
+					DesignFile:   artifactPath,
+					PipelineName: pipelineName,
+					PipelineYAML: pipelineYAML,
+					WorkDir:      workDir,
+				})
+				if err != nil {
+					log.Printf("intake poller: start workflow failed: %v", err)
+					continue
+				}
+
+				// Mark consumed AFTER workflow confirmed.
+				markConsumed(artifactPath)
+				log.Printf("intake poller: started workflow %s for %s", out.WorkflowID, filepath.Base(artifactPath))
+			}
+		}
+	}
+}
+
+// runIntakeCheck executes a trigger check script and returns the artifact path
+// if the check found something. Returns ("", nil) if nothing was found.
+func runIntakeCheck(ctx context.Context, workDir, check string) (string, error) {
+	cmd := exec.CommandContext(ctx, "sh", "-c", check)
+	cmd.Dir = workDir
+	out, err := cmd.Output()
+	if err != nil {
+		// Exit code 1 = nothing found (normal). Other errors = script problem.
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "", nil
+		}
+		return "", fmt.Errorf("check script failed: %w", err)
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", nil
+	}
+	return path, nil
+}
+
+// markConsumed appends the artifact basename to the .consumed file so it won't
+// be re-triggered. This is called AFTER workflow start is confirmed.
+func markConsumed(artifactPath string) {
+	consumedFile := filepath.Join(filepath.Dir(artifactPath), ".consumed")
+	basename := filepath.Base(artifactPath)
+	f, err := os.OpenFile(consumedFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Printf("intake poller: mark consumed failed: %v", err)
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, basename)
 }

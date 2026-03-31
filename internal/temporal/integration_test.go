@@ -24,7 +24,7 @@ type fakeSpawner struct {
 	results map[string]model.CompletionResult // node name → result
 }
 
-func (f *fakeSpawner) Spawn(_ context.Context, opts session.SpawnOpts) (<-chan error, error) {
+func (f *fakeSpawner) Spawn(_ context.Context, opts session.SpawnOpts) (<-chan session.SpawnResult, error) {
 	result, ok := f.results[opts.NodeName]
 	if !ok {
 		result = model.CompletionResult{Outcome: model.OutcomePass, Attempt: opts.Attempt}
@@ -47,7 +47,7 @@ type retryThenPassSpawner struct {
 	spotterCalls *int
 }
 
-func (r *retryThenPassSpawner) Spawn(_ context.Context, opts session.SpawnOpts) (<-chan error, error) {
+func (r *retryThenPassSpawner) Spawn(_ context.Context, opts session.SpawnOpts) (<-chan session.SpawnResult, error) {
 	var result model.CompletionResult
 
 	if opts.NodeName == "review" {

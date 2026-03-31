@@ -183,3 +183,70 @@ func TestWriteGateResult(t *testing.T) {
 		t.Error("rationale should mention code_quality dimension")
 	}
 }
+
+func TestWriteGateResult_IncludesRationale(t *testing.T) {
+	dir := t.TempDir()
+
+	agentOutput := []byte(`{
+		"dimensions": {
+			"quality": {"score": 7.0, "issues": [], "rationale": "Solid work overall"}
+		},
+		"summary": "Looks good"
+	}`)
+
+	if err := WriteGateResult(dir, agentOutput, "gate", 0); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	resultData, err := os.ReadFile(dir + "/gate-result.json")
+	if err != nil {
+		t.Fatalf("gate-result.json should exist: %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(resultData, &result); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	dims := result["dimensions"].(map[string]any)
+	quality := dims["quality"].(map[string]any)
+	rationale, ok := quality["rationale"]
+	if !ok {
+		t.Fatal("dimension should include 'rationale' field in gate-result.json")
+	}
+	if rationale != "Solid work overall" {
+		t.Errorf("rationale = %q, want 'Solid work overall'", rationale)
+	}
+}
+
+func TestExtractStreamResult_ValidStream(t *testing.T) {
+	stream := []byte(`{"type":"start","data":"..."}
+{"type":"content","text":"thinking..."}
+{"type":"result","output":{"score":8,"summary":"good"}}
+`)
+	got, err := ExtractStreamResult(stream)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(got), `"score"`) {
+		t.Errorf("expected output to contain score, got: %s", got)
+	}
+}
+
+func TestExtractStreamResult_NoResultEvent(t *testing.T) {
+	stream := []byte(`{"type":"start","data":"..."}
+{"type":"content","text":"thinking..."}
+`)
+	_, err := ExtractStreamResult(stream)
+	if err == nil {
+		t.Fatal("expected error for stream with no result event")
+	}
+	if !strings.Contains(err.Error(), "no result event") {
+		t.Errorf("error should mention 'no result event', got: %v", err)
+	}
+}
+
+func TestExtractStreamResult_EmptyStream(t *testing.T) {
+	_, err := ExtractStreamResult([]byte{})
+	if err == nil {
+		t.Fatal("expected error for empty stream")
+	}
+}

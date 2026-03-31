@@ -1,6 +1,10 @@
 package vendor
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestInterpolate(t *testing.T) {
 	tests := []struct {
@@ -54,5 +58,42 @@ func TestInterpolate(t *testing.T) {
 				t.Errorf("Interpolate(%q) = %q, want %q", tt.prompt, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolvePromptRefs_Valid(t *testing.T) {
+	workDir := t.TempDir()
+	promptsDir := filepath.Join(workDir, ".belayer", "prompts")
+	os.MkdirAll(promptsDir, 0o755)
+	os.WriteFile(filepath.Join(promptsDir, "review.md"), []byte("You are a reviewer.\n\n%{INPUT}"), 0o644)
+
+	got, err := ResolvePromptRefs("$review", workDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "You are a reviewer.\n\n%{INPUT}" {
+		t.Errorf("got %q, want resolved content", got)
+	}
+}
+
+func TestResolvePromptRefs_Missing(t *testing.T) {
+	workDir := t.TempDir()
+
+	got, err := ResolvePromptRefs("$unknown", workDir)
+	if err == nil {
+		t.Fatal("expected error for missing prompt ref")
+	}
+	if got != "$unknown" {
+		t.Errorf("unresolvable ref should be left as-is, got %q", got)
+	}
+}
+
+func TestResolvePromptRefs_NoRefs(t *testing.T) {
+	got, err := ResolvePromptRefs("plain text prompt", t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "plain text prompt" {
+		t.Errorf("got %q, want pass-through", got)
 	}
 }

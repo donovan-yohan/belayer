@@ -3,6 +3,7 @@ package temporal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,10 +15,16 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/gate"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/outcome"
 	"github.com/donovan-yohan/belayer/internal/pipeline"
 	"github.com/donovan-yohan/belayer/internal/session"
 	"github.com/donovan-yohan/belayer/internal/vendor"
 )
+
+// errNoCompletionFile is returned by pollForCompletion when the process exits
+// without writing a completion file. The caller decides what to do based on
+// the node type and SpawnResult.
+var errNoCompletionFile = errors.New("process exited without completion file")
 
 // NodeActivityInput is the input to the NodeActivity.
 type NodeActivityInput struct {
@@ -127,19 +134,27 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		return nil, fmt.Errorf("write node context: %w", err)
 	}
 
-	// 5. Resolve command: agent nodes use vendor resolution, others use command field.
+	// 5. Capture startSHA before spawning so hasNewCommits can verify commit output.
+	startSHA, _ := GetHeadSHA(input.WorkDir)
+
+	// 6. Resolve command: vendor-driven nodes use vendor resolution, others use command field.
 	command := input.Node.Command
 	var vendorCleanup func()
-	if input.Node.IsAgent() {
+	if input.Node.Vendor != "" {
 		vars := map[string]string{
 			"INPUT":    inputPrompt,
 			"WORK_DIR": input.WorkDir,
 		}
-		// Add artifact paths as variables.
 		for k, v := range input.Artifacts {
 			vars[strings.ToUpper(k)] = v
 		}
-		prompt := vendor.Interpolate(input.Node.Prompt, vars)
+		// Resolve $name prompt references from .belayer/prompts/ files.
+		// Use best-effort result even on partial failure (some refs resolved, some not).
+		resolvedPrompt, refErr := vendor.ResolvePromptRefs(input.Node.Prompt, input.WorkDir)
+		if refErr != nil {
+			activity.GetLogger(ctx).Warn("Prompt ref resolution partially failed, proceeding with best-effort prompt", "error", refErr, "node", input.Node.Name)
+		}
+		prompt := vendor.Interpolate(resolvedPrompt, vars)
 		var err error
 		command, vendorCleanup, err = vendor.BuildCommand(
 			input.Node.Vendor,
@@ -149,39 +164,72 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 			input.Node.Dimensions,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("resolve agent command for %q: %w", input.Node.Name, err)
+			return nil, fmt.Errorf("resolve vendor command for %q: %w", input.Node.Name, err)
 		}
 	}
 
 	opts := session.SpawnOpts{
-		NodeName:    input.Node.Name,
-		TaskID:      input.TaskID,
-		Attempt:     input.Attempt,
-		WorkDir:     input.WorkDir,
-		Description: input.Node.Description,
-		Command:     command,
-		InputPrompt: inputPrompt,
+		NodeName:      input.Node.Name,
+		TaskID:        input.TaskID,
+		Attempt:       input.Attempt,
+		WorkDir:       input.WorkDir,
+		Description:   input.Node.Description,
+		Command:       command,
+		InputPrompt:   inputPrompt,
+		CaptureStdout: input.Node.IsGate() && input.Node.Vendor != "",
 	}
 	exitCh, err := a.Spawner.Spawn(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("spawn session: %w", err)
 	}
 
-	// 6. Poll for completion file with heartbeats, checking exit channel.
-	result, err := pollForCompletion(ctx, input.WorkDir, input.TaskID, input.Node.Name, input.Attempt, 5*time.Second, exitCh)
+	// 7. Poll for completion file with heartbeats, checking exit channel.
+	compResult, spawnResult, pollErr := pollForCompletion(ctx, input.WorkDir, input.TaskID, input.Node.Name, string(input.Node.EffectiveType()), input.Node.Vendor, input.Attempt, 5*time.Second, exitCh)
 
 	// Clean up vendor temp files (e.g., codex schema file) regardless of outcome.
 	if vendorCleanup != nil {
 		vendorCleanup()
 	}
 
-	if err != nil {
-		return nil, err
+	// 8. Determine result based on poll outcome.
+	var result model.CompletionResult
+	autoCompleted := false
+	if pollErr == nil {
+		// Completion file found.
+		result = compResult
+	} else if errors.Is(pollErr, errNoCompletionFile) {
+		// Process exited without a completion file.
+		if spawnResult.Error != nil {
+			return nil, fmt.Errorf("node %q process failed: %w", input.Node.Name, spawnResult.Error)
+		}
+		// Gate nodes with vendor: capture stdout and materialize gate result.
+		if input.Node.IsGate() && input.Node.Vendor != "" {
+			gateResult, gateErr := materializeGateFromStdout(input, spawnResult)
+			if gateErr != nil {
+				return &NodeActivityOutput{Result: model.CompletionResult{
+					Outcome:  model.OutcomeFail,
+					Feedback: fmt.Sprintf("gate output error: %v", gateErr),
+					Attempt:  input.Attempt,
+				}}, nil
+			}
+			return &NodeActivityOutput{Result: gateResult}, nil
+		}
+		// Non-gate vendor nodes: auto-complete based on output type.
+		if input.Node.Vendor != "" {
+			result = outcome.Detect(&input.Node, input.WorkDir, input.Attempt)
+			autoCompleted = true
+		} else {
+			return nil, fmt.Errorf("node %q: %w", input.Node.Name, pollErr)
+		}
+	} else {
+		return nil, pollErr
 	}
 
-	// 7. For commit-type outputs, verify commits if startSHA is set.
-	if input.Node.Output.Type == "commit" && input.StartSHA != "" {
-		hasCommits, gitErr := hasNewCommits(input.WorkDir, input.StartSHA)
+	// 9. For auto-completed commit-type outputs, verify commits were actually produced.
+	// Only applies to vendor nodes that went through auto-complete (no completion file).
+	// Nodes with completion files already encode their outcome.
+	if autoCompleted && input.Node.Output.Type == "commit" && startSHA != "" {
+		hasCommits, gitErr := hasNewCommits(input.WorkDir, startSHA)
 		if gitErr != nil {
 			activity.GetLogger(ctx).Warn("Failed to check for new commits", "error", gitErr)
 		} else if !hasCommits {
@@ -190,8 +238,8 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		}
 	}
 
-	// For gate nodes, post-process: read gate-result.json, score, apply thresholds.
-	if input.Node.IsGate() {
+	// 10. For gate nodes with completion files (legacy/script path), post-process.
+	if input.Node.IsGate() && pollErr == nil {
 		gateResult, err := processGateResult(input.WorkDir, input.Node)
 		if err != nil {
 			return nil, fmt.Errorf("gate %q processing failed: %w", input.Node.Name, err)
@@ -201,6 +249,62 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	}
 
 	return &NodeActivityOutput{Result: result}, nil
+}
+
+// materializeGateFromStdout writes gate-result.json and rationale.md from captured
+// stdout, then processes the gate result through the scoring pipeline.
+func materializeGateFromStdout(input NodeActivityInput, spawnResult session.SpawnResult) (model.CompletionResult, error) {
+	stdout := spawnResult.Stdout
+	if len(stdout) == 0 {
+		return model.CompletionResult{}, fmt.Errorf("gate produced no output")
+	}
+
+	// For Claude stream-json, extract the result event.
+	if input.Node.Vendor == "claude" {
+		extracted, err := vendor.ExtractStreamResult(stdout)
+		if err != nil {
+			return model.CompletionResult{}, fmt.Errorf("extract stream result: %w", err)
+		}
+		stdout = extracted
+	}
+
+	// Resolve output paths from node config to match what processGateResult reads.
+	resultPath := input.Node.Output.Path
+	if resultPath == "" {
+		resultPath = ".belayer/.internal/output/gate-result.json"
+	}
+	rationalePath := input.Node.Output.RationalePath
+	if rationalePath == "" {
+		rationalePath = ".belayer/.internal/output/rationale.md"
+	}
+	outputDir := filepath.Dir(filepath.Join(input.WorkDir, resultPath))
+
+	if err := vendor.WriteGateResult(outputDir, stdout, input.Node.Name, input.Attempt); err != nil {
+		return model.CompletionResult{}, fmt.Errorf("write gate result: %w", err)
+	}
+
+	// If the node specifies a custom result filename, rename from the default.
+	defaultResultPath := filepath.Join(outputDir, "gate-result.json")
+	targetResultPath := filepath.Join(input.WorkDir, resultPath)
+	if defaultResultPath != targetResultPath {
+		if err := os.Rename(defaultResultPath, targetResultPath); err != nil {
+			return model.CompletionResult{}, fmt.Errorf("rename gate result to %q: %w", resultPath, err)
+		}
+	}
+	defaultRationalePath := filepath.Join(outputDir, "rationale.md")
+	targetRationalePath := filepath.Join(input.WorkDir, rationalePath)
+	if defaultRationalePath != targetRationalePath {
+		if err := os.Rename(defaultRationalePath, targetRationalePath); err != nil {
+			return model.CompletionResult{}, fmt.Errorf("rename rationale to %q: %w", rationalePath, err)
+		}
+	}
+
+	result, err := processGateResult(input.WorkDir, input.Node)
+	if err != nil {
+		return model.CompletionResult{}, err
+	}
+	result.Attempt = input.Attempt
+	return result, nil
 }
 
 // processGateResult reads gate-result.json, validates, computes weighted score,
@@ -285,36 +389,53 @@ func processGateResult(workDir string, node pipeline.NodeConfig) (model.Completi
 	return result, nil
 }
 
+// HeartbeatData is the structured payload sent via Temporal heartbeats.
+type HeartbeatData struct {
+	Node    string `json:"node"`
+	Type    string `json:"type"`
+	Vendor  string `json:"vendor"`
+	Attempt int    `json:"attempt"`
+	Elapsed string `json:"elapsed"`
+}
+
 // pollForCompletion checks immediately, then ticks at interval, sends heartbeats, and reads
 // the completion file when it appears. If exitCh fires (process exited), checks one more
-// time for the completion file before returning an error.
-func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, attempt int, interval time.Duration, exitCh <-chan error) (model.CompletionResult, error) {
+// time for the completion file before returning errNoCompletionFile with the SpawnResult.
+func pollForCompletion(ctx context.Context, workDir, taskID, nodeName, nodeType, nodeVendor string, attempt int, interval time.Duration, exitCh <-chan session.SpawnResult) (model.CompletionResult, session.SpawnResult, error) {
 	// Check immediately before the first tick (handles fast/fake spawners in tests).
 	if result, err := readCompletionFile(workDir, taskID, nodeName, attempt); err == nil {
-		return result, nil
+		return result, session.SpawnResult{}, nil
 	}
 
+	start := time.Now()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return model.CompletionResult{}, ctx.Err()
-		case exitErr, ok := <-exitCh: // nil exitCh blocks forever (Go spec), so only ticker and ctx.Done fire when spawner returns nil — intentional
-			// Process exited (cleanly or with error). Check one last time for completion file.
+			return model.CompletionResult{}, session.SpawnResult{}, ctx.Err()
+		case spawnResult, ok := <-exitCh: // nil exitCh blocks forever (Go spec) — intentional
+			// Process exited. Check one last time for completion file.
 			if result, readErr := readCompletionFile(workDir, taskID, nodeName, attempt); readErr == nil {
-				return result, nil
+				return result, spawnResult, nil
 			}
-			if ok && exitErr != nil {
-				return model.CompletionResult{}, fmt.Errorf("node %q process exited without completion file: %w", nodeName, exitErr)
+			if !ok {
+				// Channel closed without sending (shouldn't happen with SpawnResult pattern).
+				return model.CompletionResult{}, session.SpawnResult{}, errNoCompletionFile
 			}
-			return model.CompletionResult{}, fmt.Errorf("node %q process exited without writing completion file", nodeName)
+			return model.CompletionResult{}, spawnResult, errNoCompletionFile
 		case <-ticker.C:
-			recordHeartbeat(ctx, fmt.Sprintf("polling for %s attempt %d", nodeName, attempt))
+			recordHeartbeat(ctx, HeartbeatData{
+				Node:    nodeName,
+				Type:    nodeType,
+				Vendor:  nodeVendor,
+				Attempt: attempt,
+				Elapsed: time.Since(start).Round(time.Second).String(),
+			})
 			result, err := readCompletionFile(workDir, taskID, nodeName, attempt)
 			if err == nil {
-				return result, nil
+				return result, session.SpawnResult{}, nil
 			}
 		}
 	}

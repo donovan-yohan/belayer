@@ -314,3 +314,27 @@ func TestValidate_GateWithPROutputRejected(t *testing.T) {
 		t.Errorf("error should mention gate_result, got: %v", err)
 	}
 }
+
+func TestValidate_GateWithVendor(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Vendor = "codex"
+	cfg.Nodes[1].Prompt = "Review the code.\n\n%{INPUT}"
+	cfg.Nodes[1].Command = "" // vendor and command are mutually exclusive
+	if err := Validate(cfg); err != nil {
+		t.Errorf("gate with vendor+prompt should be valid, got: %v", err)
+	}
+}
+
+func TestValidate_GateWithVendorNoPrompt(t *testing.T) {
+	cfg := validGatePipeline()
+	cfg.Nodes[1].Vendor = "codex"
+	cfg.Nodes[1].Prompt = ""
+	cfg.Nodes[1].Command = ""
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for gate with vendor but no prompt")
+	}
+	if !strings.Contains(err.Error(), "no prompt") {
+		t.Errorf("error should mention missing prompt, got: %v", err)
+	}
+}

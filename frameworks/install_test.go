@@ -11,7 +11,7 @@ func TestInstall_BuiltinFramework(t *testing.T) {
 	targetDir := filepath.Join(tmpDir, ".belayer")
 	os.MkdirAll(targetDir, 0o755)
 
-	err := Install("claude-tmux", targetDir, false)
+	err := Install("gstack", targetDir, false)
 	if err != nil {
 		t.Fatalf("Install returned error: %v", err)
 	}
@@ -22,8 +22,8 @@ func TestInstall_BuiltinFramework(t *testing.T) {
 	}
 
 	// Verify scripts were copied.
-	if _, err := os.Stat(filepath.Join(targetDir, "scripts", "run.sh")); err != nil {
-		t.Error("scripts/run.sh not found after install")
+	if _, err := os.Stat(filepath.Join(targetDir, "scripts", "check-ready.sh")); err != nil {
+		t.Error("scripts/check-ready.sh not found after install")
 	}
 }
 
@@ -33,7 +33,7 @@ func TestInstall_ExistingPipelineNoForce(t *testing.T) {
 	os.MkdirAll(targetDir, 0o755)
 	os.WriteFile(filepath.Join(targetDir, "pipeline.yaml"), []byte("existing"), 0o644)
 
-	err := Install("claude-tmux", targetDir, false)
+	err := Install("gstack", targetDir, false)
 	if err == nil {
 		t.Fatal("expected error for existing pipeline.yaml without --force")
 	}
@@ -45,7 +45,7 @@ func TestInstall_ExistingPipelineWithForce(t *testing.T) {
 	os.MkdirAll(targetDir, 0o755)
 	os.WriteFile(filepath.Join(targetDir, "pipeline.yaml"), []byte("old"), 0o644)
 
-	err := Install("claude-tmux", targetDir, true)
+	err := Install("gstack", targetDir, true)
 	if err != nil {
 		t.Fatalf("Install with force returned error: %v", err)
 	}
@@ -65,20 +65,20 @@ func TestInstall_UnknownFramework(t *testing.T) {
 	}
 }
 
-func TestList_ContainsClaudeTmux(t *testing.T) {
+func TestList_ContainsGstack(t *testing.T) {
 	names, err := List()
 	if err != nil {
 		t.Fatalf("List returned error: %v", err)
 	}
 	found := false
 	for _, n := range names {
-		if n == "claude-tmux" {
+		if n == "gstack" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("List() = %v, want claude-tmux to be present", names)
+		t.Errorf("List() = %v, want gstack to be present", names)
 	}
 }
 

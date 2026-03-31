@@ -23,9 +23,7 @@ for doc in $(ls -t "$PROJECTS_DIR"/*-design-*.md 2>/dev/null); do
   if grep -q "^Status: APPROVED" "$doc" 2>/dev/null; then
     BASENAME=$(basename "$doc")
     if ! grep -qF "$BASENAME" "$CONSUMED_FILE" 2>/dev/null; then
-      # Mark as consumed so we don't re-trigger
-      echo "$BASENAME" >> "$CONSUMED_FILE"
-      # Output the artifact path
+      # Output the artifact path. Consumption is owned by the caller (belayer poller).
       echo "$doc"
       exit 0
     fi
