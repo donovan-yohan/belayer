@@ -22,7 +22,7 @@ Frameworks provide pipeline.yaml and node runner scripts that define
 how belayer executes pipeline nodes.
 
 Examples:
-  belayer setup --framework claude-tmux           # built-in framework
+  belayer setup --framework gstack                # built-in framework
   belayer setup --framework ./my-custom-framework # local path`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if frameworkFlag == "" {

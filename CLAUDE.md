@@ -9,7 +9,7 @@ Standalone Go CLI that orchestrates autonomous coding agents through declarative
 | Build | `go build -o belayer ./cmd/belayer` |
 | Test | `go test ./...` |
 | Run | `./belayer` |
-| Setup | `belayer setup --framework claude-tmux` |
+| Setup | `belayer setup --framework gstack` |
 
 ## Documentation Map
 
