@@ -83,13 +83,6 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 		currentNode = node.Name
 		currentAttempt = retryCount[node.Name]
 
-		// Set search attributes for Temporal Web UI visibility.
-		if err := workflow.UpsertSearchAttributes(ctx, map[string]interface{}{
-			"CurrentNode": node.Name,
-		}); err != nil {
-			workflow.GetLogger(ctx).Warn("search attributes not registered (non-fatal)", "error", err)
-		}
-
 		actInput := NodeActivityInput{
 			Node:      node,
 			TaskID:    workflow.GetInfo(ctx).WorkflowExecution.ID,
