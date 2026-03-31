@@ -28,6 +28,7 @@ Getting started:
 		newWorkerCmd(),
 		newStartCmd(),
 		newSetupCmd(),
+		newSubmitCmd(),
 	)
 
 	return cmd
