@@ -4,6 +4,7 @@
 package vendor
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -196,8 +197,9 @@ func WriteGateResult(outputDir string, agentOutput []byte, gateName string, atte
 	dims := result["dimensions"].(map[string]any)
 	for name, d := range parsed.Dimensions {
 		dims[name] = map[string]any{
-			"score":  d.Score,
-			"issues": d.Issues,
+			"score":     d.Score,
+			"issues":    d.Issues,
+			"rationale": d.Rationale,
 		}
 	}
 
@@ -233,4 +235,25 @@ func WriteGateResult(outputDir string, agentOutput []byte, gateName string, atte
 	}
 
 	return nil
+}
+
+// ExtractStreamResult parses Claude's stream-json output format and extracts
+// the final result payload. Claude's --output-format stream-json emits
+// newline-delimited JSON events; the result is the event with "type": "result".
+func ExtractStreamResult(data []byte) ([]byte, error) {
+	lines := bytes.Split(data, []byte("\n"))
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := bytes.TrimSpace(lines[i])
+		if len(line) == 0 {
+			continue
+		}
+		var event struct {
+			Type   string          `json:"type"`
+			Output json.RawMessage `json:"output"`
+		}
+		if json.Unmarshal(line, &event) == nil && event.Type == "result" && len(event.Output) > 0 {
+			return event.Output, nil
+		}
+	}
+	return nil, fmt.Errorf("no result event found in stream-json output (%d lines scanned)", len(lines))
 }
