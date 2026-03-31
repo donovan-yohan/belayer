@@ -52,10 +52,12 @@ Start this BEFORE running 'belayer start' or 'belayer climb'.`,
 type startWorkflowInput struct {
 	Spec         string
 	Source       string
+	ExternalID   string
 	DesignFile   string
 	PipelineName string
 	PipelineYAML []byte
 	WorkDir      string
+	Repos        []string
 }
 
 // startWorkflowOutput holds the result of starting a workflow.
@@ -74,18 +76,23 @@ func startWorkflow(ctx context.Context, tc client.Client, input startWorkflowInp
 	ts := time.Now().UnixMilli()
 	branchSlug := intake.GenerateBranchSlug(input.Spec)
 	branch := fmt.Sprintf("belayer/%s-%d", branchSlug, ts)
-	worktreeDir := fmt.Sprintf("%s/.belayer/worktrees/%d", input.WorkDir, ts)
+	worktreeDir := filepath.Join(input.WorkDir, ".belayer", "worktrees", fmt.Sprintf("%d", ts))
 	if err := intake.CreateGitWorktree(input.WorkDir, worktreeDir, branch); err != nil {
 		return nil, fmt.Errorf("worktree error: %w", err)
 	}
 
-	workflowID := intake.GenerateWorkflowID(input.PipelineName, input.Source, fmt.Sprintf("%d", ts))
+	externalID := input.ExternalID
+	if externalID == "" {
+		externalID = fmt.Sprintf("%d", ts)
+	}
+	workflowID := intake.GenerateWorkflowID(input.PipelineName, input.Source, externalID)
 	climbInput := model.ClimbInput{
 		Description:  input.Spec,
 		DesignFile:   input.DesignFile,
 		PipelineYAML: input.PipelineYAML,
 		WorkDir:      worktreeDir,
 		Branch:       branch,
+		Repos:        input.Repos,
 	}
 
 	opts := client.StartWorkflowOptions{
@@ -94,10 +101,26 @@ func startWorkflow(ctx context.Context, tc client.Client, input startWorkflowInp
 	}
 	run, err := tc.ExecuteWorkflow(ctx, opts, beltemporal.ClimbWorkflow, climbInput)
 	if err != nil {
+		// Best-effort cleanup of worktree and branch on failure.
+		cleanupWorktree(ctx, input.WorkDir, worktreeDir, branch)
 		return nil, fmt.Errorf("start workflow: %w", err)
 	}
 
 	return &startWorkflowOutput{WorkflowID: run.GetID(), RunID: run.GetRunID()}, nil
+}
+
+// cleanupWorktree removes a git worktree and its branch on best-effort basis.
+func cleanupWorktree(ctx context.Context, repoDir, worktreeDir, branch string) {
+	_ = os.RemoveAll(worktreeDir)
+	for _, args := range [][]string{
+		{"-C", repoDir, "worktree", "remove", "--force", worktreeDir},
+		{"-C", repoDir, "branch", "-D", branch},
+	} {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("git cleanup %v failed: %v (%s)", args, err, strings.TrimSpace(string(out)))
+		}
+	}
 }
 
 func runWorker(workDir string) error {
@@ -124,7 +147,10 @@ func runWorker(workDir string) error {
 	w.RegisterActivity(activities)
 
 	// Resolve pipeline for intake poller.
-	pipelineYAML, pipelineName, _ := intake.ResolvePipelineYAML(workDir)
+	pipelineYAML, pipelineName, pipelineErr := intake.ResolvePipelineYAML(workDir)
+	if pipelineErr != nil {
+		log.Printf("Pipeline not found in %s: %v (intake poller disabled, HTTP handler will re-resolve per request)", workDir, pipelineErr)
+	}
 	var intakeChecks []string
 	var maxConcurrent int
 	if len(pipelineYAML) > 0 {
@@ -215,10 +241,12 @@ func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []b
 		out, err := startWorkflow(r.Context(), temporalClient, startWorkflowInput{
 			Spec:         spec.Spec,
 			Source:       spec.Source,
+			ExternalID:   spec.ExternalID,
 			DesignFile:   spec.Metadata["design_file"],
 			PipelineName: spec.PipelineName,
 			PipelineYAML: resolvedYAML,
 			WorkDir:      workDir,
+			Repos:        spec.Repos,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -277,7 +305,7 @@ func startIntakePoller(ctx context.Context, tc client.Client, workDir string, ch
 				if disabled[i] {
 					continue
 				}
-				artifactPath, err := runIntakeCheck(workDir, check)
+				artifactPath, err := runIntakeCheck(ctx, workDir, check)
 				if err != nil {
 					log.Printf("intake poller: check %q disabled: %v", check, err)
 					disabled[i] = true
@@ -318,8 +346,8 @@ func startIntakePoller(ctx context.Context, tc client.Client, workDir string, ch
 
 // runIntakeCheck executes a trigger check script and returns the artifact path
 // if the check found something. Returns ("", nil) if nothing was found.
-func runIntakeCheck(workDir, check string) (string, error) {
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", check)
+func runIntakeCheck(ctx context.Context, workDir, check string) (string, error) {
+	cmd := exec.CommandContext(ctx, "sh", "-c", check)
 	cmd.Dir = workDir
 	out, err := cmd.Output()
 	if err != nil {

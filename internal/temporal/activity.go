@@ -149,10 +149,10 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 			vars[strings.ToUpper(k)] = v
 		}
 		// Resolve $name prompt references from .belayer/prompts/ files.
+		// Use best-effort result even on partial failure (some refs resolved, some not).
 		resolvedPrompt, refErr := vendor.ResolvePromptRefs(input.Node.Prompt, input.WorkDir)
 		if refErr != nil {
-			activity.GetLogger(ctx).Warn("Prompt ref resolution failed, using raw prompt", "error", refErr, "node", input.Node.Name)
-			resolvedPrompt = input.Node.Prompt
+			activity.GetLogger(ctx).Warn("Prompt ref resolution partially failed, proceeding with best-effort prompt", "error", refErr, "node", input.Node.Name)
 		}
 		prompt := vendor.Interpolate(resolvedPrompt, vars)
 		var err error
@@ -184,7 +184,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	}
 
 	// 7. Poll for completion file with heartbeats, checking exit channel.
-	compResult, spawnResult, pollErr := pollForCompletion(ctx, input.WorkDir, input.TaskID, input.Node.Name, input.Attempt, 5*time.Second, exitCh)
+	compResult, spawnResult, pollErr := pollForCompletion(ctx, input.WorkDir, input.TaskID, input.Node.Name, string(input.Node.EffectiveType()), input.Node.Vendor, input.Attempt, 5*time.Second, exitCh)
 
 	// Clean up vendor temp files (e.g., codex schema file) regardless of outcome.
 	if vendorCleanup != nil {
@@ -380,7 +380,7 @@ type HeartbeatData struct {
 // pollForCompletion checks immediately, then ticks at interval, sends heartbeats, and reads
 // the completion file when it appears. If exitCh fires (process exited), checks one more
 // time for the completion file before returning errNoCompletionFile with the SpawnResult.
-func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, attempt int, interval time.Duration, exitCh <-chan session.SpawnResult) (model.CompletionResult, session.SpawnResult, error) {
+func pollForCompletion(ctx context.Context, workDir, taskID, nodeName, nodeType, nodeVendor string, attempt int, interval time.Duration, exitCh <-chan session.SpawnResult) (model.CompletionResult, session.SpawnResult, error) {
 	// Check immediately before the first tick (handles fast/fake spawners in tests).
 	if result, err := readCompletionFile(workDir, taskID, nodeName, attempt); err == nil {
 		return result, session.SpawnResult{}, nil
@@ -407,6 +407,8 @@ func pollForCompletion(ctx context.Context, workDir, taskID, nodeName string, at
 		case <-ticker.C:
 			recordHeartbeat(ctx, HeartbeatData{
 				Node:    nodeName,
+				Type:    nodeType,
+				Vendor:  nodeVendor,
 				Attempt: attempt,
 				Elapsed: time.Since(start).Round(time.Second).String(),
 			})

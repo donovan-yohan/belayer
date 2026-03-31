@@ -131,7 +131,7 @@ func TestPollForCompletion_Timeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, _, err := pollForCompletion(ctx, workDir, "task-xyz", "coder", 1, 50*time.Millisecond, nil)
+	_, _, err := pollForCompletion(ctx, workDir, "task-xyz", "coder", "node", "", 1, 50*time.Millisecond, nil)
 	if err == nil {
 		t.Fatal("expected context error, got nil")
 	}
@@ -148,7 +148,7 @@ func TestPollForCompletion_ExitChannelFastFail(t *testing.T) {
 	exitCh := make(chan session.SpawnResult, 1)
 	exitCh <- session.SpawnResult{Error: fmt.Errorf("process crashed")}
 
-	_, spawnResult, err := pollForCompletion(ctx, workDir, "task-exit", "crash-node", 0, 50*time.Millisecond, exitCh)
+	_, spawnResult, err := pollForCompletion(ctx, workDir, "task-exit", "crash-node", "node", "", 0, 50*time.Millisecond, exitCh)
 	if err == nil {
 		t.Fatal("expected errNoCompletionFile from exit channel fast-fail")
 	}
@@ -174,7 +174,7 @@ func TestPollForCompletion_ExitChannelWithCompletionFile(t *testing.T) {
 	exitCh := make(chan session.SpawnResult, 1)
 	exitCh <- session.SpawnResult{Error: fmt.Errorf("process exited non-zero")}
 
-	result, _, err := pollForCompletion(ctx, workDir, "task-race", "race-node", 0, 50*time.Millisecond, exitCh)
+	result, _, err := pollForCompletion(ctx, workDir, "task-race", "race-node", "node", "", 0, 50*time.Millisecond, exitCh)
 	if err != nil {
 		t.Fatalf("expected completion file to win over exit error, got: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestPollForCompletion_CleanExitNoFile(t *testing.T) {
 	exitCh := make(chan session.SpawnResult, 1)
 	exitCh <- session.SpawnResult{Error: nil, Stdout: []byte("output")}
 
-	_, spawnResult, err := pollForCompletion(ctx, workDir, "task-clean", "agent-node", 0, 50*time.Millisecond, exitCh)
+	_, spawnResult, err := pollForCompletion(ctx, workDir, "task-clean", "agent-node", "agent", "claude", 0, 50*time.Millisecond, exitCh)
 	if !errors.Is(err, errNoCompletionFile) {
 		t.Fatalf("expected errNoCompletionFile, got: %v", err)
 	}

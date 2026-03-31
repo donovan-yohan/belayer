@@ -43,9 +43,11 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 	// Register workflow query handler for observability.
 	var currentNode string
 	var currentAttempt int
-	_ = workflow.SetQueryHandler(ctx, "status", func() (string, error) {
+	if err := workflow.SetQueryHandler(ctx, "status", func() (string, error) {
 		return fmt.Sprintf("node=%s attempt=%d", currentNode, currentAttempt), nil
-	})
+	}); err != nil {
+		workflow.GetLogger(ctx).Warn("failed to register status query handler", "error", err)
+	}
 
 	// 3. Seed design_doc artifact.
 	if input.DesignFile != "" {

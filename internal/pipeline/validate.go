@@ -71,7 +71,8 @@ func Validate(cfg *PipelineConfig) error {
 			}
 		}
 		// Warn if a gate prompt does not include %{INPUT} (rubric injection point).
-		if n.IsGate() && n.Prompt != "" && !strings.Contains(n.Prompt, "%{INPUT}") {
+		// Skip warning for $name refs — the referenced file may contain %{INPUT}.
+		if n.IsGate() && n.Prompt != "" && !strings.Contains(n.Prompt, "%{INPUT}") && !strings.HasPrefix(strings.TrimSpace(n.Prompt), "$") {
 			fmt.Fprintf(os.Stderr, "warning: gate %q prompt does not contain %%{INPUT} — gate rubric may not be injected\n", n.Name)
 		}
 		if n.Output.Type == "" {
