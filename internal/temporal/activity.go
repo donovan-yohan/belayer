@@ -268,14 +268,35 @@ func materializeGateFromStdout(input NodeActivityInput, spawnResult session.Spaw
 		stdout = extracted
 	}
 
-	// Resolve output directory from node config.
-	outputDir := filepath.Join(input.WorkDir, ".belayer", ".internal", "output")
-	if input.Node.Output.Path != "" {
-		outputDir = filepath.Dir(filepath.Join(input.WorkDir, input.Node.Output.Path))
+	// Resolve output paths from node config to match what processGateResult reads.
+	resultPath := input.Node.Output.Path
+	if resultPath == "" {
+		resultPath = ".belayer/.internal/output/gate-result.json"
 	}
+	rationalePath := input.Node.Output.RationalePath
+	if rationalePath == "" {
+		rationalePath = ".belayer/.internal/output/rationale.md"
+	}
+	outputDir := filepath.Dir(filepath.Join(input.WorkDir, resultPath))
 
 	if err := vendor.WriteGateResult(outputDir, stdout, input.Node.Name, input.Attempt); err != nil {
 		return model.CompletionResult{}, fmt.Errorf("write gate result: %w", err)
+	}
+
+	// If the node specifies a custom result filename, rename from the default.
+	defaultResultPath := filepath.Join(outputDir, "gate-result.json")
+	targetResultPath := filepath.Join(input.WorkDir, resultPath)
+	if defaultResultPath != targetResultPath {
+		if err := os.Rename(defaultResultPath, targetResultPath); err != nil {
+			return model.CompletionResult{}, fmt.Errorf("rename gate result to %q: %w", resultPath, err)
+		}
+	}
+	defaultRationalePath := filepath.Join(outputDir, "rationale.md")
+	targetRationalePath := filepath.Join(input.WorkDir, rationalePath)
+	if defaultRationalePath != targetRationalePath {
+		if err := os.Rename(defaultRationalePath, targetRationalePath); err != nil {
+			return model.CompletionResult{}, fmt.Errorf("rename rationale to %q: %w", rationalePath, err)
+		}
 	}
 
 	result, err := processGateResult(input.WorkDir, input.Node)

@@ -12,6 +12,29 @@ import (
 	"time"
 )
 
+// maxStdoutCapture is the maximum bytes captured from stdout for gate nodes.
+// Prevents unbounded memory growth from broken or malicious agent output.
+const maxStdoutCapture = 10 * 1024 * 1024 // 10 MB
+
+// limitedBuffer captures up to maxStdoutCapture bytes, silently discarding the rest.
+type limitedBuffer struct {
+	buf bytes.Buffer
+}
+
+func (lb *limitedBuffer) Write(p []byte) (int, error) {
+	remaining := maxStdoutCapture - lb.buf.Len()
+	if remaining <= 0 {
+		return len(p), nil // accept but discard
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	lb.buf.Write(p)
+	return len(p), nil
+}
+
+func (lb *limitedBuffer) Bytes() []byte { return lb.buf.Bytes() }
+
 // ExecSpawner implements Spawner by executing a shell command.
 type ExecSpawner struct{}
 
@@ -38,7 +61,7 @@ func (e *ExecSpawner) Spawn(ctx context.Context, opts SpawnOpts) (<-chan SpawnRe
 	)
 
 	var stderrBuf bytes.Buffer
-	var stdoutBuf bytes.Buffer
+	var stdoutBuf limitedBuffer
 
 	if opts.CaptureStdout {
 		cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)

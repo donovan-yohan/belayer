@@ -330,9 +330,13 @@ func startIntakePoller(ctx context.Context, tc client.Client, workDir string, ch
 				}
 
 				// Start workflow (consume-after-confirm).
+				// Use artifact basename as ExternalID for idempotent workflow IDs.
+				// If the same doc triggers twice (crash between start and consume),
+				// Temporal rejects the duplicate workflow ID.
 				out, err := startWorkflow(ctx, tc, startWorkflowInput{
 					Spec:         string(specData),
 					Source:       "trigger",
+					ExternalID:   filepath.Base(artifactPath),
 					DesignFile:   artifactPath,
 					PipelineName: pipelineName,
 					PipelineYAML: pipelineYAML,
