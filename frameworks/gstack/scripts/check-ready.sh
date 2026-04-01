@@ -20,7 +20,7 @@ CONSUMED_FILE="$PROJECTS_DIR/.consumed"
 
 # Find most recent APPROVED design doc not yet consumed
 for doc in $(ls -t "$PROJECTS_DIR"/*-design-*.md 2>/dev/null); do
-  if grep -q "^Status: APPROVED" "$doc" 2>/dev/null; then
+  if grep -q "^Status: APPROVED" "$doc" 2>/dev/null && grep -q "^Pipeline: ready" "$doc" 2>/dev/null; then
     BASENAME=$(basename "$doc")
     if ! grep -qF "$BASENAME" "$CONSUMED_FILE" 2>/dev/null; then
       # Output the artifact path. Consumption is owned by the caller (belayer poller).

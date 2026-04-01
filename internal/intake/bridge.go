@@ -1,14 +1,12 @@
 package intake
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
-	"time"
-	"unicode"
 
 	"github.com/donovan-yohan/belayer/internal/pipeline"
 )
@@ -60,51 +58,29 @@ func CreateGitWorktree(repoDir, worktreeDir, branch string) error {
 	return nil
 }
 
-// GenerateBranchSlug uses claude -p haiku to create a short branch-friendly slug
-// from the description. Falls back to "impl" if claude is unavailable or slow.
+// slugPattern splits on non-alphanumeric characters for branch slug generation.
+var slugPattern = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+
+// GenerateBranchSlug creates a short branch-friendly slug from the description.
+// Uses first 4 meaningful words (3+ chars), kebab-case, max 40 chars.
 func GenerateBranchSlug(description string) string {
-	// Truncate input to keep the prompt small.
-	input := description
-	if len(input) > 500 {
-		input = input[:500]
-	}
-
-	prompt := fmt.Sprintf(`Generate a short git branch name slug (2-4 words, kebab-case, lowercase, no special characters) that summarizes this work. Output ONLY the slug, nothing else.
-
-%s`, input)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "claude", "-p", "--model", "haiku", prompt)
-	out, err := cmd.Output()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: branch slug generation failed (falling back to \"impl\"): %v\n", err)
-		return "impl"
-	}
-
-	slug := strings.TrimSpace(string(out))
-	// Sanitize: only allow lowercase alphanumeric and hyphens.
-	var sanitized strings.Builder
-	for _, r := range slug {
-		switch {
-		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-':
-			sanitized.WriteRune(r)
-		case unicode.IsUpper(r):
-			sanitized.WriteRune(unicode.ToLower(r))
-		case r == ' ' || r == '_':
-			sanitized.WriteRune('-')
+	words := slugPattern.Split(strings.ToLower(description), -1)
+	var meaningful []string
+	for _, w := range words {
+		if len(w) >= 3 {
+			meaningful = append(meaningful, w)
+		}
+		if len(meaningful) == 4 {
+			break
 		}
 	}
-	result := sanitized.String()
-	result = strings.Trim(result, "-")
-	if result == "" {
+	if len(meaningful) == 0 {
 		return "impl"
 	}
-	// Cap length.
-	if len(result) > 40 {
-		result = result[:40]
-		result = strings.TrimRight(result, "-")
+	slug := strings.Join(meaningful, "-")
+	if len(slug) > 40 {
+		slug = slug[:40]
+		slug = strings.TrimRight(slug, "-")
 	}
-	return result
+	return slug
 }

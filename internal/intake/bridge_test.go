@@ -24,6 +24,44 @@ func TestGenerateWorkflowID_DifferentInputs(t *testing.T) {
 	}
 }
 
+func TestGenerateBranchSlug_Normal(t *testing.T) {
+	got := intake.GenerateBranchSlug("Implement user authentication system")
+	if got != "implement-user-authentication-system" {
+		t.Errorf("got %q, want 'implement-user-authentication-system'", got)
+	}
+}
+
+func TestGenerateBranchSlug_Short(t *testing.T) {
+	got := intake.GenerateBranchSlug("Fix bug")
+	if got != "fix-bug" {
+		t.Errorf("got %q, want 'fix-bug'", got)
+	}
+}
+
+func TestGenerateBranchSlug_Empty(t *testing.T) {
+	got := intake.GenerateBranchSlug("")
+	if got != "impl" {
+		t.Errorf("got %q, want 'impl'", got)
+	}
+}
+
+func TestGenerateBranchSlug_SpecialChars(t *testing.T) {
+	got := intake.GenerateBranchSlug("Add $review + %{INPUT} support!")
+	if got != "add-review-input-support" {
+		t.Errorf("got %q, want 'add-review-input-support'", got)
+	}
+}
+
+func TestGenerateBranchSlug_Long(t *testing.T) {
+	got := intake.GenerateBranchSlug("implement the extremely long feature description that goes on and on")
+	if len(got) > 40 {
+		t.Errorf("slug too long: %d chars, max 40", len(got))
+	}
+	if got[len(got)-1] == '-' {
+		t.Error("slug should not end with a hyphen")
+	}
+}
+
 func TestResolvePipelineYAML_NoPipeline(t *testing.T) {
 	// Use a temp directory with no pipeline YAML files — should return an error.
 	dir, err := os.MkdirTemp("", "belayer-intake-test-*")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/operatorservice/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
@@ -124,6 +127,76 @@ func cleanupWorktree(ctx context.Context, repoDir, worktreeDir, branch string) {
 	}
 }
 
+// temporalProcess bundles the child process and its log file for coordinated cleanup.
+type temporalProcess struct {
+	cmd     *exec.Cmd
+	logFile *os.File
+}
+
+// shutdown gracefully stops the Temporal dev server: SIGINT, wait with timeout, kill if needed.
+func (tp *temporalProcess) shutdown() {
+	if tp == nil || tp.cmd == nil || tp.cmd.Process == nil {
+		return
+	}
+	_ = tp.cmd.Process.Signal(os.Interrupt)
+	done := make(chan error, 1)
+	go func() { done <- tp.cmd.Wait() }()
+	select {
+	case <-time.After(5 * time.Second):
+		_ = tp.cmd.Process.Kill()
+		<-done // reap after kill
+	case <-done:
+	}
+	if tp.logFile != nil {
+		tp.logFile.Close()
+	}
+}
+
+// ensureTemporal checks if Temporal is running and starts it if not.
+// Returns a temporalProcess for cleanup, or nil if Temporal was already running.
+func ensureTemporal(workDir string) (*temporalProcess, error) {
+	// Probe localhost (not 127.0.0.1) to match the SDK's default dial target,
+	// which may resolve to IPv6 ::1 on some systems.
+	conn, err := net.DialTimeout("tcp", "localhost:7233", 2*time.Second)
+	if err == nil {
+		conn.Close()
+		return nil, nil // already running
+	}
+
+	temporalPath, err := exec.LookPath("temporal")
+	if err != nil {
+		return nil, fmt.Errorf("Temporal CLI not found.\n  Install: brew install temporal\n  Or: https://docs.temporal.io/cli")
+	}
+
+	logDir := filepath.Join(workDir, ".belayer", ".internal")
+	os.MkdirAll(logDir, 0o755)
+	logFile, err := os.Create(filepath.Join(logDir, "temporal.log"))
+	if err != nil {
+		return nil, fmt.Errorf("create temporal log: %w", err)
+	}
+
+	cmd := exec.Command(temporalPath, "server", "start-dev")
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return nil, fmt.Errorf("start Temporal: %w", err)
+	}
+
+	for i := 0; i < 30; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if conn, err := net.DialTimeout("tcp", "localhost:7233", 500*time.Millisecond); err == nil {
+			conn.Close()
+			return &temporalProcess{cmd: cmd, logFile: logFile}, nil
+		}
+	}
+	// Timeout: kill, reap, close log.
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	logFile.Close()
+	return nil, fmt.Errorf("Temporal failed to start within 15s. Check %s/temporal.log", logDir)
+}
+
 func runWorker(workDir string) error {
 	if workDir == "" {
 		var err error
@@ -133,11 +206,24 @@ func runWorker(workDir string) error {
 		}
 	}
 
+	// Auto-start Temporal if not running.
+	tp, err := ensureTemporal(workDir)
+	if err != nil {
+		return err
+	}
+	if tp != nil {
+		defer tp.shutdown()
+		fmt.Println("Started Temporal dev server (auto)")
+	}
+
 	c, err := client.Dial(client.Options{})
 	if err != nil {
-		return fmt.Errorf("cannot connect to Temporal. Run 'belayer temporal start' first.\n\nError: %w", err)
+		return fmt.Errorf("cannot connect to Temporal: %w", err)
 	}
 	defer c.Close()
+
+	// Register search attributes for Temporal Web UI observability (best-effort).
+	registerSearchAttributes(c)
 
 	// Wire real providers into the activities.
 	spawner := &session.ExecSpawner{}
@@ -387,4 +473,23 @@ func markConsumed(artifactPath string) {
 	}
 	defer f.Close()
 	fmt.Fprintln(f, basename)
+}
+
+// registerSearchAttributes registers custom search attributes with the Temporal
+// dev server for Web UI observability. Best-effort: silently skips on error
+// (attribute may already exist, or server doesn't support the operator API).
+func registerSearchAttributes(c client.Client) {
+	// Skip for non-localhost Temporal (Cloud requires UI-based registration).
+	addr := os.Getenv("TEMPORAL_ADDRESS")
+	if addr != "" && !strings.Contains(addr, "localhost") && !strings.Contains(addr, "127.0.0.1") {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = c.OperatorService().AddSearchAttributes(ctx, &operatorservice.AddSearchAttributesRequest{
+		Namespace: "default",
+		SearchAttributes: map[string]enumspb.IndexedValueType{
+			"CurrentNode": enumspb.INDEXED_VALUE_TYPE_TEXT,
+		},
+	})
 }
