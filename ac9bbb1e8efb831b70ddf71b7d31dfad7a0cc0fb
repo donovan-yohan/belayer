@@ -1,0 +1,33 @@
+internal/temporal/workflow.go
+  29d7e05dc9212413 316,321,324-326,328-329
+internal/pipeline/validate.go
+  29d7e05dc9212413 95-98
+internal/pipeline/validate_test.go
+  29d7e05dc9212413 341-496
+internal/temporal/workflow_test.go
+  29d7e05dc9212413 364-551
+internal/temporal/activity_test.go
+  29d7e05dc9212413 513-669
+internal/temporal/activity.go
+  29d7e05dc9212413 11,128,179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "ac9bbb1e8efb831b70ddf71b7d31dfad7a0cc0fb",
+  "prompts": {
+    "29d7e05dc9212413": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6c0573d6-417a-445a-aedd-efe310679908",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 555,
+      "total_deletions": 56,
+      "accepted_lines": 516,
+      "overriden_lines": 0
+    }
+  }
+}
