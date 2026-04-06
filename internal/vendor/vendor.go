@@ -14,6 +14,14 @@ import (
 	"github.com/donovan-yohan/belayer/internal/pipeline"
 )
 
+// SchemaConfig specifies structured output schema requirements for a vendor command.
+type SchemaConfig struct {
+	IsGate     bool
+	Dimensions []pipeline.DimensionConfig
+	IsRouter   bool
+	RouteNames []string // enum values for route constraint
+}
+
 // Config holds the resolved CLI command and args for a vendor.
 type Config struct {
 	Command string
@@ -108,10 +116,45 @@ func GateResultSchema(dimensions []pipeline.DimensionConfig) map[string]any {
 	}
 }
 
+// RouteResultSchema returns the JSON Schema for route result output.
+// RouteNames are embedded as an enum constraint so the model can only
+// choose from declared route options.
+func RouteResultSchema(routeNames []string) map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"route", "confidence", "reasoning", "rejected"},
+		"properties": map[string]any{
+			"route": map[string]any{
+				"type": "string",
+				"enum": routeNames,
+			},
+			"confidence": map[string]any{
+				"type":    "number",
+				"minimum": 0,
+				"maximum": 1,
+			},
+			"reasoning": map[string]any{
+				"type": "string",
+			},
+			"rejected": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":     "object",
+					"required": []string{"route", "reason"},
+					"properties": map[string]any{
+						"route":  map[string]any{"type": "string"},
+						"reason": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+}
+
 // BuildCommand constructs the full shell command for running an agent.
 // For gate nodes, it adds structured output schema handling based on the vendor's SchemaMode.
 // The returned command is meant to be run via sh -c.
-func BuildCommand(vendorName, prompt, workDir string, isGate bool, dimensions []pipeline.DimensionConfig) (string, func(), error) {
+func BuildCommand(vendorName, prompt, workDir string, schema SchemaConfig) (string, func(), error) {
 	cfg, err := Resolve(vendorName)
 	if err != nil {
 		return "", nil, err
@@ -122,19 +165,30 @@ func BuildCommand(vendorName, prompt, workDir string, isGate bool, dimensions []
 
 	var cleanup func()
 
-	// Add structured output schema for gate nodes.
-	if isGate && len(dimensions) > 0 {
-		schema := GateResultSchema(dimensions)
-		schemaJSON, err := json.Marshal(schema)
+	// Add structured output schema for gate or router nodes.
+	var schemaJSON []byte
+	if schema.IsRouter && len(schema.RouteNames) > 0 {
+		routeSchema := RouteResultSchema(schema.RouteNames)
+		var err error
+		schemaJSON, err = json.Marshal(routeSchema)
+		if err != nil {
+			return "", nil, fmt.Errorf("marshal route schema: %w", err)
+		}
+	} else if schema.IsGate && len(schema.Dimensions) > 0 {
+		gateSchema := GateResultSchema(schema.Dimensions)
+		var err error
+		schemaJSON, err = json.Marshal(gateSchema)
 		if err != nil {
 			return "", nil, fmt.Errorf("marshal gate schema: %w", err)
 		}
+	}
 
+	if len(schemaJSON) > 0 {
 		switch cfg.SchemaMode {
 		case "inline":
 			args = append(args, cfg.SchemaFlag, string(schemaJSON))
 		case "file":
-			tmpFile, err := os.CreateTemp("", "belayer-gate-schema-*.json")
+			tmpFile, err := os.CreateTemp("", "belayer-schema-*.json")
 			if err != nil {
 				return "", nil, fmt.Errorf("create schema temp file: %w", err)
 			}

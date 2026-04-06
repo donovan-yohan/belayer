@@ -23,6 +23,7 @@ Standalone Go CLI that orchestrates autonomous coding agents through declarative
 | Learnings | `docs/LEARNINGS.md` | Past learnings, corrections, patterns discovered across sessions |
 | Design Docs | `docs/design-docs/` | Feature brainstorm outputs and design decisions |
 | ADRs | `docs/adrs/` | Architecture decision records |
+| Pipeline Reference | `docs/PIPELINE_REFERENCE.md` | Full YAML schema, node types, gate/router config, validation rules |
 | TODOs | `docs/TODOS.md` | Deferred items, P2/P3 backlog, tech debt tracker |
 | Review Guidance | `docs/REVIEW_GUIDANCE.md` | Adversarial review config, deployment context, question bank |
 
@@ -33,6 +34,7 @@ Standalone Go CLI that orchestrates autonomous coding agents through declarative
 - **Node protocol**: Core writes `node-context.json` before spawning. Framework commands read it for context. Commands write completion files when done.
 - **ExecSpawner**: Core spawner execs `command:` from YAML via `sh -c`. Returns exit channel for fast-fail. Context-aware (kills process on cancellation).
 - **Score-then-route**: Gate nodes produce structured scores; Go code computes weighted average; YAML thresholds route PASS/RETRY/FAIL. Anti-gaming by design.
+- **Route nodes**: Nodes with `routes:` declare N-way agentic branching. LLM picks from enum of declared route names. Each route runs as Temporal child workflow. Decision artifact captures choice, confidence, reasoning, rejected alternatives.
 - **Three-phase model**: Explore (intake — idea to spec) → Climb (implementation — agent does the work) → Summit (output — review, gates, PR). Belayer is orchestration-only.
 - **New output types**: Adding a pipeline output type requires updates in: `validate.go` (validOutputTypes map), `model.go` (OutputConfig comment), and `outcome/detect.go` (typeDefault switch). Missing `detect.go` causes silent false-positive outcomes.
 

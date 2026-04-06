@@ -2,12 +2,14 @@ package temporal
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/pipeline"
+	"github.com/donovan-yohan/belayer/internal/route"
 )
 
 // findNodeIndex returns the index of the node with the given name, or -1 if not found.
@@ -110,6 +112,64 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 				artifacts[node.OutputKey()] = result.OutputPath
 			}
 			nodeOutputs[node.Name] = result.OutputPath
+
+			// Router dispatch: spawn child workflow for the chosen route.
+			if node.IsRouter() && result.OutputPath != "" {
+				childOut, routeErr := dispatchRoute(ctx, input, node, result, retryCount[node.Name])
+				if routeErr != nil {
+					return &model.ClimbOutput{
+						Status:      model.ClimbFailed,
+						NodeOutputs: nodeOutputs,
+						Message:     fmt.Sprintf("router %q dispatch failed: %v", node.Name, routeErr),
+						Branch:      input.Branch,
+					}, nil
+				}
+				if childOut.Status == model.ClimbFailed {
+					// Child failed — propagate as router node failure.
+					if node.OnFail != "" && node.OnFail != "stop" {
+						failJumps++
+						if failJumps > maxFailJumps {
+							return &model.ClimbOutput{
+								Status:      model.ClimbFailed,
+								NodeOutputs: nodeOutputs,
+								Message:     fmt.Sprintf("router %q: child failed, exceeded max fail jumps", node.Name),
+								Branch:      input.Branch,
+							}, nil
+						}
+						if i := findNodeIndex(cfg.Nodes, node.OnFail); i != -1 {
+							nodeIdx = i
+							continue
+						}
+					}
+					return &model.ClimbOutput{
+						Status:      model.ClimbFailed,
+						NodeOutputs: nodeOutputs,
+						Message:     fmt.Sprintf("router %q: child workflow failed: %s", node.Name, childOut.Message),
+						Branch:      input.Branch,
+					}, nil
+				}
+				// Merge child outputs: namespaced for auditability, plus un-namespaced alias.
+				// Sort keys for deterministic iteration inside the Temporal workflow.
+				childKeys := make([]string, 0, len(childOut.NodeOutputs))
+				for key := range childOut.NodeOutputs {
+					childKeys = append(childKeys, key)
+				}
+				sort.Strings(childKeys)
+				var lastChildOutput string
+				for _, key := range childKeys {
+					path := childOut.NodeOutputs[key]
+					namespacedKey := fmt.Sprintf("%s/%s", node.Name, key)
+					artifacts[namespacedKey] = path
+					nodeOutputs[namespacedKey] = path
+					lastChildOutput = path
+				}
+				// Un-namespaced alias: router's output key = child's terminal output.
+				// Lets downstream parent nodes reference the router by name.
+				if lastChildOutput != "" {
+					artifacts[node.OutputKey()] = lastChildOutput
+					nodeOutputs[node.Name] = lastChildOutput
+				}
+			}
 
 			if node.OnPass == "stop" {
 				return &model.ClimbOutput{
@@ -217,3 +277,99 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 		Branch:      input.Branch,
 	}, nil
 }
+
+// dispatchRoute reads the route decision, resolves the subpipeline, spawns a child
+// workflow for the chosen route, and returns the child's output.
+func dispatchRoute(
+	ctx workflow.Context,
+	input model.ClimbInput,
+	node pipeline.NodeConfig,
+	result model.CompletionResult,
+	attempt int,
+) (*model.ClimbOutput, error) {
+	// 1. Read route-result.json content via a side-effect-free activity.
+	actx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+	})
+	a := &Activities{}
+	var routeResultBytes []byte
+	if err := workflow.ExecuteActivity(actx, a.ReadFileActivity, ReadFileInput{
+		FilePath: result.OutputPath,
+		WorkDir:  input.WorkDir,
+	}).Get(ctx, &routeResultBytes); err != nil {
+		return nil, fmt.Errorf("read route result: %w", err)
+	}
+
+	// 2. Parse and validate route choice.
+	// Collect and sort route names for deterministic validation inside the workflow.
+	validRoutes := make([]string, 0, len(node.Routes.Options))
+	for name := range node.Routes.Options {
+		validRoutes = append(validRoutes, name)
+	}
+	sort.Strings(validRoutes)
+	routeResult, err := route.ParseBytes(routeResultBytes, validRoutes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid route result: %w", err)
+	}
+
+	chosenRoute := routeResult.Route
+	if _, ok := node.Routes.Options[chosenRoute]; !ok {
+		return nil, fmt.Errorf("route %q not found in declared options", chosenRoute)
+	}
+
+	// 3. Resolve subpipeline YAML from pre-loaded map (deterministic, no file I/O).
+	// Map is keyed by route option name (set by ResolveSubpipelineYAMLs at startup).
+	subYAML, ok := input.SubpipelineYAMLs[chosenRoute]
+	if !ok {
+		keys := make([]string, 0, len(input.SubpipelineYAMLs))
+		for k := range input.SubpipelineYAMLs {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		return nil, fmt.Errorf("subpipeline YAML for route %q not pre-loaded (available keys: %v)", chosenRoute, keys)
+	}
+
+	// 4. Parse and validate subpipeline.
+	subCfg, err := pipeline.ParsePipeline(subYAML)
+	if err != nil {
+		return nil, fmt.Errorf("parse subpipeline for route %q: %w", chosenRoute, err)
+	}
+	if err := pipeline.Validate(subCfg); err != nil {
+		return nil, fmt.Errorf("validate subpipeline for route %q: %w", chosenRoute, err)
+	}
+
+	// 5. Spawn child workflow.
+	// Include attempt counter for deterministic uniqueness across retries.
+	parentID := workflow.GetInfo(ctx).WorkflowExecution.ID
+	childID := fmt.Sprintf("%s/route/%s/%d", parentID, chosenRoute, attempt)
+
+	childInput := model.ClimbInput{
+		Description:      fmt.Sprintf("Subpipeline: %s (routed from %s)", chosenRoute, node.Name),
+		PipelineYAML:     subYAML,
+		SubpipelineYAMLs: input.SubpipelineYAMLs,
+		WorkDir:          input.WorkDir,
+		Branch:           input.Branch,
+		BaseRef:          input.BaseRef,
+	}
+
+	cwo := workflow.ChildWorkflowOptions{
+		WorkflowID: childID,
+	}
+	childCtx := workflow.WithChildOptions(ctx, cwo)
+
+	var childOut model.ClimbOutput
+	if err := workflow.ExecuteChildWorkflow(childCtx, ClimbWorkflow, childInput).Get(ctx, &childOut); err != nil {
+		return nil, fmt.Errorf("child workflow for route %q failed: %w", chosenRoute, err)
+	}
+
+	// 6. Log route decision for observability.
+	workflow.GetLogger(ctx).Info("Route dispatched",
+		"router", node.Name,
+		"route", chosenRoute,
+		"confidence", routeResult.Confidence,
+		"child_status", childOut.Status,
+	)
+
+	return &childOut, nil
+}
+

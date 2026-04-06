@@ -78,6 +78,7 @@ Belayer uses climbing metaphors and a three-phase model:
 | Model | `internal/model/` | Domain types: NodeOutcome, CompletionResult, ClimbInput/Output |
 | Pipeline | `internal/pipeline/` | YAML parser, validator, visualizer, pipeline config model |
 | Gate | `internal/gate/` | Gate result parsing, weighted scoring, threshold routing, prompt builder |
+| Route | `internal/route/` | Route result parsing/validation, route prompt builder for N-way agentic branching |
 | Events | `internal/events/` | JSONL event logger for pipeline observability (node + gate events) |
 | Outcome | `internal/outcome/` | Outcome detection: verdict.txt > output file first line > type default |
 | Session | `internal/session/` | ExecSpawner (generic command exec), path helpers for `.belayer/.internal/`, SpawnOpts |
@@ -126,9 +127,10 @@ Belayer uses an Activity-per-Node model. Each pipeline node is a Temporal Activi
 
 ### Key Concepts
 
-- **Two pipeline primitives**: Nodes (constructive — produce artifacts) and Gates (adversarial — evaluate artifacts with multi-dimensional scoring)
+- **Three pipeline primitives**: Nodes (constructive — produce artifacts), Gates (adversarial — evaluate artifacts with multi-dimensional scoring), and Routers (agentic N-way branching — LLM picks one of N declared paths, each running as an isolated Temporal child workflow)
 - **Agent nodes**: Pipeline nodes with `type: agent` + `vendor` + `prompt`. Belayer resolves the vendor to a CLI command (claude -p, codex exec) with structured output schema for gate nodes. No shell scripts needed.
-- **Vendor resolution**: `internal/vendor/` maps vendor names to CLI invocations. Claude uses `--json-schema` (inline), Codex uses `--output-schema` (temp file). Gate nodes auto-generate JSON Schema from YAML dimensions.
+- **Vendor resolution**: `internal/vendor/` maps vendor names to CLI invocations. Claude uses `--json-schema` (inline), Codex uses `--output-schema` (temp file). Gate nodes auto-generate JSON Schema from YAML dimensions. Router nodes auto-generate JSON Schema with enum constraint on route names.
+- **Route nodes**: Nodes with a `routes:` field declare N-way agentic routing. The LLM picks from an enum of declared route names. Each route points to a subpipeline YAML in `.belayer/pipelines/`. The chosen route runs as a Temporal child workflow with its own retry counters and completion semantics. Route decisions produce a structured artifact (`route-result.json`) with choice, confidence, reasoning, and rejected alternatives.
 - **%{VAR} interpolation**: Belayer variables use `%{INPUT}`, `%{WORK_DIR}` syntax to avoid clashing with shell `$VAR` and agent skill invocations like `$review`.
 - **Activity Per Node**: Each pipeline node/gate = one Temporal Activity. Simplest model.
 - **File-based completion**: Node commands write `.belayer/.internal/completion/<id>-<node>-attempt-<N>.json` when done (via `belayer node-complete` or directly)

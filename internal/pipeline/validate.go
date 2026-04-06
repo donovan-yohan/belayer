@@ -5,9 +5,14 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+// routeNameRe validates route option names (alphanumeric with hyphens).
+var routeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 
 // Validate checks a PipelineConfig for structural correctness.
 func Validate(cfg *PipelineConfig) error {
@@ -34,10 +39,11 @@ func Validate(cfg *PipelineConfig) error {
 		"self": true,
 	}
 	validOutputTypes := map[string]bool{
-		"file":        true,
-		"gate_result": true,
-		"commit":      true,
-		"pr":          true,
+		"file":         true,
+		"gate_result":  true,
+		"commit":       true,
+		"pr":           true,
+		"route_result": true,
 	}
 	validNodeTypes := map[NodeType]bool{
 		"":            true,
@@ -47,7 +53,7 @@ func Validate(cfg *PipelineConfig) error {
 	}
 	for _, n := range cfg.Nodes {
 		if !validNodeTypes[n.Type] {
-			return fmt.Errorf("node %q: unknown type %q (must be \"node\" or \"gate\")", n.Name, n.Type)
+			return fmt.Errorf("node %q: unknown type %q (must be \"node\", \"gate\", or \"agent\")", n.Name, n.Type)
 		}
 		// Agent node validation: vendor and prompt required, command mutually exclusive.
 		if n.Type == NodeTypeAgent {
@@ -85,6 +91,10 @@ func Validate(cfg *PipelineConfig) error {
 			}
 			sort.Strings(valid)
 			return fmt.Errorf("node %q: output.type must be one of [%s], got %q", n.Name, strings.Join(valid, ", "), n.Output.Type)
+		}
+		// Mutual exclusion: routes and dimensions cannot coexist on the same node.
+		if n.IsRouter() && len(n.Dimensions) > 0 {
+			return fmt.Errorf("router %q: routes and dimensions are mutually exclusive — use one or the other", n.Name)
 		}
 		// Enforce consistency between node type and output type.
 		// Gate nodes and agent nodes with dimensions both produce gate_result.
@@ -144,8 +154,36 @@ func Validate(cfg *PipelineConfig) error {
 		} else if len(n.Dimensions) > 0 && n.Type != NodeTypeAgent {
 			return fmt.Errorf("node %q: dimensions are only valid on gate or agent nodes", n.Name)
 		}
+		// Router-specific validation
+		if n.IsRouter() {
+			if n.Routes.Mode != "choose_one" {
+				return fmt.Errorf("router %q: routes.mode must be \"choose_one\", got %q", n.Name, n.Routes.Mode)
+			}
+			if len(n.Routes.Options) < 2 {
+				return fmt.Errorf("router %q: must have at least 2 route options, got %d", n.Name, len(n.Routes.Options))
+			}
+			for optName, opt := range n.Routes.Options {
+				if !routeNameRe.MatchString(optName) {
+					return fmt.Errorf("router %q: option name %q must match pattern ^[a-zA-Z0-9][a-zA-Z0-9-]*$", n.Name, optName)
+				}
+				if opt.Pipeline == "" {
+					return fmt.Errorf("router %q: option %q must have a non-empty pipeline path", n.Name, optName)
+				}
+			}
+			if n.Output.Type != "route_result" {
+				return fmt.Errorf("router %q: output.type must be \"route_result\" when routes are present, got %q", n.Name, n.Output.Type)
+			}
+			if n.Type != NodeTypeAgent {
+				return fmt.Errorf("router %q: router nodes must have type \"agent\" (got %q)", n.Name, n.Type)
+			}
+			if n.OnRetry != "" && n.OnRetry != "self" {
+				return fmt.Errorf("router %q: on_retry must be \"self\" or empty, got %q", n.Name, n.OnRetry)
+			}
+		} else if n.Output.Type == "route_result" {
+			return fmt.Errorf("node %q: output.type \"route_result\" is only valid on router nodes (add routes: with options)", n.Name)
+		}
 	}
-	// Validate intake configs.
+	// Validate intake configs (must be after node loop — uses `seen` for node name lookup).
 	validIntakeTypes := map[string]bool{
 		"jira":        true,
 		"interactive": true,
@@ -172,4 +210,33 @@ func Validate(cfg *PipelineConfig) error {
 		}
 	}
 	return nil
+}
+
+// ResolveSubpipelineYAMLs validates and pre-reads all subpipeline YAML files for router nodes.
+// Returns a map from route option name to raw YAML bytes. This snapshot is passed into
+// ClimbInput.SubpipelineYAMLs so the Temporal workflow can resolve subpipelines
+// deterministically without file I/O.
+func ResolveSubpipelineYAMLs(cfg *PipelineConfig, workDir string) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+	for _, n := range cfg.Nodes {
+		if !n.IsRouter() {
+			continue
+		}
+		for optName, opt := range n.Routes.Options {
+			subPath := filepath.Join(workDir, opt.Pipeline)
+			data, err := os.ReadFile(subPath)
+			if err != nil {
+				return nil, fmt.Errorf("router %q option %q: cannot read subpipeline %q: %w", n.Name, optName, opt.Pipeline, err)
+			}
+			subCfg, err := ParsePipeline(data)
+			if err != nil {
+				return nil, fmt.Errorf("router %q option %q: failed to parse subpipeline %q: %w", n.Name, optName, opt.Pipeline, err)
+			}
+			if err := Validate(subCfg); err != nil {
+				return nil, fmt.Errorf("router %q option %q: subpipeline %q is invalid: %w", n.Name, optName, opt.Pipeline, err)
+			}
+			result[optName] = data
+		}
+	}
+	return result, nil
 }

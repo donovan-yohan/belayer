@@ -101,6 +101,11 @@ func typeDefault(node *pipeline.NodeConfig, workDir string, attempt int) model.C
 		// which is called directly — Detect() is not invoked for gates in current code.
 		// If this path ever becomes reachable, PASS is a safe no-op since the activity will override.
 		return model.CompletionResult{Outcome: model.OutcomePass, Attempt: attempt}
+	case "route_result":
+		// Defensive default: route outcome is determined by materializeRouteFromStdout() in the activity,
+		// which is called directly — Detect() is not invoked for router nodes in current code.
+		// If this path ever becomes reachable, PASS is a safe no-op since the activity will override.
+		return model.CompletionResult{Outcome: model.OutcomePass, Attempt: attempt}
 	default:
 		// commit types default to PASS (caller checks commits via hasNewCommits)
 		return model.CompletionResult{Outcome: model.OutcomePass, Attempt: attempt}

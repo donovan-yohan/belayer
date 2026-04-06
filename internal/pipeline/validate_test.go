@@ -338,3 +338,159 @@ func TestValidate_GateWithVendorNoPrompt(t *testing.T) {
 		t.Errorf("error should mention missing prompt, got: %v", err)
 	}
 }
+
+// --- Router validation tests ---
+
+func validRouterPipeline() *PipelineConfig {
+	return &PipelineConfig{
+		Name: "router-pipeline",
+		Nodes: []NodeConfig{
+			{
+				Name:   "lead",
+				Type:   NodeTypeNode,
+				Output: OutputConfig{Type: "commit"},
+				OnPass: "router",
+				OnFail: "stop",
+			},
+			{
+				Name:   "router",
+				Type:   NodeTypeAgent,
+				Vendor: "claude",
+				Prompt: "Classify this change",
+				Output: OutputConfig{Type: "route_result"},
+				Routes: &RouteConfig{
+					Mode: "choose_one",
+					Options: map[string]RouteOption{
+						"full-review":  {Pipeline: ".belayer/pipelines/full.yaml", Description: "Full"},
+						"quick-review": {Pipeline: ".belayer/pipelines/quick.yaml", Description: "Quick"},
+					},
+				},
+				OnPass:     "stop",
+				OnRetry:    "self",
+				OnFail:     "stop",
+				MaxRetries: 2,
+			},
+		},
+	}
+}
+
+func TestValidate_RouterValid(t *testing.T) {
+	if err := Validate(validRouterPipeline()); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+}
+
+func TestValidate_RouterInvalidMode(t *testing.T) {
+	cfg := validRouterPipeline()
+	cfg.Nodes[1].Routes.Mode = "fan_out"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid route mode")
+	}
+	if !strings.Contains(err.Error(), "choose_one") {
+		t.Errorf("error should mention choose_one, got: %v", err)
+	}
+}
+
+func TestValidate_RouterSingleOption(t *testing.T) {
+	cfg := validRouterPipeline()
+	cfg.Nodes[1].Routes.Options = map[string]RouteOption{
+		"only-option": {Pipeline: ".belayer/pipelines/only.yaml"},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for single route option")
+	}
+	if !strings.Contains(err.Error(), "at least 2") {
+		t.Errorf("error should mention at least 2, got: %v", err)
+	}
+}
+
+func TestValidate_RouterInvalidOptionName(t *testing.T) {
+	cfg := validRouterPipeline()
+	cfg.Nodes[1].Routes.Options["bad name spaces"] = RouteOption{Pipeline: "p.yaml"}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for invalid option name")
+	}
+	if !strings.Contains(err.Error(), "must match pattern") {
+		t.Errorf("error should mention pattern, got: %v", err)
+	}
+}
+
+func TestValidate_RouterEmptyPipeline(t *testing.T) {
+	cfg := validRouterPipeline()
+	cfg.Nodes[1].Routes.Options["full-review"] = RouteOption{Pipeline: "", Description: "Full"}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for empty pipeline path")
+	}
+	if !strings.Contains(err.Error(), "non-empty pipeline") {
+		t.Errorf("error should mention non-empty pipeline, got: %v", err)
+	}
+}
+
+func TestValidate_RouterWrongOutputType(t *testing.T) {
+	cfg := validRouterPipeline()
+	cfg.Nodes[1].Output.Type = "file"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for wrong output type on router")
+	}
+	if !strings.Contains(err.Error(), "route_result") {
+		t.Errorf("error should mention route_result, got: %v", err)
+	}
+}
+
+func TestValidate_RouterWithDimensions(t *testing.T) {
+	cfg := validRouterPipeline()
+	cfg.Nodes[1].Dimensions = []DimensionConfig{
+		{Name: "quality", Weight: 1.0},
+	}
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for router with dimensions")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error should mention mutually exclusive, got: %v", err)
+	}
+}
+
+func TestValidate_RouterNonAgentType(t *testing.T) {
+	cfg := validRouterPipeline()
+	cfg.Nodes[1].Type = NodeTypeNode
+	cfg.Nodes[1].Command = "echo test"
+	cfg.Nodes[1].Vendor = ""
+	cfg.Nodes[1].Prompt = ""
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for non-agent router")
+	}
+	if !strings.Contains(err.Error(), "agent") {
+		t.Errorf("error should mention agent, got: %v", err)
+	}
+}
+
+func TestValidate_RouterInvalidOnRetry(t *testing.T) {
+	cfg := validRouterPipeline()
+	cfg.Nodes[1].OnRetry = "lead"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for router on_retry pointing to another node")
+	}
+	if !strings.Contains(err.Error(), "on_retry") {
+		t.Errorf("error should mention on_retry, got: %v", err)
+	}
+}
+
+func TestValidate_RouteResultOnNonRouter(t *testing.T) {
+	cfg := validPipeline()
+	cfg.Nodes[0].Output.Type = "route_result"
+	err := Validate(cfg)
+	if err == nil {
+		t.Fatal("expected error for route_result on non-router")
+	}
+	if !strings.Contains(err.Error(), "route_result") {
+		t.Errorf("error should mention route_result, got: %v", err)
+	}
+}

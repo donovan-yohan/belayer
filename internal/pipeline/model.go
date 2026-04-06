@@ -9,6 +9,18 @@ const (
 	NodeTypeAgent NodeType = "agent"
 )
 
+// RouteOption defines a single route in a router node.
+type RouteOption struct {
+	Pipeline    string `yaml:"pipeline" json:"pipeline"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
+// RouteConfig defines the routing behaviour for a router node.
+type RouteConfig struct {
+	Mode    string                 `yaml:"mode" json:"mode"`
+	Options map[string]RouteOption `yaml:"options" json:"options"`
+}
+
 // DimensionConfig defines a scoring dimension for a gate node.
 type DimensionConfig struct {
 	Name        string  `yaml:"name" json:"name"`
@@ -56,6 +68,7 @@ type NodeConfig struct {
 	Output      OutputConfig      `yaml:"output" json:"output"`
 	Dimensions  []DimensionConfig `yaml:"dimensions,omitempty" json:"dimensions,omitempty"`
 	Thresholds  ThresholdConfig   `yaml:"thresholds,omitempty" json:"thresholds,omitempty"`
+	Routes      *RouteConfig      `yaml:"routes,omitempty" json:"routes,omitempty"`
 	OnPass      string            `yaml:"on_pass" json:"on_pass"`
 	OnRetry     string            `yaml:"on_retry" json:"on_retry"`
 	OnFail      string            `yaml:"on_fail" json:"on_fail"`
@@ -69,7 +82,7 @@ type InputConfig struct {
 }
 
 // OutputConfig specifies what a node produces.
-// Type is one of: file | commit | gate_result | pr
+// Type is one of: file | commit | gate_result | pr | route_result
 type OutputConfig struct {
 	Type          string `yaml:"type" json:"type"`
 	Path          string `yaml:"path,omitempty" json:"path,omitempty"`
@@ -81,6 +94,11 @@ type OutputConfig struct {
 // Agent nodes with dimensions are also treated as gates for scoring purposes.
 func (n *NodeConfig) IsGate() bool {
 	return n.Type == NodeTypeGate || (n.Type == NodeTypeAgent && len(n.Dimensions) > 0)
+}
+
+// IsRouter returns true if this node is a router (has routes with at least one option).
+func (n *NodeConfig) IsRouter() bool {
+	return n.Routes != nil && len(n.Routes.Options) > 0
 }
 
 // IsAgent returns true if this node uses a vendor agent.

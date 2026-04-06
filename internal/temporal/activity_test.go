@@ -510,3 +510,160 @@ func TestProcessGateResult_MissingGateResultJSON(t *testing.T) {
 		t.Fatal("expected error for missing gate-result.json")
 	}
 }
+
+// --- ReadFileActivity tests ---
+
+func TestReadFileActivity_Success(t *testing.T) {
+	workDir := t.TempDir()
+	filePath := filepath.Join(workDir, "test-file.json")
+	want := []byte(`{"route":"quick-review"}`)
+	if err := os.WriteFile(filePath, want, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	a := &Activities{}
+	got, err := a.ReadFileActivity(context.Background(), ReadFileInput{
+		FilePath: filePath,
+		WorkDir:  workDir,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestReadFileActivity_RelativePath(t *testing.T) {
+	workDir := t.TempDir()
+	subDir := filepath.Join(workDir, ".belayer", ".internal", "output")
+	os.MkdirAll(subDir, 0o755)
+	want := []byte(`{"route":"full-review"}`)
+	os.WriteFile(filepath.Join(subDir, "route-result.json"), want, 0o644)
+
+	a := &Activities{}
+	got, err := a.ReadFileActivity(context.Background(), ReadFileInput{
+		FilePath: ".belayer/.internal/output/route-result.json",
+		WorkDir:  workDir,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestReadFileActivity_Missing(t *testing.T) {
+	a := &Activities{}
+	_, err := a.ReadFileActivity(context.Background(), ReadFileInput{
+		FilePath: "/tmp/nonexistent-file-12345.json",
+		WorkDir:  "/tmp",
+	})
+	if err == nil {
+		t.Fatal("expected error for missing file")
+	}
+	if !strings.Contains(err.Error(), "read file") {
+		t.Errorf("error should mention read file, got: %v", err)
+	}
+}
+
+// --- materializeRouteFromStdout tests ---
+
+func TestMaterializeRouteFromStdout_Valid(t *testing.T) {
+	workDir := t.TempDir()
+	stdout := []byte(`{"route":"quick-review","confidence":0.9,"reasoning":"small fix","rejected":[{"route":"full-review","reason":"too broad"}]}`)
+
+	input := NodeActivityInput{
+		WorkDir: workDir,
+		Attempt: 0,
+		Node: pipeline.NodeConfig{
+			Name:   "review-router",
+			Type:   pipeline.NodeTypeAgent,
+			Vendor: "codex",
+			Output: pipeline.OutputConfig{
+				Type: "route_result",
+				Path: ".belayer/.internal/output/route-result.json",
+			},
+			Routes: &pipeline.RouteConfig{
+				Mode: "choose_one",
+				Options: map[string]pipeline.RouteOption{
+					"quick-review": {Pipeline: "pipelines/quick.yaml"},
+					"full-review":  {Pipeline: "pipelines/full.yaml"},
+				},
+			},
+		},
+	}
+	spawnResult := session.SpawnResult{Stdout: stdout}
+
+	result, err := materializeRouteFromStdout(input, spawnResult)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Outcome != model.OutcomePass {
+		t.Errorf("outcome: got %q, want PASS", result.Outcome)
+	}
+	if result.OutputPath == "" {
+		t.Error("expected OutputPath to be set")
+	}
+
+	// Verify file was written.
+	data, err := os.ReadFile(filepath.Join(workDir, result.OutputPath))
+	if err != nil {
+		t.Fatalf("route-result.json not written: %v", err)
+	}
+	if string(data) != string(stdout) {
+		t.Errorf("file content mismatch")
+	}
+}
+
+func TestMaterializeRouteFromStdout_EmptyStdout(t *testing.T) {
+	input := NodeActivityInput{
+		WorkDir: t.TempDir(),
+		Node: pipeline.NodeConfig{
+			Name:   "router",
+			Vendor: "codex",
+			Routes: &pipeline.RouteConfig{
+				Options: map[string]pipeline.RouteOption{
+					"a": {Pipeline: "a.yaml"},
+					"b": {Pipeline: "b.yaml"},
+				},
+			},
+		},
+	}
+	_, err := materializeRouteFromStdout(input, session.SpawnResult{Stdout: nil})
+	if err == nil {
+		t.Fatal("expected error for empty stdout")
+	}
+	if !strings.Contains(err.Error(), "no output") {
+		t.Errorf("error should mention no output, got: %v", err)
+	}
+}
+
+func TestMaterializeRouteFromStdout_InvalidRoute(t *testing.T) {
+	workDir := t.TempDir()
+	stdout := []byte(`{"route":"nonexistent","confidence":0.5,"reasoning":"oops","rejected":[]}`)
+
+	input := NodeActivityInput{
+		WorkDir: workDir,
+		Node: pipeline.NodeConfig{
+			Name:   "router",
+			Vendor: "codex",
+			Output: pipeline.OutputConfig{Type: "route_result"},
+			Routes: &pipeline.RouteConfig{
+				Options: map[string]pipeline.RouteOption{
+					"route-a": {Pipeline: "a.yaml"},
+					"route-b": {Pipeline: "b.yaml"},
+				},
+			},
+		},
+	}
+
+	_, err := materializeRouteFromStdout(input, session.SpawnResult{Stdout: stdout})
+	if err == nil {
+		t.Fatal("expected error for invalid route choice")
+	}
+	if !strings.Contains(err.Error(), "not in valid set") {
+		t.Errorf("error should mention valid set, got: %v", err)
+	}
+}

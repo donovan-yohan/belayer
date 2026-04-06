@@ -53,14 +53,15 @@ Start this BEFORE running 'belayer start' or 'belayer climb'.`,
 
 // startWorkflowInput holds the parameters for starting a pipeline workflow.
 type startWorkflowInput struct {
-	Spec         string
-	Source       string
-	ExternalID   string
-	DesignFile   string
-	PipelineName string
-	PipelineYAML []byte
-	WorkDir      string
-	Repos        []string
+	Spec             string
+	Source           string
+	ExternalID       string
+	DesignFile       string
+	PipelineName     string
+	PipelineYAML     []byte
+	SubpipelineYAMLs map[string][]byte
+	WorkDir          string
+	Repos            []string
 }
 
 // startWorkflowOutput holds the result of starting a workflow.
@@ -90,12 +91,13 @@ func startWorkflow(ctx context.Context, tc client.Client, input startWorkflowInp
 	}
 	workflowID := intake.GenerateWorkflowID(input.PipelineName, input.Source, externalID)
 	climbInput := model.ClimbInput{
-		Description:  input.Spec,
-		DesignFile:   input.DesignFile,
-		PipelineYAML: input.PipelineYAML,
-		WorkDir:      worktreeDir,
-		Branch:       branch,
-		Repos:        input.Repos,
+		Description:      input.Spec,
+		DesignFile:       input.DesignFile,
+		PipelineYAML:     input.PipelineYAML,
+		SubpipelineYAMLs: input.SubpipelineYAMLs,
+		WorkDir:          worktreeDir,
+		Branch:           branch,
+		Repos:            input.Repos,
 	}
 
 	opts := client.StartWorkflowOptions{
@@ -240,6 +242,7 @@ func runWorker(workDir string) error {
 	}
 	var intakeChecks []string
 	var maxConcurrent int
+	var subpipelineYAMLs map[string][]byte
 	if len(pipelineYAML) > 0 {
 		if cfg, err := pipeline.ParsePipeline(pipelineYAML); err == nil {
 			for _, ic := range cfg.Intake {
@@ -251,6 +254,12 @@ func runWorker(workDir string) error {
 			if maxConcurrent == 0 {
 				maxConcurrent = 3
 			}
+			// Pre-resolve subpipeline YAMLs for router nodes (reproducibility).
+			if resolved, err := pipeline.ResolveSubpipelineYAMLs(cfg, workDir); err != nil {
+				log.Fatalf("failed to resolve router subpipelines: %v", err)
+			} else {
+				subpipelineYAMLs = resolved
+			}
 		}
 	}
 
@@ -258,13 +267,13 @@ func runWorker(workDir string) error {
 	if len(intakeChecks) > 0 {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		go startIntakePoller(ctx, c, workDir, intakeChecks, maxConcurrent, pipelineYAML, pipelineName)
+		go startIntakePoller(ctx, c, workDir, intakeChecks, maxConcurrent, pipelineYAML, pipelineName, subpipelineYAMLs)
 	}
 
 	// Start HTTP API server for submit/status tools.
 	httpErrCh := make(chan error, 1)
 	go func() {
-		httpErrCh <- startHTTPAPI(c, workDir, pipelineYAML, pipelineName)
+		httpErrCh <- startHTTPAPI(c, workDir, pipelineYAML, pipelineName, subpipelineYAMLs)
 	}()
 
 	// Fail fast if the HTTP API can't bind (e.g., port already in use).
@@ -288,7 +297,7 @@ func runWorker(workDir string) error {
 }
 
 // startHTTPAPI runs the HTTP API server for submit/status tool calls.
-func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []byte, pipelineName string) error {
+func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []byte, pipelineName string, subpipelineYAMLs map[string][]byte) error {
 	mux := http.NewServeMux()
 
 	// POST /start — accepts SubmitSpec JSON, starts a ClimbWorkflow, returns workflow ID.
@@ -313,6 +322,7 @@ func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []b
 
 		resolvedYAML := pipelineYAML
 		resolvedName := pipelineName
+		resolvedSubYAMLs := subpipelineYAMLs
 		if len(resolvedYAML) == 0 {
 			var err error
 			resolvedYAML, resolvedName, err = intake.ResolvePipelineYAML(workDir)
@@ -320,20 +330,30 @@ func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []b
 				http.Error(w, "Pipeline error: "+err.Error(), http.StatusBadRequest)
 				return
 			}
+			// Re-resolve subpipeline YAMLs from the freshly parsed pipeline.
+			if cfg, err := pipeline.ParsePipeline(resolvedYAML); err == nil {
+				if subs, err := pipeline.ResolveSubpipelineYAMLs(cfg, workDir); err != nil {
+					http.Error(w, "Subpipeline error: "+err.Error(), http.StatusBadRequest)
+					return
+				} else {
+					resolvedSubYAMLs = subs
+				}
+			}
 		}
 		if spec.PipelineName == "" {
 			spec.PipelineName = resolvedName
 		}
 
 		out, err := startWorkflow(r.Context(), temporalClient, startWorkflowInput{
-			Spec:         spec.Spec,
-			Source:       spec.Source,
-			ExternalID:   spec.ExternalID,
-			DesignFile:   spec.Metadata["design_file"],
-			PipelineName: spec.PipelineName,
-			PipelineYAML: resolvedYAML,
-			WorkDir:      workDir,
-			Repos:        spec.Repos,
+			Spec:             spec.Spec,
+			Source:           spec.Source,
+			ExternalID:       spec.ExternalID,
+			DesignFile:       spec.Metadata["design_file"],
+			PipelineName:     spec.PipelineName,
+			PipelineYAML:     resolvedYAML,
+			SubpipelineYAMLs: resolvedSubYAMLs,
+			WorkDir:          workDir,
+			Repos:            spec.Repos,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -366,7 +386,7 @@ func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []b
 // startIntakePoller polls intake trigger scripts and starts workflows when
 // APPROVED design docs are found. Consume-after-confirm: the doc is only
 // marked consumed after the workflow starts successfully.
-func startIntakePoller(ctx context.Context, tc client.Client, workDir string, checks []string, maxConcurrent int, pipelineYAML []byte, pipelineName string) {
+func startIntakePoller(ctx context.Context, tc client.Client, workDir string, checks []string, maxConcurrent int, pipelineYAML []byte, pipelineName string, subpipelineYAMLs map[string][]byte) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	failures := make(map[int]int)  // consecutive failure count per check
@@ -420,13 +440,14 @@ func startIntakePoller(ctx context.Context, tc client.Client, workDir string, ch
 				// If the same doc triggers twice (crash between start and consume),
 				// Temporal rejects the duplicate workflow ID.
 				out, err := startWorkflow(ctx, tc, startWorkflowInput{
-					Spec:         string(specData),
-					Source:       "trigger",
-					ExternalID:   filepath.Base(artifactPath),
-					DesignFile:   artifactPath,
-					PipelineName: pipelineName,
-					PipelineYAML: pipelineYAML,
-					WorkDir:      workDir,
+					Spec:             string(specData),
+					Source:           "trigger",
+					ExternalID:       filepath.Base(artifactPath),
+					DesignFile:       artifactPath,
+					PipelineName:     pipelineName,
+					PipelineYAML:     pipelineYAML,
+					SubpipelineYAMLs: subpipelineYAMLs,
+					WorkDir:          workDir,
 				})
 				if err != nil {
 					log.Printf("intake poller: start workflow failed: %v", err)
