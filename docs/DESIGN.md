@@ -37,7 +37,31 @@ Agent nodes (`type: agent`) replace shell scripts with vendor + prompt in YAML. 
   prompt: "Implement the design specification at %{INPUT}"
 ```
 
-Vendor map: `claude` → `claude -p --dangerously-skip-permissions --output-format stream-json`, `codex` → `codex exec -s read-only --json`. Gate nodes auto-append `--json-schema` (claude) or `--output-schema` (codex) with dimensions from the YAML.
+Vendor map: `claude` → `claude -p --dangerously-skip-permissions --output-format stream-json`, `codex` → `codex exec -s read-only --json`. Gate nodes auto-append `--json-schema` (claude) or `--output-schema` (codex) with dimensions from the YAML. Router nodes auto-append JSON Schema with enum constraint on route names.
+
+## Route Nodes
+
+Route nodes (`type: agent` + `routes:`) enable N-way agentic branching. The LLM classifies input and picks one of N declared paths. Each path runs as an isolated Temporal child workflow.
+
+```yaml
+- name: review-router
+  type: agent
+  vendor: claude
+  prompt: "Classify this change and choose the review depth"
+  input: { type: commit }
+  output: { type: route_result }
+  routes:
+    mode: choose_one
+    options:
+      full-feature-review:
+        pipeline: .belayer/pipelines/full-feature-review.yaml
+        description: Broad change, needs full review
+      quick-bugfix-review:
+        pipeline: .belayer/pipelines/quick-bugfix-review.yaml
+        description: Small fix, lightweight review
+```
+
+Route decisions produce `route-result.json` with choice, confidence, reasoning, and rejected alternatives. The `enum` constraint in the JSON Schema prevents the LLM from hallucinating routes. Malformed results trigger OutcomeRetry (same as gates). Subpipeline YAMLs are pre-resolved at startup for reproducibility.
 
 ## Two Contracts
 

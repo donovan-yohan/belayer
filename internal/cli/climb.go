@@ -15,6 +15,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/events"
 	"github.com/donovan-yohan/belayer/internal/intake"
 	"github.com/donovan-yohan/belayer/internal/model"
+	"github.com/donovan-yohan/belayer/internal/pipeline"
 	"github.com/donovan-yohan/belayer/internal/session"
 	beltemporal "github.com/donovan-yohan/belayer/internal/temporal"
 )
@@ -43,6 +44,18 @@ func NewClimbCmd() *cobra.Command {
 			pipelineYAML, pipelineName, err := intake.ResolvePipelineYAML(cwd)
 			if err != nil {
 				return fmt.Errorf("resolve pipeline: %w", err)
+			}
+
+			// 2b. Validate and pre-resolve subpipelines for router nodes.
+			var subpipelineYAMLs map[string][]byte
+			if cfg, err := pipeline.ParsePipeline(pipelineYAML); err == nil {
+				if err := pipeline.Validate(cfg); err != nil {
+					return fmt.Errorf("validate pipeline: %w", err)
+				}
+				subpipelineYAMLs, err = pipeline.ResolveSubpipelineYAMLs(cfg, cwd)
+				if err != nil {
+					return fmt.Errorf("validate route subpipelines: %w", err)
+				}
 			}
 
 			// 3. Connect to Temporal.
@@ -97,13 +110,14 @@ func NewClimbCmd() *cobra.Command {
 			// 7. Build and start workflow.
 			// Sessions run in the worktree (isolated), not the main repo.
 			climbInput := model.ClimbInput{
-				Description:  description,
-				DesignFile:   designFile,
-				PipelineYAML: pipelineYAML,
-				FromNode:     nodeFlag,
-				InputPath:    inputFlag,
-				WorkDir:      worktreeDir,
-				Branch:       branch,
+				Description:      description,
+				DesignFile:       designFile,
+				PipelineYAML:     pipelineYAML,
+				SubpipelineYAMLs: subpipelineYAMLs,
+				FromNode:         nodeFlag,
+				InputPath:        inputFlag,
+				WorkDir:          worktreeDir,
+				Branch:           branch,
 			}
 
 			run, err := tc.ExecuteWorkflow(

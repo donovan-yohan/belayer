@@ -17,6 +17,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/outcome"
 	"github.com/donovan-yohan/belayer/internal/pipeline"
+	"github.com/donovan-yohan/belayer/internal/route"
 	"github.com/donovan-yohan/belayer/internal/session"
 	"github.com/donovan-yohan/belayer/internal/vendor"
 )
@@ -53,8 +54,9 @@ type NodeContext struct {
 	Description string                     `json:"description"`
 	InputPrompt string                     `json:"input_prompt"`
 	Artifacts   map[string]string          `json:"artifacts"`
-	Dimensions  []pipeline.DimensionConfig `json:"dimensions,omitempty"`
-	Thresholds  *pipeline.ThresholdConfig  `json:"thresholds,omitempty"`
+	Dimensions   []pipeline.DimensionConfig `json:"dimensions,omitempty"`
+	Thresholds   *pipeline.ThresholdConfig  `json:"thresholds,omitempty"`
+	RouteOptions []string                   `json:"route_options,omitempty"`
 }
 
 // writeNodeContext writes node-context.json to the internal input directory.
@@ -117,18 +119,25 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	if input.Node.IsGate() {
 		thresholds = &input.Node.Thresholds
 	}
+	var routeOptions []string
+	if input.Node.IsRouter() {
+		for name := range input.Node.Routes.Options {
+			routeOptions = append(routeOptions, name)
+		}
+	}
 	nc := NodeContext{
 		SchemaVersion: 1,
-		TaskID:      input.TaskID,
-		NodeName:    input.Node.Name,
-		NodeType:    string(input.Node.EffectiveType()),
-		Attempt:     input.Attempt,
-		WorkDir:     input.WorkDir,
-		Description: input.Node.Description,
-		InputPrompt: inputPrompt,
-		Artifacts:   input.Artifacts,
-		Dimensions:  input.Node.Dimensions,
-		Thresholds:  thresholds,
+		TaskID:       input.TaskID,
+		NodeName:     input.Node.Name,
+		NodeType:     string(input.Node.EffectiveType()),
+		Attempt:      input.Attempt,
+		WorkDir:      input.WorkDir,
+		Description:  input.Node.Description,
+		InputPrompt:  inputPrompt,
+		Artifacts:    input.Artifacts,
+		Dimensions:   input.Node.Dimensions,
+		Thresholds:   thresholds,
+		RouteOptions: routeOptions,
 	}
 	if err := writeNodeContext(input.WorkDir, nc); err != nil {
 		return nil, fmt.Errorf("write node context: %w", err)
@@ -155,13 +164,24 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 			activity.GetLogger(ctx).Warn("Prompt ref resolution partially failed, proceeding with best-effort prompt", "error", refErr, "node", input.Node.Name)
 		}
 		prompt := vendor.Interpolate(resolvedPrompt, vars)
+		schema := vendor.SchemaConfig{
+			IsGate:     input.Node.IsGate(),
+			Dimensions: input.Node.Dimensions,
+		}
+		if input.Node.IsRouter() {
+			schema.IsRouter = true
+			names := make([]string, 0, len(input.Node.Routes.Options))
+			for name := range input.Node.Routes.Options {
+				names = append(names, name)
+			}
+			schema.RouteNames = names
+		}
 		var err error
 		command, vendorCleanup, err = vendor.BuildCommand(
 			input.Node.Vendor,
 			prompt,
 			input.WorkDir,
-			input.Node.IsGate(),
-			input.Node.Dimensions,
+			schema,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("resolve vendor command for %q: %w", input.Node.Name, err)
@@ -176,7 +196,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		Description:   input.Node.Description,
 		Command:       command,
 		InputPrompt:   inputPrompt,
-		CaptureStdout: input.Node.IsGate() && input.Node.Vendor != "",
+		CaptureStdout: (input.Node.IsGate() || input.Node.IsRouter()) && input.Node.Vendor != "",
 	}
 	exitCh, err := a.Spawner.Spawn(ctx, opts)
 	if err != nil {
@@ -213,6 +233,18 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 				}}, nil
 			}
 			return &NodeActivityOutput{Result: gateResult}, nil
+		}
+		// Router nodes with vendor: capture stdout and materialize route result.
+		if input.Node.IsRouter() && input.Node.Vendor != "" {
+			routeResult, routeErr := materializeRouteFromStdout(input, spawnResult)
+			if routeErr != nil {
+				return &NodeActivityOutput{Result: model.CompletionResult{
+					Outcome:  model.OutcomeRetry,
+					Feedback: fmt.Sprintf("route output error: %v", routeErr),
+					Attempt:  input.Attempt,
+				}}, nil
+			}
+			return &NodeActivityOutput{Result: routeResult}, nil
 		}
 		// Non-gate vendor nodes: auto-complete based on output type.
 		if input.Node.Vendor != "" {
@@ -305,6 +337,55 @@ func materializeGateFromStdout(input NodeActivityInput, spawnResult session.Spaw
 	}
 	result.Attempt = input.Attempt
 	return result, nil
+}
+
+// materializeRouteFromStdout writes route-result.json from captured stdout,
+// then parses and validates the route choice against declared options.
+func materializeRouteFromStdout(input NodeActivityInput, spawnResult session.SpawnResult) (model.CompletionResult, error) {
+	stdout := spawnResult.Stdout
+	if len(stdout) == 0 {
+		return model.CompletionResult{}, fmt.Errorf("router produced no output")
+	}
+
+	// For Claude stream-json, extract the result event.
+	if input.Node.Vendor == "claude" {
+		extracted, err := vendor.ExtractStreamResult(stdout)
+		if err != nil {
+			return model.CompletionResult{}, fmt.Errorf("extract stream result: %w", err)
+		}
+		stdout = extracted
+	}
+
+	// Resolve output path.
+	resultPath := input.Node.Output.Path
+	if resultPath == "" {
+		resultPath = ".belayer/.internal/output/route-result.json"
+	}
+	absPath := filepath.Join(input.WorkDir, resultPath)
+
+	// Write route-result.json.
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		return model.CompletionResult{}, fmt.Errorf("create output dir: %w", err)
+	}
+	if err := os.WriteFile(absPath, stdout, 0o644); err != nil {
+		return model.CompletionResult{}, fmt.Errorf("write route result: %w", err)
+	}
+
+	// Parse and validate the route choice.
+	validRoutes := make([]string, 0, len(input.Node.Routes.Options))
+	for name := range input.Node.Routes.Options {
+		validRoutes = append(validRoutes, name)
+	}
+	_, err := route.ParseBytes(stdout, validRoutes)
+	if err != nil {
+		return model.CompletionResult{}, err
+	}
+
+	return model.CompletionResult{
+		Outcome:    model.OutcomePass,
+		OutputPath: resultPath,
+		Attempt:    input.Attempt,
+	}, nil
 }
 
 // processGateResult reads gate-result.json, validates, computes weighted score,
@@ -503,6 +584,17 @@ func buildInputPrompt(node pipeline.NodeConfig, artifacts map[string]string) str
 				fmt.Fprintf(&sb, "\nInput artifact at: %s\n", path)
 			}
 		}
+	} else if node.IsRouter() {
+		sb.WriteString(route.BuildRoutePrompt(node))
+		sb.WriteString("\n")
+		switch node.Input.Type {
+		case "code", "commit":
+			sb.WriteString("\nInput: Review the changes. Full diff at .belayer/.internal/input/diff.txt\n")
+		case "file":
+			if path, ok := artifacts[resolveInputKey(node)]; ok {
+				fmt.Fprintf(&sb, "\nInput artifact at: %s\n", path)
+			}
+		}
 	} else {
 		switch node.Input.Type {
 		case "file":
@@ -587,6 +679,26 @@ func GetHeadSHA(workDir string) (string, error) {
 		return "", fmt.Errorf("git rev-parse HEAD: %w", err)
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// ReadFileInput is the input to ReadFileActivity.
+type ReadFileInput struct {
+	FilePath string
+	WorkDir  string
+}
+
+// ReadFileActivity reads a file from disk. Used by workflows to read route results
+// without violating Temporal determinism constraints.
+func (a *Activities) ReadFileActivity(ctx context.Context, input ReadFileInput) ([]byte, error) {
+	absPath := input.FilePath
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(input.WorkDir, absPath)
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("read file %q: %w", input.FilePath, err)
+	}
+	return data, nil
 }
 
 // runGit runs a git command in workDir and returns combined output.

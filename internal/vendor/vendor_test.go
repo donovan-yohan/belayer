@@ -35,7 +35,7 @@ func TestResolve(t *testing.T) {
 
 func TestBuildCommand(t *testing.T) {
 	t.Run("claude non-gate", func(t *testing.T) {
-		cmd, cleanup, err := BuildCommand("claude", "Implement the feature", "/tmp/work", false, nil)
+		cmd, cleanup, err := BuildCommand("claude", "Implement the feature", "/tmp/work", SchemaConfig{})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -61,7 +61,7 @@ func TestBuildCommand(t *testing.T) {
 			{Name: "code_quality", Weight: 0.5, Description: "Code quality"},
 			{Name: "test_coverage", Weight: 0.5, Description: "Test coverage"},
 		}
-		cmd, cleanup, err := BuildCommand("codex", "$review", "/tmp/work", true, dims)
+		cmd, cleanup, err := BuildCommand("codex", "$review", "/tmp/work", SchemaConfig{IsGate: true, Dimensions: dims})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -96,7 +96,7 @@ func TestBuildCommand(t *testing.T) {
 		dims := []pipeline.DimensionConfig{
 			{Name: "quality", Weight: 1.0, Description: "Overall quality"},
 		}
-		cmd, cleanup, err := BuildCommand("claude", "Review this", "/tmp/work", true, dims)
+		cmd, cleanup, err := BuildCommand("claude", "Review this", "/tmp/work", SchemaConfig{IsGate: true, Dimensions: dims})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -109,11 +109,116 @@ func TestBuildCommand(t *testing.T) {
 	})
 
 	t.Run("unknown vendor", func(t *testing.T) {
-		_, _, err := BuildCommand("unknown", "test", "/tmp", false, nil)
+		_, _, err := BuildCommand("unknown", "test", "/tmp", SchemaConfig{})
 		if err == nil {
 			t.Error("expected error for unknown vendor")
 		}
 	})
+
+	t.Run("claude router with inline schema", func(t *testing.T) {
+		cmd, cleanup, err := BuildCommand("claude", "Classify this change", "/tmp/work", SchemaConfig{
+			IsRouter:   true,
+			RouteNames: []string{"route-a", "route-b"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cleanup != nil {
+			t.Error("claude router should not have cleanup (inline schema)")
+		}
+		if !strings.Contains(cmd, "--json-schema") {
+			t.Error("claude router should use --json-schema flag")
+		}
+		if !strings.Contains(cmd, "route-a") {
+			t.Error("schema should contain route-a enum value")
+		}
+		if !strings.Contains(cmd, "route-b") {
+			t.Error("schema should contain route-b enum value")
+		}
+	})
+
+	t.Run("codex router with file schema", func(t *testing.T) {
+		cmd, cleanup, err := BuildCommand("codex", "Classify this change", "/tmp/work", SchemaConfig{
+			IsRouter:   true,
+			RouteNames: []string{"route-a", "route-b"},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cleanup == nil {
+			t.Error("codex router should have cleanup for temp schema file")
+		}
+		if !strings.Contains(cmd, "--output-schema") {
+			t.Error("codex router should use --output-schema flag")
+		}
+		// Verify the temp file was created and contains the enum values.
+		parts := strings.Split(cmd, "--output-schema ")
+		if len(parts) < 2 {
+			t.Fatal("could not find schema file path in command")
+		}
+		schemaPath := strings.Fields(parts[1])[0]
+		data, err := os.ReadFile(schemaPath)
+		if err != nil {
+			t.Fatalf("schema temp file should exist at %s: %v", schemaPath, err)
+		}
+		if !strings.Contains(string(data), "route-a") {
+			t.Error("schema file should contain route-a enum value")
+		}
+		cleanup()
+		if _, err := os.Stat(schemaPath); !os.IsNotExist(err) {
+			t.Error("cleanup should remove the temp file")
+		}
+	})
+}
+
+func TestRouteResultSchema(t *testing.T) {
+	routeNames := []string{"full-feature-review", "quick-bugfix-review", "refactor-review"}
+	schema := RouteResultSchema(routeNames)
+
+	// Should be valid JSON.
+	data, err := json.Marshal(schema)
+	if err != nil {
+		t.Fatalf("schema should be marshallable: %v", err)
+	}
+
+	schemaStr := string(data)
+
+	// Should contain all route names as enum values.
+	for _, name := range routeNames {
+		if !strings.Contains(schemaStr, name) {
+			t.Errorf("schema should contain route name %q", name)
+		}
+	}
+
+	// Should have required fields.
+	for _, field := range []string{"route", "confidence", "reasoning", "rejected"} {
+		if !strings.Contains(schemaStr, field) {
+			t.Errorf("schema should reference field %q", field)
+		}
+	}
+
+	// Should have enum constraint.
+	if !strings.Contains(schemaStr, `"enum"`) {
+		t.Error("schema should have enum constraint on route field")
+	}
+}
+
+func TestBuildCommand_GateAndRouterMutualExclusion(t *testing.T) {
+	// IsRouter takes precedence over IsGate when both are set (defensive).
+	dims := []pipeline.DimensionConfig{{Name: "quality", Weight: 1.0, Description: "Quality"}}
+	cmd, _, err := BuildCommand("claude", "test", "/tmp/work", SchemaConfig{
+		IsGate:     true,
+		Dimensions: dims,
+		IsRouter:   true,
+		RouteNames: []string{"route-a", "route-b"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Router takes precedence: should have enum, not dimension names.
+	if !strings.Contains(cmd, "route-a") {
+		t.Error("router schema should take precedence, expected route-a enum value")
+	}
 }
 
 func TestGateResultSchema(t *testing.T) {

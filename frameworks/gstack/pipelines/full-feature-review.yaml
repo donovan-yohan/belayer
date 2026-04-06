@@ -1,0 +1,29 @@
+name: full-feature-review
+
+nodes:
+  - name: code-review
+    type: agent
+    vendor: codex
+    prompt: "$review"
+    input: { type: commit }
+    output: { type: gate_result }
+    dimensions:
+      - { name: code_quality, weight: 0.25, description: "Code organization, readability, and adherence to project patterns" }
+      - { name: scope_compliance, weight: 0.20, description: "Does the implementation match the spec without scope creep?" }
+      - { name: production_readiness, weight: 0.20, description: "Error handling, logging, security, and deployment readiness" }
+      - { name: test_coverage, weight: 0.20, description: "Unit tests, edge cases, and integration test coverage" }
+      - { name: architecture, weight: 0.15, description: "Component boundaries, dependency management, and extensibility" }
+    thresholds: { pass: 7.0, retry: 4.0 }
+    on_pass: ship
+    on_retry: self
+    on_fail: stop
+    max_retries: 2
+
+  - name: ship
+    type: agent
+    vendor: claude
+    prompt: "Create a pull request for the completed feature. Include a detailed summary of what was implemented, run all tests, and push to remote. Write the PR URL to .belayer/.internal/output/pr.json as {\"url\": \"...\", \"number\": N}."
+    input: { type: gate_result, key: code-review }
+    output: { type: pr, path: .belayer/.internal/output/pr.json }
+    on_pass: stop
+    on_fail: stop
