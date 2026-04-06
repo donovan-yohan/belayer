@@ -361,3 +361,191 @@ func (s *ClimbWorkflowTestSuite) TestClimb_MaxRetriesExhausted() {
 	s.Equal(model.ClimbFailed, result.Status)
 	s.Contains(result.Message, "max retries")
 }
+
+// --- Router node tests ---
+
+func routerPipelineYAML() []byte {
+	return []byte(`
+name: router-test
+nodes:
+  - name: implement
+    type: node
+    command: echo test
+    description: Write code
+    output:
+      type: commit
+    on_pass: review-router
+    on_fail: stop
+  - name: review-router
+    type: agent
+    vendor: claude
+    prompt: "Classify this change"
+    input:
+      type: commit
+      key: implement
+    output:
+      type: route_result
+      path: .belayer/.internal/output/route-result.json
+    routes:
+      mode: choose_one
+      options:
+        full-review:
+          pipeline: .belayer/pipelines/full-review.yaml
+          description: Full review
+        quick-review:
+          pipeline: .belayer/pipelines/quick-review.yaml
+          description: Quick review
+    on_pass: stop
+    on_retry: self
+    on_fail: stop
+    max_retries: 2
+`)
+}
+
+var childSubpipelineYAML = []byte(`
+name: child-review
+nodes:
+  - name: code-review
+    type: node
+    command: echo review
+    description: Review code
+    output:
+      type: file
+    on_pass: stop
+    on_fail: stop
+`)
+
+func routerInput() model.ClimbInput {
+	return model.ClimbInput{
+		PipelineYAML: routerPipelineYAML(),
+		SubpipelineYAMLs: map[string][]byte{
+			"quick-review": childSubpipelineYAML,
+			"full-review":  childSubpipelineYAML,
+		},
+		WorkDir: "/tmp/test-router",
+		Branch:  "feature/router-test",
+	}
+}
+
+var validRouteResultJSON = []byte(`{"route":"quick-review","confidence":0.9,"reasoning":"small fix","rejected":[{"route":"full-review","reason":"too small"}]}`)
+
+// TestClimb_RouterDispatchesChild: implement PASS → router PASS → child executes inline → ClimbCompleted with namespaced outputs.
+func (s *ClimbWorkflowTestSuite) TestClimb_RouterDispatchesChild() {
+	a := &Activities{}
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil)
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "review-router"
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome:    model.OutcomePass,
+			OutputPath: ".belayer/.internal/output/route-result.json",
+		},
+	}, nil)
+
+	s.env.OnActivity(a.ReadFileActivity, mock.Anything, mock.Anything).Return(validRouteResultJSON, nil)
+
+	// Child subpipeline executes inline — mock its activity.
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "code-review"
+	})).Return(passOutput("code-review"), nil)
+
+	s.env.ExecuteWorkflow(ClimbWorkflow, routerInput())
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	var result model.ClimbOutput
+	s.NoError(s.env.GetWorkflowResult(&result))
+	s.Equal(model.ClimbCompleted, result.Status)
+	// Child outputs should be namespaced under the router node name.
+	s.Contains(result.NodeOutputs, "review-router/code-review")
+	// Un-namespaced alias should also exist.
+	s.Contains(result.NodeOutputs, "review-router")
+}
+
+// TestClimb_RouterChildFailure: child workflow's node fails → parent ClimbFailed.
+func (s *ClimbWorkflowTestSuite) TestClimb_RouterChildFailure() {
+	a := &Activities{}
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil)
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "review-router"
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome:    model.OutcomePass,
+			OutputPath: ".belayer/.internal/output/route-result.json",
+		},
+	}, nil)
+
+	s.env.OnActivity(a.ReadFileActivity, mock.Anything, mock.Anything).Return(validRouteResultJSON, nil)
+
+	// Child subpipeline's node fails.
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "code-review"
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome: model.OutcomeFail,
+		},
+	}, nil)
+
+	s.env.ExecuteWorkflow(ClimbWorkflow, routerInput())
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	var result model.ClimbOutput
+	s.NoError(s.env.GetWorkflowResult(&result))
+	s.Equal(model.ClimbFailed, result.Status)
+	s.Contains(result.Message, "review-router")
+}
+
+// TestClimb_RouterRetryThenPass: router first returns RETRY (malformed output), then PASS → child completes.
+func (s *ClimbWorkflowTestSuite) TestClimb_RouterRetryThenPass() {
+	a := &Activities{}
+
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "implement"
+	})).Return(passOutput("implement"), nil)
+
+	// First router attempt: malformed → RETRY.
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "review-router" && in.Attempt == 0
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome:  model.OutcomeRetry,
+			Feedback: "route output error: invalid JSON",
+			Attempt:  0,
+		},
+	}, nil).Once()
+
+	// Second router attempt: valid → PASS.
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "review-router" && in.Attempt == 1
+	})).Return(&NodeActivityOutput{
+		Result: model.CompletionResult{
+			Outcome:    model.OutcomePass,
+			OutputPath: ".belayer/.internal/output/route-result.json",
+			Attempt:    1,
+		},
+	}, nil).Once()
+
+	s.env.OnActivity(a.ReadFileActivity, mock.Anything, mock.Anything).Return(validRouteResultJSON, nil)
+
+	// Child subpipeline executes inline after successful retry.
+	s.env.OnActivity(a.NodeActivity, mock.Anything, mock.MatchedBy(func(in NodeActivityInput) bool {
+		return in.Node.Name == "code-review"
+	})).Return(passOutput("code-review"), nil)
+
+	s.env.ExecuteWorkflow(ClimbWorkflow, routerInput())
+	s.True(s.env.IsWorkflowCompleted())
+	s.NoError(s.env.GetWorkflowError())
+
+	var result model.ClimbOutput
+	s.NoError(s.env.GetWorkflowResult(&result))
+	s.Equal(model.ClimbCompleted, result.Status)
+}

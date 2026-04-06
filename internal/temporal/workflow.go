@@ -313,19 +313,20 @@ func dispatchRoute(
 	}
 
 	chosenRoute := routeResult.Route
-	option, ok := node.Routes.Options[chosenRoute]
-	if !ok {
+	if _, ok := node.Routes.Options[chosenRoute]; !ok {
 		return nil, fmt.Errorf("route %q not found in declared options", chosenRoute)
 	}
 
 	// 3. Resolve subpipeline YAML from pre-loaded map (deterministic, no file I/O).
+	// Map is keyed by route option name (set by ResolveSubpipelineYAMLs at startup).
 	subYAML, ok := input.SubpipelineYAMLs[chosenRoute]
 	if !ok {
-		// Fallback: try the option pipeline path as key.
-		subYAML, ok = input.SubpipelineYAMLs[option.Pipeline]
-		if !ok {
-			return nil, fmt.Errorf("subpipeline YAML for route %q not pre-loaded (key: %q)", chosenRoute, option.Pipeline)
+		keys := make([]string, 0, len(input.SubpipelineYAMLs))
+		for k := range input.SubpipelineYAMLs {
+			keys = append(keys, k)
 		}
+		sort.Strings(keys)
+		return nil, fmt.Errorf("subpipeline YAML for route %q not pre-loaded (available keys: %v)", chosenRoute, keys)
 	}
 
 	// 4. Parse and validate subpipeline.

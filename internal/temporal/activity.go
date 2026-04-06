@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -124,6 +125,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		for name := range input.Node.Routes.Options {
 			routeOptions = append(routeOptions, name)
 		}
+		sort.Strings(routeOptions)
 	}
 	nc := NodeContext{
 		SchemaVersion: 1,
@@ -174,6 +176,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 			for name := range input.Node.Routes.Options {
 				names = append(names, name)
 			}
+			sort.Strings(names)
 			schema.RouteNames = names
 		}
 		var err error

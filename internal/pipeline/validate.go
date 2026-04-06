@@ -92,6 +92,10 @@ func Validate(cfg *PipelineConfig) error {
 			sort.Strings(valid)
 			return fmt.Errorf("node %q: output.type must be one of [%s], got %q", n.Name, strings.Join(valid, ", "), n.Output.Type)
 		}
+		// Mutual exclusion: routes and dimensions cannot coexist on the same node.
+		if n.IsRouter() && len(n.Dimensions) > 0 {
+			return fmt.Errorf("router %q: routes and dimensions are mutually exclusive — use one or the other", n.Name)
+		}
 		// Enforce consistency between node type and output type.
 		// Gate nodes and agent nodes with dimensions both produce gate_result.
 		if n.IsGate() && n.Output.Type != "gate_result" {
@@ -169,9 +173,6 @@ func Validate(cfg *PipelineConfig) error {
 			if n.Output.Type != "route_result" {
 				return fmt.Errorf("router %q: output.type must be \"route_result\" when routes are present, got %q", n.Name, n.Output.Type)
 			}
-			if n.IsGate() {
-				return fmt.Errorf("router %q: routes and dimensions are mutually exclusive — use one or the other", n.Name)
-			}
 			if n.Type != NodeTypeAgent {
 				return fmt.Errorf("router %q: router nodes must have type \"agent\" (got %q)", n.Name, n.Type)
 			}
@@ -209,13 +210,6 @@ func Validate(cfg *PipelineConfig) error {
 		}
 	}
 	return nil
-}
-
-// ValidateRoutes parses and validates every subpipeline referenced by router nodes.
-// It must be called at all entrypoints (climb, worker) after Validate() succeeds.
-func ValidateRoutes(cfg *PipelineConfig, workDir string) error {
-	_, err := ResolveSubpipelineYAMLs(cfg, workDir)
-	return err
 }
 
 // ResolveSubpipelineYAMLs validates and pre-reads all subpipeline YAML files for router nodes.
