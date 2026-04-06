@@ -1,0 +1,57 @@
+frameworks/gstack/pipelines/quick-bugfix-review.yaml
+  44307e9af514fca9 1-27
+internal/route/prompt.go
+  44307e9af514fca9 1-38
+internal/outcome/detect.go
+  44307e9af514fca9 104-108
+frameworks/gstack/pipelines/full-feature-review.yaml
+  44307e9af514fca9 1-29
+CLAUDE.md
+  44307e9af514fca9 36
+internal/temporal/workflow.go
+  44307e9af514fca9 11,115-165,272-364
+internal/temporal/activity.go
+  44307e9af514fca9 20,57-59,122-127,130-140,167-178,184,199,237-248,342-390,587-597,684-703
+internal/cli/climb.go
+  44307e9af514fca9 18,49-60,113-120
+internal/route/result.go
+  44307e9af514fca9 1-57
+frameworks/gstack/pipelines/refactor-review.yaml
+  44307e9af514fca9 1-28
+internal/route/result_test.go
+  44307e9af514fca9 1-191
+docs/ARCHITECTURE.md
+  44307e9af514fca9 129,131-132
+internal/model/types.go
+  44307e9af514fca9 50-60
+internal/pipeline/validate.go
+  44307e9af514fca9 8-9,39-43,53,150-181,183,211-246
+internal/pipeline/model.go
+  44307e9af514fca9 12-23,71,85,99-103
+internal/cli/worker.go
+  44307e9af514fca9 56-64,94-100,245,257-258,266,272,296,334-342,375,429-436
+docs/DESIGN.md
+  44307e9af514fca9 40-64
+frameworks/gstack/pipeline.yaml
+  44307e9af514fca9 13,20,23-26,29-55,57,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "ed0c5672bb1e7ebdfe482bb1e16041c99f81a48d",
+  "prompts": {
+    "44307e9af514fca9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b8ee08b0-b807-4189-a4eb-db7151f9304e",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 903,
+      "total_deletions": 122,
+      "accepted_lines": 879,
+      "overriden_lines": 0
+    }
+  }
+}
