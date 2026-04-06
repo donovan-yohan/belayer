@@ -6,9 +6,10 @@ Patterns and conventions for the belayer codebase.
 
 Nodes define `command:` (what to exec), `description:` (what to do), routing (`on_pass`/`on_retry`/`on_fail`). Belayer execs the command via ExecSpawner, polls for completion, and routes to the next node based on outcome.
 
-Two pipeline primitives:
+Three pipeline primitives:
 - **Nodes** (constructive): Produce artifacts (code, specs, PRs)
 - **Gates** (adversarial): Evaluate artifacts with multi-dimensional scoring. Produce `gate-result.json` + `rationale.md`
+- **Routers** (agentic branching): LLM picks one of N declared paths, each running as an isolated Temporal child workflow. Produce `route-result.json`
 
 ## Framework Model
 

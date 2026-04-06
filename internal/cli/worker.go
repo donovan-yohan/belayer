@@ -255,7 +255,11 @@ func runWorker(workDir string) error {
 				maxConcurrent = 3
 			}
 			// Pre-resolve subpipeline YAMLs for router nodes (reproducibility).
-			subpipelineYAMLs, _ = pipeline.ResolveSubpipelineYAMLs(cfg, workDir)
+			if resolved, err := pipeline.ResolveSubpipelineYAMLs(cfg, workDir); err != nil {
+				log.Fatalf("failed to resolve router subpipelines: %v", err)
+			} else {
+				subpipelineYAMLs = resolved
+			}
 		}
 	}
 
@@ -318,12 +322,22 @@ func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []b
 
 		resolvedYAML := pipelineYAML
 		resolvedName := pipelineName
+		resolvedSubYAMLs := subpipelineYAMLs
 		if len(resolvedYAML) == 0 {
 			var err error
 			resolvedYAML, resolvedName, err = intake.ResolvePipelineYAML(workDir)
 			if err != nil {
 				http.Error(w, "Pipeline error: "+err.Error(), http.StatusBadRequest)
 				return
+			}
+			// Re-resolve subpipeline YAMLs from the freshly parsed pipeline.
+			if cfg, err := pipeline.ParsePipeline(resolvedYAML); err == nil {
+				if subs, err := pipeline.ResolveSubpipelineYAMLs(cfg, workDir); err != nil {
+					http.Error(w, "Subpipeline error: "+err.Error(), http.StatusBadRequest)
+					return
+				} else {
+					resolvedSubYAMLs = subs
+				}
 			}
 		}
 		if spec.PipelineName == "" {
@@ -337,7 +351,7 @@ func startHTTPAPI(temporalClient client.Client, workDir string, pipelineYAML []b
 			DesignFile:       spec.Metadata["design_file"],
 			PipelineName:     spec.PipelineName,
 			PipelineYAML:     resolvedYAML,
-			SubpipelineYAMLs: subpipelineYAMLs,
+			SubpipelineYAMLs: resolvedSubYAMLs,
 			WorkDir:          workDir,
 			Repos:            spec.Repos,
 		})

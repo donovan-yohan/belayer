@@ -2,6 +2,7 @@ package temporal
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"go.temporal.io/sdk/workflow"
@@ -114,7 +115,7 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 
 			// Router dispatch: spawn child workflow for the chosen route.
 			if node.IsRouter() && result.OutputPath != "" {
-				childOut, routeErr := dispatchRoute(ctx, input, node, result, artifacts, nodeOutputs, ao)
+				childOut, routeErr := dispatchRoute(ctx, input, node, result, retryCount[node.Name])
 				if routeErr != nil {
 					return &model.ClimbOutput{
 						Status:      model.ClimbFailed,
@@ -148,8 +149,15 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 					}, nil
 				}
 				// Merge child outputs: namespaced for auditability, plus un-namespaced alias.
+				// Sort keys for deterministic iteration inside the Temporal workflow.
+				childKeys := make([]string, 0, len(childOut.NodeOutputs))
+				for key := range childOut.NodeOutputs {
+					childKeys = append(childKeys, key)
+				}
+				sort.Strings(childKeys)
 				var lastChildOutput string
-				for key, path := range childOut.NodeOutputs {
+				for _, key := range childKeys {
+					path := childOut.NodeOutputs[key]
 					namespacedKey := fmt.Sprintf("%s/%s", node.Name, key)
 					artifacts[namespacedKey] = path
 					nodeOutputs[namespacedKey] = path
@@ -277,9 +285,7 @@ func dispatchRoute(
 	input model.ClimbInput,
 	node pipeline.NodeConfig,
 	result model.CompletionResult,
-	artifacts map[string]string,
-	nodeOutputs map[string]string,
-	ao workflow.ActivityOptions,
+	attempt int,
 ) (*model.ClimbOutput, error) {
 	// 1. Read route-result.json content via a side-effect-free activity.
 	actx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
@@ -295,10 +301,12 @@ func dispatchRoute(
 	}
 
 	// 2. Parse and validate route choice.
+	// Collect and sort route names for deterministic validation inside the workflow.
 	validRoutes := make([]string, 0, len(node.Routes.Options))
 	for name := range node.Routes.Options {
 		validRoutes = append(validRoutes, name)
 	}
+	sort.Strings(validRoutes)
 	routeResult, err := route.ParseBytes(routeResultBytes, validRoutes)
 	if err != nil {
 		return nil, fmt.Errorf("invalid route result: %w", err)
@@ -330,15 +338,17 @@ func dispatchRoute(
 	}
 
 	// 5. Spawn child workflow.
+	// Include attempt counter for deterministic uniqueness across retries.
 	parentID := workflow.GetInfo(ctx).WorkflowExecution.ID
-	childID := fmt.Sprintf("%s/route/%s", parentID, chosenRoute)
+	childID := fmt.Sprintf("%s/route/%s/%d", parentID, chosenRoute, attempt)
 
 	childInput := model.ClimbInput{
-		Description:  fmt.Sprintf("Subpipeline: %s (routed from %s)", chosenRoute, node.Name),
-		PipelineYAML: subYAML,
-		WorkDir:      input.WorkDir,
-		Branch:       input.Branch,
-		BaseRef:      input.BaseRef,
+		Description:      fmt.Sprintf("Subpipeline: %s (routed from %s)", chosenRoute, node.Name),
+		PipelineYAML:     subYAML,
+		SubpipelineYAMLs: input.SubpipelineYAMLs,
+		WorkDir:          input.WorkDir,
+		Branch:           input.Branch,
+		BaseRef:          input.BaseRef,
 	}
 
 	cwo := workflow.ChildWorkflowOptions{

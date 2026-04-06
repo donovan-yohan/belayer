@@ -18,12 +18,16 @@ func newSetupCmd() *cobra.Command {
 		Short: "Scaffold a belayer framework into the current repo",
 		Long: `Install a belayer framework into .belayer/ of the current repository.
 
-Frameworks provide pipeline.yaml and node runner scripts that define
-how belayer executes pipeline nodes.
+Frameworks provide pipeline.yaml, node runner scripts, and optional
+subpipeline YAMLs (in .belayer/pipelines/) that define how belayer
+executes pipeline nodes, gates, and routers.
 
 Examples:
   belayer setup --framework gstack                # built-in framework
-  belayer setup --framework ./my-custom-framework # local path`,
+  belayer setup --framework ./my-custom-framework # local path
+
+After setup, customize .belayer/pipeline.yaml. See docs/PIPELINE_REFERENCE.md
+for the full YAML schema.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if frameworkFlag == "" {
 				return fmt.Errorf("--framework is required")

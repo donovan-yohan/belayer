@@ -78,6 +78,7 @@ Belayer uses climbing metaphors and a three-phase model:
 | Model | `internal/model/` | Domain types: NodeOutcome, CompletionResult, ClimbInput/Output |
 | Pipeline | `internal/pipeline/` | YAML parser, validator, visualizer, pipeline config model |
 | Gate | `internal/gate/` | Gate result parsing, weighted scoring, threshold routing, prompt builder |
+| Route | `internal/route/` | Route result parsing/validation, route prompt builder for N-way agentic branching |
 | Events | `internal/events/` | JSONL event logger for pipeline observability (node + gate events) |
 | Outcome | `internal/outcome/` | Outcome detection: verdict.txt > output file first line > type default |
 | Session | `internal/session/` | ExecSpawner (generic command exec), path helpers for `.belayer/.internal/`, SpawnOpts |

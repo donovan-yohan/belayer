@@ -14,7 +14,7 @@ Execution plans for active and completed work.
 |-------|----------|-------|
 | Schedule reconciliation is a stub | Medium | `internal/intake/schedule.go` logs intent but does not create Temporal schedules |
 | Worker `/status` endpoint is a stub | Low | Returns health only — full workflow listing deferred to Phase 2 |
-| `StartSHA` in `NodeActivityInput` never populated | Low | Code-output commit verification guard never fires |
+| ~~`StartSHA` in `NodeActivityInput` never populated~~ | ~~Low~~ | Resolved: `startSHA` captured locally in `NodeActivity` before spawn (2026-03-30) |
 
 
 ## Completed Plans

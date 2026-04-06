@@ -28,6 +28,19 @@ func NewClimbCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "climb [description]",
 		Short: "Start a pipeline climb (pipeline entry point)",
+		Long: `Start a pipeline run in a fresh git worktree.
+
+Resolves .belayer/pipeline.yaml, validates nodes (including router
+subpipelines), creates a worktree, and starts a Temporal workflow.
+
+Input priority: --file > --prompt > positional args > stdin.
+
+Examples:
+  belayer climb "add user authentication"
+  belayer climb --file design.md
+  belayer climb --file design.md --detach
+  belayer climb --node review-gate --input path/to/commit
+  echo "fix the login bug" | belayer climb`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, err := os.Getwd()
 			if err != nil {

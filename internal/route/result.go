@@ -41,7 +41,8 @@ func ParseBytes(data []byte, validRoutes []string) (*RouteResult, error) {
 	return &result, nil
 }
 
-// Validate checks that the chosen route is in the valid set.
+// Validate checks that the route result is well-formed: route is in the valid set,
+// confidence is in [0, 1], and reasoning is non-empty.
 func (r *RouteResult) Validate(validRoutes []string) error {
 	if r.Route == "" {
 		return fmt.Errorf("route result: route field is empty")
@@ -52,6 +53,12 @@ func (r *RouteResult) Validate(validRoutes []string) error {
 	}
 	if !valid[r.Route] {
 		return fmt.Errorf("route result: chosen route %q is not in valid set %v", r.Route, validRoutes)
+	}
+	if r.Confidence < 0 || r.Confidence > 1 {
+		return fmt.Errorf("route result: confidence must be in [0, 1], got %f", r.Confidence)
+	}
+	if r.Reasoning == "" {
+		return fmt.Errorf("route result: reasoning field is required")
 	}
 	return nil
 }

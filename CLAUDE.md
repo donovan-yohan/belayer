@@ -23,6 +23,7 @@ Standalone Go CLI that orchestrates autonomous coding agents through declarative
 | Learnings | `docs/LEARNINGS.md` | Past learnings, corrections, patterns discovered across sessions |
 | Design Docs | `docs/design-docs/` | Feature brainstorm outputs and design decisions |
 | ADRs | `docs/adrs/` | Architecture decision records |
+| Pipeline Reference | `docs/PIPELINE_REFERENCE.md` | Full YAML schema, node types, gate/router config, validation rules |
 | TODOs | `docs/TODOS.md` | Deferred items, P2/P3 backlog, tech debt tracker |
 | Review Guidance | `docs/REVIEW_GUIDANCE.md` | Adversarial review config, deployment context, question bank |
 

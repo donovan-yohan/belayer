@@ -38,14 +38,15 @@ belayer climb "add auth"
     │   ├── Writes .belayer/.internal/input/node-context.json
     │   ├── Execs the node's command (from pipeline YAML)
     │   ├── Polls for .belayer/.internal/completion/<id>.json
-    │   └── Routes to next node (on_pass / on_retry / on_fail)
+    │   ├── Routes to next node (on_pass / on_retry / on_fail)
+    │   └── Router nodes → dispatch chosen route as child workflow
     │
     └── Pipeline complete → branch with commits ready for PR
 ```
 
 ## Pipeline YAML
 
-Pipelines define nodes (constructive steps) and gates (adversarial quality checks):
+Pipelines define nodes (constructive steps), gates (adversarial quality checks), and routers (agentic N-way branching):
 
 ```yaml
 name: my-pipeline
@@ -138,6 +139,7 @@ The `claude-tmux` framework handles this via a Claude Code Stop hook that calls 
 | **You own your nodes** — bring your own implementations | Platform owns your agents |
 | **Multi-repo as additive layer** — same per-repo pipeline | Multi-repo as an agent feature |
 | **Score-then-route gates** — deterministic quality scoring | Trust the agent's self-assessment |
+| **Route nodes** — LLM-driven N-way branching with subpipeline isolation | Static workflow paths |
 
 ## CLI
 
@@ -162,7 +164,7 @@ go build -o belayer ./cmd/belayer
 go test ./...
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code map and [docs/DESIGN.md](docs/DESIGN.md) for design patterns.
+See [docs/PIPELINE_REFERENCE.md](docs/PIPELINE_REFERENCE.md) for the full YAML schema, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code map, and [docs/DESIGN.md](docs/DESIGN.md) for design patterns.
 
 ## Companion Tools
 

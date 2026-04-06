@@ -11,6 +11,9 @@ import (
 	"strings"
 )
 
+// routeNameRe validates route option names (alphanumeric with hyphens).
+var routeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
+
 // Validate checks a PipelineConfig for structural correctness.
 func Validate(cfg *PipelineConfig) error {
 	if cfg.Name == "" {
@@ -155,7 +158,6 @@ func Validate(cfg *PipelineConfig) error {
 			if len(n.Routes.Options) < 2 {
 				return fmt.Errorf("router %q: must have at least 2 route options, got %d", n.Name, len(n.Routes.Options))
 			}
-			routeNameRe := regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9-]*$`)
 			for optName, opt := range n.Routes.Options {
 				if !routeNameRe.MatchString(optName) {
 					return fmt.Errorf("router %q: option name %q must match pattern ^[a-zA-Z0-9][a-zA-Z0-9-]*$", n.Name, optName)

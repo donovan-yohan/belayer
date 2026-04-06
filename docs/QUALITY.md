@@ -24,6 +24,8 @@ Go's built-in `go test` with `testing` package. No external test framework.
 | `internal/temporal/workflow_test.go` | ClimbWorkflow orchestration |
 | `internal/temporal/activity_test.go` | NodeActivity: spawn, heartbeat, poll completion |
 | `internal/temporal/integration_test.go` | End-to-end pipeline integration |
+| `internal/route/result_test.go` | Route result parsing, validation, prompt builder |
+| `internal/vendor/vendor_test.go` | Vendor resolution, command builder, router schema generation |
 | `internal/intake/bridge_test.go` | Intake bridge: SubmitSpec to workflow |
 | `internal/intake/jira_test.go` | Jira intake adapter |
 | `internal/intake/schedule_test.go` | Schedule reconciliation |

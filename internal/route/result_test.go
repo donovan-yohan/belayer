@@ -85,7 +85,7 @@ func TestParseBytes_ValidWithZeroConfidence(t *testing.T) {
 // --- Validate tests ---
 
 func TestValidate_ChosenInSet(t *testing.T) {
-	r := &RouteResult{Route: "full-feature-review"}
+	r := &RouteResult{Route: "full-feature-review", Confidence: 0.9, Reasoning: "broad change"}
 	err := r.Validate([]string{"quick-bugfix-review", "full-feature-review", "refactor-review"})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
