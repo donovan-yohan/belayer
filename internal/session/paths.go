@@ -30,3 +30,14 @@ func InputDir(workDir string) string {
 func OutputDir(workDir string) string {
 	return filepath.Join(InternalDir(workDir), "output")
 }
+
+// LogDir returns the path to the node log directory.
+func LogDir(workDir string) string {
+	return filepath.Join(InternalDir(workDir), "logs")
+}
+
+// LogFilePath returns the path for a node's log file, scoped by node name and attempt.
+func LogFilePath(workDir, nodeName string, attempt int) string {
+	filename := fmt.Sprintf("%s-attempt-%d.log", nodeName, attempt)
+	return filepath.Join(LogDir(workDir), filename)
+}

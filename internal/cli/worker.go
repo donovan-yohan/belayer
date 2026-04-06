@@ -85,6 +85,23 @@ func startWorkflow(ctx context.Context, tc client.Client, input startWorkflowInp
 		return nil, fmt.Errorf("worktree error: %w", err)
 	}
 
+	// Materialize the spec/design doc into the worktree so nodes can read it.
+	// .belayer/.internal/ is gitignored, so it won't exist in a fresh worktree.
+	if input.DesignFile != "" && input.Spec != "" {
+		inputDir := filepath.Join(worktreeDir, ".belayer", ".internal", "input")
+		if err := os.MkdirAll(inputDir, 0o755); err != nil {
+			cleanupWorktree(context.Background(), input.WorkDir, worktreeDir, branch)
+			return nil, fmt.Errorf("create worktree input dir: %w", err)
+		}
+		destPath := filepath.Join(inputDir, filepath.Base(input.DesignFile))
+		if err := os.WriteFile(destPath, []byte(input.Spec), 0o644); err != nil {
+			cleanupWorktree(context.Background(), input.WorkDir, worktreeDir, branch)
+			return nil, fmt.Errorf("write spec to worktree: %w", err)
+		}
+		// Update to worktree-relative path so downstream nodes resolve correctly.
+		input.DesignFile = filepath.Join(".belayer", ".internal", "input", filepath.Base(input.DesignFile))
+	}
+
 	externalID := input.ExternalID
 	if externalID == "" {
 		externalID = fmt.Sprintf("%d", ts)

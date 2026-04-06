@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ import (
 
 // NewClimbCmd returns the `belayer climb` cobra command.
 func NewClimbCmd() *cobra.Command {
-	var fileFlag, promptFlag, nodeFlag, inputFlag string
+	var fileFlag, promptFlag, nodeFlag, inputFlag, workDirFlag string
 	var detach bool
 
 	cmd := &cobra.Command{
@@ -78,17 +79,34 @@ Examples:
 			}
 			defer tc.Close()
 
-			// 4. Generate workflow ID and create git worktree.
+			// 4. Generate workflow ID and resolve worktree.
 			workflowID := fmt.Sprintf("climb-%d", time.Now().UnixMilli())
-			branchSlug := intake.GenerateBranchSlug(description)
-			branch := fmt.Sprintf("belayer/%s-%s", branchSlug, workflowID)
-			worktreeDir := filepath.Join(cwd, ".belayer", "worktrees", workflowID)
-			if err := intake.CreateGitWorktree(cwd, worktreeDir, branch); err != nil {
-				return fmt.Errorf("create git worktree: %w", err)
+			var worktreeDir, branch string
+
+			if workDirFlag != "" {
+				// Reuse existing worktree (e.g. resuming from a specific node).
+				absWorkDir, err := filepath.Abs(workDirFlag)
+				if err != nil {
+					return fmt.Errorf("resolve work-dir: %w", err)
+				}
+				worktreeDir = absWorkDir
+				// Detect the branch from the existing worktree.
+				gitBranch, err := exec.Command("git", "-C", worktreeDir, "branch", "--show-current").Output()
+				if err == nil {
+					branch = strings.TrimSpace(string(gitBranch))
+				}
+				if branch == "" {
+					branch = fmt.Sprintf("belayer/resume-%s", workflowID)
+				}
+			} else {
+				branchSlug := intake.GenerateBranchSlug(description)
+				branch = fmt.Sprintf("belayer/%s-%s", branchSlug, workflowID)
+				worktreeDir = filepath.Join(cwd, ".belayer", "worktrees", workflowID)
+				if err := intake.CreateGitWorktree(cwd, worktreeDir, branch); err != nil {
+					return fmt.Errorf("create git worktree: %w", err)
+				}
 			}
 			defer func() {
-				// On failure, preserve the worktree for inspection.
-				// On success, user can clean up manually or via `belayer cleanup`.
 				fmt.Printf("worktree at: %s\n", worktreeDir)
 			}()
 
@@ -176,6 +194,7 @@ Examples:
 	cmd.Flags().StringVar(&promptFlag, "prompt", "", "Text prompt as pipeline input")
 	cmd.Flags().StringVar(&nodeFlag, "node", "", "Resume from this node")
 	cmd.Flags().StringVar(&inputFlag, "input", "", "Input artifact path for --node")
+	cmd.Flags().StringVar(&workDirFlag, "work-dir", "", "Reuse an existing worktree instead of creating a new one")
 	cmd.Flags().BoolVar(&detach, "detach", false, "Non-blocking mode — return immediately after starting")
 
 	return cmd

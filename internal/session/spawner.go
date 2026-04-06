@@ -11,7 +11,8 @@ type SpawnOpts struct {
 	Description   string
 	Command       string
 	InputPrompt   string
-	CaptureStdout bool // When true, stdout is teed to a buffer and returned in SpawnResult.
+	CaptureStdout bool   // When true, stdout is teed to a buffer and returned in SpawnResult.
+	LogFile       string // When set, stdout and stderr are teed to this file for observability.
 }
 
 // SpawnResult carries the outcome of a spawned process.

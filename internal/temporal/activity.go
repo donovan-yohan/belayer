@@ -200,6 +200,7 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 		Command:       command,
 		InputPrompt:   inputPrompt,
 		CaptureStdout: (input.Node.IsGate() || input.Node.IsRouter()) && input.Node.Vendor != "",
+		LogFile:       session.LogFilePath(input.WorkDir, input.Node.Name, input.Attempt),
 	}
 	exitCh, err := a.Spawner.Spawn(ctx, opts)
 	if err != nil {

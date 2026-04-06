@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -63,19 +64,45 @@ func (e *ExecSpawner) Spawn(ctx context.Context, opts SpawnOpts) (<-chan SpawnRe
 	var stderrBuf bytes.Buffer
 	var stdoutBuf limitedBuffer
 
-	if opts.CaptureStdout {
-		cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
-	} else {
-		cmd.Stdout = os.Stdout
+	// Open log file for tailing if configured.
+	var logFile *os.File
+	if opts.LogFile != "" {
+		if err := os.MkdirAll(filepath.Dir(opts.LogFile), 0o755); err != nil {
+			return nil, fmt.Errorf("create log dir for node %q: %w", opts.NodeName, err)
+		}
+		var err error
+		logFile, err = os.Create(opts.LogFile)
+		if err != nil {
+			return nil, fmt.Errorf("create log file for node %q: %w", opts.NodeName, err)
+		}
 	}
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+
+	stdoutWriters := []io.Writer{os.Stdout}
+	stderrWriters := []io.Writer{os.Stderr, &stderrBuf}
+	if opts.CaptureStdout {
+		stdoutWriters = append(stdoutWriters, &stdoutBuf)
+	}
+	if logFile != nil {
+		stdoutWriters = append(stdoutWriters, logFile)
+		stderrWriters = append(stderrWriters, logFile)
+	}
+	cmd.Stdout = io.MultiWriter(stdoutWriters...)
+	cmd.Stderr = io.MultiWriter(stderrWriters...)
 
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			logFile.Close()
+		}
 		return nil, fmt.Errorf("start command for node %q: %w", opts.NodeName, err)
 	}
 
 	exitCh := make(chan SpawnResult, 1)
 	go func() {
+		defer func() {
+			if logFile != nil {
+				logFile.Close()
+			}
+		}()
 		err := cmd.Wait()
 		var exitErr error
 		if err != nil {
