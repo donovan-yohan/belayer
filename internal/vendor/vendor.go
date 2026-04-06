@@ -1,5 +1,5 @@
 // Package vendor resolves agent CLI commands from vendor names.
-// It maps vendor identifiers (claude, codex, gemini, opencode) to the
+// It maps vendor identifiers (claude, codex, opencode, gemini, copilot) to the
 // specific CLI invocations needed to run them headlessly with streaming output.
 package vendor
 
@@ -32,6 +32,10 @@ type Config struct {
 	SchemaMode string
 	// SchemaFlag is the CLI flag name for structured output.
 	SchemaFlag string
+	// PromptFlag is the CLI flag for passing the prompt. When empty, the prompt
+	// is appended as a positional argument. When set (e.g. "-p"), the prompt is
+	// passed as the flag's value.
+	PromptFlag string
 }
 
 var registry = map[string]Config{
@@ -46,6 +50,20 @@ var registry = map[string]Config{
 		Args:       []string{"exec", "-s", "read-only", "--json"},
 		SchemaMode: "file",
 		SchemaFlag: "--output-schema",
+	},
+	"opencode": {
+		Command: "opencode",
+		Args:    []string{"run"},
+	},
+	"gemini": {
+		Command:    "gemini",
+		Args:       []string{"-y"},
+		PromptFlag: "-p",
+	},
+	"copilot": {
+		Command:    "copilot",
+		Args:       []string{"--allow-all-tools", "--allow-all-paths"},
+		PromptFlag: "-p",
 	},
 }
 
@@ -203,15 +221,24 @@ func BuildCommand(vendorName, prompt, workDir string, schema SchemaConfig) (stri
 		}
 	}
 
-	// Add working directory for codex.
-	if vendorName == "codex" && workDir != "" {
-		args = append(args, "-C", workDir)
+	// Add working directory for vendors that support it.
+	if workDir != "" {
+		switch vendorName {
+		case "codex":
+			args = append(args, "-C", workDir)
+		case "opencode":
+			args = append(args, "--dir", workDir)
+		}
 	}
 
 	// Build the shell command. The prompt is the final argument.
 	parts := []string{cfg.Command}
 	parts = append(parts, args...)
-	parts = append(parts, shellQuote(prompt))
+	if cfg.PromptFlag != "" {
+		parts = append(parts, cfg.PromptFlag, shellQuote(prompt))
+	} else {
+		parts = append(parts, shellQuote(prompt))
+	}
 
 	return strings.Join(parts, " "), cleanup, nil
 }
