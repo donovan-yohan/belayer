@@ -1,0 +1,51 @@
+internal/route/result_test.go
+  3c59388a934f6be5 88
+internal/cli/worker.go
+  3c59388a934f6be5 258-262,325,333-341,354
+README.md
+  3c59388a934f6be5 41-42,49,142,167
+internal/temporal/workflow.go
+  3c59388a934f6be5 5,118,152-157,159-160,288,304,309,341,343,346-351
+internal/pipeline/validate.go
+  3c59388a934f6be5 14-16
+docs/QUALITY.md
+  3c59388a934f6be5 27-28
+docs/PLANS.md
+  3c59388a934f6be5 17
+internal/cli/setup.go
+  3c59388a934f6be5 21-23,27-30
+internal/route/result.go
+  3c59388a934f6be5 44-45,57-61
+docs/PIPELINE_REFERENCE.md
+  3c59388a934f6be5 1-380
+docs/ARCHITECTURE.md
+  3c59388a934f6be5 81
+docs/DESIGN.md
+  3c59388a934f6be5 9,12
+CLAUDE.md
+  3c59388a934f6be5 26
+internal/cli/root.go
+  3c59388a934f6be5 11,13-16,19,24-28
+internal/cli/climb.go
+  3c59388a934f6be5 31-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "f030d5f9d20b785891f7f157c93a59a3f840e2e4",
+  "prompts": {
+    "3c59388a934f6be5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "73c675f6-7355-4853-8387-a09717ceeb52",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 473,
+      "total_deletions": 27,
+      "accepted_lines": 473,
+      "overriden_lines": 0
+    }
+  }
+}
