@@ -1,0 +1,37 @@
+internal/session/paths.go
+  cf791a1a5806caab 33-43
+internal/cli/worker.go
+  cf791a1a5806caab 88-104
+internal/session/exec_spawner.go
+  cf791a1a5806caab 10,67-81,83-87,89-90,93-95,101-105
+internal/temporal/activity.go
+  cf791a1a5806caab 203
+internal/cli/logs.go
+  cf791a1a5806caab 1-136
+internal/cli/root.go
+  cf791a1a5806caab 41
+internal/session/spawner.go
+  cf791a1a5806caab 14-15
+internal/cli/climb.go
+  cf791a1a5806caab 7,26,82,84-107,197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "447b4d45dac5da789c3ceda3b1d85dcd5c7998b7",
+  "prompts": {
+    "cf791a1a5806caab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b073bfb8-5f45-4f04-8ec7-3d5910e0b3ab",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 234,
+      "total_deletions": 21,
+      "accepted_lines": 227,
+      "overriden_lines": 0
+    }
+  }
+}
