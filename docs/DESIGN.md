@@ -23,6 +23,29 @@ Three pipeline primitives:
 
 Core writes `.belayer/.internal/input/node-context.json` before spawning. Framework commands read it for context. Commands write `.belayer/.internal/completion/<id>-<node>-attempt-<N>.json` when done (via `belayer node-complete` or directly).
 
+### Poll Nodes
+
+Poll nodes extend the protocol for readiness polling. They fit into the **Climb** phase as conditional gates that wait for external systems.
+
+**How they work:**
+
+1. Belayer executes the `poll.command` at `poll.interval` until it returns exit 0 or `poll.timeout` is reached
+2. Stdout is SHA-256 hashed and persisted in workflow state (survives retries and Temporal replays)
+3. The hash enables `on_duplicate: skip` behavior — if the same output is seen again, the node can be skipped
+4. When ready, the node produces a `poll_output` artifact with metadata (attempts, duration, hash preview)
+
+**Auto-starting behavior:**
+
+Poll nodes with `on_duplicate: run` auto-start the next node even if the hash matches. This enables reactive patterns where downstream nodes re-process when polled state changes (e.g., CI status changed from "running" to "passed").
+
+**Integration with three-phase model:**
+
+- **Explore phase:** Poll nodes can wait for design docs, specs, or external approvals before starting implementation
+- **Climb phase:** Poll nodes gate between implementation and deployment (e.g., wait for CI, wait for manual approval)
+- **Summit phase:** Poll nodes can monitor post-deploy health checks before marking complete
+
+Poll nodes replace the deprecated intake `type: trigger` with better observability and integration.
+
 ## Score-then-Route
 
 Gate nodes produce structured scores per dimension. Deterministic Go code computes weighted average. YAML thresholds route PASS/RETRY/FAIL. The rationale.md is mandatory as an anti-gaming measure -- no score without explanation.

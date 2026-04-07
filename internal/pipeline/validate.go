@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // routeNameRe validates route option names (alphanumeric with hyphens).
@@ -76,6 +77,28 @@ func Validate(cfg *PipelineConfig) error {
 				return fmt.Errorf("node %q: command and vendor are mutually exclusive", n.Name)
 			}
 		}
+
+		if n.Poll != nil {
+			if n.Poll.Command == "" {
+				return fmt.Errorf("node %q: poll.command is required", n.Name)
+			}
+			if _, err := time.ParseDuration(n.Poll.Interval); err != nil {
+				return fmt.Errorf("node %q: poll.interval must be a valid duration, got %q: %w", n.Name, n.Poll.Interval, err)
+			}
+			if n.Poll.OnDuplicate != "" && n.Poll.OnDuplicate != "skip" && n.Poll.OnDuplicate != "run" {
+				return fmt.Errorf("node %q: poll.on_duplicate must be \"\", \"skip\", or \"run\", got %q", n.Name, n.Poll.OnDuplicate)
+			}
+			if len(n.Dimensions) > 0 {
+				return fmt.Errorf("node %q: poll and dimensions are mutually exclusive", n.Name)
+			}
+			if n.IsRouter() {
+				return fmt.Errorf("node %q: poll and routes are mutually exclusive", n.Name)
+			}
+			if n.Command == "" && n.Vendor == "" && n.Output.Type != "file" {
+				return fmt.Errorf("node %q: poll nodes without command or vendor must use output.type \"file\"", n.Name)
+			}
+		}
+
 		// Warn if a gate prompt does not include %{INPUT} (rubric injection point).
 		// Skip warning for $name refs — the referenced file may contain %{INPUT}.
 		if n.IsGate() && n.Prompt != "" && !strings.Contains(n.Prompt, "%{INPUT}") && !strings.HasPrefix(strings.TrimSpace(n.Prompt), "$") {
