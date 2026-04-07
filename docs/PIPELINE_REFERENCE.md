@@ -266,6 +266,120 @@ nodes:
 
 **Subpipeline YAMLs are pre-resolved** at startup (worker boot or `belayer climb`). The raw YAML is snapshotted and passed into the Temporal workflow for deterministic replay. No file I/O happens during workflow execution.
 
+## Poll Nodes (Readiness Polling)
+
+Poll nodes wait for external conditions before proceeding. They execute a command periodically and proceed when the condition is met (exit 0). Unlike triggers which run once at intake, poll nodes run within the pipeline flow and can access artifacts from prior nodes.
+
+```yaml
+# Pass-through mode: no command, polls for artifact existence
+- name: wait-for-build
+  type: node
+  description: |
+    Wait for the CI build to complete.
+  poll:
+    interval: 30s                    # polling interval (default: 30s)
+    timeout: 10m                     # max wait time (default: 10m)
+    command: .belayer/scripts/check-ci.sh
+    on_duplicate: skip               # skip | run (default: skip)
+  input: { type: commit }
+  output: { type: poll_output, key: ci_status }
+  on_pass: deploy
+
+# Command mode: command produces output that is hashed
+- name: wait-for-approval
+  type: node
+  description: |
+    Wait for manual approval and capture the approver.
+  poll:
+    interval: 1m
+    timeout: 24h
+    command: .belayer/scripts/check-approval.sh
+    on_duplicate: run                # re-run if output changes
+  input: { type: commit }
+  output: { type: poll_output, key: approval }
+  on_pass: deploy
+```
+
+**YAML Schema:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `poll.interval` | duration | `30s` | How often to poll (e.g., `10s`, `5m`, `1h`) |
+| `poll.timeout` | duration | `10m` | Maximum time to wait before failing |
+| `poll.command` | string | (none) | Shell command to execute. If omitted, polls for input artifact |
+| `poll.on_duplicate` | string | `skip` | `skip` = skip if hash matches prior run; `run` = always re-run |
+
+**Behavior Contract:**
+
+1. **Exit codes:**
+   - Exit 0 = condition ready, proceed to next node
+   - Exit 1 = condition not ready, wait and poll again
+   - Exit >1 = error, fail the node
+
+2. **SHA-256 hashing:**
+   - When `poll.command` is set, stdout is captured and SHA-256 hashed
+   - The hash is persisted in workflow state across retries/replays
+   - Used to detect changes in polled state (e.g., different CI status)
+
+3. **on_duplicate options:**
+   - `skip`: If hash matches a prior successful poll, skip the node (idempotent)
+   - `run`: Always execute the next node, even if hash matches (reactive)
+
+**Pass-through vs Command Mode:**
+
+| Mode | Config | Behavior |
+|------|--------|----------|
+| Pass-through | No `poll.command` | Polls until input artifact exists (file mode) or description provided (description mode) |
+| Command | `poll.command` set | Executes command at interval, hashes stdout, proceeds on exit 0 |
+
+**Poll Output Artifact:**
+
+Poll nodes produce a `poll_output` artifact containing:
+
+```json
+{
+  "ready_at": "2026-04-07T10:30:00Z",
+  "attempts": 15,
+  "duration_ms": 45000,
+  "stdout_hash": "sha256:abc123...",
+  "stdout_preview": "build status: passed"
+}
+```
+
+**Examples:**
+
+```yaml
+# Poll for CI completion
+- name: ci-check
+  type: node
+  poll:
+    interval: 30s
+    timeout: 30m
+    command: ./scripts/ci-status.sh %{INPUT}
+  input: { type: commit, key: implement }
+  output: { type: poll_output }
+  on_pass: deploy
+
+# Poll for external API readiness
+- name: api-ready
+  type: node
+  poll:
+    interval: 10s
+    timeout: 5m
+    command: curl -sf http://api/health
+  on_pass: run-tests
+
+# Poll for manual trigger file
+- name: manual-approval
+  type: node
+  poll:
+    interval: 1m
+    timeout: 48h
+  input: { type: file, path: /tmp/approval.txt }
+  output: { type: poll_output }
+  on_pass: release
+```
+
 ## Output Types
 
 | Type | Produced By | Description |
@@ -275,6 +389,7 @@ nodes:
 | `gate_result` | Gates | Structured scores + rationale |
 | `pr` | Nodes, agents | Pull request creation |
 | `route_result` | Routers | Route decision with confidence and reasoning |
+| `poll_output` | Poll nodes | Poll result with hash, attempts, and duration |
 
 **Adding a new output type** requires updates in three places:
 1. `internal/pipeline/validate.go` — `validOutputTypes` map
@@ -302,6 +417,31 @@ intake:
 | `trigger` | Script-based polling. `check` script returns artifact path on stdout (exit 0) or nothing (exit 1) |
 | `interactive` | `belayer start` session. At most one per pipeline |
 | `jira` | Jira issue intake (requires config) |
+
+**Deprecation Notice:** `type: trigger` is deprecated. Use [poll nodes](#poll-nodes-readiness-polling) instead.
+
+**Migration:** Replace intake triggers with poll nodes:
+
+```yaml
+# Before (deprecated)
+intake:
+  - name: design-doc
+    type: trigger
+    check: .belayer/scripts/check-ready.sh
+
+# After (preferred)
+nodes:
+  - name: await-design-doc
+    type: node
+    poll:
+      interval: 30s
+      timeout: 10m
+      command: .belayer/scripts/check-ready.sh
+    output: { type: poll_output }
+    on_pass: implement
+```
+
+Poll nodes provide better visibility (attempts, duration), hash-based deduplication, and integrate cleanly with the three-phase model.
 
 ## Safety Configuration
 

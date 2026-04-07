@@ -35,6 +35,12 @@ type ThresholdConfig struct {
 	Retry float64 `yaml:"retry" json:"retry"`
 }
 
+type PollConfig struct {
+	Command     string `yaml:"command" json:"command"`
+	Interval    string `yaml:"interval" json:"interval"`
+	OnDuplicate string `yaml:"on_duplicate,omitempty" json:"on_duplicate,omitempty"`
+}
+
 // IntakeConfig defines an intake source in the pipeline.
 type IntakeConfig struct {
 	Name   string            `yaml:"name" json:"name"`
@@ -69,6 +75,7 @@ type NodeConfig struct {
 	Dimensions  []DimensionConfig `yaml:"dimensions,omitempty" json:"dimensions,omitempty"`
 	Thresholds  ThresholdConfig   `yaml:"thresholds,omitempty" json:"thresholds,omitempty"`
 	Routes      *RouteConfig      `yaml:"routes,omitempty" json:"routes,omitempty"`
+	Poll        *PollConfig       `yaml:"poll,omitempty" json:"poll,omitempty"`
 	OnPass      string            `yaml:"on_pass" json:"on_pass"`
 	OnRetry     string            `yaml:"on_retry" json:"on_retry"`
 	OnFail      string            `yaml:"on_fail" json:"on_fail"`
@@ -99,6 +106,10 @@ func (n *NodeConfig) IsGate() bool {
 // IsRouter returns true if this node is a router (has routes with at least one option).
 func (n *NodeConfig) IsRouter() bool {
 	return n.Routes != nil && len(n.Routes.Options) > 0
+}
+
+func (n *NodeConfig) HasPoll() bool {
+	return n.Poll != nil
 }
 
 // IsAgent returns true if this node uses a vendor agent.

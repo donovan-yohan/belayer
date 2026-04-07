@@ -3,12 +3,19 @@ name: gstack
 # Trigger contract: how intake signals "ready to build"
 # Checks for APPROVED design docs in ~/.gstack/projects/
 # Can also be invoked explicitly: belayer submit --spec <path>
-intake:
-  - name: design-doc
-    type: trigger
-    check: .belayer/scripts/check-ready.sh
-
 nodes:
+  - name: intake
+    description: Poll for approved design documents
+    poll:
+      command: .belayer/scripts/check-ready.sh
+      interval: 30s
+      on_duplicate: skip
+    output:
+      type: file
+      key: design_doc
+    on_pass: implement
+    on_fail: stop
+
   # Implementation phase: self-resolving loop
   # implement ↔ review-router is the build loop.
   - name: implement

@@ -18,6 +18,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/model"
 	"github.com/donovan-yohan/belayer/internal/outcome"
 	"github.com/donovan-yohan/belayer/internal/pipeline"
+	"github.com/donovan-yohan/belayer/internal/poll"
 	"github.com/donovan-yohan/belayer/internal/route"
 	"github.com/donovan-yohan/belayer/internal/session"
 	"github.com/donovan-yohan/belayer/internal/vendor"
@@ -33,6 +34,7 @@ type NodeActivityInput struct {
 	Node      pipeline.NodeConfig
 	TaskID    string
 	WorkDir   string
+	RepoDir   string
 	Attempt   int
 	Artifacts map[string]string
 	StartSHA  string
@@ -49,15 +51,16 @@ type NodeContext struct {
 	SchemaVersion int                        `json:"schema_version"`
 	TaskID        string                     `json:"task_id"`
 	NodeName      string                     `json:"node_name"`
-	NodeType    string                     `json:"node_type"`
-	Attempt     int                        `json:"attempt"`
-	WorkDir     string                     `json:"work_dir"`
-	Description string                     `json:"description"`
-	InputPrompt string                     `json:"input_prompt"`
-	Artifacts   map[string]string          `json:"artifacts"`
-	Dimensions   []pipeline.DimensionConfig `json:"dimensions,omitempty"`
-	Thresholds   *pipeline.ThresholdConfig  `json:"thresholds,omitempty"`
-	RouteOptions []string                   `json:"route_options,omitempty"`
+	NodeType      string                     `json:"node_type"`
+	Attempt       int                        `json:"attempt"`
+	WorkDir       string                     `json:"work_dir"`
+	Description   string                     `json:"description"`
+	InputPrompt   string                     `json:"input_prompt"`
+	Artifacts     map[string]string          `json:"artifacts"`
+	Dimensions    []pipeline.DimensionConfig `json:"dimensions,omitempty"`
+	Thresholds    *pipeline.ThresholdConfig  `json:"thresholds,omitempty"`
+	RouteOptions  []string                   `json:"route_options,omitempty"`
+	PollOutput    string                     `json:"poll_output,omitempty"`
 }
 
 // writeNodeContext writes node-context.json to the internal input directory.
@@ -129,20 +132,43 @@ func (a *Activities) NodeActivity(ctx context.Context, input NodeActivityInput) 
 	}
 	nc := NodeContext{
 		SchemaVersion: 1,
-		TaskID:       input.TaskID,
-		NodeName:     input.Node.Name,
-		NodeType:     string(input.Node.EffectiveType()),
-		Attempt:      input.Attempt,
-		WorkDir:      input.WorkDir,
-		Description:  input.Node.Description,
-		InputPrompt:  inputPrompt,
-		Artifacts:    input.Artifacts,
-		Dimensions:   input.Node.Dimensions,
-		Thresholds:   thresholds,
-		RouteOptions: routeOptions,
+		TaskID:        input.TaskID,
+		NodeName:      input.Node.Name,
+		NodeType:      string(input.Node.EffectiveType()),
+		Attempt:       input.Attempt,
+		WorkDir:       input.WorkDir,
+		Description:   input.Node.Description,
+		InputPrompt:   inputPrompt,
+		Artifacts:     input.Artifacts,
+		Dimensions:    input.Node.Dimensions,
+		Thresholds:    thresholds,
+		RouteOptions:  routeOptions,
 	}
 	if err := writeNodeContext(input.WorkDir, nc); err != nil {
 		return nil, fmt.Errorf("write node context: %w", err)
+	}
+
+	// 4.5. Poll loop: if node has poll config, run it before spawning.
+	if input.Node.HasPoll() {
+		pollOutput, err := runPollLoop(ctx, *input.Node.Poll, input.RepoDir, input.Node.Name)
+		if err != nil {
+			return nil, fmt.Errorf("poll loop for %q: %w", input.Node.Name, err)
+		}
+		// Store poll output as artifact
+		pollOutputPath := filepath.Join(session.InputDir(input.WorkDir), "poll-output.txt")
+		if err := os.WriteFile(pollOutputPath, []byte(pollOutput), 0o644); err != nil {
+			return nil, fmt.Errorf("write poll output: %w", err)
+		}
+		input.Artifacts["poll_output"] = ".belayer/.internal/input/poll-output.txt"
+
+		// Pass-through: if no command and no vendor, poll output IS the node output
+		if input.Node.Command == "" && input.Node.Vendor == "" {
+			return &NodeActivityOutput{Result: model.CompletionResult{
+				Outcome:    model.OutcomePass,
+				OutputPath: pollOutputPath,
+				Attempt:    input.Attempt,
+			}}, nil
+		}
 	}
 
 	// 5. Capture startSHA before spawning so hasNewCommits can verify commit output.
@@ -714,4 +740,87 @@ func runGit(workDir string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// runPollLoop executes a poll command at regular intervals until it succeeds
+// with a unique output (based on hash). Returns the poll output on success.
+func runPollLoop(ctx context.Context, pollConfig pipeline.PollConfig, repoDir, nodeName string) (string, error) {
+	// Parse interval (default to 30s if not specified)
+	interval := 30 * time.Second
+	if pollConfig.Interval != "" {
+		parsed, err := time.ParseDuration(pollConfig.Interval)
+		if err != nil {
+			return "", fmt.Errorf("parse poll interval %q: %w", pollConfig.Interval, err)
+		}
+		interval = parsed
+	}
+
+	// Create hash tracker for duplicate detection
+	tracker, err := poll.NewHashTracker(filepath.Join(repoDir, ".belayer", ".internal"), nodeName)
+	if err != nil {
+		return "", fmt.Errorf("create hash tracker: %w", err)
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	failures := 0
+	const maxFailures = 5
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+
+		case <-ticker.C:
+			// Send heartbeat to keep Temporal from thinking we're dead
+			activity.RecordHeartbeat(ctx)
+
+			// Run the poll command in repoDir
+			cmd := exec.CommandContext(ctx, "sh", "-c", pollConfig.Command)
+			cmd.Dir = repoDir
+			output, err := cmd.Output()
+
+			if err != nil {
+				// Exit code 1 = nothing found (continue polling)
+				if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+					continue
+				}
+				// Script error - log warning and continue (with failure counting)
+				failures++
+				if failures >= maxFailures {
+					return "", fmt.Errorf("poll command failed %d times (max %d): %w", failures, maxFailures, err)
+				}
+				activity.GetLogger(ctx).Warn("Poll command failed", "error", err, "failures", failures, "maxFailures", maxFailures)
+				continue
+			}
+
+			// Exit 0 - capture stdout and hash it
+			stdout := strings.TrimSpace(string(output))
+			if stdout == "" {
+				// Empty output, continue polling
+				continue
+			}
+
+			hash := poll.ComputeHash([]byte(stdout))
+
+			// Check duplicate handling
+			onDuplicate := pollConfig.OnDuplicate
+			if onDuplicate == "" {
+				onDuplicate = "skip" // default behavior
+			}
+
+			if onDuplicate == "skip" && tracker.Contains(hash) {
+				// Duplicate found, continue polling
+				continue
+			}
+
+			// New unique result - add to tracker and return
+			if err := tracker.Add(hash); err != nil {
+				return "", fmt.Errorf("add hash to tracker: %w", err)
+			}
+
+			return stdout, nil
+		}
+	}
 }

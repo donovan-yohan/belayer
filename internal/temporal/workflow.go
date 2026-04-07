@@ -65,14 +65,7 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 		}
 	}
 
-	// 5. Activity options.
-	ao := workflow.ActivityOptions{
-		StartToCloseTimeout:    2 * time.Hour,
-		HeartbeatTimeout:       60 * time.Second,
-		ScheduleToCloseTimeout: 24 * time.Hour,
-	}
-	actx := workflow.WithActivityOptions(ctx, ao)
-
+	// 5. Activity options (set per-node to handle poll nodes with longer timeouts).
 	a := &Activities{}
 	nodeIdx := startIdx
 	failJumps := 0 // Cycle detection for OnFail jumps
@@ -85,10 +78,24 @@ func ClimbWorkflow(ctx workflow.Context, input model.ClimbInput) (*model.ClimbOu
 		currentNode = node.Name
 		currentAttempt = retryCount[node.Name]
 
+		// Set activity options based on node type
+		// Poll nodes need longer timeout since they may block for extended periods
+		activityTimeout := 2 * time.Hour
+		if node.HasPoll() {
+			activityTimeout = 24 * time.Hour
+		}
+		ao := workflow.ActivityOptions{
+			StartToCloseTimeout:    activityTimeout,
+			HeartbeatTimeout:       60 * time.Second,
+			ScheduleToCloseTimeout: 24 * time.Hour,
+		}
+		actx := workflow.WithActivityOptions(ctx, ao)
+
 		actInput := NodeActivityInput{
 			Node:      node,
 			TaskID:    workflow.GetInfo(ctx).WorkflowExecution.ID,
 			WorkDir:   input.WorkDir,
+			RepoDir:   input.RepoDir,
 			Attempt:   retryCount[node.Name],
 			Artifacts: artifacts,
 		}
@@ -372,4 +379,3 @@ func dispatchRoute(
 
 	return &childOut, nil
 }
-
