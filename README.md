@@ -46,64 +46,55 @@ belayer debug <session-id>
 ```mermaid
 flowchart TB
     subgraph Client["CLI Client"]
-        CLI["belayer CLI<br/>(cobra commands)"]
+        CLI["belayer CLI"]
     end
 
-    subgraph Daemon["Belayer Daemon (HTTP/Unix Socket)"]
-        HTTP["HTTP Router<br/>POST /sessions<br/>GET /sessions/{id}<br/>POST /events<br/>POST /messages"]
-        Store[("SQLite Store<br/>• sessions<br/>• events<br/>• FTS5 search<br/>WAL mode")]
-        Broker["Message Broker<br/>• Send/Broadcast<br/>• Debounced delivery<br/>• Agent IPC"]
-        Memory[("Three-Tier Memory<br/>├─ Core (in-context)<br/>├─ Archival (FTS5)<br/>└─ Recall (combined)")]
+    subgraph Daemon["Belayer Daemon"]
+        HTTP["HTTP Router"]
+        Store[("SQLite Store")]
+        Broker["Message Broker"]
+        Memory[("Three-Tier Memory")]
     end
 
-    subgraph SessionTemplates["Session Templates"]
-        Intake["Intake Phase<br/>├─ 1 Agent: explorer<br/>└─ Idea → Spec"]
-        Implement["Implement Phase<br/>├─ pilot (opus)<br/>├─ implementer (sonnet)<br/>└─ reviewer (codex)"]
-        Deliver["Deliver Phase<br/>├─ qa<br/>└─ merger"]
+    subgraph Templates["Session Templates"]
+        Intake["Intake Phase"]
+        Implement["Implement Phase"]
+        Deliver["Deliver Phase"]
     end
 
     subgraph Execution["Agent Execution"]
         subgraph Local["Local Mode"]
-            Tmux["tmux Runner<br/>• CreateSession<br/>• SendKeys<br/>• CapturePane"]
+            Tmux["tmux Runner"]
         end
         
         subgraph DockerMode["Docker Mode"]
-            Sandbox["Docker Sandbox<br/>• Network isolation<br/>• tinyproxy allowlist<br/>• Volume mounts"]
-            Proxy["tinyproxy<br/>Limited → allowlisted<br/>None → internal only<br/>Full → unrestricted"]
+            Sandbox["Docker Sandbox"]
+            Proxy["tinyproxy"]
         end
     end
 
     subgraph Vendors["Vendor Adapters"]
-        Claude["Claude Adapter<br/>claude-code"]
-        Codex["Codex Adapter<br/>codex"]
-        Generic["Generic Adapter<br/>Any terminal program"]
+        Claude["Claude"]
+        Codex["Codex"]
+        Generic["Generic"]
     end
 
-    subgraph Workspaces["Workspace Config"]
-        WSStruct["~/.belayer/<br/>├─ daemon.sock<br/>├─ belayer.db<br/>├─ templates/*.yaml<br/>├─ sandboxes/{id}/<br/>└─ repos.json"]
-    end
-
-    CLI -->|Unix Socket| HTTP
+    CLI --> HTTP
     HTTP --> Store
     HTTP --> Broker
     HTTP --> Memory
     
-    Store -->|Session CRUD| SessionTemplates
-    Broker -->|Route messages| Execution
-    Memory -->|Recall context| Execution
+    Store --> Templates
+    Broker --> Execution
+    Memory --> Execution
     
-    Execution -->|Launch| Vendors
+    Execution --> Vendors
     
-    SessionTemplates -.->|Load config| Workspaces
+    Templates -.-> Workspaces
     
-    Tmux -->|exec| Vendors
-    Sandbox -->|container| Vendors
+    Tmux --> Vendors
+    Sandbox --> Vendors
     Sandbox --> Proxy
-
-    style Daemon fill:#e1f5ff,stroke:#01579b,stroke-width:2px
-    style Execution fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    style Vendors fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
-    style Client fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
 ```
 
 ### Component Overview
