@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"text/template"
 )
@@ -18,11 +19,12 @@ type ComposeConfig struct {
 
 // AgentComposeConfig describes a single agent service in the compose file.
 type AgentComposeConfig struct {
-	Name    string            // e.g., "pilot", "implementer", "reviewer"
-	Image   string            // default: "belayer/agent:latest"
-	WorkDir string            // host path to mount as /workspace
-	EnvFile string            // path to .env file for vendor auth
-	EnvVars map[string]string // additional env vars (BELAYER_SESSION_ID, etc.)
+	Name         string            // e.g., "pilot", "implementer", "reviewer"
+	Image        string            // default: "belayer/agent:latest"
+	WorkDir      string            // host path to mount as /workspace
+	EnvFile      string            // path to .env file for vendor auth
+	EnvVars      map[string]string // additional env vars (BELAYER_SESSION_ID, etc.)
+	ExtraVolumes []string          // additional volume mounts ("host:container:opts")
 }
 
 // NetworkConfig describes the network isolation mode for the session.
@@ -33,25 +35,28 @@ type NetworkConfig struct {
 }
 
 const composeTmpl = `{{ if .IncludeCompose }}include:
-  - path: {{ .IncludeCompose }}
+  - path: "{{ .IncludeCompose }}"
 
 {{ end }}services:
 {{ range .Agents }}  {{ .Name }}:
-    image: {{ .Image }}
+    image: "{{ .Image }}"
     working_dir: /workspace
-{{ if .WorkDir }}    volumes:
-      - {{ .WorkDir }}:/workspace
+    volumes:
+{{ if .WorkDir }}      - "{{ .WorkDir }}:/workspace"
+{{ end }}{{ range .ExtraVolumes }}      - "{{ . }}"
 {{ end }}{{ if .EnvFile }}    env_file:
-      - {{ .EnvFile }}
+      - "{{ .EnvFile }}"
 {{ end }}    environment:
-{{ range $k, $v := .EnvVars }}      {{ $k }}: {{ $v }}
+{{ range $k, $v := .EnvVars }}      {{ $k }}: "{{ $v }}"
+{{ end }}{{ if $.IncludeProxy }}      HTTP_PROXY: "http://proxy:8888"
+      HTTPS_PROXY: "http://proxy:8888"
 {{ end }}    networks:
       - session
 {{ if $.IncludeProxy }}    depends_on:
       - proxy
 {{ end }}
 {{ end }}{{ if .IncludeProxy }}  proxy:
-    image: {{ .ProxyImage }}
+    image: "{{ .ProxyImage }}"
     environment:
       ALLOWED_HOSTS: "{{ .AllowedHosts }}"
     networks:
@@ -77,11 +82,12 @@ type composeTemplateData struct {
 }
 
 type agentTemplateData struct {
-	Name    string
-	Image   string
-	WorkDir string
-	EnvFile string
-	EnvVars map[string]string
+	Name         string
+	Image        string
+	WorkDir      string
+	EnvFile      string
+	EnvVars      map[string]string
+	ExtraVolumes []string
 }
 
 // generateCompose returns docker-compose.yml content for the given ComposeConfig.
@@ -98,11 +104,12 @@ func generateCompose(cfg ComposeConfig) ([]byte, error) {
 			img = "belayer/agent:latest"
 		}
 		agents = append(agents, agentTemplateData{
-			Name:    a.Name,
-			Image:   img,
-			WorkDir: a.WorkDir,
-			EnvFile: a.EnvFile,
-			EnvVars: a.EnvVars,
+			Name:         a.Name,
+			Image:        img,
+			WorkDir:      a.WorkDir,
+			EnvFile:      a.EnvFile,
+			EnvVars:      a.EnvVars,
+			ExtraVolumes: a.ExtraVolumes,
 		})
 	}
 
@@ -130,6 +137,55 @@ func generateCompose(cfg ComposeConfig) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
+}
+
+// BridgeEnvironment merges an EnvironmentConfig into a ComposeConfig.
+// It sets the network mode, allowed hosts, include compose path,
+// and appends package manager hosts if configured.
+func BridgeEnvironment(env *EnvironmentConfig, cfg *ComposeConfig) {
+	if env == nil {
+		return
+	}
+
+	// Network configuration
+	cfg.Network.Type = env.Networking.Type
+	cfg.Network.AllowedHosts = append(cfg.Network.AllowedHosts, env.Networking.AllowedHosts...)
+
+	if env.Networking.AllowPackageManagers {
+		cfg.Network.AllowedHosts = append(cfg.Network.AllowedHosts, PackageManagerHosts()...)
+	}
+
+	// Compose extension
+	if env.Compose.Include != "" {
+		cfg.IncludeCompose = env.Compose.Include
+	}
+}
+
+// GenerateEnvFile creates .env file content for mounting into agent containers.
+// It reads auth tokens from the host environment and writes them in KEY=VALUE format.
+func GenerateEnvFile(extraVars map[string]string) []byte {
+	var buf bytes.Buffer
+
+	// Standard vendor auth environment variables to forward
+	authVars := []string{
+		"ANTHROPIC_API_KEY",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+		"OPENAI_API_KEY",
+		"GEMINI_API_KEY",
+		"OPENCODE_API_KEY",
+	}
+
+	for _, key := range authVars {
+		if val := os.Getenv(key); val != "" {
+			fmt.Fprintf(&buf, "%s=%s\n", key, val)
+		}
+	}
+
+	for k, v := range extraVars {
+		fmt.Fprintf(&buf, "%s=%s\n", k, v)
+	}
+
+	return buf.Bytes()
 }
 
 // allocatePort finds an available TCP port by binding to :0 and reading the

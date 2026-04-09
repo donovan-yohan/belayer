@@ -11,12 +11,13 @@ import (
 	"github.com/donovan-yohan/belayer/internal/agent"
 	"github.com/donovan-yohan/belayer/internal/docker"
 	"github.com/donovan-yohan/belayer/internal/session"
+	"github.com/donovan-yohan/belayer/internal/shell"
 	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
 func newSessionStartCmd() *cobra.Command {
-	var template, input, name, repo, socket, attachAgent string
+	var template, input, name, repo, socket, attachAgent, environment string
 	var attach, dockerMode bool
 
 	cmd := &cobra.Command{
@@ -27,7 +28,11 @@ agent prompts, and launch each agent in a tmux pane (or Docker container
 with --docker).
 
 Templates are loaded from .belayer/templates/<name>.yaml in the workspace,
-falling back to built-in defaults.`,
+falling back to built-in defaults.
+
+In Docker mode, agents run inside isolated containers with configurable
+network access. Use --environment to specify a .belayer/environments/<name>.yaml
+config that controls network isolation, compose extensions, and repos.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if template == "" {
 				return fmt.Errorf("--template is required")
@@ -90,84 +95,12 @@ falling back to built-in defaults.`,
 
 			// 9. Launch agents.
 			if dockerMode {
-				agentCfgs := make([]docker.AgentComposeConfig, 0, len(tmpl.Agents))
-				for _, spec := range tmpl.Agents {
-					agentCfgs = append(agentCfgs, docker.AgentComposeConfig{
-						Name:    spec.Name,
-						WorkDir: workDir,
-						EnvVars: map[string]string{
-							"BELAYER_SESSION_ID": sess.ID,
-							"BELAYER_AGENT_ID":   spec.Name,
-						},
-					})
+				if err := launchDocker(cmd, c, tmpl, sess, agentNames, taskInput, workDir, wsDir, environment, name); err != nil {
+					return err
 				}
-				cfg := docker.SandboxConfig{
-					ComposeConfig: docker.ComposeConfig{
-						SessionID: sess.ID,
-						Agents:    agentCfgs,
-						Network:   docker.NetworkConfig{Type: "none"},
-					},
-				}
-				sandbox, err := docker.NewSandbox(cfg)
-				if err != nil {
-					return fmt.Errorf("create sandbox: %w", err)
-				}
-				if err := sandbox.Create(); err != nil {
-					return fmt.Errorf("create sandbox compose: %w", err)
-				}
-				if err := sandbox.Start(); err != nil {
-					return fmt.Errorf("start sandbox: %w", err)
-				}
-				_ = c.LogEvent(sess.ID, "sandbox_started", mustJSON(map[string]string{
-					"compose_dir": sandbox.ComposeDir(),
-				}))
-				fmt.Fprintf(cmd.OutOrStdout(), "Docker sandbox started at: %s\n", sandbox.ComposeDir())
 			} else {
-				runner := tmux.NewLocalRunner()
-
-				for _, spec := range tmpl.Agents {
-					others := make([]string, 0, len(agentNames)-1)
-					for _, n := range agentNames {
-						if n != spec.Name {
-							others = append(others, n)
-						}
-					}
-
-					cfg := agent.AgentConfig{
-						Name:         spec.Name,
-						Vendor:       spec.Vendor,
-						Model:        spec.Model,
-						SystemPrompt: spec.SystemPrompt,
-					}
-
-					compiled := agent.CompilePrompt(agent.PromptContext{
-						Config:      cfg,
-						TaskInput:   taskInput,
-						SessionID:   sess.ID,
-						OtherAgents: others,
-					})
-
-					sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", name, spec.Name))
-					if err := os.WriteFile(sysPromptFile, []byte(compiled), 0600); err != nil {
-						return fmt.Errorf("write system prompt for %s: %w", spec.Name, err)
-					}
-					taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", name, spec.Name))
-					if err := os.WriteFile(taskFile, []byte(taskInput), 0600); err != nil {
-						return fmt.Errorf("write task file for %s: %w", spec.Name, err)
-					}
-
-					tmuxSessionName := fmt.Sprintf("%s-%s", name, spec.Name)
-					launchCmd := buildLaunchCmd(spec, sess.ID, sysPromptFile, taskFile, workDir)
-
-					if err := runner.CreateSession(tmuxSessionName, launchCmd); err != nil {
-						return fmt.Errorf("create tmux session for %s: %w", spec.Name, err)
-					}
-
-					_ = c.LogEvent(sess.ID, "agent_launched", mustJSON(map[string]string{
-						"agent":  spec.Name,
-						"vendor": spec.Vendor,
-						"model":  spec.Model,
-					}))
+				if err := launchTmux(cmd, c, tmpl, sess, agentNames, taskInput, workDir, name); err != nil {
+					return err
 				}
 			}
 
@@ -224,58 +157,335 @@ falling back to built-in defaults.`,
 	cmd.Flags().BoolVar(&attach, "attach", false, "Attach to the first agent's tmux pane after launch")
 	cmd.Flags().StringVar(&attachAgent, "attach-agent", "", "Agent to attach to (requires --attach)")
 	cmd.Flags().BoolVar(&dockerMode, "docker", false, "Run agents in Docker containers instead of local tmux")
+	cmd.Flags().StringVar(&environment, "environment", "", "Environment config name (from .belayer/environments/<name>.yaml)")
 	return cmd
 }
 
-// buildLaunchCmd constructs the shell command to run inside a tmux session for an agent.
+// launchDocker starts agents in Docker containers with network isolation.
+func launchDocker(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, wsDir, environment, sessionName string) error {
+	// 1. Load and validate environment config.
+	var envCfg *docker.EnvironmentConfig
+	if environment != "" {
+		var err error
+		envCfg, err = docker.LoadEnvironmentByName(wsDir, environment)
+		if err != nil {
+			return fmt.Errorf("load environment %q: %w", environment, err)
+		}
+		if err := docker.ValidateEnvironment(envCfg); err != nil {
+			return fmt.Errorf("validate environment: %w", err)
+		}
+	} else {
+		envCfg = docker.DefaultEnvironment()
+	}
+
+	// 2. Compute sandbox directory and create it.
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home directory: %w", err)
+	}
+	sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sess.ID)
+	if err := os.MkdirAll(sandboxDir, 0o700); err != nil {
+		return fmt.Errorf("create sandbox dir: %w", err)
+	}
+
+	// 3. Write task file to sandbox dir (shared across agents).
+	taskFile := filepath.Join(sandboxDir, "task.txt")
+	if err := os.WriteFile(taskFile, []byte(taskInput), 0o600); err != nil {
+		return fmt.Errorf("write task file: %w", err)
+	}
+
+	// 4. Generate .env file for vendor auth.
+	envFilePath := filepath.Join(sandboxDir, ".env")
+	if err := os.WriteFile(envFilePath, docker.GenerateEnvFile(nil), 0o600); err != nil {
+		return fmt.Errorf("write env file: %w", err)
+	}
+
+	// 5. Create per-agent worktrees for isolation.
+	agentWorkDirs := make(map[string]string, len(tmpl.Agents))
+	for _, spec := range tmpl.Agents {
+		wt, err := createWorktree(workDir, sandboxDir, spec.Name, "")
+		if err != nil {
+			// Log warning but continue — fallback to shared workDir.
+			fmt.Fprintf(cmd.OutOrStdout(), "  warning: worktree for %s: %v (using shared workdir)\n", spec.Name, err)
+			agentWorkDirs[spec.Name] = workDir
+		} else {
+			agentWorkDirs[spec.Name] = wt
+		}
+	}
+
+	// 6. Build agent configs.
+	hostUID := fmt.Sprintf("%d", os.Getuid())
+	hostGID := fmt.Sprintf("%d", os.Getgid())
+	sessionVolume := sandboxDir + ":/belayer/session:ro"
+	socketPath := filepath.Join(home, ".belayer", "daemon.sock")
+	socketVolume := socketPath + ":/belayer/daemon.sock"
+
+	agentCfgs := make([]docker.AgentComposeConfig, 0, len(tmpl.Agents))
+	for _, spec := range tmpl.Agents {
+		team := make([]agent.TeamMember, 0, len(tmpl.Agents)-1)
+		for _, s := range tmpl.Agents {
+			if s.Name != spec.Name {
+				team = append(team, agent.TeamMember{
+					Name:   s.Name,
+					Vendor: s.Vendor,
+					Model:  s.Model,
+					Role:   s.Role,
+				})
+			}
+		}
+
+		cfg := agent.AgentConfig{
+			Name:         spec.Name,
+			Vendor:       spec.Vendor,
+			Model:        spec.Model,
+			SystemPrompt: spec.SystemPrompt,
+		}
+
+		compiled := agent.CompilePrompt(agent.PromptContext{
+			Config:    cfg,
+			TaskInput: taskInput,
+			SessionID: sess.ID,
+			Team:      team,
+		})
+
+		// Write agent-specific system prompt to sandbox dir.
+		sysPromptFile := filepath.Join(sandboxDir, fmt.Sprintf("sysprompt-%s.txt", spec.Name))
+		if err := os.WriteFile(sysPromptFile, []byte(compiled), 0o600); err != nil {
+			return fmt.Errorf("write system prompt for %s: %w", spec.Name, err)
+		}
+
+		// Build the vendor CLI command using container paths.
+		containerPrompt := fmt.Sprintf("/belayer/session/sysprompt-%s.txt", spec.Name)
+		containerTask := "/belayer/session/task.txt"
+		agentCmd := buildVendorCmd(spec, containerPrompt, containerTask)
+
+		agentCfgs = append(agentCfgs, docker.AgentComposeConfig{
+			Name:    spec.Name,
+			WorkDir: agentWorkDirs[spec.Name],
+			EnvFile: envFilePath,
+			EnvVars: map[string]string{
+				"BELAYER_SESSION_ID": sess.ID,
+				"BELAYER_AGENT_ID":   spec.Name,
+				"BELAYER_AGENT_CMD":  agentCmd,
+				"BELAYER_HOST_UID":   hostUID,
+				"BELAYER_HOST_GID":   hostGID,
+				"BELAYER_SOCKET":     "/belayer/daemon.sock",
+			},
+			ExtraVolumes: []string{sessionVolume, socketVolume},
+		})
+	}
+
+	// 6. Build compose config and bridge environment.
+	composeCfg := docker.ComposeConfig{
+		SessionID: sess.ID,
+		Agents:    agentCfgs,
+		Network:   docker.NetworkConfig{Type: envCfg.Networking.Type},
+	}
+	docker.BridgeEnvironment(envCfg, &composeCfg)
+
+	// 7. Create and start sandbox.
+	sandbox, err := docker.NewSandbox(docker.SandboxConfig{ComposeConfig: composeCfg})
+	if err != nil {
+		return fmt.Errorf("create sandbox: %w", err)
+	}
+	if err := sandbox.Create(); err != nil {
+		return fmt.Errorf("generate sandbox compose: %w", err)
+	}
+	if err := sandbox.Start(); err != nil {
+		return fmt.Errorf("start sandbox: %w", err)
+	}
+
+	_ = c.LogEvent(sess.ID, "sandbox_started", mustJSON(map[string]string{
+		"compose_dir": sandbox.ComposeDir(),
+		"network":     envCfg.Networking.Type,
+		"environment": environment,
+	}))
+	fmt.Fprintf(cmd.OutOrStdout(), "Docker sandbox started: %s (network: %s)\n", sandbox.ComposeDir(), envCfg.Networking.Type)
+
+	return nil
+}
+
+// launchTmux starts agents in local tmux sessions.
+func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, sessionName string) error {
+	runner := tmux.NewLocalRunner()
+
+	// Create per-agent worktrees for isolation.
+	wtBaseDir := filepath.Join(os.TempDir(), "belayer-worktrees", sessionName)
+	agentWorkDirs := make(map[string]string, len(tmpl.Agents))
+	for _, spec := range tmpl.Agents {
+		wt, err := createWorktree(workDir, wtBaseDir, spec.Name, "")
+		if err != nil {
+			// Log warning but continue — fallback to shared workDir.
+			fmt.Fprintf(cmd.OutOrStdout(), "  warning: worktree for %s: %v (using shared workdir)\n", spec.Name, err)
+			agentWorkDirs[spec.Name] = workDir
+		} else {
+			agentWorkDirs[spec.Name] = wt
+		}
+	}
+
+	for _, spec := range tmpl.Agents {
+		team := make([]agent.TeamMember, 0, len(tmpl.Agents)-1)
+		for _, s := range tmpl.Agents {
+			if s.Name != spec.Name {
+				team = append(team, agent.TeamMember{
+					Name:   s.Name,
+					Vendor: s.Vendor,
+					Model:  s.Model,
+					Role:   s.Role,
+				})
+			}
+		}
+
+		cfg := agent.AgentConfig{
+			Name:         spec.Name,
+			Vendor:       spec.Vendor,
+			Model:        spec.Model,
+			SystemPrompt: spec.SystemPrompt,
+		}
+
+		compiled := agent.CompilePrompt(agent.PromptContext{
+			Config:    cfg,
+			TaskInput: taskInput,
+			SessionID: sess.ID,
+			Team:      team,
+		})
+
+		sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", sessionName, spec.Name))
+		if err := os.WriteFile(sysPromptFile, []byte(compiled), 0600); err != nil {
+			return fmt.Errorf("write system prompt for %s: %w", spec.Name, err)
+		}
+		taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", sessionName, spec.Name))
+		if err := os.WriteFile(taskFile, []byte(taskInput), 0600); err != nil {
+			return fmt.Errorf("write task file for %s: %w", spec.Name, err)
+		}
+
+		tmuxSessionName := fmt.Sprintf("%s-%s", sessionName, spec.Name)
+		launchCmd := buildLaunchCmd(spec, sess.ID, sysPromptFile, taskFile, agentWorkDirs[spec.Name])
+
+		if err := runner.CreateSession(tmuxSessionName, launchCmd); err != nil {
+			return fmt.Errorf("create tmux session for %s: %w", spec.Name, err)
+		}
+
+		_ = c.LogEvent(sess.ID, "agent_launched", mustJSON(map[string]string{
+			"agent":  spec.Name,
+			"vendor": spec.Vendor,
+			"model":  spec.Model,
+		}))
+	}
+
+	return nil
+}
+
+// buildLaunchCmd constructs a safe shell command to run inside a tmux session.
+// All user-controlled values are escaped via shell.Quote to prevent injection.
 func buildLaunchCmd(spec session.AgentSpec, sessionID, sysPromptFile, taskFile, workDir string) string {
 	modelDisplay := spec.Model
 	if modelDisplay == "" {
 		modelDisplay = "default"
 	}
 
-	// Build optional flags from agent config.
-	var mcpFlag, settingsFlag string
-	if spec.MCPConfig != "" {
-		mcpFlag = fmt.Sprintf(` --mcp-config '%s'`, spec.MCPConfig)
+	// Build env exports with safe quoting.
+	envExports := []string{
+		"BELAYER_SESSION_ID=" + shell.Quote(sessionID),
+		"BELAYER_AGENT_ID=" + shell.Quote(spec.Name),
 	}
-	if spec.Settings != "" {
-		settingsFlag = fmt.Sprintf(` --settings '%s'`, spec.Settings)
-	}
-
-	var vendorCmd string
-	switch spec.Vendor {
-	case "claude":
-		vendorCmd = fmt.Sprintf(`claude --dangerously-skip-permissions%s%s --system-prompt-file '%s' "$(cat '%s')"`,
-			mcpFlag, settingsFlag, sysPromptFile, taskFile)
-	case "opencode":
-		vendorCmd = fmt.Sprintf(`opencode -m %s --prompt "$(cat '%s' '%s')"`, spec.Model, sysPromptFile, taskFile)
-	case "codex":
-		vendorCmd = fmt.Sprintf(`codex --dangerously-bypass-approvals-and-sandbox -c "instructions=$(cat '%s')" "$(cat '%s')"`, sysPromptFile, taskFile)
-	case "gemini":
-		vendorCmd = fmt.Sprintf(`gemini --yolo -i "$(cat '%s' '%s')"`, sysPromptFile, taskFile)
-	default:
-		vendorCmd = fmt.Sprintf(`echo "No vendor CLI for: %s"; cat '%s'`, spec.Vendor, sysPromptFile)
-	}
-
-	// Export agent-level env vars.
-	var envExports string
 	for k, v := range spec.Env {
-		envExports += fmt.Sprintf(` %s="%s"`, k, v)
+		if safe := shell.QuoteEnvKey(k); safe != "" {
+			envExports = append(envExports, safe+"="+shell.Quote(v))
+		}
 	}
 
-	return fmt.Sprintf(
-		`bash -c 'export BELAYER_SESSION_ID="%s" BELAYER_AGENT_ID="%s"%s; cd "%s" 2>/dev/null; echo "=== Belayer Agent: %s (%s/%s) ==="; echo "Session: $BELAYER_SESSION_ID"; echo ""; %s; echo ""; echo "Agent exited. Dropping to shell for debugging."; exec bash'`,
-		sessionID, spec.Name, envExports, workDir,
-		spec.Name, spec.Vendor, modelDisplay,
-		vendorCmd,
-	)
+	var parts []string
+	parts = append(parts, "export "+strings.Join(envExports, " "))
+	parts = append(parts, fmt.Sprintf("cd %s 2>/dev/null", shell.Quote(workDir)))
+	parts = append(parts, fmt.Sprintf("echo %s",
+		shell.Quote(fmt.Sprintf("=== Belayer Agent: %s (%s/%s) ===", spec.Name, spec.Vendor, modelDisplay))))
+	parts = append(parts, "echo \"Session: $BELAYER_SESSION_ID\"")
+	parts = append(parts, "echo ''")
+	parts = append(parts, buildVendorCmd(spec, sysPromptFile, taskFile))
+	parts = append(parts, "echo ''")
+	parts = append(parts, "echo 'Agent exited. Dropping to shell for debugging.'")
+	parts = append(parts, "exec bash")
+
+	return strings.Join(parts, "; ")
 }
 
-// capitalize returns the string with its first letter upper-cased.
-func capitalize(s string) string {
-	if s == "" {
-		return s
+// createWorktree creates a git worktree from the repo at repoDir for the given session.
+// Returns the worktree path. The worktree is created at baseDir/worktrees/<agentName>.
+// If git worktree creation fails (e.g., not a git repo), falls back to repoDir.
+func createWorktree(repoDir, baseDir, agentName, branch string) (string, error) {
+	worktreePath := filepath.Join(baseDir, "worktrees", agentName)
+	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o700); err != nil {
+		return repoDir, fmt.Errorf("create worktree dir: %w", err)
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+
+	// Try to fetch latest from origin first (best effort).
+	fetchCmd := exec.Command("git", "-C", repoDir, "fetch", "origin", "--quiet")
+	fetchCmd.Run() // ignore errors — may be offline
+
+	// Determine base branch.
+	if branch == "" {
+		branch = "origin/main"
+		// Try origin/master if origin/main doesn't exist.
+		checkCmd := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", "origin/main")
+		if checkCmd.Run() != nil {
+			branch = "origin/master"
+		}
+	}
+
+	// Create the worktree.
+	args := []string{"-C", repoDir, "worktree", "add", worktreePath, "--detach", branch}
+	cmd := exec.Command("git", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return repoDir, fmt.Errorf("git worktree add: %s: %w", string(out), err)
+	}
+
+	return worktreePath, nil
+}
+
+// cleanupWorktrees removes git worktrees created for a session.
+func cleanupWorktrees(baseDir string) {
+	worktreeDir := filepath.Join(baseDir, "worktrees")
+	entries, err := os.ReadDir(worktreeDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			wt := filepath.Join(worktreeDir, entry.Name())
+			exec.Command("git", "worktree", "remove", "--force", wt).Run()
+		}
+	}
+}
+
+// buildVendorCmd returns the vendor-specific CLI command string.
+// All file paths and user-controlled values are safely quoted.
+// Used by both tmux and Docker launch paths.
+func buildVendorCmd(spec session.AgentSpec, sysPromptFile, taskFile string) string {
+	qPrompt := shell.Quote(sysPromptFile)
+	qTask := shell.Quote(taskFile)
+
+	switch spec.Vendor {
+	case "claude":
+		cmd := "claude --dangerously-skip-permissions"
+		if spec.MCPConfig != "" {
+			cmd += " --mcp-config " + shell.Quote(spec.MCPConfig)
+		}
+		if spec.Settings != "" {
+			cmd += " --settings " + shell.Quote(spec.Settings)
+		}
+		return cmd + " --system-prompt-file " + qPrompt + " \"$(cat " + qTask + ")\""
+	case "opencode":
+		model := "default"
+		if spec.Model != "" {
+			model = spec.Model
+		}
+		return "opencode -m " + shell.Quote(model) + " --prompt \"$(cat " + qPrompt + " " + qTask + ")\""
+	case "codex":
+		return "codex --dangerously-bypass-approvals-and-sandbox -c \"instructions=$(cat " + qPrompt + ")\" \"$(cat " + qTask + ")\""
+	case "gemini":
+		return "gemini --yolo -i \"$(cat " + qPrompt + " " + qTask + ")\""
+	default:
+		return "echo " + shell.Quote("No vendor CLI for: "+spec.Vendor) + "; cat " + qPrompt
+	}
 }

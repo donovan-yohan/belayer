@@ -40,7 +40,7 @@ type Daemon struct {
 
 // New creates a Daemon with the given config. Call Start to begin serving.
 func New(cfg Config) (*Daemon, error) {
-	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700); err != nil {
 		return nil, fmt.Errorf("daemon: create db dir: %w", err)
 	}
 
@@ -70,7 +70,7 @@ func New(cfg Config) (*Daemon, error) {
 // Start begins listening on the Unix socket. Blocks until the server is stopped.
 func (d *Daemon) Start(ctx context.Context) error {
 	// Remove stale socket file.
-	if err := os.MkdirAll(filepath.Dir(d.config.SocketPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(d.config.SocketPath), 0o700); err != nil {
 		return fmt.Errorf("daemon: create socket dir: %w", err)
 	}
 	os.Remove(d.config.SocketPath)
@@ -79,6 +79,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("daemon: listen: %w", err)
 	}
+	os.Chmod(d.config.SocketPath, 0o600)
 	d.listener = ln
 
 	// Shut down gracefully when ctx is cancelled.

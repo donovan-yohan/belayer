@@ -40,7 +40,7 @@ func newSetupCmd() *cobra.Command {
 			}
 
 			// 1. Create ~/.belayer/ if it doesn't exist.
-			if err := os.MkdirAll(belayerDir, 0755); err != nil {
+			if err := os.MkdirAll(belayerDir, 0700); err != nil {
 				return fmt.Errorf("setup: create workspace dir %q: %w", belayerDir, err)
 			}
 
@@ -88,7 +88,7 @@ func newSetupCmd() *cobra.Command {
 
 			// 4. Ensure socket directory exists (daemon.sock lives in belayerDir).
 			socketDir := belayerDir
-			if err := os.MkdirAll(socketDir, 0755); err != nil {
+			if err := os.MkdirAll(socketDir, 0700); err != nil {
 				return fmt.Errorf("setup: ensure socket directory: %w", err)
 			}
 

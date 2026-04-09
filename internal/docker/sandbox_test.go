@@ -358,3 +358,180 @@ func TestAllocatePort_UniqueResults(t *testing.T) {
 		t.Errorf("expected both ports > 0, got p1=%d p2=%d", p1, p2)
 	}
 }
+
+func TestGenerateCompose_ExtraVolumes(t *testing.T) {
+	cfg := ComposeConfig{
+		SessionID: "abc123",
+		Agents: []AgentComposeConfig{
+			{
+				Name:         "pilot",
+				Image:        "belayer/agent:latest",
+				ExtraVolumes: []string{"/host/path:/container/path:ro"},
+			},
+		},
+		Network: NetworkConfig{Type: "none"},
+	}
+	out, err := generateCompose(cfg)
+	if err != nil {
+		t.Fatalf("generateCompose returned error: %v", err)
+	}
+	content := string(out)
+	if !strings.Contains(content, "/host/path:/container/path:ro") {
+		t.Errorf("expected extra volume mount in compose output, got:\n%s", content)
+	}
+}
+
+func TestGenerateCompose_ProxyEnvVarsInAgentService(t *testing.T) {
+	cfg := ComposeConfig{
+		SessionID: "abc123",
+		Agents: []AgentComposeConfig{
+			{Name: "pilot", Image: "belayer/agent:latest"},
+		},
+		Network: NetworkConfig{Type: "limited"},
+	}
+	out, err := generateCompose(cfg)
+	if err != nil {
+		t.Fatalf("generateCompose returned error: %v", err)
+	}
+	content := string(out)
+	if !strings.Contains(content, "HTTP_PROXY") {
+		t.Errorf("expected HTTP_PROXY in compose output for 'limited' network, got:\n%s", content)
+	}
+	if !strings.Contains(content, "HTTPS_PROXY") {
+		t.Errorf("expected HTTPS_PROXY in compose output for 'limited' network, got:\n%s", content)
+	}
+	// Verify they appear before the proxy service (i.e., under the agent service)
+	agentIdx := strings.Index(content, "pilot:")
+	proxyIdx := strings.Index(content, "proxy:")
+	httpProxyIdx := strings.Index(content, "HTTP_PROXY")
+	if agentIdx < 0 || proxyIdx < 0 || httpProxyIdx < 0 {
+		t.Fatalf("could not find expected sections in compose output:\n%s", content)
+	}
+	if httpProxyIdx > proxyIdx {
+		t.Errorf("expected HTTP_PROXY to appear under agent service (before proxy service block), got:\n%s", content)
+	}
+}
+
+func TestGenerateCompose_EnvVarsQuoted(t *testing.T) {
+	cfg := ComposeConfig{
+		SessionID: "abc123",
+		Agents: []AgentComposeConfig{
+			{
+				Name:  "pilot",
+				Image: "belayer/agent:latest",
+				EnvVars: map[string]string{
+					"BELAYER_SESSION_ID": "abc123",
+				},
+			},
+		},
+		Network: NetworkConfig{Type: "none"},
+	}
+	out, err := generateCompose(cfg)
+	if err != nil {
+		t.Fatalf("generateCompose returned error: %v", err)
+	}
+	content := string(out)
+	if !strings.Contains(content, `BELAYER_SESSION_ID: "abc123"`) {
+		t.Errorf("expected env var value to be double-quoted in compose output, got:\n%s", content)
+	}
+}
+
+func TestBridgeEnvironment_MergesConfig(t *testing.T) {
+	env := &EnvironmentConfig{
+		Networking: NetworkingRule{
+			Type:         "limited",
+			AllowedHosts: []string{"api.anthropic.com"},
+		},
+		Compose: ComposeExtend{
+			Include: "/path/to/docker-compose.yml",
+		},
+	}
+	cfg := ComposeConfig{
+		SessionID: "abc123",
+		Agents:    []AgentComposeConfig{{Name: "pilot"}},
+	}
+	BridgeEnvironment(env, &cfg)
+
+	if cfg.Network.Type != "limited" {
+		t.Errorf("expected Network.Type %q, got %q", "limited", cfg.Network.Type)
+	}
+	if len(cfg.Network.AllowedHosts) == 0 {
+		t.Fatal("expected AllowedHosts to be non-empty")
+	}
+	found := false
+	for _, h := range cfg.Network.AllowedHosts {
+		if h == "api.anthropic.com" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'api.anthropic.com' in AllowedHosts, got %v", cfg.Network.AllowedHosts)
+	}
+	if cfg.IncludeCompose != "/path/to/docker-compose.yml" {
+		t.Errorf("expected IncludeCompose %q, got %q", "/path/to/docker-compose.yml", cfg.IncludeCompose)
+	}
+}
+
+func TestBridgeEnvironment_PackageManagers(t *testing.T) {
+	env := &EnvironmentConfig{
+		Networking: NetworkingRule{
+			Type:                 "limited",
+			AllowPackageManagers: true,
+		},
+	}
+	cfg := ComposeConfig{
+		SessionID: "abc123",
+		Agents:    []AgentComposeConfig{{Name: "pilot"}},
+	}
+	BridgeEnvironment(env, &cfg)
+
+	pkgHosts := PackageManagerHosts()
+	hostSet := make(map[string]struct{}, len(cfg.Network.AllowedHosts))
+	for _, h := range cfg.Network.AllowedHosts {
+		hostSet[h] = struct{}{}
+	}
+	for _, domain := range pkgHosts {
+		if _, ok := hostSet[domain]; !ok {
+			t.Errorf("expected package manager domain %q in AllowedHosts, got %v", domain, cfg.Network.AllowedHosts)
+		}
+	}
+}
+
+func TestBridgeEnvironment_NilSafe(t *testing.T) {
+	cfg := ComposeConfig{
+		SessionID: "abc123",
+		Agents:    []AgentComposeConfig{{Name: "pilot"}},
+	}
+	// Should not panic
+	BridgeEnvironment(nil, &cfg)
+}
+
+func TestGenerateEnvFile_IncludesExtraVars(t *testing.T) {
+	extraVars := map[string]string{
+		"CUSTOM_KEY": "custom_value",
+	}
+	out := GenerateEnvFile(extraVars)
+	content := string(out)
+	if !strings.Contains(content, "CUSTOM_KEY=custom_value") {
+		t.Errorf("expected 'CUSTOM_KEY=custom_value' in env file output, got:\n%s", content)
+	}
+}
+
+func TestGenerateEnvFile_EmptyWhenNoAuth(t *testing.T) {
+	// Unset all vendor auth vars to ensure a clean environment
+	authVars := []string{
+		"ANTHROPIC_API_KEY",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+		"OPENAI_API_KEY",
+		"GEMINI_API_KEY",
+		"OPENCODE_API_KEY",
+	}
+	for _, key := range authVars {
+		t.Setenv(key, "")
+	}
+
+	out := GenerateEnvFile(nil)
+	if len(out) != 0 {
+		t.Errorf("expected empty env file when no auth vars set and no extra vars, got:\n%s", string(out))
+	}
+}

@@ -2,6 +2,8 @@ package session
 
 import (
 	"testing"
+
+	yamlPkg "gopkg.in/yaml.v3"
 )
 
 // ---------------------------------------------------------------------------
@@ -124,6 +126,46 @@ func TestValidateTemplate_AgentMissingVendor(t *testing.T) {
 	}
 }
 
+func TestValidateTemplate_InvalidAgentName(t *testing.T) {
+	tmpl := SessionTemplate{
+		Name: "test",
+		Agents: []AgentSpec{
+			{Name: "; rm -rf /", Vendor: "claude"},
+		},
+	}
+	if err := ValidateTemplate(tmpl); err == nil {
+		t.Error("expected error for invalid agent name, got nil")
+	}
+}
+
+func TestValidateTemplate_InvalidEnvKey(t *testing.T) {
+	tmpl := SessionTemplate{
+		Name: "test",
+		Agents: []AgentSpec{
+			{Name: "pilot", Vendor: "claude", Env: map[string]string{
+				"GOOD_KEY": "value",
+				"BAD;KEY":  "value",
+			}},
+		},
+	}
+	if err := ValidateTemplate(tmpl); err == nil {
+		t.Error("expected error for invalid env key, got nil")
+	}
+}
+
+func TestValidateTemplate_ValidAgentName(t *testing.T) {
+	tmpl := SessionTemplate{
+		Name: "test",
+		Agents: []AgentSpec{
+			{Name: "api-implementer", Vendor: "claude"},
+			{Name: "pilot.v2", Vendor: "opencode"},
+		},
+	}
+	if err := ValidateTemplate(tmpl); err != nil {
+		t.Errorf("expected no error for valid agent names, got: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ListTemplates
 // ---------------------------------------------------------------------------
@@ -138,5 +180,39 @@ func TestListTemplates(t *testing.T) {
 		if !want[n] {
 			t.Errorf("ListTemplates: unexpected name %q", n)
 		}
+	}
+}
+
+func TestAgentSpec_RepoField(t *testing.T) {
+	yamlStr := `
+name: fullstack
+phase: implement
+description: Multi-repo session
+agents:
+  - name: pilot
+    vendor: claude
+    model: opus
+  - name: api-impl
+    vendor: claude
+    model: sonnet
+    repo: extend-api
+  - name: app-impl
+    vendor: claude
+    model: sonnet
+    repo: extend-app
+`
+	var tmpl SessionTemplate
+	if err := yamlPkg.Unmarshal([]byte(yamlStr), &tmpl); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if tmpl.Agents[0].Repo != "" {
+		t.Errorf("pilot should have empty repo, got %q", tmpl.Agents[0].Repo)
+	}
+	if tmpl.Agents[1].Repo != "extend-api" {
+		t.Errorf("api-impl should have repo 'extend-api', got %q", tmpl.Agents[1].Repo)
+	}
+	if tmpl.Agents[2].Repo != "extend-app" {
+		t.Errorf("app-impl should have repo 'extend-app', got %q", tmpl.Agents[2].Repo)
 	}
 }

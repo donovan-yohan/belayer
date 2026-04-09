@@ -34,6 +34,7 @@ Commands:
 		newAttachCmd(),
 		newLogsCmd(),
 		newStatusCmd(),
+		newDebugCmd(),
 		newRecallCmd(),
 		newMessageCmd(),
 		newContextCmd(),

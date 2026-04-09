@@ -13,13 +13,15 @@ func baseCtx() PromptContext {
 			Model:        "opus",
 			SystemPrompt: "You are the pilot agent coordinating the team.",
 		},
-		TaskInput:     "Implement feature X as described in spec.md.",
-		CoreMemory:    "Always write tests before implementation.",
-		PersonalMem:   "Prefers small, focused commits.",
-		StaleWarnings: []string{"core.md not updated in 30 days"},
-		RestartCtx:    "Resuming after crash at step 3.",
-		OtherAgents:   []string{"implementer-agent", "reviewer-agent"},
-		SessionID:     "session-abc123",
+		TaskInput:   "Implement feature X as described in spec.md.",
+		CoreMemory:  "Always write tests before implementation.",
+		PersonalMem: "Prefers small, focused commits.",
+		RestartCtx:  "Resuming after crash at step 3.",
+		Team: []TeamMember{
+			{Name: "implementer-agent", Vendor: "opencode", Model: "sonnet", Role: "Code implementation"},
+			{Name: "reviewer-agent", Vendor: "opencode", Model: "codex", Role: "Code review"},
+		},
+		SessionID: "session-abc123",
 	}
 }
 
@@ -37,16 +39,18 @@ func TestCompilePrompt_AllFields(t *testing.T) {
 		{"system prompt", ctx.Config.SystemPrompt},
 		{"task header", "# Task\n"},
 		{"task input", ctx.TaskInput},
-		{"session context header", "# Session Context\n"},
+		{"team header", "# Your Team\n"},
 		{"session id", "Session: session-abc123"},
-		{"other agents", "Other agents in this session: implementer-agent, reviewer-agent"},
-		{"core learnings header", "# Core Learnings\n"},
-		{"core memory", ctx.CoreMemory},
+		{"implementer in roster", "**implementer-agent** (opencode/sonnet)"},
+		{"reviewer in roster", "**reviewer-agent** (opencode/codex)"},
+		{"implementer role", "Code implementation"},
+		{"reviewer role", "Code review"},
+		{"core memory header", "# Your Memory\n"},
+		{"core memory tags", "<core_memory>"},
+		{"core memory content", ctx.CoreMemory},
 		{"personal memory header", "# Personal Memory\n"},
 		{"personal memory", ctx.PersonalMem},
-		{"stale warnings header", "# Stale Warnings\n"},
-		{"stale warning entry", "WARNING: core.md not updated in 30 days"},
-		{"belayer cli header", "# Belayer CLI (Messaging Plane)\n"},
+		{"belayer cli header", "# Belayer CLI\n"},
 		{"restart context header", "# Restart Context\n"},
 		{"restart context", ctx.RestartCtx},
 	}
@@ -72,15 +76,15 @@ func TestCompilePrompt_EmptyTaskInput(t *testing.T) {
 	}
 }
 
-// TestCompilePrompt_NoCoreMemory verifies that missing CoreMemory shows the
-// fallback message instead of an empty section.
+// TestCompilePrompt_NoCoreMemory verifies that the Your Memory section
+// is omitted entirely when CoreMemory is empty.
 func TestCompilePrompt_NoCoreMemory(t *testing.T) {
 	ctx := baseCtx()
 	ctx.CoreMemory = ""
 	result := CompilePrompt(ctx)
 
-	if !strings.Contains(result, "No core learnings available.") {
-		t.Errorf("CompilePrompt() expected fallback text for empty CoreMemory\ngot:\n%s", result)
+	if strings.Contains(result, "# Your Memory") {
+		t.Errorf("CompilePrompt() should omit Your Memory section when CoreMemory is empty\ngot:\n%s", result)
 	}
 }
 
@@ -96,30 +100,30 @@ func TestCompilePrompt_NoPersonalMemory(t *testing.T) {
 	}
 }
 
-// TestCompilePrompt_StaleWarnings verifies that each warning is prefixed with
-// "WARNING: " and all appear in the output.
-func TestCompilePrompt_StaleWarnings(t *testing.T) {
+// TestCompilePrompt_MemoryIndex verifies that the Memory Index section
+// appears when MemoryIndex is set and is omitted when empty.
+func TestCompilePrompt_MemoryIndex(t *testing.T) {
 	ctx := baseCtx()
-	ctx.StaleWarnings = []string{"file A is stale", "file B is stale"}
+	ctx.MemoryIndex = "- codebase.md — architecture and conventions\n- team.md — agent tendencies"
 	result := CompilePrompt(ctx)
 
-	if !strings.Contains(result, "WARNING: file A is stale") {
-		t.Errorf("CompilePrompt() missing WARNING prefix for first warning\ngot:\n%s", result)
+	if !strings.Contains(result, "# Memory Index\n") {
+		t.Errorf("CompilePrompt() missing Memory Index header\ngot:\n%s", result)
 	}
-	if !strings.Contains(result, "WARNING: file B is stale") {
-		t.Errorf("CompilePrompt() missing WARNING prefix for second warning\ngot:\n%s", result)
+	if !strings.Contains(result, "codebase.md") {
+		t.Errorf("CompilePrompt() missing memory index content\ngot:\n%s", result)
 	}
 }
 
-// TestCompilePrompt_NoStaleWarnings verifies that the Stale Warnings section
-// is omitted entirely when there are no warnings.
-func TestCompilePrompt_NoStaleWarnings(t *testing.T) {
+// TestCompilePrompt_NoMemoryIndex verifies that the Memory Index section
+// is omitted entirely when MemoryIndex is empty.
+func TestCompilePrompt_NoMemoryIndex(t *testing.T) {
 	ctx := baseCtx()
-	ctx.StaleWarnings = nil
+	ctx.MemoryIndex = ""
 	result := CompilePrompt(ctx)
 
-	if strings.Contains(result, "# Stale Warnings") {
-		t.Errorf("CompilePrompt() should omit Stale Warnings section when none exist\ngot:\n%s", result)
+	if strings.Contains(result, "# Memory Index") {
+		t.Errorf("CompilePrompt() should omit Memory Index section when empty\ngot:\n%s", result)
 	}
 }
 
@@ -150,15 +154,43 @@ func TestCompilePrompt_NoRestartContext(t *testing.T) {
 	}
 }
 
-// TestCompilePrompt_OtherAgents verifies that all other agent names appear in
-// the Session Context section.
-func TestCompilePrompt_OtherAgents(t *testing.T) {
+// TestCompilePrompt_TeamRoster verifies that all team members appear with
+// their vendor, model, and role in the output.
+func TestCompilePrompt_TeamRoster(t *testing.T) {
 	ctx := baseCtx()
-	ctx.OtherAgents = []string{"alpha", "beta", "gamma"}
+	ctx.Team = []TeamMember{
+		{Name: "alpha", Vendor: "claude", Model: "opus", Role: "Orchestrator"},
+		{Name: "beta", Vendor: "opencode", Model: "sonnet", Role: "Implementer"},
+		{Name: "gamma", Vendor: "opencode", Model: "codex", Role: "Reviewer"},
+	}
 	result := CompilePrompt(ctx)
 
-	if !strings.Contains(result, "Other agents in this session: alpha, beta, gamma") {
-		t.Errorf("CompilePrompt() missing other agents list\ngot:\n%s", result)
+	if !strings.Contains(result, "**alpha** (claude/opus) — Orchestrator") {
+		t.Errorf("CompilePrompt() missing alpha in team roster\ngot:\n%s", result)
+	}
+	if !strings.Contains(result, "**beta** (opencode/sonnet) — Implementer") {
+		t.Errorf("CompilePrompt() missing beta in team roster\ngot:\n%s", result)
+	}
+	if !strings.Contains(result, "**gamma** (opencode/codex) — Reviewer") {
+		t.Errorf("CompilePrompt() missing gamma in team roster\ngot:\n%s", result)
+	}
+}
+
+// TestCompilePrompt_NoTeam verifies that a solo agent gets a Session section
+// instead of a Team section.
+func TestCompilePrompt_NoTeam(t *testing.T) {
+	ctx := baseCtx()
+	ctx.Team = nil
+	result := CompilePrompt(ctx)
+
+	if strings.Contains(result, "# Your Team") {
+		t.Errorf("CompilePrompt() should not show Team section when no teammates\ngot:\n%s", result)
+	}
+	if !strings.Contains(result, "# Session\n") {
+		t.Errorf("CompilePrompt() should show Session section for solo agent\ngot:\n%s", result)
+	}
+	if !strings.Contains(result, "You are the only agent") {
+		t.Errorf("CompilePrompt() should indicate solo agent\ngot:\n%s", result)
 	}
 }
 
@@ -174,13 +206,12 @@ func TestCompilePrompt_BelayerCLIAlwaysPresent(t *testing.T) {
 	result := CompilePrompt(ctx)
 
 	cliChecks := []string{
-		"# Belayer CLI (Messaging Plane)\n",
+		"# Belayer CLI\n",
 		"belayer message send",
 		"belayer message broadcast",
 		"belayer context",
-		"belayer recall search",
+		"belayer recall",
 		"belayer note",
-		"belayer tool run",
 	}
 	for _, want := range cliChecks {
 		if !strings.Contains(result, want) {

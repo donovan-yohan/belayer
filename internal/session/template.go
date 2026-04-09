@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 
 	"gopkg.in/yaml.v3"
 )
+
+var safeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 // Phase represents the three-phase model of a belayer session.
 type Phase string
@@ -23,6 +26,8 @@ type AgentSpec struct {
 	Name         string            `yaml:"name" json:"name"`
 	Vendor       string            `yaml:"vendor" json:"vendor"`
 	Model        string            `yaml:"model" json:"model"`
+	Repo         string            `yaml:"repo,omitempty" json:"repo,omitempty"` // optional repo name from environment config
+	Role         string            `yaml:"role,omitempty" json:"role,omitempty"` // human-readable description of what this agent does
 	SystemPrompt string            `yaml:"system_prompt" json:"system_prompt"`
 	MCPConfig    string            `yaml:"mcp_config,omitempty" json:"mcp_config,omitempty"`
 	Settings     string            `yaml:"settings,omitempty" json:"settings,omitempty"`
@@ -94,7 +99,7 @@ func ListTemplates() []string {
 // WriteDefaultTemplates writes all built-in templates as YAML files to dir.
 // Existing files are not overwritten.
 func WriteDefaultTemplates(dir string) error {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("session: create templates dir: %w", err)
 	}
 	for name, tmpl := range builtinTemplates {
@@ -106,7 +111,7 @@ func WriteDefaultTemplates(dir string) error {
 		if err != nil {
 			return fmt.Errorf("session: marshal template %q: %w", name, err)
 		}
-		if err := os.WriteFile(path, data, 0644); err != nil {
+		if err := os.WriteFile(path, data, 0600); err != nil {
 			return fmt.Errorf("session: write template %q: %w", name, err)
 		}
 	}
@@ -128,6 +133,16 @@ func ValidateTemplate(tmpl SessionTemplate) error {
 		if a.Vendor == "" {
 			return fmt.Errorf("session: template %q agent %q has no vendor", tmpl.Name, a.Name)
 		}
+		if !safeNamePattern.MatchString(a.Name) {
+			return fmt.Errorf("session: template %q agent %q has invalid name (must be alphanumeric with ._- allowed)", tmpl.Name, a.Name)
+		}
+		for k := range a.Env {
+			for _, c := range k {
+				if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+					return fmt.Errorf("session: template %q agent %q env key %q contains invalid characters", tmpl.Name, a.Name, k)
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -143,32 +158,45 @@ var builtinTemplates = map[string]SessionTemplate{
 				Name:         "explorer",
 				Vendor:       "claude",
 				Model:        "sonnet",
-				SystemPrompt: "You are an exploration agent. Analyze the idea and produce a detailed spec.",
+				Role:         "Exploration and spec generation",
+				SystemPrompt: "You are an exploration agent. Analyze the idea, research the codebase, and produce a detailed implementation spec. The spec should include scope, approach, key files to modify, edge cases, and a testing strategy.",
 			},
 		},
 	},
 	"implement": {
 		Name:        "implement",
 		Phase:       PhaseImplement,
-		Description: "Implementation — pilot + implementer + reviewer trio",
+		Description: "Implementation — pilot orchestrates team to complete work",
 		Agents: []AgentSpec{
 			{
-				Name:         "pilot",
-				Vendor:       "claude",
-				Model:        "opus",
-				SystemPrompt: "You are the pilot agent. Coordinate the implementer and reviewer. You do NOT write code.",
+				Name:   "pilot",
+				Vendor: "claude",
+				Model:  "opus",
+				Role:   "Orchestrator — decomposes work, delegates to team, interprets results",
+				SystemPrompt: `You are the pilot agent for this belayer session. You orchestrate — you do NOT write code.
+You decompose work, delegate to your team, interpret results, and decide what happens next.
+
+How you coordinate your team is your judgment. You may discover effective patterns over time — write observations to your memory so future sessions benefit.
+
+When delegating, provide enough context that your agents can succeed without asking clarifying questions: relevant file paths, architectural constraints, what has already been tried, and what success looks like.`,
 			},
 			{
-				Name:         "implementer",
-				Vendor:       "opencode",
-				Model:        "opencode/claude-sonnet-4-6",
-				SystemPrompt: "You are the implementer. Write code as directed by the pilot.",
+				Name:   "implementer",
+				Vendor: "opencode",
+				Model:  "opencode/claude-sonnet-4-6",
+				Role:   "Code implementation — writes and modifies code as directed",
+				SystemPrompt: `You are an implementer. Write code as directed. Focus on correctness, completeness, and clean implementation.
+
+When you finish a task, summarize what you changed and any decisions you made so the pilot can coordinate next steps.`,
 			},
 			{
-				Name:         "reviewer",
-				Vendor:       "opencode",
-				Model:        "opencode/gpt-5.1-codex",
-				SystemPrompt: "You are the code reviewer. Review changes for correctness, style, and completeness.",
+				Name:   "reviewer",
+				Vendor: "opencode",
+				Model:  "opencode/gpt-5.1-codex",
+				Role:   "Code review — evaluates changes for correctness, style, and completeness",
+				SystemPrompt: `You are the code reviewer. Review changes for correctness, style, and completeness. Provide structured, actionable feedback.
+
+Be specific about what needs to change and why. Distinguish between blocking issues and suggestions.`,
 			},
 		},
 	},
@@ -178,16 +206,20 @@ var builtinTemplates = map[string]SessionTemplate{
 		Description: "Deliver — QA validation, merge, and monitoring",
 		Agents: []AgentSpec{
 			{
-				Name:         "qa",
-				Vendor:       "claude",
-				Model:        "sonnet",
-				SystemPrompt: "You are the QA agent. Run tests and validate the implementation.",
+				Name:   "qa",
+				Vendor: "claude",
+				Model:  "sonnet",
+				Role:   "QA validation — runs tests and validates the implementation",
+				SystemPrompt: `You are the QA agent. Run the test suite, validate the implementation against the spec, and report any failures or gaps.
+
+Be thorough but practical — focus on correctness and regressions, not style.`,
 			},
 			{
-				Name:         "merger",
-				Vendor:       "claude",
-				Model:        "sonnet",
-				SystemPrompt: "You are the merge agent. Create the PR and handle merge logistics.",
+				Name:   "merger",
+				Vendor: "claude",
+				Model:  "sonnet",
+				Role:   "Merge logistics — creates PR and handles merge",
+				SystemPrompt: `You are the merge agent. Create the pull request with a clear description, ensure CI passes, and handle merge logistics.`,
 			},
 		},
 	},

@@ -1,20 +1,29 @@
 FROM ubuntu:24.04
 
+# System dependencies for agent execution
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tmux git curl jq ca-certificates \
+    tmux git curl jq ca-certificates sudo \
     && rm -rf /var/lib/apt/lists/*
 
-# Create belayer user
-RUN useradd -m -s /bin/bash -u 1000 belayer
+# Create belayer user with sudo access (entrypoint adjusts UID/GID)
+RUN useradd -m -s /bin/bash -u 1000 belayer \
+    && echo "belayer ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/belayer
 
 # Install belayer CLI (built externally, copied in)
 COPY belayer /usr/local/bin/belayer
 RUN chmod +x /usr/local/bin/belayer
 
+# Entrypoint handles init duties (UID/GID sync, signal forwarding)
+COPY docker/belayer-entrypoint.sh /usr/local/bin/belayer-entrypoint
+RUN chmod +x /usr/local/bin/belayer-entrypoint
+
 WORKDIR /workspace
 
-# Run as belayer user by default
-USER belayer
+# BELAYER_AGENT_CMD is the vendor CLI command to run in the agent tmux window.
+# Set by compose generation. If empty, drops to interactive shell.
+ENV BELAYER_AGENT_CMD=""
+ENV BELAYER_HOST_UID=""
+ENV BELAYER_HOST_GID=""
 
-# tmux as the execution substrate — agent shell starts here
-ENTRYPOINT ["tmux", "new-session", "-s", "agent"]
+ENTRYPOINT ["belayer-entrypoint"]
+CMD ["bash"]

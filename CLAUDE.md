@@ -16,11 +16,13 @@ Three-phase model:
 ```
 belayer daemon                     # Start supervisor
 belayer setup [--global]           # Bootstrap .belayer/ workspace (cwd or global)
-belayer implement --input "task"   # Launch implementation session with agent trio
-belayer session create/list/stop   # Low-level session CRUD
-belayer attach <id> [--agent name] # Attach to agent tmux panes
+belayer session start --template implement --docker --environment extend-fullstack --input "task"
+belayer session list/stop          # Session CRUD
+belayer session wake <id> --agent  # Restart crashed agent with compiled context
+belayer attach <id> [--agent name] # Attach to agent tmux panes (local + Docker)
 belayer status                     # Daemon health + active sessions
-belayer logs <id>                  # Session event stream
+belayer logs <id> [-f] [--since N] # Session event stream (--follow for real-time)
+belayer debug <id>                 # Aggregated diagnostics (events + container health)
 belayer recall "query"             # FTS5 search across events
 belayer message send/broadcast     # Agent-to-agent messaging
 belayer context                    # Session info (messaging plane)
@@ -42,7 +44,8 @@ Workspaces are cwd-derived: belayer walks up from the current directory looking 
 - `internal/vendor/` — Claude, Codex, Generic adapters
 - `internal/memory/` — Three-tier: core (in-context), archival (FTS5), recall
 - `internal/workspace/` — repos.json loading and path resolution
-- `internal/docker/` — Compose generation for sandboxed execution (not yet wired)
+- `internal/docker/` — Compose generation, network isolation, environment configs, .env auth
+- `internal/shell/` — Safe shell quoting (prevents command injection from YAML templates)
 
 ## Development
 

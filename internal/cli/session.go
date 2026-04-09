@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,7 @@ func newSessionCmd() *cobra.Command {
 		newSessionStartCmd(),
 		newSessionListCmd(),
 		newSessionStopCmd(),
+		newSessionWakeCmd(),
 	)
 	return cmd
 }
@@ -167,10 +169,17 @@ changes. Any work not committed will be lost.`,
 				killed = append(killed, strings.TrimPrefix(tmuxSess, prefix))
 			}
 
+			// Log session_completed event for reflection trigger.
+			_ = c.LogEvent(sessionID, "session_completed", mustJSON(map[string]string{
+				"name":   sess.Name,
+				"status": "stopped",
+			}))
+
 			fmt.Fprintf(cmd.OutOrStdout(), "Stopped session %s (%s)\n", sess2.ID, sess2.Name)
 			if len(killed) > 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "Terminated agents: %s\n", strings.Join(killed, ", "))
 			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Reflection will run on next daemon cycle (trigger: post-session).")
 
 			// Clean up Docker sandbox if it exists.
 			home, _ := os.UserHomeDir()
@@ -193,6 +202,97 @@ changes. Any work not committed will be lost.`,
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	cmd.Flags().BoolVar(&force, "force", false, "Force stop even with uncommitted changes (DANGEROUS: uncommitted code will be lost)")
+	return cmd
+}
+
+func newSessionWakeCmd() *cobra.Command {
+	var agentName, socket string
+
+	cmd := &cobra.Command{
+		Use:   "wake <session-id-or-name>",
+		Short: "Restart a crashed agent with compiled context",
+		Long: `Restart a stopped agent in a session. Compiles restart context
+from the session event history and relaunches the agent with
+that context prepended to its prompt.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if agentName == "" {
+				return fmt.Errorf("--agent is required (which agent to wake)")
+			}
+
+			c := NewClient(resolveSocket(socket))
+			target := args[0]
+
+			sessionID, err := lookupSessionID(c, target)
+			if err != nil {
+				return fmt.Errorf("session not found: %w", err)
+			}
+
+			// Get session info.
+			sessions, err := c.ListSessions()
+			if err != nil {
+				return fmt.Errorf("list sessions: %w", err)
+			}
+			var sessionName, sessionTemplate string
+			for _, s := range sessions {
+				if s.ID == sessionID {
+					sessionName = s.Name
+					sessionTemplate = s.Template
+					break
+				}
+			}
+
+			// Compile restart context from events.
+			events, err := c.GetEvents(sessionID)
+			if err != nil {
+				return fmt.Errorf("get events: %w", err)
+			}
+
+			var contextLines []string
+			contextLines = append(contextLines, fmt.Sprintf("=== RESTART CONTEXT (session: %s, agent: %s) ===", sessionID[:8], agentName))
+			contextLines = append(contextLines, fmt.Sprintf("You are being restarted. Here is what happened before you stopped:\n"))
+
+			for _, e := range events {
+				// Include relevant events for context.
+				switch e.Type {
+				case "session_started", "agent_launched", "sandbox_started",
+					"session_status_changed", "agent_note":
+					contextLines = append(contextLines,
+						fmt.Sprintf("[%s] %s: %s", e.Timestamp.Format("15:04:05"), e.Type, e.Data))
+				}
+			}
+			contextLines = append(contextLines, "\n=== END RESTART CONTEXT ===\n")
+			contextLines = append(contextLines, "Continue from where you left off. Check git status and test results to understand current state.\n")
+
+			restartContext := strings.Join(contextLines, "\n")
+
+			// Log the wake event.
+			_ = c.LogEvent(sessionID, "agent_wake", mustJSON(map[string]string{
+				"agent":         agentName,
+				"context_lines": fmt.Sprintf("%d", len(events)),
+			}))
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Waking agent %q in session %s (template: %s)\n", agentName, sessionName, sessionTemplate)
+			fmt.Fprintf(cmd.OutOrStdout(), "Restart context: %d events compiled\n", len(events))
+			fmt.Fprintf(cmd.OutOrStdout(), "\nContext will be prepended to the agent's prompt on next launch.\n")
+			fmt.Fprintf(cmd.OutOrStdout(), "Restart context saved. Relaunch the session to apply:\n")
+			fmt.Fprintf(cmd.OutOrStdout(), "  belayer session start --template %s --input <spec> --name %s\n", sessionTemplate, sessionName)
+
+			// Write restart context to a file for the next session start to pick up.
+			home, _ := os.UserHomeDir()
+			restartDir := filepath.Join(home, ".belayer", "restart")
+			os.MkdirAll(restartDir, 0o700)
+			restartFile := filepath.Join(restartDir, sessionID+"-"+agentName+".txt")
+			if err := os.WriteFile(restartFile, []byte(restartContext), 0o600); err != nil {
+				return fmt.Errorf("write restart context: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "  Restart context: %s\n", restartFile)
+
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&agentName, "agent", "", "Agent to wake (required)")
+	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	return cmd
 }
 
@@ -317,26 +417,81 @@ With --agent, attaches directly to that agent's tmux pane.`,
 
 func newLogsCmd() *cobra.Command {
 	var socket string
+	var follow bool
+	var since int
 
 	cmd := &cobra.Command{
 		Use:   "logs <session-id>",
 		Short: "Show session events",
+		Long:  "Show session events. Use --follow to tail in real-time.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := NewClient(resolveSocket(socket))
-			events, err := c.GetEvents(args[0])
+			sessionID := args[0]
+
+			// Try to resolve name to ID.
+			if resolved, err := lookupSessionID(c, sessionID); err == nil {
+				sessionID = resolved
+			}
+
+			events, err := c.GetEvents(sessionID)
 			if err != nil {
 				return fmt.Errorf("get events: %w", err)
 			}
-			for _, e := range events {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s  %-24s  %s\n",
-					e.Timestamp.Format("15:04:05.000"), e.Type, e.Data)
+
+			// Filter by --since if set.
+			cutoff := time.Time{}
+			if since > 0 {
+				cutoff = time.Now().Add(-time.Duration(since) * time.Minute)
 			}
-			return nil
+
+			// Print existing events.
+			lastSeen := time.Time{}
+			for _, e := range events {
+				if !cutoff.IsZero() && e.Timestamp.Before(cutoff) {
+					continue
+				}
+				printEvent(cmd, e)
+				if e.Timestamp.After(lastSeen) {
+					lastSeen = e.Timestamp
+				}
+			}
+
+			if !follow {
+				return nil
+			}
+
+			// Polling loop for --follow.
+			fmt.Fprintln(cmd.OutOrStdout(), "--- following (Ctrl+C to stop) ---")
+			for {
+				time.Sleep(2 * time.Second)
+
+				events, err := c.GetEvents(sessionID)
+				if err != nil {
+					continue // transient error, keep polling
+				}
+
+				for _, e := range events {
+					if !lastSeen.IsZero() && !e.Timestamp.After(lastSeen) {
+						continue
+					}
+					printEvent(cmd, e)
+					if e.Timestamp.After(lastSeen) {
+						lastSeen = e.Timestamp
+					}
+				}
+			}
 		},
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow events in real-time")
+	cmd.Flags().IntVar(&since, "since", 0, "Show events from the last N minutes")
 	return cmd
+}
+
+func printEvent(cmd *cobra.Command, e eventResponse) {
+	fmt.Fprintf(cmd.OutOrStdout(), "%s  %-24s  %s\n",
+		e.Timestamp.Format("15:04:05.000"), e.Type, e.Data)
 }
 
 func newStatusCmd() *cobra.Command {
@@ -425,6 +580,10 @@ func newRecallCmd() *cobra.Command {
 func resolveSocket(override string) string {
 	if override != "" {
 		return override
+	}
+	// Inside Docker containers, BELAYER_SOCKET points to the mounted daemon socket.
+	if envSocket := os.Getenv("BELAYER_SOCKET"); envSocket != "" {
+		return envSocket
 	}
 	return DefaultSocketPath()
 }

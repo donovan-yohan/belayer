@@ -124,11 +124,11 @@ func TestPackageManagerHosts(t *testing.T) {
 	}
 
 	expected := map[string]bool{
-		"registry.npmjs.org":      false,
-		"pypi.org":                false,
-		"proxy.golang.org":        false,
-		"repo.maven.apache.org":   false,
-		"rubygems.org":            false,
+		"registry.npmjs.org":    false,
+		"pypi.org":              false,
+		"proxy.golang.org":      false,
+		"repo.maven.apache.org": false,
+		"rubygems.org":          false,
 	}
 
 	for _, h := range hosts {
@@ -141,5 +141,88 @@ func TestPackageManagerHosts(t *testing.T) {
 		if !found {
 			t.Errorf("expected domain %q in PackageManagerHosts, not found", domain)
 		}
+	}
+}
+
+func TestValidateEnvironment_ValidConfig(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Networking: NetworkingRule{
+			Type:         "limited",
+			AllowedHosts: []string{"api.anthropic.com", "*.github.com"},
+		},
+	}
+	if err := ValidateEnvironment(cfg); err != nil {
+		t.Errorf("expected no error for valid config, got: %v", err)
+	}
+}
+
+func TestValidateEnvironment_InvalidNetworkType(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Networking: NetworkingRule{Type: "yolo"},
+	}
+	if err := ValidateEnvironment(cfg); err == nil {
+		t.Error("expected error for invalid network type")
+	}
+}
+
+func TestValidateEnvironment_BroadPattern(t *testing.T) {
+	tests := []string{".*", ".", "*"}
+	for _, host := range tests {
+		cfg := &EnvironmentConfig{
+			Networking: NetworkingRule{
+				Type:         "limited",
+				AllowedHosts: []string{host},
+			},
+		}
+		if err := ValidateEnvironment(cfg); err == nil {
+			t.Errorf("expected error for broad pattern %q", host)
+		}
+	}
+}
+
+func TestValidateEnvironment_InvalidHostChars(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Networking: NetworkingRule{
+			Type:         "limited",
+			AllowedHosts: []string{"evil.com|good.com"},
+		},
+	}
+	if err := ValidateEnvironment(cfg); err == nil {
+		t.Error("expected error for host with pipe character")
+	}
+}
+
+func TestEscapeHostForRegex_Simple(t *testing.T) {
+	got := EscapeHostForRegex("api.anthropic.com")
+	want := "api\\.anthropic\\.com"
+	if got != want {
+		t.Errorf("EscapeHostForRegex: got %q, want %q", got, want)
+	}
+}
+
+func TestEscapeHostForRegex_Wildcard(t *testing.T) {
+	got := EscapeHostForRegex("*.github.com")
+	want := "[a-zA-Z0-9.-]+\\.github\\.com"
+	if got != want {
+		t.Errorf("EscapeHostForRegex wildcard: got %q, want %q", got, want)
+	}
+}
+
+func TestEnvironmentConfig_ResolveRepoPath(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Repos: []RepoRef{
+			{Name: "extend-api", Path: "/work/extend-api"},
+			{Name: "extend-app", Path: "/work/extend-app"},
+		},
+	}
+
+	if got := cfg.ResolveRepoPath("extend-api"); got != "/work/extend-api" {
+		t.Errorf("expected /work/extend-api, got %q", got)
+	}
+	if got := cfg.ResolveRepoPath("extend-app"); got != "/work/extend-app" {
+		t.Errorf("expected /work/extend-app, got %q", got)
+	}
+	if got := cfg.ResolveRepoPath("nonexistent"); got != "" {
+		t.Errorf("expected empty for nonexistent repo, got %q", got)
 	}
 }

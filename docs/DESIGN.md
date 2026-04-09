@@ -16,7 +16,17 @@ Status: `implemented` — v6 session runtime (2026-04-09)
 - **Scion messaging**: Broker with bracketed paste delivery via tmux, 2s debounce for coalescing rapid messages, urgent bypass.
 - **Pilot-always-present**: Implement sessions enforce pilot (opus) + implementer (sonnet) + reviewer (codex) trio.
 - **Docker sandbox**: Per-session compose with internal network isolation, mounted .env for auth.
+- **Multi-repo mapping**: AgentSpec YAML supports optional `repo` field for per-agent repository targeting. Environment config maps repo names to paths via `ResolveRepoPath`.
+- **Per-session worktrees**: Each agent gets an isolated `git worktree` from `origin/main`, preventing agents from trampling each other's work or the user's checkout.
 - **Sleep-time compute**: Post-session Reflector consolidates core memory into archival entries.
+
+## Observability
+
+- **Streaming logs**: `belayer logs -f` polls events every 2s. `--since N` filters to last N minutes.
+- **Debug command**: `belayer debug <id>` aggregates session metadata, recent events, Docker container health (`docker compose ps`), and logs from exited containers.
+- **Agent self-observability**: Daemon socket mounted into Docker containers at `/belayer/daemon.sock`. Agents can call `belayer recall`, `belayer note`, `belayer logs` from inside sandboxes.
+- **Error trapping**: Container entrypoint traps EXIT and logs agent exit code to the session event store via `belayer note`.
+- **Restart context**: `belayer session wake --agent <name>` compiles event history into restart context for crashed agents. Vendor adapters provide `CompileRestartPrompt` for vendor-specific formatting.
 
 ## Session Templates
 
