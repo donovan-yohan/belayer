@@ -196,6 +196,72 @@ Network modes:
 
 Each session gets an isolated Docker network. Agents communicate with the daemon via mounted Unix socket, enabling `belayer recall`, `belayer note`, and `belayer logs` from inside containers.
 
+## Isolation Model
+
+Belayer provides defense in depth through multiple isolation layers:
+
+### Network Isolation
+
+| Layer | Mechanism | Guarantee |
+|-------|-----------|-----------|
+| **Docker Network** | `internal: true` | Containers cannot reach host network directly |
+| **Per-Session Networks** | Unique network per session | Agents from different sessions cannot communicate |
+| **tinyproxy** | HTTP proxy with regex allowlist | Only explicitly allowed hosts reachable in "limited" mode |
+| **Host Validation** | Rejects broad patterns (`.*`, `.`, `*`) | Prevents accidental wildcard allowlisting |
+
+**Network Modes:**
+
+- **`none`** — Internal Docker network only. No internet access. Use for air-gapped environments or when agents should only access local resources.
+- **`limited`** — HTTP/HTTPS via tinyproxy with host allowlist. Vendor APIs and package managers work; everything else is blocked.
+- **`full`** — Unrestricted access. Use when you trust the agents or need unfettered internet access.
+
+### Filesystem Isolation
+
+| Layer | Mechanism | Guarantee |
+|-------|-----------|-----------|
+| **Container Filesystem** | Docker overlayfs | Agent changes are isolated to container unless explicitly mounted |
+| **Workspace Mount** | Read-write bind mount to `/workspace` | Agents can modify project files, but only within the workspace |
+| **Daemon Socket Mount** | Unix socket at `/belayer/daemon.sock` | Agents can query daemon for logs/recall, but cannot escape container |
+| **Git Worktrees** | Per-agent worktrees (optional) | Each agent gets isolated git working directory |
+| **.env Mount** | Credentials mounted as file (0600) | API keys never embedded in compose YAML or shell commands |
+| **Directory Permissions** | `.belayer/` directories use 0700 | Only owner can access workspace configuration |
+
+### Local Mode Isolation
+
+When running without Docker (`--docker` not specified), agents run in tmux sessions on the host:
+
+- **Process isolation**: Each agent is a separate tmux session with unique name prefix (`belayer-{session}-{agent}`)
+- **Working directory**: Agents run in the current working directory (no chroot)
+- **Network**: Full host network access (no sandboxing)
+- **Use case**: Trusted environments where Docker overhead isn't acceptable
+
+### Security Boundaries
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          ISOLATION BOUNDARIES                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Host System
+  ├─ Daemon (Unix socket ~/.belayer/daemon.sock, chmod 0600)
+  │   └─ HTTP API with session-scoped access control
+  │
+  ├─ Docker Daemon
+  │   └─ Per-Session Networks (internal: true)
+  │       └─ Container A ──► tinyproxy ──► Internet (if allowed)
+  │       └─ Container B ──► tinyproxy ──► Internet (if allowed)
+  │           │
+  │           ├─ Mounted: /workspace (RW)       ← Project files
+  │           ├─ Mounted: /belayer/daemon.sock (RO) ← Daemon API
+  │           ├─ Mounted: /belayer/.env (RO)    ← Credentials
+  │           └─ Container filesystem (overlay) ← Ephemeral changes
+  │
+  └─ tmux sessions (local mode, no network/filesystem isolation)
+
+  Key Principle: Agents cannot escape their session boundary. Even if an agent
+  is compromised, it can only affect its own session and explicitly mounted paths.
+```
+
 ## Development
 
 ```bash

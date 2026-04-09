@@ -184,13 +184,106 @@ agent → (yaml.v3)
 workspace → (os/exec, encoding/json)
 ```
 
-## Security Model
+## Security & Isolation Model
+
+Belayer provides defense in depth through multiple isolation layers. Understanding these boundaries is critical for security-conscious deployments.
+
+### Network Isolation
+
+#### Docker Network Architecture
+
+```
+Host Network Namespace
+└── Docker Daemon
+    ├── Session Network A (internal: true, isolated)
+    │   ├── Container: pilot ──┐
+    │   ├── Container: implementer │──► tinyproxy ──► Internet (if allowed)
+    │   └── Container: reviewer ──┘
+    │
+    ├── Session Network B (internal: true, isolated)
+    │   └── Container: explorer ──► tinyproxy ──► Internet (if allowed)
+    │
+    └── tinyproxy (per-session, optional)
+        └── Allowlist: ["api.anthropic.com", "*.github.com"]
+```
+
+**Key Properties:**
+- **Internal networks**: Docker networks marked `internal: true` cannot reach the host network or internet directly
+- **Per-session isolation**: Each session gets its own Docker network; agents cannot communicate across sessions
+- **tinyproxy filtering**: In "limited" mode, all outbound traffic goes through tinyproxy with regex-based host allowlisting
+- **Host validation**: Broad patterns (`.*`, `.`, `*`) and non-hostname characters are rejected to prevent accidental over-allowlisting
+
+#### Network Modes
+
+| Mode | Implementation | Use Case |
+|------|----------------|----------|
+| `none` | Internal Docker network only | Air-gapped environments, offline work |
+| `limited` | tinyproxy with allowlist | Production default — vendor APIs + package managers only |
+| `full` | Direct bridge network | Trusted environments, maximum flexibility |
+
+### Filesystem Isolation
+
+#### Container Mounts
+
+Each Docker container receives carefully scoped filesystem access:
+
+| Mount | Path | Mode | Purpose |
+|-------|------|------|---------|
+| Workspace | `/workspace` | Read-write | Project files agent works on |
+| Daemon Socket | `/belayer/daemon.sock` | Read-only | Agent self-observability API |
+| Credentials | `/belayer/.env` | Read-only (0600) | Vendor API keys (never in env vars) |
+| Git Config | `~/.gitconfig` | Read-only | Git identity for commits |
+| SSH Keys | `~/.ssh` | Read-only (if mounted) | Git authentication |
+
+**Container Filesystem:**
+- Overlayfs for container root — changes outside mounted paths are ephemeral
+- No access to host `/proc`, `/sys`, or other system paths
+- No ability to mount new volumes or escape via privileged operations
+
+#### Local Mode (tmux) Isolation
+
+When Docker is not used, agents run as tmux sessions:
+
+| Aspect | Isolation Level |
+|--------|-----------------|
+| Process | Separate tmux session with unique name |
+| Filesystem | Full host access (runs in CWD) |
+| Network | Full host network access |
+| Use case | Trusted environments, no Docker overhead |
+
+**Process Isolation:**
+- Session naming: `belayer-{session-id}-{agent-name}`
+- Separate process group for signal management
+- Bracketed paste mode to prevent injection attacks
+
+### Access Control Matrix
+
+| Resource | Docker Mode | Local Mode |
+|----------|-------------|------------|
+| Workspace files | RW via mount | RW in CWD |
+| Daemon API | RO via socket mount | Unix socket (same) |
+| Internet | filtered/none/full | Full access |
+| Host filesystem | No access | Full access |
+| Other sessions | No access | No access (via session scoping) |
+| Credentials | Mounted file only | Environment variables |
+
+### Security Mechanisms
 
 - **Shell safety**: All YAML template values pass through `internal/shell.Quote` before shell interpolation. Template validation rejects agent names and env keys with unsafe characters.
 - **Directory permissions**: All `.belayer/` directories created with 0700. Daemon socket chmod'd to 0600. Compose files and templates written with 0600.
-- **Network isolation**: Docker `internal: true` networks prevent direct internet access. Limited mode uses tinyproxy with anchored regex patterns. Host validation rejects broad patterns (`.*`, `.`, `*`) and non-hostname characters.
-- **Auth isolation**: Vendor credentials forwarded via mounted `.env` file (0600), never embedded in compose YAML or shell commands.
 - **Compose safety**: All values in generated docker-compose.yml are YAML double-quoted to prevent YAML injection.
+- **Auth isolation**: Vendor credentials forwarded via mounted `.env` file (0600), never embedded in compose YAML or shell commands.
+
+### Threat Model
+
+| Threat | Mitigation |
+|--------|------------|
+| Agent escapes container | Docker `internal` networks + no privileged mode + read-only rootfs for system paths |
+| Agent accesses other sessions | Per-session Docker networks + session-scoped API tokens |
+| Credential exfiltration | Credentials in mounted files (not env vars) + network filtering |
+| Agent modifies host system | Container overlayfs + limited mount scope |
+| Prompt injection via logs | Structured JSON logging + no shell interpolation of log content |
+| Privilege escalation | Non-root container user (UID/GID sync) + no sudo |
 
 ---
 
