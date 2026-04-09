@@ -61,6 +61,7 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/messages", d.handleSendMessage)
 	mux.HandleFunc("POST /sessions/{id}/messages/broadcast", d.handleBroadcastMessage)
 	mux.HandleFunc("GET /sessions/{id}/messages", d.handleListMessages)
+	mux.HandleFunc("GET /search", d.handleSearch)
 
 	d.server = &http.Server{Handler: mux}
 	return d, nil
@@ -246,6 +247,20 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "logged"})
+}
+
+func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q is required"})
+		return
+	}
+	events, err := d.store.SearchEvents(q)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, events)
 }
 
 // --- helpers ---

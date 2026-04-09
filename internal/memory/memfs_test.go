@@ -16,7 +16,7 @@ func TestWriteCoreFile_CreatesFile(t *testing.T) {
 
 	entries := []CoreEntry{
 		{Key: "goal", Value: "build a memory system"},
-		{Key: "phase", Value: "climb"},
+		{Key: "phase", Value: "implement"},
 	}
 
 	if err := fs.WriteCoreFile("myrepo", entries); err != nil {
@@ -33,7 +33,7 @@ func TestWriteCoreFile_CreatesFile(t *testing.T) {
 	if !strings.Contains(content, "## goal\nbuild a memory system") {
 		t.Errorf("expected goal entry in core.md, got:\n%s", content)
 	}
-	if !strings.Contains(content, "## phase\nclimb") {
+	if !strings.Contains(content, "## phase\nimplement") {
 		t.Errorf("expected phase entry in core.md, got:\n%s", content)
 	}
 }
@@ -46,7 +46,7 @@ func TestReadCoreFile_ParsesEntries(t *testing.T) {
 
 	written := []CoreEntry{
 		{Key: "goal", Value: "build a memory system"},
-		{Key: "phase", Value: "climb"},
+		{Key: "phase", Value: "implement"},
 	}
 
 	if err := fs.WriteCoreFile("repo1", written); err != nil {
@@ -70,8 +70,8 @@ func TestReadCoreFile_ParsesEntries(t *testing.T) {
 	if keys["goal"] != "build a memory system" {
 		t.Errorf("goal: got %q, want %q", keys["goal"], "build a memory system")
 	}
-	if keys["phase"] != "climb" {
-		t.Errorf("phase: got %q, want %q", keys["phase"], "climb")
+	if keys["phase"] != "implement" {
+		t.Errorf("phase: got %q, want %q", keys["phase"], "implement")
 	}
 }
 
@@ -298,7 +298,7 @@ func TestRebuildIndex_PopulatesSQLiteFromMarkdown(t *testing.T) {
 	// Write core entries for repo1.
 	coreEntries := []CoreEntry{
 		{SessionID: "sess-rebuild", Key: "goal", Value: "build the index"},
-		{SessionID: "sess-rebuild", Key: "phase", Value: "summit"},
+		{SessionID: "sess-rebuild", Key: "phase", Value: "deliver"},
 	}
 	if err := fs.WriteCoreFile("repo1", coreEntries); err != nil {
 		t.Fatalf("WriteCoreFile: %v", err)

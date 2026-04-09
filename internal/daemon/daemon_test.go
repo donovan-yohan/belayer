@@ -29,6 +29,7 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("PATCH /sessions/{id}", d.handleUpdateSession)
 	mux.HandleFunc("GET /sessions/{id}/events", d.handleGetEvents)
 	mux.HandleFunc("POST /sessions/{id}/events", d.handleLogEvent)
+	mux.HandleFunc("GET /search", d.handleSearch)
 	d.server = &http.Server{Handler: mux}
 	return d
 }
@@ -72,7 +73,7 @@ func TestCreateSession(t *testing.T) {
 	d := testDaemon(t)
 	rr := doRequest(t, d, "POST", "/sessions", createSessionRequest{
 		Name:     "test-session",
-		Template: "climb",
+		Template: "implement",
 	})
 
 	if rr.Code != http.StatusCreated {
@@ -82,8 +83,8 @@ func TestCreateSession(t *testing.T) {
 	if sess.Name != "test-session" {
 		t.Fatalf("expected name=test-session, got %s", sess.Name)
 	}
-	if sess.Template != "climb" {
-		t.Fatalf("expected template=climb, got %s", sess.Template)
+	if sess.Template != "implement" {
+		t.Fatalf("expected template=implement, got %s", sess.Template)
 	}
 	if sess.Status != "pending" {
 		t.Fatalf("expected status=pending, got %s", sess.Status)
@@ -216,5 +217,44 @@ func TestShutdown(t *testing.T) {
 	if err := d.Shutdown(context.Background()); err != nil {
 		// server.Shutdown may return an error if Serve was never called — that's fine.
 		_ = err
+	}
+}
+
+func TestSearchEvents(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create a session and log searchable events.
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "search-test"})
+	created := decodeJSON[store.Session](t, createRR)
+
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/events", logEventRequest{
+		Type: "node_started",
+		Data: `{"node":"implementer"}`,
+	})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/events", logEventRequest{
+		Type: "node_completed",
+		Data: `{"node":"reviewer"}`,
+	})
+
+	// Search for a term that matches one event's data.
+	rr := doRequest(t, d, "GET", "/search?q=implementer", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	events := decodeJSON[[]store.SessionEvent](t, rr)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(events))
+	}
+	if events[0].Type != "node_started" {
+		t.Errorf("expected type=node_started, got %s", events[0].Type)
+	}
+}
+
+func TestSearchEventsMissingQuery(t *testing.T) {
+	d := testDaemon(t)
+
+	rr := doRequest(t, d, "GET", "/search", nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
 	}
 }

@@ -38,8 +38,8 @@ Belayer v6 is built around a session runtime rather than a pipeline engine.
 
 7. **Agent framework** (`internal/agent/`, `internal/session/`, `internal/reflection/`)
    - YAML agent configs with role validation and tool registry
-   - Explore/Climb/Summit session templates
-   - Pilot-always-present invariant enforced in Climb
+   - Intake/Implement/Deliver session templates
+   - Pilot-always-present invariant enforced in Implement
    - Sleep-time reflection for memory consolidation
 
 ## Package Dependency Graph

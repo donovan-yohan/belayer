@@ -1,7 +1,6 @@
 package session
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -9,32 +8,32 @@ import (
 // LoadTemplate
 // ---------------------------------------------------------------------------
 
-func TestLoadTemplate_Explore(t *testing.T) {
-	tmpl, err := LoadTemplate("explore")
+func TestLoadTemplate_Intake(t *testing.T) {
+	tmpl, err := LoadTemplate("intake")
 	if err != nil {
-		t.Fatalf("LoadTemplate(\"explore\") unexpected error: %v", err)
+		t.Fatalf("LoadTemplate(\"intake\") unexpected error: %v", err)
 	}
-	if tmpl.Name != "explore" {
-		t.Errorf("Name: got %q, want %q", tmpl.Name, "explore")
+	if tmpl.Name != "intake" {
+		t.Errorf("Name: got %q, want %q", tmpl.Name, "intake")
 	}
-	if tmpl.Phase != PhaseExplore {
-		t.Errorf("Phase: got %q, want %q", tmpl.Phase, PhaseExplore)
+	if tmpl.Phase != PhaseIntake {
+		t.Errorf("Phase: got %q, want %q", tmpl.Phase, PhaseIntake)
 	}
 	if len(tmpl.Agents) != 1 {
 		t.Errorf("Agents: got %d, want 1", len(tmpl.Agents))
 	}
 }
 
-func TestLoadTemplate_Climb(t *testing.T) {
-	tmpl, err := LoadTemplate("climb")
+func TestLoadTemplate_Implement(t *testing.T) {
+	tmpl, err := LoadTemplate("implement")
 	if err != nil {
-		t.Fatalf("LoadTemplate(\"climb\") unexpected error: %v", err)
+		t.Fatalf("LoadTemplate(\"implement\") unexpected error: %v", err)
 	}
-	if tmpl.Name != "climb" {
-		t.Errorf("Name: got %q, want %q", tmpl.Name, "climb")
+	if tmpl.Name != "implement" {
+		t.Errorf("Name: got %q, want %q", tmpl.Name, "implement")
 	}
-	if tmpl.Phase != PhaseClimb {
-		t.Errorf("Phase: got %q, want %q", tmpl.Phase, PhaseClimb)
+	if tmpl.Phase != PhaseImplement {
+		t.Errorf("Phase: got %q, want %q", tmpl.Phase, PhaseImplement)
 	}
 	if len(tmpl.Agents) != 3 {
 		t.Errorf("Agents: got %d, want 3", len(tmpl.Agents))
@@ -42,26 +41,26 @@ func TestLoadTemplate_Climb(t *testing.T) {
 	// Must include a pilot.
 	var hasPilot bool
 	for _, a := range tmpl.Agents {
-		if a.Role == "pilot" {
+		if a.Name == "pilot" {
 			hasPilot = true
 			break
 		}
 	}
 	if !hasPilot {
-		t.Error("climb template missing agent with role \"pilot\"")
+		t.Error("implement template missing agent named \"pilot\"")
 	}
 }
 
-func TestLoadTemplate_Summit(t *testing.T) {
-	tmpl, err := LoadTemplate("summit")
+func TestLoadTemplate_Deliver(t *testing.T) {
+	tmpl, err := LoadTemplate("deliver")
 	if err != nil {
-		t.Fatalf("LoadTemplate(\"summit\") unexpected error: %v", err)
+		t.Fatalf("LoadTemplate(\"deliver\") unexpected error: %v", err)
 	}
-	if tmpl.Name != "summit" {
-		t.Errorf("Name: got %q, want %q", tmpl.Name, "summit")
+	if tmpl.Name != "deliver" {
+		t.Errorf("Name: got %q, want %q", tmpl.Name, "deliver")
 	}
-	if tmpl.Phase != PhaseSummit {
-		t.Errorf("Phase: got %q, want %q", tmpl.Phase, PhaseSummit)
+	if tmpl.Phase != PhaseDeliver {
+		t.Errorf("Phase: got %q, want %q", tmpl.Phase, PhaseDeliver)
 	}
 	if len(tmpl.Agents) != 2 {
 		t.Errorf("Agents: got %d, want 2", len(tmpl.Agents))
@@ -79,86 +78,49 @@ func TestLoadTemplate_Unknown(t *testing.T) {
 // ValidateTemplate — valid cases
 // ---------------------------------------------------------------------------
 
-func TestValidateTemplate_ValidClimb(t *testing.T) {
-	tmpl, err := LoadTemplate("climb")
+func TestValidateTemplate_ValidImplement(t *testing.T) {
+	tmpl, err := LoadTemplate("implement")
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	if err := ValidateTemplate(tmpl); err != nil {
-		t.Errorf("ValidateTemplate(climb) unexpected error: %v", err)
+		t.Errorf("ValidateTemplate(implement) unexpected error: %v", err)
 	}
 }
 
-func TestValidateTemplate_ValidExplore(t *testing.T) {
-	tmpl, err := LoadTemplate("explore")
+func TestValidateTemplate_ValidIntake(t *testing.T) {
+	tmpl, err := LoadTemplate("intake")
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	// Explore has no pilot — that must be fine (pilot invariant is climb-only).
+	// Intake has no pilot — that must be fine (pilot invariant is implement-only).
 	if err := ValidateTemplate(tmpl); err != nil {
-		t.Errorf("ValidateTemplate(explore) unexpected error: %v", err)
+		t.Errorf("ValidateTemplate(intake) unexpected error: %v", err)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// ValidateTemplate — climb trio invariant failures
+// ValidateTemplate — error cases
 // ---------------------------------------------------------------------------
 
-func TestValidateTemplate_ClimbMissingPilot(t *testing.T) {
-	tmpl, _ := LoadTemplate("climb")
-	// Strip the pilot agent.
-	var filtered []AgentSpec
-	for _, a := range tmpl.Agents {
-		if a.Role != "pilot" {
-			filtered = append(filtered, a)
-		}
-	}
-	tmpl.Agents = filtered
-
-	err := ValidateTemplate(tmpl)
-	if err == nil {
-		t.Fatal("ValidateTemplate expected error for missing pilot, got nil")
-	}
-	if !strings.Contains(err.Error(), "pilot") {
-		t.Errorf("error %q should contain \"pilot\"", err.Error())
+func TestValidateTemplate_EmptyName(t *testing.T) {
+	tmpl := SessionTemplate{Agents: []AgentSpec{{Name: "a", Vendor: "claude"}}}
+	if err := ValidateTemplate(tmpl); err == nil {
+		t.Fatal("expected error for empty name")
 	}
 }
 
-func TestValidateTemplate_ClimbMissingReviewer(t *testing.T) {
-	tmpl, _ := LoadTemplate("climb")
-	var filtered []AgentSpec
-	for _, a := range tmpl.Agents {
-		if a.Role != "reviewer" {
-			filtered = append(filtered, a)
-		}
-	}
-	tmpl.Agents = filtered
-
-	err := ValidateTemplate(tmpl)
-	if err == nil {
-		t.Fatal("ValidateTemplate expected error for missing reviewer, got nil")
-	}
-	if !strings.Contains(err.Error(), "reviewer") {
-		t.Errorf("error %q should contain \"reviewer\"", err.Error())
+func TestValidateTemplate_NoAgents(t *testing.T) {
+	tmpl := SessionTemplate{Name: "test"}
+	if err := ValidateTemplate(tmpl); err == nil {
+		t.Fatal("expected error for no agents")
 	}
 }
 
-func TestValidateTemplate_ClimbMissingImplementer(t *testing.T) {
-	tmpl, _ := LoadTemplate("climb")
-	var filtered []AgentSpec
-	for _, a := range tmpl.Agents {
-		if a.Role != "implementer" {
-			filtered = append(filtered, a)
-		}
-	}
-	tmpl.Agents = filtered
-
-	err := ValidateTemplate(tmpl)
-	if err == nil {
-		t.Fatal("ValidateTemplate expected error for missing implementer, got nil")
-	}
-	if !strings.Contains(err.Error(), "implementer") {
-		t.Errorf("error %q should contain \"implementer\"", err.Error())
+func TestValidateTemplate_AgentMissingVendor(t *testing.T) {
+	tmpl := SessionTemplate{Name: "test", Agents: []AgentSpec{{Name: "a"}}}
+	if err := ValidateTemplate(tmpl); err == nil {
+		t.Fatal("expected error for agent with no vendor")
 	}
 }
 
@@ -168,7 +130,7 @@ func TestValidateTemplate_ClimbMissingImplementer(t *testing.T) {
 
 func TestListTemplates(t *testing.T) {
 	names := ListTemplates()
-	want := map[string]bool{"climb": true, "explore": true, "summit": true}
+	want := map[string]bool{"implement": true, "intake": true, "deliver": true}
 	if len(names) != len(want) {
 		t.Fatalf("ListTemplates: got %d names, want %d", len(names), len(want))
 	}

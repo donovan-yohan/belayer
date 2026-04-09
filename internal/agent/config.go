@@ -7,27 +7,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Role identifies the functional role an agent plays in a pipeline session.
-type Role string
-
-const (
-	RolePilot       Role = "pilot"
-	RoleImplementer Role = "implementer"
-	RoleReviewer    Role = "reviewer"
-)
-
-var validRoles = map[Role]struct{}{
-	RolePilot:       {},
-	RoleImplementer: {},
-	RoleReviewer:    {},
-}
-
-// AgentConfig holds the configuration for a single agent in a pipeline session.
+// AgentConfig holds the configuration for a single agent.
 type AgentConfig struct {
 	Name         string `yaml:"name" json:"name"`
-	Role         Role   `yaml:"role" json:"role"`
-	Vendor       string `yaml:"vendor" json:"vendor"`         // e.g., "claude", "codex"
-	Model        string `yaml:"model" json:"model"`           // e.g., "opus", "sonnet"
+	Vendor       string `yaml:"vendor" json:"vendor"`
+	Model        string `yaml:"model" json:"model"`
 	Tools        []Tool `yaml:"tools,omitempty" json:"tools,omitempty"`
 	SystemPrompt string `yaml:"system_prompt" json:"system_prompt"`
 }
@@ -71,9 +55,6 @@ func LoadAgentConfigs(path string) ([]AgentConfig, error) {
 func ValidateAgentConfig(cfg AgentConfig) error {
 	if cfg.Name == "" {
 		return fmt.Errorf("agent: config validation: name is required")
-	}
-	if _, ok := validRoles[cfg.Role]; !ok {
-		return fmt.Errorf("agent: config validation: invalid role %q (must be one of: pilot, implementer, reviewer)", cfg.Role)
 	}
 	if cfg.Vendor == "" {
 		return fmt.Errorf("agent: config validation: vendor is required")

@@ -1,34 +1,56 @@
 # belayer
 
-Belayer is being rebuilt on a v6 clean-break branch.
+Session runtime for autonomous coding agents. Many robots, bring your own pilots.
 
-## Current Status
+## What It Does
 
-This repository no longer contains the v5 Temporal + YAML pipeline implementation.
-`feature/v6` is the base branch for rebuilding Belayer as a session-runtime orchestrator.
+Belayer provides the infrastructure for multi-agent coding sessions: a daemon that manages sessions, messaging, memory, and execution environments. You bring the AI agents (Claude, Codex, or any terminal program); belayer provides the coordination layer.
 
-What is intentionally preserved right now:
+## Quick Start
 
-- the CLI entrypoint scaffold
-- shared model/event types
-- lightweight event logging
-- v6-oriented documentation
+```bash
+# Build and install
+go install ./cmd/belayer
 
-## Immediate Direction
+# Bootstrap a workspace
+belayer setup
 
-Belayer v6 is targeting:
+# Start the daemon
+belayer daemon
 
-- daemon-managed coding sessions
-- local runtime state backed by SQLite
-- vendor CLI adapters
-- tmux / local execution coordination
-- a simpler, more legible operator model than v5
+# Launch an implementation session
+belayer implement --input "Add rate limiting to /api/v1/cards"
+
+# Attach to the pilot agent
+belayer attach <session-name> --agent pilot
+
+# Monitor
+belayer status
+belayer logs <session-id>
+```
+
+## Three Phases
+
+| Phase | Command | Agents | Purpose |
+|---|---|---|---|
+| **Intake** | `belayer intake` | 1 (explorer) | Idea to spec |
+| **Implement** | `belayer implement` | 3 (pilot, implementer, reviewer) | Code with review loop |
+| **Deliver** | `belayer deliver` | 2 (QA, merger) | Validate, merge, monitor |
+
+## Architecture
+
+- **Daemon** — always-on supervisor on Unix socket (`~/.belayer/daemon.sock`)
+- **SQLite** — session store, event log, FTS5 search (WAL mode)
+- **tmux** — agent execution substrate (local; Docker containers planned)
+- **Three-tier memory** — core (in-context), archival (FTS5), recall (combined)
+- **Message broker** — agent-to-agent IPC with debounce
+- **Vendor adapters** — Claude, Codex, Generic (extensible)
 
 ## Development
 
 ```bash
-go build ./...
+go build ./cmd/belayer
 go test ./...
 ```
 
-This branch is meant to be the clean foundation for the rest of the v6 epic.
+Tracked in [Epic #21](https://github.com/donovan-yohan/belayer/issues/21).

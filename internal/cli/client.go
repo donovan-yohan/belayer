@@ -164,6 +164,23 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
+// LogEvent posts an event to a session.
+func (c *Client) LogEvent(sessionID, eventType, data string) error {
+	body := map[string]any{
+		"type": eventType,
+		"data": data,
+	}
+	resp, err := c.do("POST", "/sessions/"+sessionID+"/events", body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		return fmt.Errorf("log event: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // GetEvents returns events for a session.
 func (c *Client) GetEvents(sessionID string) ([]eventResponse, error) {
 	resp, err := c.do("GET", "/sessions/"+sessionID+"/events", nil)

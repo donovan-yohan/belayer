@@ -53,7 +53,7 @@ func TestReflect_CreateArchivalEntry(t *testing.T) {
 	if err := m.WriteCore(sessionID, "goal", "build memory system"); err != nil {
 		t.Fatalf("WriteCore: %v", err)
 	}
-	if err := m.WriteCore(sessionID, "phase", "climb"); err != nil {
+	if err := m.WriteCore(sessionID, "phase", "implement"); err != nil {
 		t.Fatalf("WriteCore: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func TestConsolidate_FormatsMarkdown(t *testing.T) {
 
 	entries := []memory.CoreEntry{
 		{Key: "goal", Value: "build a memory system"},
-		{Key: "phase", Value: "climb"},
+		{Key: "phase", Value: "implement"},
 	}
 
 	got := r.Consolidate(entries)
@@ -181,7 +181,7 @@ func TestConsolidate_FormatsMarkdown(t *testing.T) {
 	if !strings.Contains(got, "- **goal**: build a memory system\n") {
 		t.Errorf("expected goal entry in output, got: %q", got)
 	}
-	if !strings.Contains(got, "- **phase**: climb\n") {
+	if !strings.Contains(got, "- **phase**: implement\n") {
 		t.Errorf("expected phase entry in output, got: %q", got)
 	}
 }

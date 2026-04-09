@@ -10,32 +10,38 @@ import (
 
 // SandboxConfig holds configuration for a Docker sandbox.
 type SandboxConfig struct {
-	SessionID      string
-	Image          string          // default: "ubuntu:24.04"
-	EnvFile        string          // path to .env file to mount (optional)
-	AllowedDomains []string        // domains for network allowlisting (config marker only)
-	WorkDir        string          // working directory inside container (default: /workspace)
-	Ports          map[int]int     // host:container port mappings
+	ComposeConfig ComposeConfig
 }
 
 // Sandbox manages the lifecycle of a Docker Compose-based sandbox container.
 type Sandbox struct {
 	config     SandboxConfig
-	composeDir string // directory containing the generated docker-compose.yml
+	agentNames []string // names of agent services for cleanup
+	composeDir string   // directory containing the generated docker-compose.yml
 }
 
 // NewSandbox validates config, sets defaults, and returns a Sandbox ready for Create.
 func NewSandbox(cfg SandboxConfig) (*Sandbox, error) {
-	if cfg.SessionID == "" {
+	if cfg.ComposeConfig.SessionID == "" {
 		return nil, fmt.Errorf("docker: sandbox: SessionID is required")
 	}
-	if cfg.Image == "" {
-		cfg.Image = "ubuntu:24.04"
+
+	// Apply defaults to each agent.
+	for i := range cfg.ComposeConfig.Agents {
+		if cfg.ComposeConfig.Agents[i].Image == "" {
+			cfg.ComposeConfig.Agents[i].Image = "belayer/agent:latest"
+		}
+		if cfg.ComposeConfig.Agents[i].WorkDir == "" {
+			cfg.ComposeConfig.Agents[i].WorkDir = "/workspace"
+		}
 	}
-	if cfg.WorkDir == "" {
-		cfg.WorkDir = "/workspace"
+
+	agentNames := make([]string, 0, len(cfg.ComposeConfig.Agents))
+	for _, a := range cfg.ComposeConfig.Agents {
+		agentNames = append(agentNames, a.Name)
 	}
-	return &Sandbox{config: cfg}, nil
+
+	return &Sandbox{config: cfg, agentNames: agentNames}, nil
 }
 
 // Create generates the docker-compose.yml in ~/.belayer/sandboxes/<sessionID>/.
@@ -46,12 +52,12 @@ func (s *Sandbox) Create() error {
 		return fmt.Errorf("docker: sandbox: get home dir: %w", err)
 	}
 
-	dir := filepath.Join(home, ".belayer", "sandboxes", s.config.SessionID)
+	dir := filepath.Join(home, ".belayer", "sandboxes", s.config.ComposeConfig.SessionID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("docker: sandbox: create compose dir: %w", err)
 	}
 
-	content, err := generateCompose(s.config)
+	content, err := generateCompose(s.config.ComposeConfig)
 	if err != nil {
 		return fmt.Errorf("docker: sandbox: generate compose: %w", err)
 	}
@@ -88,7 +94,7 @@ func (s *Sandbox) Stop(warn bool) error {
 		return fmt.Errorf("docker: sandbox: must call Create before Stop")
 	}
 	if warn {
-		fmt.Fprintln(os.Stderr, "warning: stopping sandbox for session", s.config.SessionID)
+		fmt.Fprintln(os.Stderr, "warning: stopping sandbox for session", s.config.ComposeConfig.SessionID)
 	}
 	composePath := filepath.Join(s.composeDir, "docker-compose.yml")
 	cmd := exec.Command("docker", "compose", "-f", composePath, "down")
@@ -100,13 +106,20 @@ func (s *Sandbox) Stop(warn bool) error {
 	return nil
 }
 
-// Exec runs a command inside the "agent" service container and returns its combined output.
-func (s *Sandbox) Exec(command string) (string, error) {
+// Exec runs a command inside the named agent service container and returns its combined output.
+// If agentName is empty, the first agent in the config is used.
+func (s *Sandbox) Exec(agentName, command string) (string, error) {
 	if s.composeDir == "" {
 		return "", fmt.Errorf("docker: sandbox: must call Create before Exec")
 	}
+	if agentName == "" && len(s.agentNames) > 0 {
+		agentName = s.agentNames[0]
+	}
+	if agentName == "" {
+		return "", fmt.Errorf("docker: sandbox: no agent name specified and no agents configured")
+	}
 	composePath := filepath.Join(s.composeDir, "docker-compose.yml")
-	cmd := exec.Command("docker", "compose", "-f", composePath, "exec", "-T", "agent", "sh", "-c", command)
+	cmd := exec.Command("docker", "compose", "-f", composePath, "exec", "-T", agentName, "sh", "-c", command)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -114,6 +127,11 @@ func (s *Sandbox) Exec(command string) (string, error) {
 		return out.String(), fmt.Errorf("docker: sandbox: exec: %w", err)
 	}
 	return out.String(), nil
+}
+
+// AgentNames returns the list of agent service names in this sandbox.
+func (s *Sandbox) AgentNames() []string {
+	return s.agentNames
 }
 
 // ComposeDir returns the directory containing the generated docker-compose.yml.

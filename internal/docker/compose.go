@@ -4,55 +4,124 @@ import (
 	"bytes"
 	"fmt"
 	"net"
+	"strings"
 	"text/template"
 )
 
-const composeTmpl = `services:
-  agent:
-    image: {{ .Image }}
-    command: ["sleep", "infinity"]
-    working_dir: {{ .WorkDir }}
-    networks:
-      - belayer
-{{ if .EnvFile }}    env_file:
-      - /run/secrets/env
-    volumes:
-      - {{ .EnvFile }}:/run/secrets/env:ro
-{{ end }}{{ if .AllowedDomains }}    # Allowed domains (configure firewall rules manually):
-{{ range .AllowedDomains }}    #   - {{ . }}
-{{ end }}{{ end }}
-networks:
-  belayer:
-    name: belayer-{{ .SessionID }}
-    internal: true
-`
-
-type composeData struct {
-	Image          string
-	WorkDir        string
-	EnvFile        string
+// ComposeConfig describes a full session's Docker Compose setup.
+type ComposeConfig struct {
 	SessionID      string
-	AllowedDomains []string
+	Agents         []AgentComposeConfig
+	Network        NetworkConfig
+	IncludeCompose string // path to user's existing docker-compose.yml to extend
 }
 
-// generateCompose returns docker-compose.yml content for the given SandboxConfig.
-func generateCompose(cfg SandboxConfig) ([]byte, error) {
+// AgentComposeConfig describes a single agent service in the compose file.
+type AgentComposeConfig struct {
+	Name    string            // e.g., "pilot", "implementer", "reviewer"
+	Image   string            // default: "belayer/agent:latest"
+	WorkDir string            // host path to mount as /workspace
+	EnvFile string            // path to .env file for vendor auth
+	EnvVars map[string]string // additional env vars (BELAYER_SESSION_ID, etc.)
+}
+
+// NetworkConfig describes the network isolation mode for the session.
+type NetworkConfig struct {
+	Type         string   // "none", "limited", "full"
+	AllowedHosts []string // for "limited" mode
+	ProxyImage   string   // default: "ubuntu/squid:latest"
+}
+
+const composeTmpl = `{{ if .IncludeCompose }}include:
+  - path: {{ .IncludeCompose }}
+
+{{ end }}services:
+{{ range .Agents }}  {{ .Name }}:
+    image: {{ .Image }}
+    working_dir: /workspace
+{{ if .WorkDir }}    volumes:
+      - {{ .WorkDir }}:/workspace
+{{ end }}{{ if .EnvFile }}    env_file:
+      - {{ .EnvFile }}
+{{ end }}    environment:
+{{ range $k, $v := .EnvVars }}      {{ $k }}: {{ $v }}
+{{ end }}    networks:
+      - session
+{{ if $.IncludeProxy }}    depends_on:
+      - proxy
+{{ end }}
+{{ end }}{{ if .IncludeProxy }}  proxy:
+    image: {{ .ProxyImage }}
+    environment:
+      ALLOWED_HOSTS: "{{ .AllowedHosts }}"
+    networks:
+      - session
+      - internet
+
+{{ end }}networks:
+  session:
+    name: belayer-{{ .SessionID }}
+{{ if .InternalNetwork }}    internal: true
+{{ end }}{{ if .IncludeProxy }}  internet:
+    driver: bridge
+{{ end }}`
+
+type composeTemplateData struct {
+	SessionID       string
+	Agents          []agentTemplateData
+	IncludeCompose  string
+	IncludeProxy    bool
+	ProxyImage      string
+	AllowedHosts    string
+	InternalNetwork bool
+}
+
+type agentTemplateData struct {
+	Name    string
+	Image   string
+	WorkDir string
+	EnvFile string
+	EnvVars map[string]string
+}
+
+// generateCompose returns docker-compose.yml content for the given ComposeConfig.
+func generateCompose(cfg ComposeConfig) ([]byte, error) {
 	tmpl, err := template.New("compose").Parse(composeTmpl)
 	if err != nil {
 		return nil, fmt.Errorf("docker: parse compose template: %w", err)
 	}
 
-	workDir := cfg.WorkDir
-	if workDir == "" {
-		workDir = "/workspace"
+	agents := make([]agentTemplateData, 0, len(cfg.Agents))
+	for _, a := range cfg.Agents {
+		img := a.Image
+		if img == "" {
+			img = "belayer/agent:latest"
+		}
+		agents = append(agents, agentTemplateData{
+			Name:    a.Name,
+			Image:   img,
+			WorkDir: a.WorkDir,
+			EnvFile: a.EnvFile,
+			EnvVars: a.EnvVars,
+		})
 	}
 
-	data := composeData{
-		Image:          cfg.Image,
-		WorkDir:        workDir,
-		EnvFile:        cfg.EnvFile,
-		SessionID:      cfg.SessionID,
-		AllowedDomains: cfg.AllowedDomains,
+	proxyImage := cfg.Network.ProxyImage
+	if proxyImage == "" {
+		proxyImage = "ubuntu/squid:latest"
+	}
+
+	includeProxy := cfg.Network.Type == "limited"
+	internalNetwork := cfg.Network.Type != "full"
+
+	data := composeTemplateData{
+		SessionID:       cfg.SessionID,
+		Agents:          agents,
+		IncludeCompose:  cfg.IncludeCompose,
+		IncludeProxy:    includeProxy,
+		ProxyImage:      proxyImage,
+		AllowedHosts:    strings.Join(cfg.Network.AllowedHosts, ","),
+		InternalNetwork: internalNetwork,
 	}
 
 	var buf bytes.Buffer

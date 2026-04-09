@@ -9,7 +9,6 @@ func baseCtx() PromptContext {
 	return PromptContext{
 		Config: AgentConfig{
 			Name:         "pilot-agent",
-			Role:         RolePilot,
 			Vendor:       "claude",
 			Model:        "opus",
 			SystemPrompt: "You are the pilot agent coordinating the team.",
