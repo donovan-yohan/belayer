@@ -1,0 +1,77 @@
+docs/ARCHITECTURE.md
+  57241f7f1cf6e9f2 16,19-23,26-29,34,38-39,44-46,49,54-56,58,60,62-63
+README.md
+  8ad1df319275a452 49,52-56,59-62,67,71-72,77-79,82,87-89,91,93,95-96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "5d0b27e67bc40a131f76dbe6acc59643d1fc5d11",
+  "prompts": {
+    "122e389a46ddebf4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6fc578d5-73f7-4fbe-8486-1ca1272fc7b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 614,
+      "overriden_lines": 0
+    },
+    "2f8be35992b6c0cd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fabf94a4-7194-4e49-bb68-5b4b8e77f6ff",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1465,
+      "overriden_lines": 0
+    },
+    "57241f7f1cf6e9f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "opencode-transcript-ses_28d228a93ffePVQovYQt4w5NJo-f8239b3c-6afa-49ee-a7ec-5efafb1be0ac",
+        "model": "unknown"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 33,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    },
+    "8ad1df319275a452": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "opencode-transcript-ses_28d228a93ffePVQovYQt4w5NJo-a53dc755-cbf6-4d66-9909-4c4ff4ce0b61",
+        "model": "unknown"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 24,
+      "total_deletions": 33,
+      "accepted_lines": 24,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
