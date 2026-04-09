@@ -1,18 +1,27 @@
 # Design
 
-Status: `active` — v6 clean-break baseline (2026-04-09)
+Status: `implemented` — v6 session runtime (2026-04-09)
 
-Belayer v6 design work should optimize for operator clarity and runtime simplicity.
+## Qualities Achieved
 
-## Desired Qualities
+- **Session-first UX**: Users think in sessions and templates, not node graphs.
+- **Observable state**: SQLite-backed events with FTS5 search; `belayer status` and `belayer logs`.
+- **Low ceremony**: `belayer daemon` + `belayer session create --template climb` — no pipeline YAML.
+- **Recoverable operations**: SQLite WAL mode, daemon graceful shutdown, session state persisted.
+- **Vendor-agnostic core**: Adapter interface with Claude/Codex/Generic implementations.
 
-- **Session-first UX**: users think in tasks and live sessions, not node graphs.
-- **Observable state**: operators can tell what is running, blocked, failed, or waiting.
-- **Low ceremony**: the common case should not require framework setup or pipeline authoring.
-- **Recoverable operations**: crashes and restarts should preserve enough local state to resume.
-- **Vendor-agnostic core**: Belayer coordinates external agents without hard-coding a single provider model.
+## Key Patterns
 
-## Branch Guidance
+- **Three-tier memory** (Letta-inspired): core (always in context) / archival (FTS5 search) / recall (combined). Agent-driven, markdown is authoritative.
+- **Scion messaging**: Broker with bracketed paste delivery via tmux, 2s debounce for coalescing rapid messages, urgent bypass.
+- **Pilot-always-present**: Climb sessions enforce pilot (opus) + implementer (sonnet) + reviewer (codex) trio.
+- **Docker sandbox**: Per-session compose with internal network isolation, mounted .env for auth.
+- **Sleep-time compute**: Post-session Reflector consolidates core memory into archival entries.
 
-On `feature/v6`, prefer building the smallest runtime slice that proves the session model.
-Do not reintroduce Temporal, the v5 YAML pipeline engine, or framework/plugin scaffolding unless a v6 design explicitly calls for it.
+## Session Templates
+
+| Template | Phase | Agents | Purpose |
+|----------|-------|--------|---------|
+| explore | Explore | 1 (explorer) | Intake — idea to spec |
+| climb | Climb | 3+ (pilot, implementer, reviewer) | Implementation with review loop |
+| summit | Summit | 2 (QA, merger) | Validation and merge |
