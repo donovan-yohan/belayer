@@ -1,0 +1,106 @@
+internal/reflection/config.go
+  122e389a46ddebf4 1-88
+docker/belayer-entrypoint.sh
+  2f8be35992b6c0cd 1-43
+internal/shell/quote_test.go
+  2f8be35992b6c0cd 1-69
+internal/cli/root.go
+  2f8be35992b6c0cd 37
+internal/daemon/daemon.go
+  2f8be35992b6c0cd 43,73,82
+internal/reflection/reflection.go
+  122e389a46ddebf4 22-23,28-29,34,103-137
+internal/cli/setup.go
+  2f8be35992b6c0cd 43,91
+internal/shell/quote.go
+  2f8be35992b6c0cd 1-29
+docker/Dockerfile.agent
+  2f8be35992b6c0cd 3,5,8-10,16-18,22-26,28-29
+internal/session/template.go
+  2f8be35992b6c0cd 7,13,29,102,114,136-145
+  122e389a46ddebf4 30,161-162,169,172-181,184-190,193-199,209-215,218-222
+internal/docker/sandbox.go
+  2f8be35992b6c0cd 56,66
+internal/reflection/reflection_test.go
+  122e389a46ddebf4 39,50,95,119,169,194,207,249,262-425
+docs/DESIGN.md
+  2f8be35992b6c0cd 19-20,23-30
+docker/proxy-entrypoint.sh
+  2f8be35992b6c0cd 2-3,7-11,15-19
+internal/cli/debug.go
+  2f8be35992b6c0cd 1-131
+internal/docker/compose.go
+  2f8be35992b6c0cd 7,22-27,38,42,44-46,48,50-52,59,85-90,107-112,142-190
+internal/cli/session_start.go
+  2f8be35992b6c0cd 14,20,31-35,98-99,102-103,160,164-224,234-244,249-326,336-346,351-376,379-380,387-390,392-395,398-411,413-419,422-440,443-458,461-467,470-477,479-483,485,487,489
+  122e389a46ddebf4 225-233,245-248,327-335,347-350
+internal/reflection/prompt.go
+  122e389a46ddebf4 1-101
+internal/cli/root_test.go
+  2f8be35992b6c0cd 8
+internal/cli/session_start_test.go
+  2f8be35992b6c0cd 1-178
+internal/session/template_test.go
+  2f8be35992b6c0cd 5-6,129-168,185-218
+CLAUDE.md
+  2f8be35992b6c0cd 19-22,24-25,47-48
+internal/agent/prompt.go
+  122e389a46ddebf4 4,8-15,18-25,29-37,51-64,66-75,77-84,96,101-102
+internal/docker/environment_test.go
+  2f8be35992b6c0cd 127-131,146-207,210-228
+internal/agent/prompt_test.go
+  122e389a46ddebf4 16-24,42,44-50,53,79-80,86-87,103-105,107,110-111,113-114,118-120,122,125-126,157-169,171-176,179-181,183,186-193,209,213
+internal/cli/session.go
+  2f8be35992b6c0cd 13,27,208-298,420-421,426,430-437,441-449,451-457,459-482,487-488,492-494,584-587
+  122e389a46ddebf4 172-177,182
+internal/docker/sandbox_test.go
+  2f8be35992b6c0cd 361-537
+internal/docker/environment.go
+  2f8be35992b6c0cd 7,72-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "ff023e5a728531903f120ecd1a5ce6025959aa3e",
+  "prompts": {
+    "122e389a46ddebf4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6fc578d5-73f7-4fbe-8486-1ca1272fc7b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 614,
+      "overriden_lines": 0
+    },
+    "2f8be35992b6c0cd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fabf94a4-7194-4e49-bb68-5b4b8e77f6ff",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1465,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
