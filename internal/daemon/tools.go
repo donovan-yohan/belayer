@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,9 +16,12 @@ import (
 
 // sandboxDir returns the path to the sandbox directory for a session.
 // Convention: ~/.belayer/sandboxes/<sessionID>/
-func sandboxDir(sessionID string) string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".belayer", "sandboxes", sessionID)
+func sandboxDir(sessionID string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("determine sandbox directory: user home directory unavailable: %w", err)
+	}
+	return filepath.Join(home, ".belayer", "sandboxes", sessionID), nil
 }
 
 // toolResult is the JSON response for a tool execution.
@@ -157,10 +162,27 @@ func (d *Daemon) handleExecuteTool(w http.ResponseWriter, r *http.Request) {
 		input = map[string]string{}
 	}
 
+	// Resolve sandbox directory.
+	sandboxPath, err := sandboxDir(sessionID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
 	// Execute the tool.
-	executor := &agent.Executor{SandboxDir: sandboxDir(sessionID)}
+	executor := &agent.Executor{SandboxDir: sandboxPath}
 	result, err := executor.Execute(r.Context(), spec, input)
 	if err != nil {
+		var renderErr *agent.RenderError
+		if errors.As(err, &renderErr) {
+			// Bad input: template references a key not present in the input map.
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "tool execution timed out"})
+			return
+		}
 		// Execution infrastructure error (e.g. compose file missing, process can't start).
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

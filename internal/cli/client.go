@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -277,9 +278,9 @@ type toolSpecResponse struct {
 
 // ExecuteTool runs a named tool for a session and returns the result.
 func (c *Client) ExecuteTool(sessionID, toolName string, input map[string]string, callingAgent string) (toolResultResponse, error) {
-	path := fmt.Sprintf("/sessions/%s/tools/%s", sessionID, toolName)
+	path := fmt.Sprintf("/sessions/%s/tools/%s", url.PathEscape(sessionID), url.PathEscape(toolName))
 	if callingAgent != "" {
-		path += "?agent=" + callingAgent
+		path += "?" + url.Values{"agent": {callingAgent}}.Encode()
 	}
 	resp, err := c.do("POST", path, input)
 	if err != nil {
@@ -299,7 +300,7 @@ func (c *Client) ExecuteTool(sessionID, toolName string, input map[string]string
 
 // ListTools returns the registered tools for a session.
 func (c *Client) ListTools(sessionID string) ([]toolSpecResponse, error) {
-	resp, err := c.do("GET", "/sessions/"+sessionID+"/tools", nil)
+	resp, err := c.do("GET", "/sessions/"+url.PathEscape(sessionID)+"/tools", nil)
 	if err != nil {
 		return nil, err
 	}

@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,16 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/shell"
 )
+
+// RenderError is returned when a tool's command template cannot be rendered,
+// typically due to missing or invalid input keys. The daemon maps this to a
+// 400 response so callers can distinguish bad input from infrastructure failures.
+type RenderError struct {
+	err error
+}
+
+func (e *RenderError) Error() string { return e.err.Error() }
+func (e *RenderError) Unwrap() error { return e.err }
 
 // ExecResult holds the outcome of a tool execution.
 type ExecResult struct {
@@ -52,7 +63,7 @@ func (e *Executor) Execute(ctx context.Context, spec ToolSpec, input map[string]
 	// Render the command template with shell-safe quoting.
 	rendered, err := renderCommand(spec.Exec.Command, input)
 	if err != nil {
-		return ExecResult{}, fmt.Errorf("executor: render command for tool %q: %w", spec.Name, err)
+		return ExecResult{}, &RenderError{err: fmt.Errorf("executor: render command for tool %q: %w", spec.Name, err)}
 	}
 
 	// Apply timeout.
@@ -121,6 +132,12 @@ func captureCommand(cmd *exec.Cmd) (ExecResult, error) {
 			result.ExitCode = exitErr.ExitCode()
 			// Non-zero exit is not an executor error — it's a tool result.
 			return result, nil
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			// Context timeout/cancel: set conventional exit code 130 (SIGKILL) so
+			// callers and audit logs can distinguish timeouts from infrastructure failures.
+			result.ExitCode = 130
+			return result, err
 		}
 		// Process couldn't be started or was killed by signal.
 		return result, fmt.Errorf("executor: command failed: %w", err)

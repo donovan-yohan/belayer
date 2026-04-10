@@ -22,10 +22,17 @@ type ToolExec struct {
 	Timeout int    `yaml:"timeout,omitempty" json:"timeout,omitempty"` // seconds, default 60
 }
 
-// ToolConstraints expresses optional safety constraints on a tool.
+// ToolConstraints expresses optional safety metadata for a tool.
+// These fields are informational only and are not enforced by the executor —
+// they communicate intent and enable downstream audit tooling, but do not
+// restrict execution at runtime. Enforcement is deferred to a future release.
 type ToolConstraints struct {
+	// ReadOnly, when true, signals that the tool should not mutate state.
+	// Not currently enforced by the executor.
 	ReadOnly bool `yaml:"read_only,omitempty" json:"read_only,omitempty"`
-	Audit    bool `yaml:"audit,omitempty" json:"audit,omitempty"`
+	// Audit, when true, signals that all invocations should be flagged for review.
+	// Not currently enforced — tool_executed events are always emitted regardless.
+	Audit bool `yaml:"audit,omitempty" json:"audit,omitempty"`
 }
 
 // ValidTargets is the set of allowed execution targets.
