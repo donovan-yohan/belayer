@@ -1,45 +1,63 @@
-# belayer
+# CLAUDE.md
 
-Standalone Go CLI that orchestrates autonomous coding agents through declarative YAML pipelines. Pure orchestration layer — not an agent, not a harness. Three phases: **Explore** (intake — idea to spec), **Climb** (implementation — agent does the work), **Summit** (output — review, gates, PR). Agent-agnostic — works with Claude, Codex, or any agent that can run in a shell.
+Belayer v6 — session runtime for autonomous coding agents.
 
-## Quick Reference
+## Architecture
 
-| Action | Command |
-|--------|---------|
-| Build | `go build -o belayer ./cmd/belayer` |
-| Test | `go test ./...` |
-| Run | `./belayer` |
-| Setup | `belayer setup --framework gstack` |
+Daemon-based session runtime. One global daemon (`belayer daemon`) serves all workspaces via Unix socket. Sessions are the primitive — each session has a template (intake/implement/deliver), agents, events, and messages stored in SQLite.
 
-## Documentation Map
+Three-phase model:
+- **intake** — single agent generates spec from idea
+- **implement** — pilot (opus) + implementer (sonnet) + reviewer (codex) trio
+- **deliver** — QA validation and merge
 
-| Category | Path | When to look here |
-|----------|------|-------------------|
-| Architecture | `docs/ARCHITECTURE.md` | Module boundaries, data flow, pipeline engine |
-| Design | `docs/DESIGN.md` | Patterns, framework model, agentic node contracts |
-| Philosophy | `docs/PHILOSOPHY.md` | Three roles separation, H-as-feature, orchestration-only identity, learning loop rationale |
-| Quality | `docs/QUALITY.md` | Test runner, test files, isolation patterns |
-| Plans | `docs/PLANS.md` | Active work, completed plans, tech debt |
-| Learnings | `docs/LEARNINGS.md` | Past learnings, corrections, patterns discovered across sessions |
-| Design Docs | `docs/design-docs/` | Feature brainstorm outputs and design decisions |
-| ADRs | `docs/adrs/` | Architecture decision records |
-| Pipeline Reference | `docs/PIPELINE_REFERENCE.md` | Full YAML schema, node types, gate/router config, validation rules |
-| TODOs | `docs/TODOS.md` | Deferred items, P2/P3 backlog, tech debt tracker |
-| Review Guidance | `docs/REVIEW_GUIDANCE.md` | Adversarial review config, deployment context, question bank |
+## CLI Surface
 
-## Key Patterns
+```
+belayer daemon                     # Start supervisor
+belayer setup [--global]           # Bootstrap .belayer/ workspace (cwd or global)
+belayer session start --template implement --docker --environment extend-fullstack --input "task"
+belayer session list/stop          # Session CRUD
+belayer session wake <id> --agent  # Restart crashed agent with compiled context
+belayer attach <id> [--agent name] # Attach to agent tmux panes (local + Docker)
+belayer status                     # Daemon health + active sessions
+belayer logs <id> [-f] [--since N] # Session event stream (--follow for real-time)
+belayer debug <id>                 # Aggregated diagnostics (events + container health)
+belayer recall "query"             # FTS5 search across events
+belayer message send/broadcast     # Agent-to-agent messaging
+belayer context                    # Session info (messaging plane)
+belayer note "text"                # Log observation to session
+```
 
-- **Pipeline-as-YAML**: Nodes define `command:` (what to exec), `description:` (what to do), routing (`on_pass`/`on_retry`/`on_fail`). Belayer execs the command, polls for completion.
-- **Framework model**: `belayer setup --framework <name-or-path>` scaffolds pipeline + scripts into `.belayer/`. Orchestration config is committed; runtime state is in `.belayer/.internal/` (gitignored).
-- **Node protocol**: Core writes `node-context.json` before spawning. Framework commands read it for context. Commands write completion files when done.
-- **ExecSpawner**: Core spawner execs `command:` from YAML via `sh -c`. Returns exit channel for fast-fail. Context-aware (kills process on cancellation).
-- **Score-then-route**: Gate nodes produce structured scores; Go code computes weighted average; YAML thresholds route PASS/RETRY/FAIL. Anti-gaming by design.
-- **Route nodes**: Nodes with `routes:` declare N-way agentic branching. LLM picks from enum of declared route names. Each route runs as Temporal child workflow. Decision artifact captures choice, confidence, reasoning, rejected alternatives.
-- **Three-phase model**: Explore (intake — idea to spec) → Climb (implementation — agent does the work) → Summit (output — review, gates, PR). Belayer is orchestration-only.
-- **New output types**: Adding a pipeline output type requires updates in: `validate.go` (validOutputTypes map), `model.go` (OutputConfig comment), and `outcome/detect.go` (typeDefault switch). Missing `detect.go` causes silent false-positive outcomes.
+## Workspace Scoping
 
-## gstack
+Workspaces are cwd-derived: belayer walks up from the current directory looking for `.belayer/`. Falls back to `~/.belayer/` if none found. The daemon is global; workspaces are local.
 
-- Use `/browse` from gstack for ALL web browsing — never use `mcp__claude-in-chrome__*` tools
-- Available skills: /office-hours, /plan-ceo-review, /plan-eng-review, /plan-design-review, /design-consultation, /design-shotgun, /design-html, /review, /ship, /land-and-deploy, /canary, /benchmark, /browse, /connect-chrome, /qa, /qa-only, /design-review, /setup-browser-cookies, /setup-deploy, /retro, /investigate, /document-release, /codex, /cso, /autoplan, /careful, /freeze, /guard, /unfreeze, /gstack-upgrade, /learn
-- If gstack skills aren't working, run `cd .claude/skills/gstack && ./setup` to rebuild
+## Key Packages
+
+- `internal/daemon/` — HTTP server on Unix socket, session/event CRUD
+- `internal/store/` — SQLite with WAL mode, FTS5 for event search
+- `internal/session/` — Template definitions (intake/implement/deliver)
+- `internal/agent/` — Config, prompt compilation, memory, tool registry
+- `internal/broker/` — Message send/broadcast with 2s debounce
+- `internal/tmux/` — Local tmux runner for agent execution
+- `internal/vendor/` — Claude, Codex, Generic adapters
+- `internal/memory/` — Three-tier: core (in-context), archival (FTS5), recall
+- `internal/workspace/` — repos.json loading and path resolution
+- `internal/docker/` — Compose generation, network isolation, environment configs, .env auth
+- `internal/shell/` — Safe shell quoting (prevents command injection from YAML templates)
+
+## Development
+
+```bash
+go build ./cmd/belayer
+go test ./...
+go install ./cmd/belayer
+```
+
+## Guidance
+
+- The daemon handles plumbing. The pilot agent handles judgment.
+- Do not replace LLM judgment with deterministic heuristics.
+- Pilot is always present in implement sessions, even single-repo.
+- Keep the phase naming clear: intake/implement/deliver in code (explore/climb/summit is marketing only).

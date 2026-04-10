@@ -1,0 +1,14 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tinyproxy ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
+
+# ALLOWED_HOSTS env var is read at startup to generate filter rules
+COPY docker/proxy-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8888
+ENTRYPOINT ["/entrypoint.sh"]

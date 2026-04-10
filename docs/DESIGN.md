@@ -1,197 +1,53 @@
 # Design
 
-Patterns and conventions for the belayer codebase.
+Status: `implemented` — v6 session runtime (2026-04-09)
 
-## Pipeline-as-YAML
+## Qualities Achieved
 
-Nodes define `command:` (what to exec), `description:` (what to do), routing (`on_pass`/`on_retry`/`on_fail`). Belayer execs the command via ExecSpawner, polls for completion, and routes to the next node based on outcome.
+- **Session-first UX**: Users think in sessions and templates, not node graphs.
+- **Observable state**: SQLite-backed events with FTS5 search; `belayer status` and `belayer logs`.
+- **Low ceremony**: `belayer daemon` + `belayer session start --template climb --input "task"` — no pipeline YAML.
+- **Recoverable operations**: SQLite WAL mode, daemon graceful shutdown, session state persisted.
+- **Vendor-agnostic core**: Adapter interface with Claude/Codex/Generic implementations.
+- **Isolation by default**: Clamshell sandboxes provide deny-by-default egress, host-owned credentials, per-binary policy. Belayer never builds its own isolation.
 
-Three pipeline primitives:
-- **Nodes** (constructive): Produce artifacts (code, specs, PRs)
-- **Gates** (adversarial): Evaluate artifacts with multi-dimensional scoring. Produce `gate-result.json` + `rationale.md`
-- **Routers** (agentic branching): LLM picks one of N declared paths, each running as an isolated Temporal child workflow. Produce `route-result.json`
+## Key Patterns
 
-## Framework Model
+- **Three-tier memory** (Letta-inspired): **Core** — session-scoped key-value pairs, always injected into prompts, upsert semantics for fast updates. **Archival** — append-only long-term learnings with provenance (session, source file, date, tags), full-text searchable via FTS5. **Recall** — on-demand combined view: core entries for the current session + archival search results for a query. Markdown files on disk are authoritative; SQLite FTS5 is a derived index rebuilt from markdown via `RebuildIndex` on fresh clones.
+- **Scion messaging**: Broker with bracketed paste delivery via tmux, 2s debounce for coalescing rapid messages, urgent bypass.
+- **Pilot-always-present**: Climb sessions enforce pilot (opus) + implementer (sonnet) + reviewer (codex) trio. Pilot orchestrates, facilitates PR-based review loops, detects cross-repo drift in fullstack sessions. Review loops evolve via agent memory, not hardcoded rules.
+- **PR-based review loop**: Implementer creates PR → pilot routes to reviewer with spec context → reviewer provides fresh-eyes pass/fail → on fail, pilot sends feedback to implementer → iterate until pass. The reviewer is a different vendor (codex) with no implementation context — genuinely independent review.
+- **Agent memory & learning**: All agents get personal memory that persists across sessions. Pilot accumulates coordination patterns, implementers learn codebase conventions, reviewer's checklist evolves from experience. Post-session reflection consolidates both personal memory and shared institutional learnings.
+- **Clamshell sandbox**: Deny-by-default network, host-owned credentials via `inference.local` routing, per-binary egress policy, audit logging. Replaces Docker sandbox + tinyproxy model.
+- **Pluggable runtime**: `Runtime` interface in `internal/runtime/` with `LocalRuntime` (tmux), `DockerRuntime` (compose, legacy), `ClamshellRuntime` (sandbox). `Select()` dispatcher chooses backend based on CLI flags.
+- **Multi-repo mapping**: AgentSpec YAML supports optional `repo` field for per-agent repository targeting. Environment config maps repo names to paths via `ResolveRepoPath`.
+- **Per-session worktrees**: Each agent gets an isolated `git worktree` from `origin/main`, preventing agents from trampling each other's work or the user's checkout. Cleanup wired into session stop and `belayer session clean`.
+- **Sleep-time compute**: Post-session Reflector consolidates core memory into archival entries.
+- **Tiered agents** (data model): Main characters (persistent, peer-to-peer messaging), peripheral (session-scoped), ephemeral (task-scoped). `Tier` field on `AgentSpec`. Scion athenaeum pattern.
+- **Epic sessions**: Pilot-only roster for workspace orchestration. Pilot creates/monitors/stops child sessions for epic decomposition.
 
-`belayer setup --framework <name-or-path>` scaffolds pipeline + scripts into `.belayer/`. Orchestration config is committed; runtime state is in `.belayer/.internal/` (gitignored).
+## Planned Patterns
 
-- Built-in frameworks embedded via `//go:embed` in `frameworks/`
-- Core ships ExecSpawner (generic command exec); specific agent integrations live in frameworks
-- `claude-tmux` is the reference framework for Claude Code sessions via tmux
+These are defined in the [sandbox runtime design doc](design-docs/2026-04-09-sandbox-runtime-architecture-design.md) and tracked as open issues:
 
-## Node Protocol
+- **Workbench provisioning** (#43, #52): On-demand test infrastructure (`belayer workbench up/down`) with health checks and readiness detection. Workbench is distinct from sandbox — it's the application stack agents test against.
+- **Tool execution routing** (#44): User-defined tools in environment config, routed to agent/workbench/infra/host targets by the daemon with audit trail. Template variables auto-shell-quoted via `internal/shell/`.
+- **Tiered agent behavior** (#49): Dynamic spawning of peripheral and ephemeral agents at runtime (`belayer session add-agent --tier ephemeral`). Auto-cleanup on ephemeral completion.
+- **Pilot orchestration tools** (#50): Cross-session management — pilot calls `belayer session start/stop/list`, provisions workbenches, runs tools, monitors via event stream.
+- **Event-driven monitoring** (#53): SSE/long-poll endpoints replacing 2s polling. `belayer watch --sessions id1,id2` for multi-session pilots.
 
-Core writes `.belayer/.internal/input/node-context.json` before spawning. Framework commands read it for context. Commands write `.belayer/.internal/completion/<id>-<node>-attempt-<N>.json` when done (via `belayer node-complete` or directly).
+## Observability
 
-### Poll Nodes
+- **Streaming logs**: `belayer logs -f` polls events every 2s. `--since N` filters to last N minutes.
+- **Debug command**: `belayer debug <id>` aggregates session metadata, recent events, container health, and logs from exited agents.
+- **Agent self-observability**: Daemon socket available inside sandboxes. Agents can call `belayer recall`, `belayer note`, `belayer logs` from within their sandbox.
+- **Error trapping**: Container entrypoint traps EXIT and logs agent exit code to the session event store via `belayer note`.
+- **Restart context**: `belayer session wake --agent <name>` compiles event history into restart context for crashed agents. Vendor adapters provide `CompileRestartPrompt` for vendor-specific formatting.
 
-Poll nodes extend the protocol for readiness polling. They fit into the **Climb** phase as conditional gates that wait for external systems.
+## Session Templates
 
-**How they work:**
-
-1. Belayer executes the `poll.command` at `poll.interval` until it returns exit 0 or `poll.timeout` is reached
-2. Stdout is SHA-256 hashed and persisted in workflow state (survives retries and Temporal replays)
-3. The hash enables `on_duplicate: skip` behavior — if the same output is seen again, the node can be skipped
-4. When ready, the node produces a `poll_output` artifact with metadata (attempts, duration, hash preview)
-
-**Auto-starting behavior:**
-
-Poll nodes with `on_duplicate: run` auto-start the next node even if the hash matches. This enables reactive patterns where downstream nodes re-process when polled state changes (e.g., CI status changed from "running" to "passed").
-
-**Integration with three-phase model:**
-
-- **Explore phase:** Poll nodes can wait for design docs, specs, or external approvals before starting implementation
-- **Climb phase:** Poll nodes gate between implementation and deployment (e.g., wait for CI, wait for manual approval)
-- **Summit phase:** Poll nodes can monitor post-deploy health checks before marking complete
-
-Poll nodes replace the deprecated intake `type: trigger` with better observability and integration.
-
-## Score-then-Route
-
-Gate nodes produce structured scores per dimension. Deterministic Go code computes weighted average. YAML thresholds route PASS/RETRY/FAIL. The rationale.md is mandatory as an anti-gaming measure -- no score without explanation.
-
-## Agent Nodes
-
-Agent nodes (`type: agent`) replace shell scripts with vendor + prompt in YAML. Belayer resolves the vendor to the right CLI command. `command:` still works for custom scripts.
-
-```yaml
-- name: implement
-  type: agent
-  vendor: claude
-  prompt: "Implement the design specification at %{INPUT}"
-```
-
-Vendor map: `claude` → `claude -p --dangerously-skip-permissions --output-format stream-json`, `codex` → `codex exec -s read-only --json`. Gate nodes auto-append `--json-schema` (claude) or `--output-schema` (codex) with dimensions from the YAML. Router nodes auto-append JSON Schema with enum constraint on route names.
-
-## Route Nodes
-
-Route nodes (`type: agent` + `routes:`) enable N-way agentic branching. The LLM classifies input and picks one of N declared paths. Each path runs as an isolated Temporal child workflow.
-
-```yaml
-- name: review-router
-  type: agent
-  vendor: claude
-  prompt: "Classify this change and choose the review depth"
-  input: { type: commit }
-  output: { type: route_result }
-  routes:
-    mode: choose_one
-    options:
-      full-feature-review:
-        pipeline: .belayer/pipelines/full-feature-review.yaml
-        description: Broad change, needs full review
-      quick-bugfix-review:
-        pipeline: .belayer/pipelines/quick-bugfix-review.yaml
-        description: Small fix, lightweight review
-```
-
-Route decisions produce `route-result.json` with choice, confidence, reasoning, and rejected alternatives. The `enum` constraint in the JSON Schema prevents the LLM from hallucinating routes. Malformed results trigger OutcomeRetry (same as gates). Subpipeline YAMLs are pre-resolved at startup for reproducibility.
-
-## Two Contracts
-
-Belayer's only opinions about workflow:
-- **Trigger contract** (Intake → Implementation): framework script validates "is this artifact ready to build?"
-- **Ready-to-ship contract** (Implementation → Output): implementation declares "ready to ship"
-
-Both are shell scripts returning exit 0 (ready) or exit 1 (not ready). What "ready" means is the framework's decision.
-
-## Validation Pipeline
-
-Validation flows through four layers. See [review-loops-test-infra-design](design-docs/2026-03-16-review-loops-test-infra-design.md) for full design.
-
-1. **Plan node**: Produces implementation plan from spec
-2. **Implement node**: Executes the plan, produces code
-3. **Review gate**: Multi-dimensional quality scoring with threshold routing
-4. **PR-author node**: Creates pull request from completed work
-
-## Setter/Spotter Contracts
-
-Setter and spotter are first-class belayer concepts, not generic pipeline nodes. They are multi-repo only -- single-repo problems bypass both.
-
-**Setter contract**: `spec.md` in -> per-repo `spec.md` out.
-
-- Receives the top-level problem spec.
-- Produces one `spec.md` per target repo, scoped to that repo's responsibilities.
-- Belayer routes each per-repo spec to the appropriate lead as the climb input.
-
-**Spotter contract**: N commit hashes in -> gate score + `feedback/rationale.md` out.
-
-- Receives the final commit hashes from all leads after their climbs complete.
-- Produces a numeric gate score and a rationale document covering cross-repo consistency.
-- A failing spotter score blocks PR creation and re-dispatches affected leads with the rationale as feedback.
-
-Belayer provides the contracts and orchestration. Users implement the nodes. This is what keeps belayer agent-agnostic -- the runtime inside a setter or spotter is not prescribed.
-
-## PR Manifest
-
-The PR manifest is the typed interface between the Climb and Summit phases. It is written after all leads complete and all spotters pass, and is consumed by the Summit phase to create and monitor pull requests.
-
-```json
-{
-  "prs": [
-    {
-      "repo": "api",
-      "url": "...",
-      "number": 42,
-      "branch": "...",
-      "commit": "abc1234",
-      "ci_status": "passed",
-      "reviews": "approved"
-    }
-  ],
-  "validation": {
-    "cross_repo": "PASS",
-    "spotter_score": 8.5
-  }
-}
-```
-
-## Naming Convention
-
-Climbing metaphors throughout:
-
-| Name | Role |
-|------|------|
-| **Crag** | Long-lived workspace (repos, config) |
-| **Problem** | Work item submitted by the user |
-| **Climb** | Per-repo subtask derived from a problem |
-| **Setter** | Multi-repo work distributor (multi-repo only) |
-| **Belayer** | Orchestrator / pipeline runner |
-| **Lead** | Implementation agent (per-repo) |
-| **Spotter** | Multi-repo cross-repo validator (multi-repo only) |
-| **Boulderer** | One-off specialist for small tasks (deferred) |
-
-> The **setter** defines **problems** at the **crag**. The **belayer** sends **leads** up their **climbs**. When they **top** out, the **spotter** validates. If no retries were needed, it was **flashed**.
-
-## Strategic Principles
-
-1. **Belayer optimizes for autonomy, not efficiency** -- Redundant work is acceptable if it enables self-correction without human intervention.
-2. **Multi-repo is additive, not transformative** -- The per-repo pipeline is unchanged; setter and spotter layer on top without altering what each lead does.
-3. **Belayer is plumbing** -- Belayer provides contracts and orchestration, not node implementations. What runs inside a node is not belayer's concern.
-4. **Agent-agnostic** -- Nodes are black boxes. Use whatever agent fulfills the contract: Claude, Codex, a shell script, or a future runtime. Core ships ExecSpawner (generic command exec); specific agent integrations live in frameworks.
-5. **Orchestration is owned by the environment** -- Pipeline config and node scripts live in the target repo's `.belayer/` directory, not in belayer core. `belayer setup --framework` scaffolds the orchestration definition; users customize freely.
-6. **Boring by default** -- Solve specific problems with opinionated plumbing. Don't over-abstract or generalize beyond the stated use case.
-
-## Plugin Marketplace
-
-The belayer repo doubles as a Claude Code marketplace. A `.claude-plugin/marketplace.json` at the repo root lists bundled plugins, and `plugins/` contains their source (markdown commands, agents, skills).
-
-- **Bundled plugins**: `harness` (documentation + execution workflow) and `pr` (PR lifecycle management)
-- **Auto-install**: `belayer init` registers the belayer GitHub repo as a marketplace in Claude Code's `~/.claude/plugins/` registry
-- **Canonical source**: Belayer owns these plugins. Changes flow from here back to llm-agents, not the reverse.
-- **Atomic writes**: Registry file updates use temp-file + rename to avoid corrupting Claude Code's plugin state on interrupt
-
-## Why Belayer
-
-| belayer | competitors |
-|---------|-------------|
-| Agent-agnostic orchestration | Model-locked agents |
-| Multi-repo as additive layer | Multi-repo as agent feature |
-| Pipeline-as-YAML | Hardcoded workflows |
-| Three phases with typed contracts | Monolithic pipelines |
-| You own your nodes | Platform owns your agents |
-
-## See Also
-
-- [Architecture](ARCHITECTURE.md) -- module boundaries and data flow
-- [Quality](QUALITY.md) -- testing strategy
+| Template | Agents | Purpose |
+|----------|--------|---------|
+| climb | 3 (pilot, implementer, reviewer) | Single-repo implementation with review loop |
+| climb-fullstack | 4 (pilot, api-impl, app-impl, reviewer) | Multi-repo implementation (e.g. API + frontend) |
+| epic | 1 (pilot) | Workspace orchestration — decomposes epics, creates parallel sessions |
