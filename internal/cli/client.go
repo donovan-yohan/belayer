@@ -194,3 +194,60 @@ func (c *Client) GetEvents(sessionID string) ([]eventResponse, error) {
 	}
 	return events, nil
 }
+
+type workbenchResponse struct {
+	ID        string    `json:"ID"`
+	SessionID string    `json:"SessionID"`
+	Status    string    `json:"Status"`
+	Endpoints string    `json:"Endpoints"`
+	Spec      string    `json:"Spec"`
+	CreatedAt time.Time `json:"CreatedAt"`
+	UpdatedAt time.Time `json:"UpdatedAt"`
+}
+
+// CreateWorkbench provisions a workbench for a session via the daemon.
+func (c *Client) CreateWorkbench(sessionID, spec string) (workbenchResponse, error) {
+	resp, err := c.do("POST", "/sessions/"+sessionID+"/workbench", map[string]string{
+		"session_id": sessionID,
+		"spec":       spec,
+	})
+	if err != nil {
+		return workbenchResponse{}, err
+	}
+	defer resp.Body.Close()
+	var wb workbenchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&wb); err != nil {
+		return workbenchResponse{}, fmt.Errorf("decode workbench: %w", err)
+	}
+	return wb, nil
+}
+
+// GetWorkbenchStatus retrieves the workbench state for a session via the daemon.
+func (c *Client) GetWorkbenchStatus(sessionID string) (workbenchResponse, error) {
+	resp, err := c.do("GET", "/sessions/"+sessionID+"/workbench", nil)
+	if err != nil {
+		return workbenchResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return workbenchResponse{}, fmt.Errorf("workbench for session %s not found", sessionID)
+	}
+	var wb workbenchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&wb); err != nil {
+		return workbenchResponse{}, fmt.Errorf("decode workbench: %w", err)
+	}
+	return wb, nil
+}
+
+// DeleteWorkbenchBySession deletes workbench records for a session via the daemon API.
+func (c *Client) DeleteWorkbenchBySession(sessionID string) error {
+	resp, err := c.do("DELETE", "/sessions/"+sessionID+"/workbench", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("delete workbench: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}

@@ -22,6 +22,17 @@ func Migrate(db *sql.DB) error {
 			data       TEXT NOT NULL DEFAULT '{}'
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS workbenches (
+			id         TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL UNIQUE,
+			status     TEXT NOT NULL DEFAULT 'pending',
+			endpoints  TEXT DEFAULT '{}',
+			spec       TEXT DEFAULT '{}',
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		)`,
+
 		// FTS5 virtual table for full-text search over event type and data.
 		`CREATE VIRTUAL TABLE IF NOT EXISTS events_fts
 			USING fts5(type, data, content=events, content_rowid=id)`,

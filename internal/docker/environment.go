@@ -5,17 +5,19 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 // EnvironmentConfig describes the Docker infrastructure for a session.
 type EnvironmentConfig struct {
-	Name       string         `yaml:"name"`
-	Type       string         `yaml:"type"`       // "docker-compose"
-	Compose    ComposeExtend  `yaml:"compose"`
-	Networking NetworkingRule `yaml:"networking"`
-	Repos      []RepoRef      `yaml:"repos"`
+	Name       string               `yaml:"name"`
+	Type       string               `yaml:"type"` // "docker-compose"
+	Compose    ComposeExtend        `yaml:"compose"`
+	Networking NetworkingRule       `yaml:"networking"`
+	Repos      []RepoRef            `yaml:"repos"`
+	Workbench  *WorkbenchConfigSpec `yaml:"workbench"` // nil means no workbench configured
 }
 
 // ComposeExtend describes how to extend an existing Docker Compose setup.
@@ -29,12 +31,39 @@ type NetworkingRule struct {
 	Type                 string   `yaml:"type"` // "none", "limited", "full"
 	AllowedHosts         []string `yaml:"allowed_hosts"`
 	AllowPackageManagers bool     `yaml:"allow_package_managers"`
+	ConnectToWorkbench   bool     `yaml:"connect_to_workbench"` // allow connection to workbench services
 }
 
 // RepoRef identifies a repository involved in the session.
 type RepoRef struct {
 	Name string `yaml:"name"`
 	Path string `yaml:"path"`
+}
+
+// WorkbenchConfigSpec describes the workbench configuration for provisioning services (YAML parsing).
+type WorkbenchConfigSpec struct {
+	Timeout  string        `yaml:"timeout"` // e.g., "5m"
+	Services []ServiceDecl `yaml:"services"`
+}
+
+// ServiceDecl describes a service to be provisioned in the workbench (YAML parsing).
+type ServiceDecl struct {
+	Name     string            `yaml:"name"`
+	Build    string            `yaml:"build"` // path or ${WORKTREE_*} template
+	Image    string            `yaml:"image"` // or use pre-built image
+	Ports    []string          `yaml:"ports"`
+	Env      map[string]string `yaml:"environment"`
+	Depends  []string          `yaml:"depends_on"`
+	Health   *HealthDecl       `yaml:"health_check"`
+	Networks []string          `yaml:"networks"` // e.g., ["infra-net"] for explicit network assignment
+}
+
+// HealthDecl describes a health check for a service (YAML parsing).
+type HealthDecl struct {
+	Test     []string `yaml:"test"`
+	Interval string   `yaml:"interval"`
+	Timeout  string   `yaml:"timeout"`
+	Retries  int      `yaml:"retries"`
 }
 
 // LoadEnvironment reads and parses an EnvironmentConfig from the given YAML file path.
@@ -79,6 +108,14 @@ func ValidateEnvironment(cfg *EnvironmentConfig) error {
 	for _, host := range cfg.Networking.AllowedHosts {
 		if err := validateHost(host); err != nil {
 			return fmt.Errorf("docker: environment: invalid allowed host %q: %w", host, err)
+		}
+	}
+
+	if cfg.Workbench != nil {
+		if cfg.Workbench.Timeout != "" {
+			if _, err := time.ParseDuration(cfg.Workbench.Timeout); err != nil {
+				return fmt.Errorf("docker: environment: invalid workbench timeout %q: %w", cfg.Workbench.Timeout, err)
+			}
 		}
 	}
 
