@@ -10,6 +10,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/agent"
 	"github.com/donovan-yohan/belayer/internal/docker"
+	runtimepkg "github.com/donovan-yohan/belayer/internal/runtime"
 	"github.com/donovan-yohan/belayer/internal/session"
 	"github.com/donovan-yohan/belayer/internal/shell"
 	"github.com/donovan-yohan/belayer/internal/tmux"
@@ -41,9 +42,10 @@ config that controls network isolation, compose extensions, and repos.`,
 				return fmt.Errorf("--input is required (task description or path to spec file)")
 			}
 
-			// 1. Resolve workspace directory and templates.
-			wsDir := resolveWorkspaceDir()
-			templatesDir := filepath.Join(wsDir, "templates")
+			// 1. Resolve workspace directory, .belayer config dir, and templates.
+			workspaceRoot := resolveWorkspaceDir()
+			belayerDir := resolveBelayerDir()
+			templatesDir := filepath.Join(belayerDir, "templates")
 
 			// 2. Require daemon is running.
 			c := NewClient(resolveSocket(socket))
@@ -66,8 +68,21 @@ config that controls network isolation, compose extensions, and repos.`,
 				name = fmt.Sprintf("%s-%d", template, time.Now().Unix())
 			}
 
-			// 5. Load template from workspace, falling back to built-in.
-			tmpl, err := session.LoadTemplateFromDir(templatesDir, template)
+			// 5. Load environment config early when template resolution depends on it.
+			var envCfg *docker.EnvironmentConfig
+			if environment != "" {
+				var err error
+				envCfg, err = docker.LoadEnvironmentByName(belayerDir, environment)
+				if err != nil {
+					return fmt.Errorf("load environment %q: %w", environment, err)
+				}
+				if err := docker.ValidateEnvironment(envCfg); err != nil {
+					return fmt.Errorf("validate environment: %w", err)
+				}
+			}
+
+			// 6. Load template from workspace, falling back to built-in or environment-defined rosters.
+			tmpl, err := loadLaunchTemplate(templatesDir, belayerDir, envCfg, template, repo)
 			if err != nil {
 				return fmt.Errorf("load template: %w", err)
 			}
@@ -75,43 +90,44 @@ config that controls network isolation, compose extensions, and repos.`,
 				return fmt.Errorf("validate template: %w", err)
 			}
 
-			// 6. Create session via daemon.
+			// 7. Create session via daemon.
 			sess, err := c.CreateSession(name, template)
 			if err != nil {
 				return fmt.Errorf("create session: %w", err)
 			}
 
-			// 7. Build list of agent names.
+			// 8. Build list of agent names.
 			agentNames := make([]string, len(tmpl.Agents))
 			for i, a := range tmpl.Agents {
 				agentNames[i] = a.Name
 			}
 
-			// 8. Resolve working directory.
+			// 9. Resolve working directory.
 			workDir := repo
 			if workDir == "" {
 				workDir, _ = os.Getwd()
 			}
 
-			// 9. Launch agents.
-			if dockerMode {
-				if err := launchDocker(cmd, c, tmpl, sess, agentNames, taskInput, workDir, wsDir, environment, name); err != nil {
+			// 10. Launch agents using the selected runtime backend.
+			selectedRuntime := runtimepkg.Select(dockerMode)
+			if selectedRuntime.Mode() == runtimepkg.ModeDocker {
+				if err := launchDocker(cmd, c, tmpl, sess, agentNames, taskInput, workDir, workspaceRoot, belayerDir, environment, name, envCfg); err != nil {
 					return err
 				}
 			} else {
-				if err := launchTmux(cmd, c, tmpl, sess, agentNames, taskInput, workDir, name); err != nil {
+				if err := launchTmux(cmd, c, tmpl, sess, agentNames, taskInput, workDir, workspaceRoot, belayerDir, environment, name, envCfg); err != nil {
 					return err
 				}
 			}
 
-			// 10. Log session_started event and update status.
+			// 11. Log session_started event and update status.
 			_ = c.LogEvent(sess.ID, "session_started", mustJSON(map[string]string{
 				"template": template,
 				"name":     name,
 			}))
 			_, _ = c.UpdateSession(sess.ID, "running")
 
-			// 11. Print summary.
+			// 12. Print summary.
 			fmt.Fprintf(cmd.OutOrStdout(), "Session started: %s (template: %s)\n", sess.ID, template)
 			if !dockerMode {
 				for _, spec := range tmpl.Agents {
@@ -130,7 +146,7 @@ config that controls network isolation, compose extensions, and repos.`,
 			fmt.Fprintln(cmd.OutOrStdout(), "  belayer status")
 			fmt.Fprintf(cmd.OutOrStdout(), "  belayer logs %s\n", sess.ID)
 
-			// 12. Auto-attach if requested (local tmux only).
+			// 13. Auto-attach if requested (local tmux only).
 			if attach && !dockerMode {
 				target := attachAgent
 				if target == "" && len(tmpl.Agents) > 0 {
@@ -162,19 +178,18 @@ config that controls network isolation, compose extensions, and repos.`,
 }
 
 // launchDocker starts agents in Docker containers with network isolation.
-func launchDocker(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, wsDir, environment, sessionName string) error {
+func launchDocker(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, workspaceRoot, belayerDir, environment, sessionName string, envCfg *docker.EnvironmentConfig) error {
 	// 1. Load and validate environment config.
-	var envCfg *docker.EnvironmentConfig
-	if environment != "" {
+	if envCfg == nil && environment != "" {
 		var err error
-		envCfg, err = docker.LoadEnvironmentByName(wsDir, environment)
+		envCfg, err = docker.LoadEnvironmentByName(belayerDir, environment)
 		if err != nil {
 			return fmt.Errorf("load environment %q: %w", environment, err)
 		}
 		if err := docker.ValidateEnvironment(envCfg); err != nil {
 			return fmt.Errorf("validate environment: %w", err)
 		}
-	} else {
+	} else if envCfg == nil {
 		envCfg = docker.DefaultEnvironment()
 	}
 
@@ -201,8 +216,31 @@ func launchDocker(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, s
 	}
 
 	// 5. Create per-agent worktrees for isolation.
+	repoWorkDirs := make(map[string]string)
+	for _, repoRef := range envCfg.Repos {
+		repoPath := expandHomePath(repoRef.Path)
+		if repoPath == "" {
+			continue
+		}
+		wt, err := createWorktree(repoPath, filepath.Join(sandboxDir, "repo-worktrees"), repoRef.Name, "")
+		if err != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "  warning: repo worktree for %s: %v (using source repo)\n", repoRef.Name, err)
+			repoWorkDirs[repoRef.Name] = repoPath
+			continue
+		}
+		repoWorkDirs[repoRef.Name] = wt
+	}
+
 	agentWorkDirs := make(map[string]string, len(tmpl.Agents))
+	agentMeta := make(map[string]docker.AgentRuntimeMetadata, len(tmpl.Agents))
 	for _, spec := range tmpl.Agents {
+		agentMeta[spec.Name] = docker.AgentRuntimeMetadata{Name: spec.Name, Repo: spec.Repo, Tier: spec.Tier}
+		if spec.Repo != "" {
+			if repoDir, ok := repoWorkDirs[spec.Repo]; ok {
+				agentWorkDirs[spec.Name] = repoDir
+				continue
+			}
+		}
 		wt, err := createWorktree(workDir, sandboxDir, spec.Name, "")
 		if err != nil {
 			// Log warning but continue — fallback to shared workDir.
@@ -295,6 +333,40 @@ func launchDocker(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, s
 		return fmt.Errorf("start sandbox: %w", err)
 	}
 
+	var workbenchSpec *docker.WorkbenchConfigSpec
+	if envCfg.Workbench != nil {
+		spec, err := envCfg.ResolveWorkbenchSpec()
+		if err != nil {
+			return fmt.Errorf("resolve workbench spec: %w", err)
+		}
+		workbenchSpec = &spec
+	}
+
+	if err := docker.WriteRuntimeMetadata(sandboxDir, docker.RuntimeMetadata{
+		SessionID:          sess.ID,
+		SessionName:        sessionName,
+		Template:           tmpl.Name,
+		Environment:        environment,
+		EnvironmentPath:    envCfg.SourcePath(),
+		BelayerDir:         belayerDir,
+		WorkspaceRoot:      workspaceRoot,
+		SandboxDir:         sandboxDir,
+		SandboxComposeFile: filepath.Join(sandbox.ComposeDir(), "docker-compose.yml"),
+		Workbench:          workbenchSpec,
+		Tools:              envCfg.Tools,
+		RepoWorktrees:      repoWorkDirs,
+		AgentWorktrees:     agentWorkDirs,
+		Agents:             agentMeta,
+	}); err != nil {
+		return fmt.Errorf("write runtime metadata: %w", err)
+	}
+
+	for _, tool := range envCfg.Tools {
+		if err := c.RegisterTool(sess.ID, tool); err != nil {
+			return fmt.Errorf("register environment tool %q: %w", tool.Name, err)
+		}
+	}
+
 	_ = c.LogEvent(sess.ID, "sandbox_started", mustJSON(map[string]string{
 		"compose_dir": sandbox.ComposeDir(),
 		"network":     envCfg.Networking.Type,
@@ -306,13 +378,38 @@ func launchDocker(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, s
 }
 
 // launchTmux starts agents in local tmux sessions.
-func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, sessionName string) error {
+func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, workspaceRoot, belayerDir, environment, sessionName string, envCfg *docker.EnvironmentConfig) error {
 	runner := tmux.NewLocalRunner()
 
 	// Create per-agent worktrees for isolation.
 	wtBaseDir := filepath.Join(os.TempDir(), "belayer-worktrees", sessionName)
+	repoWorkDirs := make(map[string]string)
+	if envCfg != nil {
+		for _, repoRef := range envCfg.Repos {
+			repoPath := expandHomePath(repoRef.Path)
+			if repoPath == "" {
+				continue
+			}
+			wt, err := createWorktree(repoPath, filepath.Join(wtBaseDir, "repos"), repoRef.Name, "")
+			if err != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "  warning: repo worktree for %s: %v (using source repo)\n", repoRef.Name, err)
+				repoWorkDirs[repoRef.Name] = repoPath
+				continue
+			}
+			repoWorkDirs[repoRef.Name] = wt
+		}
+	}
+
 	agentWorkDirs := make(map[string]string, len(tmpl.Agents))
+	agentMeta := make(map[string]docker.AgentRuntimeMetadata, len(tmpl.Agents))
 	for _, spec := range tmpl.Agents {
+		agentMeta[spec.Name] = docker.AgentRuntimeMetadata{Name: spec.Name, Repo: spec.Repo, Tier: spec.Tier}
+		if spec.Repo != "" {
+			if repoDir, ok := repoWorkDirs[spec.Repo]; ok {
+				agentWorkDirs[spec.Name] = repoDir
+				continue
+			}
+		}
 		wt, err := createWorktree(workDir, wtBaseDir, spec.Name, "")
 		if err != nil {
 			// Log warning but continue — fallback to shared workDir.
@@ -350,16 +447,18 @@ func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, ses
 			Team:      team,
 		})
 
-		sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", sessionName, spec.Name))
+		safeSessName := sanitizeName(sessionName)
+		safeSpecName := sanitizeName(spec.Name)
+		sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", safeSessName, safeSpecName))
 		if err := os.WriteFile(sysPromptFile, []byte(compiled), 0600); err != nil {
 			return fmt.Errorf("write system prompt for %s: %w", spec.Name, err)
 		}
-		taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", sessionName, spec.Name))
+		taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", safeSessName, safeSpecName))
 		if err := os.WriteFile(taskFile, []byte(taskInput), 0600); err != nil {
 			return fmt.Errorf("write task file for %s: %w", spec.Name, err)
 		}
 
-		tmuxSessionName := fmt.Sprintf("%s-%s", sessionName, spec.Name)
+		tmuxSessionName := fmt.Sprintf("%s-%s", safeSessName, safeSpecName)
 		launchCmd := buildLaunchCmd(spec, sess.ID, sysPromptFile, taskFile, agentWorkDirs[spec.Name])
 
 		if err := runner.CreateSession(tmuxSessionName, launchCmd); err != nil {
@@ -370,7 +469,55 @@ func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, ses
 			"agent":  spec.Name,
 			"vendor": spec.Vendor,
 			"model":  spec.Model,
+			"tier":   spec.Tier,
 		}))
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil {
+		sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sess.ID)
+		var workbenchSpec *docker.WorkbenchConfigSpec
+		if envCfg != nil && envCfg.Workbench != nil {
+			spec, err := envCfg.ResolveWorkbenchSpec()
+			if err != nil {
+				return fmt.Errorf("resolve workbench spec: %w", err)
+			}
+			workbenchSpec = &spec
+		}
+		if err := docker.WriteRuntimeMetadata(sandboxDir, docker.RuntimeMetadata{
+			SessionID:   sess.ID,
+			SessionName: sessionName,
+			Template:    tmpl.Name,
+			Environment: environment,
+			EnvironmentPath: func() string {
+				if envCfg == nil {
+					return ""
+				}
+				return envCfg.SourcePath()
+			}(),
+			BelayerDir:    belayerDir,
+			WorkspaceRoot: workspaceRoot,
+			Workbench:     workbenchSpec,
+			Tools: func() []agent.ToolSpec {
+				if envCfg == nil {
+					return nil
+				}
+				return envCfg.Tools
+			}(),
+			RepoWorktrees:  repoWorkDirs,
+			AgentWorktrees: agentWorkDirs,
+			Agents:         agentMeta,
+		}); err != nil {
+			return fmt.Errorf("write runtime metadata: %w", err)
+		}
+	}
+
+	if envCfg != nil {
+		for _, tool := range envCfg.Tools {
+			if err := c.RegisterTool(sess.ID, tool); err != nil {
+				return fmt.Errorf("register environment tool %q: %w", tool.Name, err)
+			}
+		}
 	}
 
 	return nil
@@ -441,6 +588,17 @@ func createWorktree(repoDir, baseDir, agentName, branch string) (string, error) 
 	}
 
 	return worktreePath, nil
+}
+
+func expandHomePath(path string) string {
+	if path == "" || !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, path[2:])
 }
 
 // cleanupWorktrees removes git worktrees created for a session.

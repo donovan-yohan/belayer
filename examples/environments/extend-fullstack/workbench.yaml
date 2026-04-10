@@ -1,29 +1,30 @@
-# Workbench spec — provisioned on demand via `belayer workbench up`
-# Runs the extend stack for integration testing.
-
+timeout: 5m
 services:
-  postgres:
+  - name: postgres
     image: postgres:16
     environment:
       POSTGRES_DB: "extend_{{.SessionID}}"
       POSTGRES_USER: extend
       POSTGRES_PASSWORD: localdev
     ports: ["5432"]
-    healthcheck:
+    networks: ["infra-net"]
+    health_check:
       test: ["CMD", "pg_isready", "-U", "extend"]
       interval: 5s
       timeout: 3s
       retries: 10
 
-  localstack:
+  - name: localstack
     image: localstack/localstack:3
     ports: ["4566"]
+    networks: ["infra-net"]
 
-  rabbitmq:
+  - name: rabbitmq
     image: rabbitmq:3-management
     ports: ["5672", "15672"]
+    networks: ["infra-net"]
 
-  extend-api:
+  - name: extend-api
     build:
       context: "{{.Worktree.extend-api}}"
       dockerfile: Dockerfile
@@ -38,14 +39,14 @@ services:
       postgres:
         condition: service_healthy
     ports: ["8080"]
-    healthcheck:
+    health_check:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 5s
       timeout: 3s
       start_period: 90s
       retries: 24
 
-  extend-app:
+  - name: extend-app
     build:
       context: "{{.Worktree.extend-app}}"
     environment:
@@ -54,7 +55,7 @@ services:
       extend-api:
         condition: service_healthy
     ports: ["3000"]
-    healthcheck:
+    health_check:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 5s
       timeout: 3s

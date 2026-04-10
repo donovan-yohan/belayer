@@ -27,6 +27,7 @@ type AgentSpec struct {
 	Vendor       string            `yaml:"vendor" json:"vendor"`
 	Model        string            `yaml:"model" json:"model"`
 	Repo         string            `yaml:"repo,omitempty" json:"repo,omitempty"` // optional repo name from environment config
+	Tier         string            `yaml:"tier,omitempty" json:"tier,omitempty"` // main, peripheral, ephemeral
 	Role         string            `yaml:"role,omitempty" json:"role,omitempty"` // human-readable description of what this agent does
 	SystemPrompt string            `yaml:"system_prompt" json:"system_prompt"`
 	MCPConfig    string            `yaml:"mcp_config,omitempty" json:"mcp_config,omitempty"`

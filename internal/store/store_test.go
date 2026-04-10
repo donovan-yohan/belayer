@@ -221,6 +221,77 @@ func TestQueryEvents_OrderedByTimestampASC(t *testing.T) {
 	}
 }
 
+func TestQueryEventsAfter_FiltersByEventID(t *testing.T) {
+	s := openMemory(t)
+
+	id, _ := s.CreateSession(Session{Name: "after-test"})
+	var eventIDs []int64
+	for _, typ := range []string{"alpha", "beta", "gamma"} {
+		if err := s.LogEvent(SessionEvent{SessionID: id, Type: typ}); err != nil {
+			t.Fatalf("LogEvent(%s): %v", typ, err)
+		}
+		events, err := s.QueryEvents(id)
+		if err != nil {
+			t.Fatalf("QueryEvents: %v", err)
+		}
+		eventIDs = append(eventIDs, events[len(events)-1].ID)
+	}
+
+	evts, err := s.QueryEventsAfter(id, eventIDs[0])
+	if err != nil {
+		t.Fatalf("QueryEventsAfter: %v", err)
+	}
+	if len(evts) != 2 {
+		t.Fatalf("expected 2 events after first ID, got %d", len(evts))
+	}
+	if evts[0].Type != "beta" || evts[1].Type != "gamma" {
+		t.Fatalf("unexpected events after first ID: %#v", evts)
+	}
+}
+
+func TestQueryEventsForSessionsAfter_FiltersSessionsAndEventID(t *testing.T) {
+	s := openMemory(t)
+
+	sessionA, _ := s.CreateSession(Session{Name: "sess-a"})
+	sessionB, _ := s.CreateSession(Session{Name: "sess-b"})
+	sessionC, _ := s.CreateSession(Session{Name: "sess-c"})
+
+	if err := s.LogEvent(SessionEvent{SessionID: sessionA, Type: "a-1"}); err != nil {
+		t.Fatalf("LogEvent(a-1): %v", err)
+	}
+	eventsA, err := s.QueryEvents(sessionA)
+	if err != nil {
+		t.Fatalf("QueryEvents(a): %v", err)
+	}
+	cutoffID := eventsA[len(eventsA)-1].ID
+
+	for _, evt := range []SessionEvent{
+		{SessionID: sessionB, Type: "b-1"},
+		{SessionID: sessionA, Type: "a-2"},
+		{SessionID: sessionC, Type: "c-1"},
+		{SessionID: sessionB, Type: "b-2"},
+	} {
+		if err := s.LogEvent(evt); err != nil {
+			t.Fatalf("LogEvent(%s): %v", evt.Type, err)
+		}
+	}
+
+	evts, err := s.QueryEventsForSessionsAfter([]string{sessionA, sessionB}, cutoffID)
+	if err != nil {
+		t.Fatalf("QueryEventsForSessionsAfter: %v", err)
+	}
+	if len(evts) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(evts))
+	}
+	got := []string{evts[0].Type, evts[1].Type, evts[2].Type}
+	want := []string{"b-1", "a-2", "b-2"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("event[%d] = %q, want %q (all=%v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 // TestSearchEvents_MatchesType verifies FTS5 search on the type field.
 func TestSearchEvents_MatchesType(t *testing.T) {
 	s := openMemory(t)

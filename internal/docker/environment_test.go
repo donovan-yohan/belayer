@@ -25,6 +25,26 @@ repos:
     path: ~/Documents/Programs/work/extend-app
 `
 
+const splitWorkbenchEnvironmentYAML = `
+name: extend-fullstack
+workbench:
+  spec: workbench.yaml
+`
+
+const splitWorkbenchSpecYAML = `
+timeout: 5m
+services:
+  - name: extend-api
+    image: example/api:latest
+    ports: ["8080"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+`
+
 func TestLoadEnvironment_ValidYAML(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "env-*.yaml")
 	if err != nil {
@@ -101,6 +121,32 @@ func TestLoadEnvironmentByName_NonexistentName(t *testing.T) {
 	_, err := LoadEnvironmentByName(t.TempDir(), "does-not-exist")
 	if err == nil {
 		t.Fatal("expected error for nonexistent environment name, got nil")
+	}
+}
+
+func TestLoadEnvironment_LoadsSeparateWorkbenchSpec(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "environment.yaml")
+	specPath := filepath.Join(dir, "workbench.yaml")
+	if err := os.WriteFile(envPath, []byte(splitWorkbenchEnvironmentYAML), 0o644); err != nil {
+		t.Fatalf("write env file: %v", err)
+	}
+	if err := os.WriteFile(specPath, []byte(splitWorkbenchSpecYAML), 0o644); err != nil {
+		t.Fatalf("write workbench spec: %v", err)
+	}
+
+	cfg, err := LoadEnvironment(envPath)
+	if err != nil {
+		t.Fatalf("LoadEnvironment returned error: %v", err)
+	}
+	if cfg.Workbench == nil {
+		t.Fatal("expected Workbench to be loaded")
+	}
+	if len(cfg.Workbench.Services) != 1 {
+		t.Fatalf("expected 1 workbench service, got %d", len(cfg.Workbench.Services))
+	}
+	if cfg.Workbench.Services[0].Health == nil || cfg.Workbench.Services[0].Health.StartPeriod != "30s" {
+		t.Fatalf("expected health start period from split workbench spec, got %#v", cfg.Workbench.Services[0].Health)
 	}
 }
 
