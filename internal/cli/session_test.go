@@ -34,27 +34,16 @@ func TestCleanupWorktrees_RemovesWorktreeDirectories(t *testing.T) {
 		}
 	}
 
-	// cleanupWorktrees calls `git worktree remove --force <path>` then returns.
-	// For non-git directories the git command fails silently; the directories
-	// themselves are NOT removed by cleanupWorktrees (it delegates to git).
-	// The function contract is: call git worktree remove for each subdir.
-	// We test that the function runs without panicking and touches each entry.
+	// cleanupWorktrees calls `git -C <path> worktree remove --force <path>` then
+	// unconditionally calls os.RemoveAll on each subdir. For non-git directories the
+	// git command fails silently, but the directory is removed from disk regardless.
 	cleanupWorktrees(baseDir)
 
-	// After calling cleanupWorktrees the worktrees directory itself still exists
-	// (the function does not remove the parent), and the subdirs may or may not
-	// still exist depending on whether git succeeded.  What we can assert is that
-	// the function does not leave extra unexpected directories.
-	entries, err := os.ReadDir(worktreeDir)
-	if err != nil {
-		t.Fatalf("ReadDir after cleanup: %v", err)
-	}
-	// Both entries were there before; after cleanup each should have had
-	// `git worktree remove --force` attempted.  On a CI machine without a real
-	// git repo, the dirs survive (git exits non-zero, error is ignored).
-	// We just verify the count didn't increase.
-	if len(entries) > 2 {
-		t.Errorf("unexpected extra entries after cleanupWorktrees: %d", len(entries))
+	// Both worktree subdirs should have been removed unconditionally by os.RemoveAll.
+	for _, wt := range []string{wt1, wt2} {
+		if _, err := os.Stat(wt); !os.IsNotExist(err) {
+			t.Errorf("expected worktree dir %s to be removed after cleanupWorktrees, stat err: %v", wt, err)
+		}
 	}
 }
 
@@ -113,17 +102,15 @@ func TestCleanupWorktrees_RealGitWorktree(t *testing.T) {
 	}
 }
 
-// TestSessionCleanCmd_SandboxCleanup tests the session clean command's sandbox
-// removal logic using a temporary directory that simulates ~/.belayer/sandboxes/.
+// TestSessionCleanCmd_SandboxCleanup tests cleanupSandboxDirs using a temporary
+// directory that simulates ~/.belayer/sandboxes/.
 func TestSessionCleanCmd_SandboxCleanup(t *testing.T) {
-	// Build a fake home dir with sandbox directories.
 	fakeHome := t.TempDir()
 	sandboxesDir := filepath.Join(fakeHome, ".belayer", "sandboxes")
 	if err := os.MkdirAll(sandboxesDir, 0o700); err != nil {
 		t.Fatalf("mkdir sandboxes: %v", err)
 	}
 
-	// Create two sandbox directories for "stopped" session IDs (no active sessions).
 	stoppedID1 := "session-dead-0001"
 	stoppedID2 := "session-dead-0002"
 	for _, id := range []string{stoppedID1, stoppedID2} {
@@ -131,54 +118,32 @@ func TestSessionCleanCmd_SandboxCleanup(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatalf("mkdir sandbox %s: %v", id, err)
 		}
-		// Write a placeholder file (not docker-compose.yml so no docker call).
+		// Use info.txt (not docker-compose.yml) so no docker call is attempted.
 		if err := os.WriteFile(filepath.Join(dir, "info.txt"), []byte("test"), 0o600); err != nil {
 			t.Fatalf("write info: %v", err)
 		}
 	}
 
-	// Directly exercise the sandbox-removal logic extracted from newSessionCleanCmd.
-	// We simulate "no active sessions" by passing an empty activeSessions map.
-	activeSessions := map[string]bool{}
-	var out bytes.Buffer
-	cleaned := 0
-
-	entries, err := os.ReadDir(sandboxesDir)
-	if err != nil {
-		t.Fatalf("ReadDir sandboxes: %v", err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		sessionID := entry.Name()
-		if activeSessions[sessionID] {
-			continue
-		}
-		sandboxDir := filepath.Join(sandboxesDir, sessionID)
-		if err := os.RemoveAll(sandboxDir); err != nil {
-			t.Errorf("RemoveAll %s: %v", sandboxDir, err)
-		} else {
-			out.WriteString("Removed sandbox: " + sandboxDir + "\n")
-			cleaned++
-		}
-	}
+	var out, errOut bytes.Buffer
+	cleaned := cleanupSandboxDirs(sandboxesDir, map[string]bool{}, &out, &errOut)
 
 	if cleaned != 2 {
 		t.Errorf("expected 2 cleaned sandboxes, got %d; output: %s", cleaned, out.String())
 	}
-
-	// Verify they're gone.
 	for _, id := range []string{stoppedID1, stoppedID2} {
 		dir := filepath.Join(sandboxesDir, id)
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Errorf("sandbox dir %s should be removed, stat err: %v", dir, err)
+			t.Errorf("sandbox dir %s should be removed, stat err: %v; output: %s", dir, err, out.String())
+		}
+		sandboxDir := filepath.Join(sandboxesDir, id)
+		if !strings.Contains(out.String(), "Removed sandbox: "+sandboxDir) {
+			t.Errorf("expected output to mention removed sandbox %s; output: %s", sandboxDir, out.String())
 		}
 	}
 }
 
 // TestSessionCleanCmd_ActiveSessionsPreserved verifies that sandbox dirs for
-// active (running) sessions are NOT removed.
+// active (running) sessions are NOT removed by cleanupSandboxDirs.
 func TestSessionCleanCmd_ActiveSessionsPreserved(t *testing.T) {
 	fakeHome := t.TempDir()
 	sandboxesDir := filepath.Join(fakeHome, ".belayer", "sandboxes")
@@ -195,26 +160,15 @@ func TestSessionCleanCmd_ActiveSessionsPreserved(t *testing.T) {
 		}
 	}
 
-	activeSessions := map[string]bool{activeID: true}
-	cleaned := 0
-
-	entries, _ := os.ReadDir(sandboxesDir)
-	for _, entry := range entries {
-		if !entry.IsDir() || activeSessions[entry.Name()] {
-			continue
-		}
-		os.RemoveAll(filepath.Join(sandboxesDir, entry.Name())) //nolint:errcheck
-		cleaned++
-	}
+	var out, errOut bytes.Buffer
+	cleaned := cleanupSandboxDirs(sandboxesDir, map[string]bool{activeID: true}, &out, &errOut)
 
 	if cleaned != 1 {
 		t.Errorf("expected 1 cleaned, got %d", cleaned)
 	}
-	// Active session dir must still exist.
 	if _, err := os.Stat(filepath.Join(sandboxesDir, activeID)); err != nil {
 		t.Errorf("active session sandbox should still exist: %v", err)
 	}
-	// Dead session dir must be gone.
 	if _, err := os.Stat(filepath.Join(sandboxesDir, deadID)); !os.IsNotExist(err) {
 		t.Errorf("dead session sandbox should be removed")
 	}

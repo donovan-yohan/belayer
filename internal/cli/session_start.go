@@ -456,8 +456,8 @@ func cleanupWorktrees(baseDir string) {
 	for _, entry := range entries {
 		if entry.IsDir() {
 			wt := filepath.Join(worktreeDir, entry.Name())
-			exec.Command("git", "worktree", "remove", "--force", wt).Run() //nolint:errcheck
-			os.RemoveAll(wt)                                                //nolint:errcheck
+			exec.Command("git", "-C", wt, "worktree", "remove", "--force", wt).Run() //nolint:errcheck
+			os.RemoveAll(wt)                                                         //nolint:errcheck
 		}
 	}
 }

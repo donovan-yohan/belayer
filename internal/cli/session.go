@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -182,37 +183,41 @@ changes. Any work not committed will be lost.`,
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Reflection will run on next daemon cycle (trigger: post-session).")
 
-			// Clean up Docker sandbox if it exists.
-			home, _ := os.UserHomeDir()
-			sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sessionID)
-			composePath := filepath.Join(sandboxDir, "docker-compose.yml")
-			if _, err := os.Stat(composePath); err == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), "Stopping Docker sandbox...")
-				stopCmd := exec.Command("docker", "compose", "-f", composePath, "down")
-				stopCmd.Stdout = cmd.OutOrStdout()
-				stopCmd.Stderr = cmd.ErrOrStderr()
-				if err := stopCmd.Run(); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: docker compose down failed: %v\n", err)
-				} else {
-					fmt.Fprintln(cmd.OutOrStdout(), "Docker sandbox stopped.")
-					os.RemoveAll(sandboxDir)
+			// Clean up Docker sandbox and workbench if home directory is resolvable.
+			if home, err := os.UserHomeDir(); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not resolve home directory, skipping sandbox/workbench cleanup: %v\n", err)
+			} else {
+				sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sessionID)
+				composePath := filepath.Join(sandboxDir, "docker-compose.yml")
+				if _, err := os.Stat(composePath); err == nil {
+					fmt.Fprintln(cmd.OutOrStdout(), "Stopping Docker sandbox...")
+					stopCmd := exec.Command("docker", "compose", "-f", composePath, "down")
+					stopCmd.Stdout = cmd.OutOrStdout()
+					stopCmd.Stderr = cmd.ErrOrStderr()
+					if err := stopCmd.Run(); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: docker compose down failed: %v\n", err)
+					} else {
+						fmt.Fprintln(cmd.OutOrStdout(), "Docker sandbox stopped.")
+						if err := os.RemoveAll(sandboxDir); err != nil {
+							fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to remove sandbox directory %s: %v\n", sandboxDir, err)
+						}
+					}
 				}
-			}
 
-			// Clean up workbench if it exists.
-			workbenchDir := filepath.Join(home, ".belayer", "workbenches", sessionID)
-			workbenchComposePath := filepath.Join(workbenchDir, "docker-compose.yml")
-			if _, err := os.Stat(workbenchComposePath); err == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), "Stopping workbench...")
-				stopWorkbenchCmd := exec.Command("docker", "compose", "-f", workbenchComposePath, "down")
-				stopWorkbenchCmd.Stdout = cmd.OutOrStdout()
-				stopWorkbenchCmd.Stderr = cmd.ErrOrStderr()
-				if err := stopWorkbenchCmd.Run(); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: workbench docker compose down failed: %v\n", err)
-				} else {
-					fmt.Fprintln(cmd.OutOrStdout(), "Workbench stopped.")
+				workbenchDir := filepath.Join(home, ".belayer", "workbenches", sessionID)
+				workbenchComposePath := filepath.Join(workbenchDir, "docker-compose.yml")
+				if _, err := os.Stat(workbenchComposePath); err == nil {
+					fmt.Fprintln(cmd.OutOrStdout(), "Stopping workbench...")
+					stopWorkbenchCmd := exec.Command("docker", "compose", "-f", workbenchComposePath, "down")
+					stopWorkbenchCmd.Stdout = cmd.OutOrStdout()
+					stopWorkbenchCmd.Stderr = cmd.ErrOrStderr()
+					if err := stopWorkbenchCmd.Run(); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: workbench docker compose down failed: %v\n", err)
+					} else {
+						fmt.Fprintln(cmd.OutOrStdout(), "Workbench stopped.")
+					}
+					os.RemoveAll(workbenchDir) //nolint:errcheck
 				}
-				os.RemoveAll(workbenchDir) //nolint:errcheck
 			}
 
 			// Delete workbench record from store via daemon API if reachable.
@@ -220,9 +225,11 @@ changes. Any work not committed will be lost.`,
 				_ = c.DeleteWorkbenchBySession(sessionID) //nolint:errcheck
 			}
 
-			// Clean up git worktrees created for this session.
-			wsDir := resolveWorkspaceDir()
-			cleanupWorktrees(filepath.Join(wsDir, "sessions", sessionID))
+			// Clean up git worktrees created for this session (tmux mode).
+			// Docker-mode worktrees live inside the sandbox dir and were already removed above.
+			wtBaseDir := filepath.Join(os.TempDir(), "belayer-worktrees", sess.Name)
+			cleanupWorktrees(wtBaseDir)
+			os.RemoveAll(wtBaseDir) //nolint:errcheck
 
 			return nil
 		},
@@ -329,118 +336,41 @@ func newSessionCleanCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clean",
 		Short: "Clean up orphaned sandbox directories and git worktrees",
-		Long: `Walk ~/.belayer/sandboxes/ and the workspace worktrees directory,
+		Long: `Walk ~/.belayer/sandboxes/ and the tmux worktrees directory,
 removing directories for sessions that no longer exist or are stopped.
 Also runs 'git worktree prune' to clean up stale worktree refs.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := NewClient(resolveSocket(socket))
 
-			// Build set of active (running) session IDs.
-			activeSessions := map[string]bool{}
+			// Build set of active (running) session IDs and names.
+			// Abort if we can't query the daemon — proceeding with an empty set
+			// would treat ALL sessions as orphaned and delete everything.
 			sessions, err := c.ListSessions()
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list sessions (daemon may be offline): %v\n", err)
-			} else {
-				for _, s := range sessions {
-					if s.Status == "running" {
-						activeSessions[s.ID] = true
-					}
+				return fmt.Errorf("could not list sessions (daemon may be offline); aborting cleanup to avoid removing active sandboxes/worktrees: %w", err)
+			}
+			activeSessions := map[string]bool{}
+			activeSessionNames := map[string]bool{}
+			for _, s := range sessions {
+				if s.Status == "running" {
+					activeSessions[s.ID] = true
+					activeSessionNames[s.Name] = true
 				}
+			}
+
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("could not resolve user home directory: %w", err)
 			}
 
 			cleaned := 0
-
-			// Clean up sandbox directories.
-			home, _ := os.UserHomeDir()
 			sandboxesDir := filepath.Join(home, ".belayer", "sandboxes")
-			sandboxEntries, err := os.ReadDir(sandboxesDir)
-			if err != nil && !os.IsNotExist(err) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read sandboxes dir %s: %v\n", sandboxesDir, err)
-			}
-			for _, entry := range sandboxEntries {
-				if !entry.IsDir() {
-					continue
-				}
-				sessionID := entry.Name()
-				if activeSessions[sessionID] {
-					continue
-				}
-				sandboxDir := filepath.Join(sandboxesDir, sessionID)
-				// Bring down any compose stack that may still be running.
-				composePath := filepath.Join(sandboxDir, "docker-compose.yml")
-				if _, err := os.Stat(composePath); err == nil {
-					stopCmd := exec.Command("docker", "compose", "-f", composePath, "down")
-					stopCmd.Stdout = cmd.OutOrStdout()
-					stopCmd.Stderr = cmd.ErrOrStderr()
-					stopCmd.Run() //nolint:errcheck
-				}
-				if err := os.RemoveAll(sandboxDir); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not remove sandbox dir %s: %v\n", sandboxDir, err)
-				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "Removed sandbox: %s\n", sandboxDir)
-					cleaned++
-				}
-			}
+			cleaned += cleanupSandboxDirs(sandboxesDir, activeSessions, cmd.OutOrStdout(), cmd.ErrOrStderr())
 
-			// Clean up worktree directories.
-			wsDir := resolveWorkspaceDir()
-			sessionsDir := filepath.Join(wsDir, "sessions")
-			sessionEntries, err := os.ReadDir(sessionsDir)
-			if err != nil && !os.IsNotExist(err) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read sessions dir %s: %v\n", sessionsDir, err)
-			}
-
-			// Track which repo dirs had worktrees pruned.
-			prunedRepos := map[string]bool{}
-
-			for _, entry := range sessionEntries {
-				if !entry.IsDir() {
-					continue
-				}
-				sessionID := entry.Name()
-				if activeSessions[sessionID] {
-					continue
-				}
-				sessionDir := filepath.Join(sessionsDir, sessionID)
-				worktreeDir := filepath.Join(sessionDir, "worktrees")
-				wtEntries, err := os.ReadDir(worktreeDir)
-				if err != nil {
-					// No worktrees dir — remove the whole session dir if it's otherwise empty.
-					os.Remove(sessionDir) //nolint:errcheck
-					continue
-				}
-				for _, wt := range wtEntries {
-					if !wt.IsDir() {
-						continue
-					}
-					wtPath := filepath.Join(worktreeDir, wt.Name())
-					// Attempt git worktree remove (graceful).
-					exec.Command("git", "worktree", "remove", "--force", wtPath).Run() //nolint:errcheck
-					// Fall back to raw removal.
-					if err := os.RemoveAll(wtPath); err != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not remove worktree %s: %v\n", wtPath, err)
-					} else {
-						// Track parent repo for prune pass.
-						// The worktree dir name is the repo base dir by convention.
-						if repoDir := repoForWorktree(wtPath); repoDir != "" && !prunedRepos[repoDir] {
-							prunedRepos[repoDir] = true
-						}
-						fmt.Fprintf(cmd.OutOrStdout(), "Removed worktree: %s\n", wtPath)
-						cleaned++
-					}
-				}
-				os.RemoveAll(sessionDir) //nolint:errcheck
-			}
-
-			// Run 'git worktree prune' for each affected repo.
-			for repoDir := range prunedRepos {
-				pruneCmd := exec.Command("git", "-C", repoDir, "worktree", "prune")
-				if out, err := pruneCmd.CombinedOutput(); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: git worktree prune in %s failed: %v: %s\n", repoDir, err, string(out))
-				} else {
-					fmt.Fprintf(cmd.OutOrStdout(), "Pruned worktree refs in: %s\n", repoDir)
-				}
-			}
+			// Docker-mode worktrees live under the sandbox dir and are removed above.
+			// Tmux-mode worktrees live under os.TempDir()/belayer-worktrees/<sessionName>/.
+			belayerWorktreesDir := filepath.Join(os.TempDir(), "belayer-worktrees")
+			cleaned += cleanupTmuxWorktreeDirs(belayerWorktreesDir, activeSessionNames, cmd.OutOrStdout(), cmd.ErrOrStderr())
 
 			if cleaned == 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "Nothing to clean up.")
@@ -452,6 +382,102 @@ Also runs 'git worktree prune' to clean up stale worktree refs.`,
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	return cmd
+}
+
+// cleanupSandboxDirs removes sandbox directories for sessions not in activeSessions.
+// It first runs docker compose down if a compose file exists. Returns the count removed.
+func cleanupSandboxDirs(sandboxesDir string, activeSessions map[string]bool, out, errOut io.Writer) int {
+	entries, err := os.ReadDir(sandboxesDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(errOut, "Warning: could not read sandboxes dir %s: %v\n", sandboxesDir, err)
+		}
+		return 0
+	}
+	cleaned := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sessionID := entry.Name()
+		if activeSessions[sessionID] {
+			continue
+		}
+		sandboxDir := filepath.Join(sandboxesDir, sessionID)
+		composePath := filepath.Join(sandboxDir, "docker-compose.yml")
+		if _, err := os.Stat(composePath); err == nil {
+			stopCmd := exec.Command("docker", "compose", "-f", composePath, "down")
+			stopCmd.Stdout = out
+			stopCmd.Stderr = errOut
+			stopCmd.Run() //nolint:errcheck
+		}
+		if err := os.RemoveAll(sandboxDir); err != nil {
+			fmt.Fprintf(errOut, "Warning: could not remove sandbox dir %s: %v\n", sandboxDir, err)
+		} else {
+			fmt.Fprintf(out, "Removed sandbox: %s\n", sandboxDir)
+			cleaned++
+		}
+	}
+	return cleaned
+}
+
+// cleanupTmuxWorktreeDirs removes tmux-mode worktree directories for sessions not in
+// activeSessionNames. Each subdirectory of belayerWorktreesDir is named after a session name.
+// Captures repo dirs before removal so git worktree prune can run on affected repos.
+// Returns the count of worktree items removed.
+func cleanupTmuxWorktreeDirs(belayerWorktreesDir string, activeSessionNames map[string]bool, out, errOut io.Writer) int {
+	entries, err := os.ReadDir(belayerWorktreesDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(errOut, "Warning: could not read worktrees dir %s: %v\n", belayerWorktreesDir, err)
+		}
+		return 0
+	}
+	prunedRepos := map[string]bool{}
+	cleaned := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		sessionName := entry.Name()
+		if activeSessionNames[sessionName] {
+			continue
+		}
+		sessionWtDir := filepath.Join(belayerWorktreesDir, sessionName)
+		worktreeDir := filepath.Join(sessionWtDir, "worktrees")
+		wtEntries, err := os.ReadDir(worktreeDir)
+		if err != nil {
+			os.RemoveAll(sessionWtDir) //nolint:errcheck
+			continue
+		}
+		for _, wt := range wtEntries {
+			if !wt.IsDir() {
+				continue
+			}
+			wtPath := filepath.Join(worktreeDir, wt.Name())
+			// Capture repo dir before removing — git can't run on a deleted path.
+			if repoDir := repoForWorktree(wtPath); repoDir != "" && !prunedRepos[repoDir] {
+				prunedRepos[repoDir] = true
+			}
+			exec.Command("git", "-C", wtPath, "worktree", "remove", "--force", wtPath).Run() //nolint:errcheck
+			if err := os.RemoveAll(wtPath); err != nil {
+				fmt.Fprintf(errOut, "Warning: could not remove worktree %s: %v\n", wtPath, err)
+			} else {
+				fmt.Fprintf(out, "Removed worktree: %s\n", wtPath)
+				cleaned++
+			}
+		}
+		os.RemoveAll(sessionWtDir) //nolint:errcheck
+	}
+	for repoDir := range prunedRepos {
+		pruneCmd := exec.Command("git", "-C", repoDir, "worktree", "prune")
+		if pruneOut, err := pruneCmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(errOut, "Warning: git worktree prune in %s failed: %v: %s\n", repoDir, err, string(pruneOut))
+		} else {
+			fmt.Fprintf(out, "Pruned worktree refs in: %s\n", repoDir)
+		}
+	}
+	return cleaned
 }
 
 // repoForWorktree returns the main git repo directory that owns the given worktree path,
