@@ -251,3 +251,66 @@ func (c *Client) DeleteWorkbenchBySession(sessionID string) error {
 	}
 	return nil
 }
+
+// --- Tool routing client methods ---
+
+// toolResultResponse is the JSON response from a tool execution.
+type toolResultResponse struct {
+	Output     string `json:"output"`
+	Stderr     string `json:"stderr,omitempty"`
+	ExitCode   int    `json:"exit_code"`
+	DurationMS int64  `json:"duration_ms"`
+	Target     string `json:"target"`
+}
+
+// toolSpecResponse mirrors agent.ToolSpec for client-side deserialization.
+type toolSpecResponse struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Input       map[string]string `json:"input"`
+	Exec        struct {
+		Target  string `json:"target"`
+		Command string `json:"command"`
+		Timeout int    `json:"timeout,omitempty"`
+	} `json:"exec"`
+}
+
+// ExecuteTool runs a named tool for a session and returns the result.
+func (c *Client) ExecuteTool(sessionID, toolName string, input map[string]string, callingAgent string) (toolResultResponse, error) {
+	path := fmt.Sprintf("/sessions/%s/tools/%s", sessionID, toolName)
+	if callingAgent != "" {
+		path += "?agent=" + callingAgent
+	}
+	resp, err := c.do("POST", path, input)
+	if err != nil {
+		return toolResultResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return toolResultResponse{}, fmt.Errorf("tool execute: status %d: %s", resp.StatusCode, string(body))
+	}
+	var result toolResultResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return toolResultResponse{}, fmt.Errorf("decode tool result: %w", err)
+	}
+	return result, nil
+}
+
+// ListTools returns the registered tools for a session.
+func (c *Client) ListTools(sessionID string) ([]toolSpecResponse, error) {
+	resp, err := c.do("GET", "/sessions/"+sessionID+"/tools", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list tools: status %d: %s", resp.StatusCode, string(body))
+	}
+	var tools []toolSpecResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tools); err != nil {
+		return nil, fmt.Errorf("decode tools: %w", err)
+	}
+	return tools, nil
+}

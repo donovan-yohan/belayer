@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/agent"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -37,6 +39,10 @@ type Daemon struct {
 	listener net.Listener
 	server   *http.Server
 	config   Config
+
+	// Tool registry: per-session tool specs, protected by toolsMu.
+	toolsMu sync.RWMutex
+	tools   map[string][]agent.ToolSpec
 }
 
 // New creates a Daemon with the given config. Call Start to begin serving.
@@ -50,7 +56,7 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: open store: %w", err)
 	}
 
-	d := &Daemon{store: st, config: cfg}
+	d := &Daemon{store: st, config: cfg, tools: make(map[string][]agent.ToolSpec)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", d.handleHealth)
 	mux.HandleFunc("POST /sessions", d.handleCreateSession)
@@ -66,6 +72,9 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/workbench", d.handleCreateWorkbench)
 	mux.HandleFunc("GET /sessions/{id}/workbench", d.handleGetWorkbench)
 	mux.HandleFunc("DELETE /sessions/{id}/workbench", d.handleDeleteWorkbench)
+	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
+	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
+	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
 
 	d.server = &http.Server{Handler: mux}
 	return d, nil
