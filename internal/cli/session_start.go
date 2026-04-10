@@ -115,7 +115,7 @@ config that controls network isolation, compose extensions, and repos.`,
 					return err
 				}
 			} else {
-				if err := launchTmux(cmd, c, tmpl, sess, agentNames, taskInput, workDir, name); err != nil {
+				if err := launchTmux(cmd, c, tmpl, sess, agentNames, taskInput, workDir, workspaceRoot, belayerDir, environment, name, envCfg); err != nil {
 					return err
 				}
 			}
@@ -378,13 +378,38 @@ func launchDocker(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, s
 }
 
 // launchTmux starts agents in local tmux sessions.
-func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, sessionName string) error {
+func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, workspaceRoot, belayerDir, environment, sessionName string, envCfg *docker.EnvironmentConfig) error {
 	runner := tmux.NewLocalRunner()
 
 	// Create per-agent worktrees for isolation.
 	wtBaseDir := filepath.Join(os.TempDir(), "belayer-worktrees", sessionName)
+	repoWorkDirs := make(map[string]string)
+	if envCfg != nil {
+		for _, repoRef := range envCfg.Repos {
+			repoPath := expandHomePath(repoRef.Path)
+			if repoPath == "" {
+				continue
+			}
+			wt, err := createWorktree(repoPath, filepath.Join(wtBaseDir, "repos"), repoRef.Name, "")
+			if err != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "  warning: repo worktree for %s: %v (using source repo)\n", repoRef.Name, err)
+				repoWorkDirs[repoRef.Name] = repoPath
+				continue
+			}
+			repoWorkDirs[repoRef.Name] = wt
+		}
+	}
+
 	agentWorkDirs := make(map[string]string, len(tmpl.Agents))
+	agentMeta := make(map[string]docker.AgentRuntimeMetadata, len(tmpl.Agents))
 	for _, spec := range tmpl.Agents {
+		agentMeta[spec.Name] = docker.AgentRuntimeMetadata{Name: spec.Name, Repo: spec.Repo, Tier: spec.Tier}
+		if spec.Repo != "" {
+			if repoDir, ok := repoWorkDirs[spec.Repo]; ok {
+				agentWorkDirs[spec.Name] = repoDir
+				continue
+			}
+		}
 		wt, err := createWorktree(workDir, wtBaseDir, spec.Name, "")
 		if err != nil {
 			// Log warning but continue — fallback to shared workDir.
@@ -444,6 +469,53 @@ func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, ses
 			"model":  spec.Model,
 			"tier":   spec.Tier,
 		}))
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil {
+		sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sess.ID)
+		var workbenchSpec *docker.WorkbenchConfigSpec
+		if envCfg != nil && envCfg.Workbench != nil {
+			spec, err := envCfg.ResolveWorkbenchSpec()
+			if err != nil {
+				return fmt.Errorf("resolve workbench spec: %w", err)
+			}
+			workbenchSpec = &spec
+		}
+		if err := docker.WriteRuntimeMetadata(sandboxDir, docker.RuntimeMetadata{
+			SessionID:   sess.ID,
+			SessionName: sessionName,
+			Template:    tmpl.Name,
+			Environment: environment,
+			EnvironmentPath: func() string {
+				if envCfg == nil {
+					return ""
+				}
+				return envCfg.SourcePath()
+			}(),
+			BelayerDir:    belayerDir,
+			WorkspaceRoot: workspaceRoot,
+			Workbench:     workbenchSpec,
+			Tools: func() []agent.ToolSpec {
+				if envCfg == nil {
+					return nil
+				}
+				return envCfg.Tools
+			}(),
+			RepoWorktrees:  repoWorkDirs,
+			AgentWorktrees: agentWorkDirs,
+			Agents:         agentMeta,
+		}); err != nil {
+			return fmt.Errorf("write runtime metadata: %w", err)
+		}
+	}
+
+	if envCfg != nil {
+		for _, tool := range envCfg.Tools {
+			if err := c.RegisterTool(sess.ID, tool); err != nil {
+				return fmt.Errorf("register environment tool %q: %w", tool.Name, err)
+			}
+		}
 	}
 
 	return nil
