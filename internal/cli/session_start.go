@@ -444,6 +444,9 @@ func createWorktree(repoDir, baseDir, agentName, branch string) (string, error) 
 }
 
 // cleanupWorktrees removes git worktrees created for a session.
+// It first attempts a graceful `git worktree remove --force` to deregister the
+// worktree from git's internal tracking, then removes the directory from disk
+// regardless of whether the git command succeeded.
 func cleanupWorktrees(baseDir string) {
 	worktreeDir := filepath.Join(baseDir, "worktrees")
 	entries, err := os.ReadDir(worktreeDir)
@@ -453,7 +456,8 @@ func cleanupWorktrees(baseDir string) {
 	for _, entry := range entries {
 		if entry.IsDir() {
 			wt := filepath.Join(worktreeDir, entry.Name())
-			exec.Command("git", "worktree", "remove", "--force", wt).Run()
+			exec.Command("git", "-C", wt, "worktree", "remove", "--force", wt).Run() //nolint:errcheck
+			os.RemoveAll(wt)                                                         //nolint:errcheck
 		}
 	}
 }
