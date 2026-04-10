@@ -47,10 +47,10 @@ flowchart TB
     O --> T
     C --> SB
     T --> SB
-    M -.->|"reflection<br/>(post-session)"| S
+    M -.->|"sleep-time<br/>(per-agent)"| S
 ```
 
-Session is the root primitive — everything is scoped to a session. Orchestration and Memory depend on Session. Communication and Tools are directed by Orchestration. Sandbox is where Communication and Tools physically execute. Memory feeds back into future Sessions via the reflection cycle.
+Session is the root primitive — everything is scoped to a session. Orchestration and Memory depend on Session. Communication and Tools are directed by Orchestration. Sandbox is where Communication and Tools physically execute. Memory feeds back into future Sessions via per-agent sleep-time compute.
 
 ---
 
@@ -160,30 +160,32 @@ Communication is the transport layer between agents. Agents don't know each othe
 
 ### 5. Memory
 
-Memory is knowledge that persists beyond any single agent invocation or session. The runtime owns memory infrastructure; a dedicated reflection agent writes to it.
+Memory is knowledge that persists beyond any single agent invocation or session. The runtime owns memory infrastructure — storage, indexing, injection, and sleep-time triggers. Agents own their memory content — they decide what to remember, how to organize it, and when to prune.
+
+This follows the same principle as the rest of the spec: **the runtime handles plumbing, agents handle judgment.**
 
 **Contract:**
 - Three tiers with different access patterns:
-  - **Core** — always injected into agent prompts, small, frequently updated
+  - **Core** — always injected into agent prompts, small, frequently updated (the agent's identity)
   - **Archival** — searchable long-term knowledge with provenance
   - **Recall** — on-demand combined query across core and archival
-- Personal agent memory (per-agent, persists across sessions)
-- Shared institutional memory (all agents can read, reflection-managed)
-- Sleep-time reflection (post-session consolidation by a separate agent)
+- Agent-managed memory (agents write their own memory via tools, same as editing code)
+- Personal agent memory (per-agent, persists across sessions, portable across harnesses)
+- Sleep-time compute (per-agent background consolidation during idle periods)
 - Staleness detection (entries carry provenance: session, date, source)
 
 **Inside this interface:**
-- Memory storage and retrieval across all three tiers
-- Reflection agent lifecycle (launch post-session, provide event access)
+- Memory storage, indexing, and retrieval across all three tiers
 - Memory injection into agent prompts at session start
-- Quality pattern accumulation (what fails review in this codebase)
+- Sleep-time trigger mechanism (on idle, every N turns, on context compaction)
+- Git-backed versioning of memory files (rollback, conflict resolution, audit trail)
 
 **Outside this interface:**
-- What to remember (that's the reflection agent's LLM judgment)
-- Storage backend (SQLite FTS5, vector DB, markdown files — implementation choice)
-- Agent intelligence (memory augments prompts, it doesn't replace reasoning)
+- What to remember (agent judgment — the agent decides what's worth keeping)
+- How to organize memory (agent judgment — file hierarchy, indexes, references)
+- Storage backend (SQLite FTS5, vector DB, markdown files, git repos — implementation choice)
 
-**Why agents can't own this:** Working agents are biased by their current task. A reflection agent runs post-session with clean perspective — consolidating what actually happened, not what the agent wished happened. This separation prevents self-serving memory and ensures institutional knowledge reflects reality.
+**Why the runtime still owns this interface:** Agents manage their own memory content, but the runtime provides the infrastructure that makes it durable and searchable. Without the runtime: memory doesn't survive crashes, there's no full-text search across sessions, there's no trigger mechanism for sleep-time consolidation, and there's no versioning for rollback. The agent writes; the runtime persists.
 
 ---
 
@@ -214,23 +216,61 @@ Tools are capabilities that agents invoke through the runtime. The runtime route
 
 ---
 
+## Agent Identity
+
+An agent is not a process — it's an identity. The process (Claude Code, Codex, Letta, any harness) is the runtime detail. The identity is what persists.
+
+Each agent is defined by a portable directory of files:
+
+```
+.belayer/agents/api-implementer/
+├── config.yaml              ← vendor, model, role, tier
+├── system-prompt.md         ← role identity and instructions
+├── sleep-prompt.md          ← deep sleep consolidation instructions
+├── memory/
+│   └── system/              ← core memory (pinned to context window)
+│       ├── identity.md      ← "I am a backend implementer. Kotlin/Spring Boot."
+│       ├── codebase.md      ← "Rate limiter is in middleware/. Register in PermissionRegistry.kt."
+│       └── patterns.md      ← "Reviewer catches missing SpiceDB checks. Always add them."
+└── skills/                  ← learned behaviors from past sessions
+    └── flyway-migration/
+        └── SKILL.md         ← "When adding a column, create a reversible migration..."
+```
+
+**Context is identity.** What an agent has in its memory files determines who it is — its expertise, its patterns, its accumulated knowledge. The model weights are the substrate; the memory is the self. This means:
+
+- The same agent identity loaded into Claude Code or Codex or Letta produces the same "personality" — adapted to each harness, but carrying the same knowledge
+- Memory files are git-backed, versioned, and portable
+- An agent's identity survives model upgrades, vendor swaps, and framework changes
+- Over N sessions, the agent becomes an expert at its role for this codebase
+
+**Sleep-time compute** is how agents consolidate experience. Each agent has a sleep-time prompt (`sleep-prompt.md`) that governs how it processes its own session events during idle periods. The runtime triggers sleep-time; the agent decides what to remember.
+
+- Runs per-agent during idle periods, between turns, or post-session
+- The agent reviews its own events and updates its own memory files
+- Consolidates raw observations into generalized patterns (not event logs)
+- Prunes stale facts while preserving identity markers
+- The orchestrator's sleep-time naturally produces cross-agent learnings because the orchestrator already has cross-agent visibility
+
+---
+
 ## Agent Roles
 
-The specification defines four structural roles. Implementations may use different names, but the roles map to distinct interface dependencies and trust boundaries.
+The specification defines three structural roles. Implementations may use different names, but the roles map to distinct interface dependencies and trust boundaries.
 
 | Role | Primary Interfaces | Key Property |
 |---|---|---|
 | **Orchestrator** | Orchestration, Communication, Tools | Adapts coordination to roster and task |
 | **Worker** | Sandbox, Communication, Tools | Operates in isolation, produces artifacts |
 | **Validator** | Communication, Sandbox (read-only) | Context-isolated from workers |
-| **Reflector** | Memory, Session (read events) | Sole writer of persistent memory |
+
+All roles share the Memory interface — every agent manages its own memory and has its own sleep-time process.
 
 ```mermaid
 sequenceDiagram
     participant O as Orchestrator
     participant W as Worker
     participant V as Validator
-    participant R as Reflector
 
     Note over O,V: IMPLEMENT PHASE
     O->>W: Task + spec context
@@ -248,10 +288,14 @@ sequenceDiagram
         V-->>O: PASS
     end
 
-    Note over R: POST-SESSION (sleep-time)
-    R->>R: Read session events + current memory
-    R->>R: Consolidate into personal + shared memory
-    R-->>O: Memory available for next session
+    Note over O: SLEEP-TIME (orchestrator)
+    O->>O: Consolidate cross-agent coordination patterns
+
+    Note over W: SLEEP-TIME (worker)
+    W->>W: Consolidate codebase patterns
+
+    Note over V: SLEEP-TIME (validator)
+    V->>V: Refine review checklist from experience
 ```
 
 ### Orchestrator
@@ -261,8 +305,8 @@ Coordinates the session. Decomposes tasks, assigns work, monitors progress, deci
 - Reads team roster from template, adapts coordination to team shape
 - Sends instructions via Communication, monitors progress via Session events
 - Can dynamically spawn ephemeral agents via Tools
-- Accumulates coordination patterns in Memory ("app-implementer forgets TypeScript types when API changes")
 - In epic sessions, orchestrates across multiple child sessions
+- **Sleep-time produces cross-agent patterns** — the orchestrator sees all agents' events, so its memory consolidation naturally captures institutional knowledge ("app-implementer forgets TypeScript types when API changes")
 
 ### Worker
 
@@ -272,7 +316,7 @@ Writes code, runs tests, creates artifacts. Operates inside a Sandbox.
 - Executes in an isolated Sandbox with a dedicated worktree
 - Creates PRs, runs tests — all within sandbox boundaries
 - Reports progress via Session events
-- Accumulates codebase patterns in Memory ("always register in PermissionRegistry.kt")
+- **Sleep-time produces codebase expertise** — patterns, conventions, common pitfalls ("always register in PermissionRegistry.kt")
 
 ### Validator
 
@@ -282,17 +326,7 @@ Provides independent review. The critical property is **context isolation**: the
 - Reads artifacts in a read-only sandbox
 - Provides structured pass/fail feedback
 - **Must be a different vendor or model than the worker** — architecturally enforced independence
-- Accumulates review patterns in Memory ("missing SpiceDB permission checks — caught 5 times")
-
-### Reflector
-
-Runs post-session (sleep-time compute). Consolidates raw session events into structured memory. Working agents cannot write their own persistent memory — only the reflector can.
-
-- Reads Session events and current Memory state
-- Writes updated personal memory for each agent
-- Writes shared institutional learnings
-- Flags contradictions rather than silently resolving them
-- Over N sessions, each agent becomes an expert at its role for this codebase
+- **Sleep-time produces review expertise** — an evolving checklist built from experience ("missing SpiceDB permission checks — caught 5 times")
 
 ---
 
@@ -344,9 +378,9 @@ These hold regardless of implementation:
 
 2. **Context isolation is a feature, not a limitation.** The validator's independence is architecturally enforced — different vendor, no implementation context, separate sandbox. An agent reviewing work it watched being written is performing sycophantic self-review.
 
-3. **Agents are cattle, not pets.** Any agent can crash and be replaced. The session event log provides continuity. A replacement agent receives compiled restart context from event history. No agent holds irreplaceable state.
+3. **Agent identity is portable; agent processes are disposable.** An agent's identity (memory files, skills, config) persists across sessions and survives harness swaps. But the process running the agent is cattle — it can crash and be replaced. The session event log provides process continuity. The memory directory provides identity continuity. A replacement process receives compiled restart context and the agent's full identity files.
 
-4. **The runtime learns.** Session N+1 benefits from sessions 1 through N. Quality patterns accumulate through reflection. The reviewer's checklist evolves. The orchestrator's coordination strategies improve. This is not aspirational — it's the core feedback mechanism.
+4. **Agents learn through sleep-time compute.** Every agent consolidates its own experience during idle periods — the orchestrator learns coordination patterns, workers learn codebase conventions, validators refine their review checklists. Memory should generalize (patterns and indexes), not memorize (raw event logs). Over N sessions, each agent becomes an expert at its role for this codebase.
 
 5. **Vendor-agnostic by contract.** The orchestrator could be Claude, the worker Codex, the validator Gemini. Vendor adapters normalize output format, token tracking, and message delivery. Swapping a vendor changes an adapter, not the architecture.
 
@@ -378,6 +412,6 @@ Each interface can be sourced from existing tools:
 | Memory | Letta (three-tier + sleep-time reflection), any vector DB + markdown |
 | Tools | MCP servers, shell commands, API gateways |
 
-The spec's value is not any single interface — it's the composition. How sessions scope memory. How orchestration directs communication. How sandboxes bound tool execution. How reflection feeds memory back into future sessions. The interfaces are individually simple; their composition is what makes multi-agent coding sessions reliable.
+The spec's value is not any single interface — it's the composition. How sessions scope memory. How orchestration directs communication. How sandboxes bound tool execution. How sleep-time compute feeds agent experience back into future sessions. The interfaces are individually simple; their composition is what makes multi-agent coding sessions reliable.
 
-An implementation that fulfills all six interface contracts — whether as a monolithic daemon, a composed set of existing tools, or a library — is a conforming runtime. The test is behavioral: does the system provide session persistence, LLM-driven orchestration, enforced isolation, transparent messaging, persistent memory with reflection, and routed tool execution?
+An implementation that fulfills all six interface contracts — whether as a monolithic daemon, a composed set of existing tools, or a library — is a conforming runtime. The test is behavioral: does the system provide session persistence, LLM-driven orchestration, enforced isolation, transparent messaging, agent-managed memory with sleep-time consolidation, and routed tool execution?
