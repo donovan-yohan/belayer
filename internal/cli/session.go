@@ -25,6 +25,7 @@ func newSessionCmd() *cobra.Command {
 		newSessionListCmd(),
 		newSessionStopCmd(),
 		newSessionWakeCmd(),
+		newSessionCleanCmd(),
 	)
 	return cmd
 }
@@ -194,6 +195,7 @@ changes. Any work not committed will be lost.`,
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: docker compose down failed: %v\n", err)
 				} else {
 					fmt.Fprintln(cmd.OutOrStdout(), "Docker sandbox stopped.")
+					os.RemoveAll(sandboxDir)
 				}
 			}
 
@@ -217,6 +219,10 @@ changes. Any work not committed will be lost.`,
 			if err := c.Health(); err == nil {
 				_ = c.DeleteWorkbenchBySession(sessionID) //nolint:errcheck
 			}
+
+			// Clean up git worktrees created for this session.
+			wsDir := resolveWorkspaceDir()
+			cleanupWorktrees(filepath.Join(wsDir, "sessions", sessionID))
 
 			return nil
 		},
@@ -315,6 +321,156 @@ that context prepended to its prompt.`,
 	cmd.Flags().StringVar(&agentName, "agent", "", "Agent to wake (required)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	return cmd
+}
+
+func newSessionCleanCmd() *cobra.Command {
+	var socket string
+
+	cmd := &cobra.Command{
+		Use:   "clean",
+		Short: "Clean up orphaned sandbox directories and git worktrees",
+		Long: `Walk ~/.belayer/sandboxes/ and the workspace worktrees directory,
+removing directories for sessions that no longer exist or are stopped.
+Also runs 'git worktree prune' to clean up stale worktree refs.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := NewClient(resolveSocket(socket))
+
+			// Build set of active (running) session IDs.
+			activeSessions := map[string]bool{}
+			sessions, err := c.ListSessions()
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not list sessions (daemon may be offline): %v\n", err)
+			} else {
+				for _, s := range sessions {
+					if s.Status == "running" {
+						activeSessions[s.ID] = true
+					}
+				}
+			}
+
+			cleaned := 0
+
+			// Clean up sandbox directories.
+			home, _ := os.UserHomeDir()
+			sandboxesDir := filepath.Join(home, ".belayer", "sandboxes")
+			sandboxEntries, err := os.ReadDir(sandboxesDir)
+			if err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read sandboxes dir %s: %v\n", sandboxesDir, err)
+			}
+			for _, entry := range sandboxEntries {
+				if !entry.IsDir() {
+					continue
+				}
+				sessionID := entry.Name()
+				if activeSessions[sessionID] {
+					continue
+				}
+				sandboxDir := filepath.Join(sandboxesDir, sessionID)
+				// Bring down any compose stack that may still be running.
+				composePath := filepath.Join(sandboxDir, "docker-compose.yml")
+				if _, err := os.Stat(composePath); err == nil {
+					stopCmd := exec.Command("docker", "compose", "-f", composePath, "down")
+					stopCmd.Stdout = cmd.OutOrStdout()
+					stopCmd.Stderr = cmd.ErrOrStderr()
+					stopCmd.Run() //nolint:errcheck
+				}
+				if err := os.RemoveAll(sandboxDir); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not remove sandbox dir %s: %v\n", sandboxDir, err)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "Removed sandbox: %s\n", sandboxDir)
+					cleaned++
+				}
+			}
+
+			// Clean up worktree directories.
+			wsDir := resolveWorkspaceDir()
+			sessionsDir := filepath.Join(wsDir, "sessions")
+			sessionEntries, err := os.ReadDir(sessionsDir)
+			if err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not read sessions dir %s: %v\n", sessionsDir, err)
+			}
+
+			// Track which repo dirs had worktrees pruned.
+			prunedRepos := map[string]bool{}
+
+			for _, entry := range sessionEntries {
+				if !entry.IsDir() {
+					continue
+				}
+				sessionID := entry.Name()
+				if activeSessions[sessionID] {
+					continue
+				}
+				sessionDir := filepath.Join(sessionsDir, sessionID)
+				worktreeDir := filepath.Join(sessionDir, "worktrees")
+				wtEntries, err := os.ReadDir(worktreeDir)
+				if err != nil {
+					// No worktrees dir — remove the whole session dir if it's otherwise empty.
+					os.Remove(sessionDir) //nolint:errcheck
+					continue
+				}
+				for _, wt := range wtEntries {
+					if !wt.IsDir() {
+						continue
+					}
+					wtPath := filepath.Join(worktreeDir, wt.Name())
+					// Attempt git worktree remove (graceful).
+					exec.Command("git", "worktree", "remove", "--force", wtPath).Run() //nolint:errcheck
+					// Fall back to raw removal.
+					if err := os.RemoveAll(wtPath); err != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not remove worktree %s: %v\n", wtPath, err)
+					} else {
+						// Track parent repo for prune pass.
+						// The worktree dir name is the repo base dir by convention.
+						if repoDir := repoForWorktree(wtPath); repoDir != "" && !prunedRepos[repoDir] {
+							prunedRepos[repoDir] = true
+						}
+						fmt.Fprintf(cmd.OutOrStdout(), "Removed worktree: %s\n", wtPath)
+						cleaned++
+					}
+				}
+				os.RemoveAll(sessionDir) //nolint:errcheck
+			}
+
+			// Run 'git worktree prune' for each affected repo.
+			for repoDir := range prunedRepos {
+				pruneCmd := exec.Command("git", "-C", repoDir, "worktree", "prune")
+				if out, err := pruneCmd.CombinedOutput(); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: git worktree prune in %s failed: %v: %s\n", repoDir, err, string(out))
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "Pruned worktree refs in: %s\n", repoDir)
+				}
+			}
+
+			if cleaned == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "Nothing to clean up.")
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "Cleaned %d item(s).\n", cleaned)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	return cmd
+}
+
+// repoForWorktree returns the main git repo directory that owns the given worktree path,
+// or an empty string if it cannot be determined.
+func repoForWorktree(wtPath string) string {
+	out, err := exec.Command("git", "-C", wtPath, "rev-parse", "--git-common-dir").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	commonDir := strings.TrimSpace(string(out))
+	if commonDir == "" {
+		return ""
+	}
+	// --git-common-dir returns an absolute path or a path relative to the worktree.
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(wtPath, commonDir)
+	}
+	// The common git dir is typically <repo>/.git; the repo root is its parent.
+	return filepath.Dir(commonDir)
 }
 
 // lookupSessionID resolves a session name, ID prefix, or full ID to a full session ID.
