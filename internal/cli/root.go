@@ -23,6 +23,7 @@ Commands:
   setup       Bootstrap a .belayer/ workspace
   status      Show running sessions
   logs        Show session events
+  watch       Stream events from one or more sessions
   recall      Search events via FTS5`,
 	}
 
@@ -33,6 +34,7 @@ Commands:
 		newSessionCmd(),
 		newAttachCmd(),
 		newLogsCmd(),
+		newWatchCmd(),
 		newStatusCmd(),
 		newDebugCmd(),
 		newRecallCmd(),

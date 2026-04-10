@@ -117,7 +117,7 @@ func TestGenerateWorkbenchCompose_BuildContext(t *testing.T) {
 			Services: []ServiceDecl{
 				{
 					Name:  "api",
-					Build: "/path/to/api",
+					Build: BuildDecl{Context: "/path/to/api"},
 				},
 			},
 		},
@@ -219,9 +219,9 @@ func TestGenerateWorkbenchCompose_DependsOn(t *testing.T) {
 		Spec: WorkbenchConfigSpec{
 			Services: []ServiceDecl{
 				{
-					Name:    "api",
-					Image:   "extend/api:latest",
-					Depends: []string{"db"},
+					Name:      "api",
+					Image:     "extend/api:latest",
+					DependsOn: map[string]ServiceDependency{"db": {}},
 				},
 				{
 					Name:  "db",
@@ -238,8 +238,8 @@ func TestGenerateWorkbenchCompose_DependsOn(t *testing.T) {
 	if !strings.Contains(content, "depends_on:") {
 		t.Errorf("expected 'depends_on:' in compose output, got:\n%s", content)
 	}
-	if !strings.Contains(content, "- db") {
-		t.Errorf("expected '- db' dependency in compose output, got:\n%s", content)
+	if !strings.Contains(content, "db:") || !strings.Contains(content, "condition: service_started") {
+		t.Errorf("expected structured db dependency in compose output, got:\n%s", content)
 	}
 }
 
@@ -281,6 +281,35 @@ func TestGenerateWorkbenchCompose_HealthCheck(t *testing.T) {
 	}
 	if !strings.Contains(content, "retries: 5") {
 		t.Errorf("expected retries in compose output, got:\n%s", content)
+	}
+}
+
+func TestGenerateWorkbenchCompose_HealthCheckStartPeriod(t *testing.T) {
+	cfg := WorkbenchConfig{
+		SessionID: "test-session",
+		Spec: WorkbenchConfigSpec{
+			Services: []ServiceDecl{
+				{
+					Name:  "api",
+					Image: "extend/api:latest",
+					Health: &HealthDecl{
+						Test:        []string{"CMD", "curl", "-f", "http://localhost:8080/health"},
+						Interval:    "5s",
+						Timeout:     "3s",
+						Retries:     10,
+						StartPeriod: "30s",
+					},
+				},
+			},
+		},
+	}
+	out, err := generateWorkbenchCompose(cfg)
+	if err != nil {
+		t.Fatalf("generateWorkbenchCompose returned error: %v", err)
+	}
+	content := string(out)
+	if !strings.Contains(content, "start_period: 30s") {
+		t.Errorf("expected start_period in compose output, got:\n%s", content)
 	}
 }
 
@@ -337,7 +366,7 @@ func TestGenerateWorkbenchCompose_WorktreePathSubstitution(t *testing.T) {
 			Services: []ServiceDecl{
 				{
 					Name:  "api",
-					Build: "${WORKTREE_extend_api}",
+					Build: BuildDecl{Context: "${WORKTREE_extend_api}"},
 				},
 			},
 		},
@@ -355,6 +384,31 @@ func TestGenerateWorkbenchCompose_WorktreePathSubstitution(t *testing.T) {
 	}
 	if strings.Contains(content, "${WORKTREE_extend_api}") {
 		t.Errorf("expected placeholder to be substituted, got:\n%s", content)
+	}
+}
+
+func TestGenerateWorkbenchCompose_WorktreeDotTemplateSubstitution(t *testing.T) {
+	cfg := WorkbenchConfig{
+		SessionID: "test-session",
+		Spec: WorkbenchConfigSpec{
+			Services: []ServiceDecl{
+				{
+					Name:  "api",
+					Build: BuildDecl{Context: "{{.Worktree.extend-api}}"},
+				},
+			},
+		},
+		WorktreePaths: map[string]string{
+			"extend-api": "/Users/test/worktrees/extend-api",
+		},
+	}
+	out, err := generateWorkbenchCompose(cfg)
+	if err != nil {
+		t.Fatalf("generateWorkbenchCompose returned error: %v", err)
+	}
+	content := string(out)
+	if !strings.Contains(content, "/Users/test/worktrees/extend-api") {
+		t.Errorf("expected substituted path in compose output, got:\n%s", content)
 	}
 }
 
@@ -522,5 +576,28 @@ func TestWorkbench_Stop_RequiresCreate(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must call Create before Stop") {
 		t.Errorf("expected error about Create, got: %v", err)
+	}
+}
+
+func TestWorkbench_Endpoints(t *testing.T) {
+	w, err := NewWorkbench(WorkbenchConfig{
+		SessionID: "test-session",
+		Spec: WorkbenchConfigSpec{
+			Services: []ServiceDecl{
+				{Name: "extend-api", Ports: []string{"8080"}},
+				{Name: "postgres", Ports: []string{"5432"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWorkbench returned error: %v", err)
+	}
+
+	endpoints := w.Endpoints()
+	if endpoints["extend-api"].URL != "http://extend-api:8080" {
+		t.Fatalf("unexpected extend-api endpoint: %#v", endpoints["extend-api"])
+	}
+	if endpoints["postgres"].URL != "postgres:5432" {
+		t.Fatalf("unexpected postgres endpoint: %#v", endpoints["postgres"])
 	}
 }

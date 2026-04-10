@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -273,6 +274,52 @@ func (s *Store) QueryEvents(sessionID string) ([]SessionEvent, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store: query events: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
+// QueryEventsAfter returns all events for a session with IDs greater than afterID,
+// ordered by ID ASC.
+func (s *Store) QueryEventsAfter(sessionID string, afterID int64) ([]SessionEvent, error) {
+	rows, err := s.db.Query(
+		`SELECT id, session_id, timestamp, type, data
+		 FROM events
+		 WHERE session_id = ? AND id > ?
+		 ORDER BY id ASC`,
+		sessionID, afterID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: query events after: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
+// QueryEventsForSessionsAfter returns all events for the provided session IDs
+// with IDs greater than afterID, ordered by ID ASC.
+func (s *Store) QueryEventsForSessionsAfter(sessionIDs []string, afterID int64) ([]SessionEvent, error) {
+	if len(sessionIDs) == 0 {
+		return []SessionEvent{}, nil
+	}
+
+	placeholders := make([]string, len(sessionIDs))
+	args := make([]any, 0, len(sessionIDs)+1)
+	for i, sessionID := range sessionIDs {
+		placeholders[i] = "?"
+		args = append(args, sessionID)
+	}
+	args = append(args, afterID)
+
+	rows, err := s.db.Query(
+		fmt.Sprintf(`SELECT id, session_id, timestamp, type, data
+		 FROM events
+		 WHERE session_id IN (%s) AND id > ?
+		 ORDER BY id ASC`, strings.Join(placeholders, ",")),
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: query events for sessions after: %w", err)
 	}
 	defer rows.Close()
 	return scanEvents(rows)

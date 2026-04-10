@@ -56,6 +56,12 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			toolName := args[0]
 			if sessionFlag == "" {
+				sessionFlag = os.Getenv("BELAYER_SESSION_ID")
+			}
+			if agentFlag == "" {
+				agentFlag = os.Getenv("BELAYER_AGENT_ID")
+			}
+			if sessionFlag == "" {
 				return fmt.Errorf("--session is required")
 			}
 
@@ -118,6 +124,9 @@ func newToolListCmd() *cobra.Command {
 Examples:
   belayer tool list --session abc123`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if sessionFlag == "" {
+				sessionFlag = os.Getenv("BELAYER_SESSION_ID")
+			}
 			if sessionFlag == "" {
 				return fmt.Errorf("--session is required")
 			}

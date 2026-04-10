@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,7 +13,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/donovan-yohan/belayer/internal/agent"
 )
 
 // Client connects to the belayer daemon via Unix socket.
@@ -184,7 +190,26 @@ func (c *Client) LogEvent(sessionID, eventType, data string) error {
 
 // GetEvents returns events for a session.
 func (c *Client) GetEvents(sessionID string) ([]eventResponse, error) {
-	resp, err := c.do("GET", "/sessions/"+sessionID+"/events", nil)
+	return c.GetEventsAfter(sessionID, 0, 0)
+}
+
+// GetEventsAfter returns events for a session after the given event ID. When
+// waitFor is positive, the daemon long-polls until new events arrive or the
+// wait interval expires.
+func (c *Client) GetEventsAfter(sessionID string, afterID int64, waitFor time.Duration) ([]eventResponse, error) {
+	path := "/sessions/" + sessionID + "/events"
+	query := url.Values{}
+	if afterID > 0 {
+		query.Set("after", strconv.FormatInt(afterID, 10))
+	}
+	if waitFor > 0 {
+		query.Set("wait", waitFor.String())
+	}
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	resp, err := c.do("GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -194,6 +219,57 @@ func (c *Client) GetEvents(sessionID string) ([]eventResponse, error) {
 		return nil, fmt.Errorf("decode events: %w", err)
 	}
 	return events, nil
+}
+
+// WatchSessions streams multiplexed session events over the SSE endpoint until
+// the provided context is cancelled.
+func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID int64, onEvent func(eventResponse) error) error {
+	query := url.Values{}
+	query.Set("sessions", strings.Join(sessionIDs, ","))
+	if afterID > 0 {
+		query.Set("after", strconv.FormatInt(afterID, 10))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://daemon/events/stream?"+query.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("watch sessions: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	var payload strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "data: ") {
+			payload.WriteString(strings.TrimPrefix(line, "data: "))
+			continue
+		}
+		if line == "" && payload.Len() > 0 {
+			var evt eventResponse
+			if err := json.Unmarshal([]byte(payload.String()), &evt); err != nil {
+				return fmt.Errorf("watch sessions: decode event: %w", err)
+			}
+			if err := onEvent(evt); err != nil {
+				return err
+			}
+			payload.Reset()
+		}
+	}
+	if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
+		return fmt.Errorf("watch sessions: %w", err)
+	}
+	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }
 
 type workbenchResponse struct {
@@ -216,6 +292,10 @@ func (c *Client) CreateWorkbench(sessionID, spec string) (workbenchResponse, err
 		return workbenchResponse{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return workbenchResponse{}, fmt.Errorf("create workbench: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	var wb workbenchResponse
 	if err := json.NewDecoder(resp.Body).Decode(&wb); err != nil {
 		return workbenchResponse{}, fmt.Errorf("decode workbench: %w", err)
@@ -249,6 +329,20 @@ func (c *Client) DeleteWorkbenchBySession(sessionID string) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("delete workbench: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// RegisterTool registers a tool for a session.
+func (c *Client) RegisterTool(sessionID string, spec agent.ToolSpec) error {
+	resp, err := c.do("POST", "/sessions/"+url.PathEscape(sessionID)+"/tools", spec)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("register tool: status %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
 }

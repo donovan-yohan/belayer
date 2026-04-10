@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -26,6 +27,9 @@ func newWorkbenchUpCmd() *cobra.Command {
 		Use:   "up",
 		Short: "Provision the workbench for the current session",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if sessionID == "" {
+				sessionID = os.Getenv("BELAYER_SESSION_ID")
+			}
 			if sessionID == "" {
 				return fmt.Errorf("--session is required")
 			}
@@ -52,6 +56,9 @@ func newWorkbenchStatusCmd() *cobra.Command {
 		Short: "Check workbench readiness and endpoints",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if sessionID == "" {
+				sessionID = os.Getenv("BELAYER_SESSION_ID")
+			}
+			if sessionID == "" {
 				return fmt.Errorf("--session is required")
 			}
 			c := NewClient(resolveSocket(socket))
@@ -77,6 +84,9 @@ func newWorkbenchDownCmd() *cobra.Command {
 		Use:   "down",
 		Short: "Tear down the workbench",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if sessionID == "" {
+				sessionID = os.Getenv("BELAYER_SESSION_ID")
+			}
 			if sessionID == "" {
 				return fmt.Errorf("--session is required")
 			}

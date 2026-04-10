@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,11 +9,16 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/agent"
+	"github.com/donovan-yohan/belayer/internal/docker"
+	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +28,9 @@ func newSessionCmd() *cobra.Command {
 		Short: "Manage belayer sessions",
 	}
 	cmd.AddCommand(
+		newSessionCreateCmd(),
 		newSessionStartCmd(),
+		newSessionAddAgentCmd(),
 		newSessionListCmd(),
 		newSessionStopCmd(),
 		newSessionWakeCmd(),
@@ -32,27 +40,9 @@ func newSessionCmd() *cobra.Command {
 }
 
 func newSessionCreateCmd() *cobra.Command {
-	var name, template, socket string
-
-	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a new session",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" {
-				return fmt.Errorf("--name is required")
-			}
-			c := NewClient(resolveSocket(socket))
-			sess, err := c.CreateSession(name, template)
-			if err != nil {
-				return fmt.Errorf("create session: %w", err)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created session %s (%s)\n", sess.ID, sess.Name)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&name, "name", "", "Session name (required)")
-	cmd.Flags().StringVar(&template, "template", "", "Session template (intake, implement, deliver)")
-	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	cmd := newSessionStartCmd()
+	cmd.Use = "create"
+	cmd.Short = "Create and start a session"
 	return cmd
 }
 
@@ -328,6 +318,128 @@ that context prepended to its prompt.`,
 	cmd.Flags().StringVar(&agentName, "agent", "", "Agent to wake (required)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	return cmd
+}
+
+func newSessionAddAgentCmd() *cobra.Command {
+	var (
+		template  string
+		socket    string
+		repo      string
+		input     string
+		command   string
+		tier      string
+		ephemeral bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "add-agent <session-id-or-name> <agent-name>",
+		Short: "Add an agent to a running local session",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if template == "" {
+				return fmt.Errorf("--template is required")
+			}
+			if input == "" {
+				input = command
+			}
+			if input == "" {
+				return fmt.Errorf("--input or --command is required")
+			}
+
+			c := NewClient(resolveSocket(socket))
+			sessionID, err := lookupSessionID(c, args[0])
+			if err != nil {
+				return fmt.Errorf("add agent: %w", err)
+			}
+			sess, err := c.GetSession(sessionID)
+			if err != nil {
+				return fmt.Errorf("add agent: %w", err)
+			}
+
+			home, _ := os.UserHomeDir()
+			sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sessionID)
+			if meta, err := docker.LoadRuntimeMetadata(sandboxDir); err == nil && meta.SandboxComposeFile != "" {
+				return fmt.Errorf("session add-agent currently supports local tmux sessions only")
+			}
+
+			spec, err := loadAgentTemplateSpec(resolveBelayerDir(), template, repo)
+			if err != nil {
+				return err
+			}
+			spec.Name = args[1]
+			switch {
+			case tier != "":
+				spec.Tier = tier
+			case ephemeral:
+				spec.Tier = "ephemeral"
+			case spec.Tier == "":
+				spec.Tier = "main"
+			}
+
+			workDir := resolveAddAgentWorkDir(repo)
+			cfg := agent.AgentConfig{
+				Name:         spec.Name,
+				Vendor:       spec.Vendor,
+				Model:        spec.Model,
+				SystemPrompt: spec.SystemPrompt,
+			}
+			compiled := agent.CompilePrompt(agent.PromptContext{
+				Config:    cfg,
+				TaskInput: input,
+				SessionID: sessionID,
+			})
+
+			sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", sess.Name, spec.Name))
+			taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", sess.Name, spec.Name))
+			if err := os.WriteFile(sysPromptFile, []byte(compiled), 0o600); err != nil {
+				return fmt.Errorf("write system prompt: %w", err)
+			}
+			if err := os.WriteFile(taskFile, []byte(input), 0o600); err != nil {
+				return fmt.Errorf("write task file: %w", err)
+			}
+
+			runner := tmux.NewLocalRunner()
+			if err := runner.CreateSession(fmt.Sprintf("%s-%s", sess.Name, spec.Name), buildLaunchCmd(spec, sessionID, sysPromptFile, taskFile, workDir)); err != nil {
+				return fmt.Errorf("launch agent: %w", err)
+			}
+
+			payload := mustJSON(map[string]string{
+				"agent":    spec.Name,
+				"template": template,
+				"tier":     spec.Tier,
+			})
+			_ = c.LogEvent(sessionID, "agent_added", payload)
+			_ = c.LogEvent(sessionID, "agent_launched", mustJSON(map[string]string{
+				"agent":  spec.Name,
+				"vendor": spec.Vendor,
+				"model":  spec.Model,
+				"tier":   spec.Tier,
+			}))
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Added agent %s to session %s (%s/%s, tier=%s)\n", spec.Name, sessionID, spec.Vendor, spec.Model, spec.Tier)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&template, "template", "", "Agent template name from .belayer/templates/<name>")
+	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	cmd.Flags().StringVar(&repo, "repo", "", "Optional repo name or workdir path for the agent")
+	cmd.Flags().StringVar(&input, "input", "", "Task input for the added agent")
+	cmd.Flags().StringVar(&command, "command", "", "Alias for --input")
+	cmd.Flags().StringVar(&tier, "tier", "", "Explicit tier override (main, peripheral, ephemeral)")
+	cmd.Flags().BoolVar(&ephemeral, "ephemeral", false, "Mark the added agent as ephemeral")
+	return cmd
+}
+
+func resolveAddAgentWorkDir(repo string) string {
+	if repo != "" {
+		if filepath.IsAbs(repo) || strings.HasPrefix(repo, ".") {
+			return repo
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return cwd
+	}
+	return "."
 }
 
 func newSessionCleanCmd() *cobra.Command {
@@ -650,6 +762,7 @@ func newLogsCmd() *cobra.Command {
 
 			// Print existing events.
 			lastSeen := time.Time{}
+			var lastSeenID int64
 			for _, e := range events {
 				if !cutoff.IsZero() && e.Timestamp.Before(cutoff) {
 					continue
@@ -658,29 +771,30 @@ func newLogsCmd() *cobra.Command {
 				if e.Timestamp.After(lastSeen) {
 					lastSeen = e.Timestamp
 				}
+				if e.ID > lastSeenID {
+					lastSeenID = e.ID
+				}
 			}
 
 			if !follow {
 				return nil
 			}
 
-			// Polling loop for --follow.
+			// Long-poll loop for --follow.
 			fmt.Fprintln(cmd.OutOrStdout(), "--- following (Ctrl+C to stop) ---")
 			for {
-				time.Sleep(2 * time.Second)
-
-				events, err := c.GetEvents(sessionID)
+				events, err := c.GetEventsAfter(sessionID, lastSeenID, 30*time.Second)
 				if err != nil {
 					continue // transient error, keep polling
 				}
 
 				for _, e := range events {
-					if !lastSeen.IsZero() && !e.Timestamp.After(lastSeen) {
-						continue
-					}
 					printEvent(cmd, e)
 					if e.Timestamp.After(lastSeen) {
 						lastSeen = e.Timestamp
+					}
+					if e.ID > lastSeenID {
+						lastSeenID = e.ID
 					}
 				}
 			}
@@ -689,6 +803,67 @@ func newLogsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow events in real-time")
 	cmd.Flags().IntVar(&since, "since", 0, "Show events from the last N minutes")
+	return cmd
+}
+
+func newWatchCmd() *cobra.Command {
+	var (
+		socket       string
+		sessionsFlag string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "watch",
+		Short: "Stream events from one or more sessions as they happen",
+		Long:  "Stream events from one or more sessions via the daemon SSE endpoint.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionArgs := strings.TrimSpace(sessionsFlag)
+			if sessionArgs == "" {
+				sessionArgs = strings.Join(args, ",")
+			}
+			if sessionArgs == "" {
+				return fmt.Errorf("--sessions is required")
+			}
+
+			c := NewClient(resolveSocket(socket))
+			rawSessions := strings.Split(sessionArgs, ",")
+			sessionIDs := make([]string, 0, len(rawSessions))
+			var afterID int64
+			for _, raw := range rawSessions {
+				raw = strings.TrimSpace(raw)
+				if raw == "" {
+					continue
+				}
+				sessionID, err := lookupSessionID(c, raw)
+				if err != nil {
+					return err
+				}
+				sessionIDs = append(sessionIDs, sessionID)
+				events, err := c.GetEvents(sessionID)
+				if err == nil {
+					for _, evt := range events {
+						if evt.ID > afterID {
+							afterID = evt.ID
+						}
+					}
+				}
+			}
+			if len(sessionIDs) == 0 {
+				return fmt.Errorf("no sessions resolved")
+			}
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Watching sessions: %s\n", strings.Join(sessionIDs, ", "))
+			return c.WatchSessions(ctx, sessionIDs, afterID, func(evt eventResponse) error {
+				printEvent(cmd, evt)
+				return nil
+			})
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	cmd.Flags().StringVar(&sessionsFlag, "sessions", "", "Comma-separated session IDs or names")
 	return cmd
 }
 

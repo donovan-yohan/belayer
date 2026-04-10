@@ -216,3 +216,30 @@ agents:
 		t.Errorf("app-impl should have repo 'extend-app', got %q", tmpl.Agents[2].Repo)
 	}
 }
+
+func TestAgentSpec_TierField(t *testing.T) {
+	yamlStr := `
+name: tiered
+phase: implement
+description: Tiered agents
+agents:
+  - name: pilot
+    vendor: claude
+    model: opus
+    tier: main
+  - name: reviewer
+    vendor: claude
+    model: sonnet
+    tier: ephemeral
+`
+	var tmpl SessionTemplate
+	if err := yamlPkg.Unmarshal([]byte(yamlStr), &tmpl); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if tmpl.Agents[0].Tier != "main" {
+		t.Fatalf("pilot tier = %q, want main", tmpl.Agents[0].Tier)
+	}
+	if tmpl.Agents[1].Tier != "ephemeral" {
+		t.Fatalf("reviewer tier = %q, want ephemeral", tmpl.Agents[1].Tier)
+	}
+}
