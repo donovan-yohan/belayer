@@ -469,7 +469,7 @@ func removeGitWorktree(worktreePath string) error {
 		if removeErr := os.RemoveAll(worktreePath); removeErr != nil {
 			return fmt.Errorf("read git common dir: %w; fallback remove: %w", err, removeErr)
 		}
-		return nil
+		return fmt.Errorf("read git common dir: %w; fallback removed worktree path but git metadata may remain", err)
 	}
 
 	commonDir := strings.TrimSpace(string(commonDirOut))
@@ -485,9 +485,11 @@ func removeGitWorktree(worktreePath string) error {
 
 	repoDir := filepath.Dir(commonDir)
 	if out, err := exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", worktreePath).CombinedOutput(); err != nil {
+		trimmedOut := strings.TrimSpace(string(out))
 		if removeErr := os.RemoveAll(worktreePath); removeErr != nil {
-			return fmt.Errorf("git worktree remove: %w (%s); fallback remove: %w", err, strings.TrimSpace(string(out)), removeErr)
+			return fmt.Errorf("git worktree remove: %w (%s); fallback remove: %w", err, trimmedOut, removeErr)
 		}
+		return fmt.Errorf("git worktree remove: %w (%s); fallback removed worktree path but git metadata may remain", err, trimmedOut)
 	}
 	return nil
 }

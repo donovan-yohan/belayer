@@ -29,14 +29,14 @@ func cleanupSessionArtifacts(paths sessionCleanupPaths, stdout, stderr io.Writer
 	}
 
 	for _, warning := range cleanupWorktrees(paths.SandboxDir) {
-		errs = append(errs, warning)
+		fmt.Fprintf(stderr, "warning: %v\n", warning)
 	}
 	if err := removeDirIfPresent(paths.SandboxDir); err != nil {
 		errs = append(errs, fmt.Errorf("remove sandbox dir: %w", err))
 	}
 
 	for _, warning := range cleanupWorktrees(paths.LocalWorktreeDir) {
-		errs = append(errs, warning)
+		fmt.Fprintf(stderr, "warning: %v\n", warning)
 	}
 	if err := removeDirIfPresent(paths.LocalWorktreeDir); err != nil {
 		errs = append(errs, fmt.Errorf("remove local worktree dir: %w", err))

@@ -216,13 +216,10 @@ the argument is used as a best-effort identifier for both paths.`,
 			resolvedName := target
 
 			c := NewClient(resolveSocket(socket))
-			if sessions, err := c.ListSessions(); err == nil {
-				for _, s := range sessions {
-					if strings.HasPrefix(s.ID, target) || s.Name == target {
-						sessionID = s.ID
-						resolvedName = s.Name
-						break
-					}
+			if resolvedID, err := lookupSessionID(c, target); err == nil {
+				sessionID = resolvedID
+				if session, err := c.GetSession(sessionID); err == nil && session.Name != "" {
+					resolvedName = session.Name
 				}
 			}
 			if sessionName != "" {
@@ -348,10 +345,20 @@ func lookupSessionID(c *Client, arg string) (string, error) {
 		// Daemon may be offline; fall back to treating arg as a raw ID.
 		return arg, nil
 	}
+	var prefixMatches []string
 	for _, s := range sessions {
-		if strings.HasPrefix(s.ID, arg) || s.Name == arg {
+		if s.ID == arg || s.Name == arg {
 			return s.ID, nil
 		}
+		if strings.HasPrefix(s.ID, arg) {
+			prefixMatches = append(prefixMatches, s.ID)
+		}
+	}
+	if len(prefixMatches) == 1 {
+		return prefixMatches[0], nil
+	}
+	if len(prefixMatches) > 1 {
+		return "", fmt.Errorf("session ID prefix %q is ambiguous: matched %d sessions; use a longer prefix or exact ID", arg, len(prefixMatches))
 	}
 	return "", fmt.Errorf("no session found matching %q", arg)
 }
