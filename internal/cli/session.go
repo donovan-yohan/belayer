@@ -389,8 +389,10 @@ func newSessionAddAgentCmd() *cobra.Command {
 				SessionID: sessionID,
 			})
 
-			sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", sess.Name, spec.Name))
-			taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", sess.Name, spec.Name))
+			safeSessName := sanitizeName(sess.Name)
+			safeSpecName := sanitizeName(spec.Name)
+			sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", safeSessName, safeSpecName))
+			taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", safeSessName, safeSpecName))
 			if err := os.WriteFile(sysPromptFile, []byte(compiled), 0o600); err != nil {
 				return fmt.Errorf("write system prompt: %w", err)
 			}
@@ -399,7 +401,7 @@ func newSessionAddAgentCmd() *cobra.Command {
 			}
 
 			runner := tmux.NewLocalRunner()
-			if err := runner.CreateSession(fmt.Sprintf("%s-%s", sess.Name, spec.Name), buildLaunchCmd(spec, sessionID, sysPromptFile, taskFile, workDir)); err != nil {
+			if err := runner.CreateSession(fmt.Sprintf("%s-%s", safeSessName, safeSpecName), buildLaunchCmd(spec, sessionID, sysPromptFile, taskFile, workDir)); err != nil {
 				return fmt.Errorf("launch agent: %w", err)
 			}
 
@@ -953,6 +955,13 @@ func newRecallCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	return cmd
+}
+
+// sanitizeName replaces path separators and other unsafe characters in a name
+// so it can be used safely in file paths and tmux session names.
+func sanitizeName(name string) string {
+	r := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
+	return r.Replace(name)
 }
 
 func resolveSocket(override string) string {

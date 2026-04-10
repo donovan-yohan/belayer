@@ -234,7 +234,16 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 	if err != nil {
 		return err
 	}
-	resp, err := c.http.Do(req)
+	// Use a streaming-specific HTTP client without a timeout so the SSE
+	// connection is not killed by the default 10s client timeout.
+	streamClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", c.socketPath)
+			},
+		},
+	}
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -245,22 +254,36 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var payload strings.Builder
+	var eventType string
 	for scanner.Scan() {
 		line := scanner.Text()
+		if strings.HasPrefix(line, "event: ") {
+			eventType = strings.TrimPrefix(line, "event: ")
+			continue
+		}
 		if strings.HasPrefix(line, "data: ") {
 			payload.WriteString(strings.TrimPrefix(line, "data: "))
 			continue
 		}
 		if line == "" && payload.Len() > 0 {
+			if eventType == "error" {
+				payload.Reset()
+				eventType = ""
+				continue
+			}
 			var evt eventResponse
 			if err := json.Unmarshal([]byte(payload.String()), &evt); err != nil {
-				return fmt.Errorf("watch sessions: decode event: %w", err)
+				payload.Reset()
+				eventType = ""
+				continue
 			}
 			if err := onEvent(evt); err != nil {
 				return err
 			}
 			payload.Reset()
+			eventType = ""
 		}
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
