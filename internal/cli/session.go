@@ -23,6 +23,7 @@ func newSessionCmd() *cobra.Command {
 	cmd.AddCommand(
 		newSessionStartCmd(),
 		newSessionListCmd(),
+		newSessionCleanCmd(),
 		newSessionStopCmd(),
 		newSessionWakeCmd(),
 	)
@@ -181,20 +182,10 @@ changes. Any work not committed will be lost.`,
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Reflection will run on next daemon cycle (trigger: post-session).")
 
-			// Clean up Docker sandbox if it exists.
 			home, _ := os.UserHomeDir()
-			sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sessionID)
-			composePath := filepath.Join(sandboxDir, "docker-compose.yml")
-			if _, err := os.Stat(composePath); err == nil {
-				fmt.Fprintln(cmd.OutOrStdout(), "Stopping Docker sandbox...")
-				stopCmd := exec.Command("docker", "compose", "-f", composePath, "down")
-				stopCmd.Stdout = cmd.OutOrStdout()
-				stopCmd.Stderr = cmd.ErrOrStderr()
-				if err := stopCmd.Run(); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: docker compose down failed: %v\n", err)
-				} else {
-					fmt.Fprintln(cmd.OutOrStdout(), "Docker sandbox stopped.")
-				}
+			paths := buildSessionCleanupPaths(home, os.TempDir(), sessionID, sess.Name)
+			if err := cleanupSessionArtifacts(paths, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: session cleanup incomplete: %v\n", err)
 			}
 
 			return nil
@@ -202,6 +193,58 @@ changes. Any work not committed will be lost.`,
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	cmd.Flags().BoolVar(&force, "force", false, "Force stop even with uncommitted changes (DANGEROUS: uncommitted code will be lost)")
+	return cmd
+}
+
+func newSessionCleanCmd() *cobra.Command {
+	var socket string
+	var sessionName string
+
+	cmd := &cobra.Command{
+		Use:   "clean <session-id-or-name>",
+		Short: "Remove leftover sandbox and worktree artifacts for a session",
+		Long: `Clean up session artifacts without changing daemon state.
+
+This is intended for orphaned local worktrees or Docker sandbox directories left
+behind after an interrupted session stop. When the daemon is reachable, belayer
+resolves both the session ID and name automatically. If the daemon is offline,
+the argument is used as a best-effort identifier for both paths.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := args[0]
+			sessionID := target
+			resolvedName := target
+
+			c := NewClient(resolveSocket(socket))
+			if sessions, err := c.ListSessions(); err == nil {
+				for _, s := range sessions {
+					if strings.HasPrefix(s.ID, target) || s.Name == target {
+						sessionID = s.ID
+						resolvedName = s.Name
+						break
+					}
+				}
+			}
+			if sessionName != "" {
+				resolvedName = sessionName
+			}
+
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("resolve home directory: %w", err)
+			}
+
+			paths := buildSessionCleanupPaths(home, os.TempDir(), sessionID, resolvedName)
+			if err := cleanupSessionArtifacts(paths, cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
+				return fmt.Errorf("clean session artifacts: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Cleaned artifacts for %s (session ID: %s, session name: %s)\n", target, sessionID, resolvedName)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	cmd.Flags().StringVar(&sessionName, "name", "", "Explicit session name to use for local worktree cleanup")
 	return cmd
 }
 

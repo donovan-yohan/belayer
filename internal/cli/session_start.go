@@ -443,19 +443,53 @@ func createWorktree(repoDir, baseDir, agentName, branch string) (string, error) 
 	return worktreePath, nil
 }
 
-// cleanupWorktrees removes git worktrees created for a session.
-func cleanupWorktrees(baseDir string) {
+// cleanupWorktrees removes git worktrees created for a session and returns any
+// warnings encountered while attempting cleanup.
+func cleanupWorktrees(baseDir string) []error {
 	worktreeDir := filepath.Join(baseDir, "worktrees")
 	entries, err := os.ReadDir(worktreeDir)
 	if err != nil {
-		return
+		return nil
 	}
+	var warnings []error
 	for _, entry := range entries {
 		if entry.IsDir() {
 			wt := filepath.Join(worktreeDir, entry.Name())
-			exec.Command("git", "worktree", "remove", "--force", wt).Run()
+			if err := removeGitWorktree(wt); err != nil {
+				warnings = append(warnings, fmt.Errorf("remove worktree %s: %w", wt, err))
+			}
 		}
 	}
+	return warnings
+}
+
+func removeGitWorktree(worktreePath string) error {
+	commonDirOut, err := exec.Command("git", "-C", worktreePath, "rev-parse", "--git-common-dir").CombinedOutput()
+	if err != nil {
+		if removeErr := os.RemoveAll(worktreePath); removeErr != nil {
+			return fmt.Errorf("read git common dir: %w; fallback remove: %w", err, removeErr)
+		}
+		return nil
+	}
+
+	commonDir := strings.TrimSpace(string(commonDirOut))
+	if commonDir == "" {
+		if removeErr := os.RemoveAll(worktreePath); removeErr != nil {
+			return fmt.Errorf("empty git common dir; fallback remove: %w", removeErr)
+		}
+		return nil
+	}
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Clean(filepath.Join(worktreePath, commonDir))
+	}
+
+	repoDir := filepath.Dir(commonDir)
+	if out, err := exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", worktreePath).CombinedOutput(); err != nil {
+		if removeErr := os.RemoveAll(worktreePath); removeErr != nil {
+			return fmt.Errorf("git worktree remove: %w (%s); fallback remove: %w", err, strings.TrimSpace(string(out)), removeErr)
+		}
+	}
+	return nil
 }
 
 // buildVendorCmd returns the vendor-specific CLI command string.
