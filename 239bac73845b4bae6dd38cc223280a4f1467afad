@@ -1,0 +1,33 @@
+internal/docker/workbench_test.go
+  da7c9dc8e4921a57 4-5,25-41,191-207,209-213,272-274,361-380,384,389,398-399,421,424,441-445
+internal/docker/environment.go
+  da7c9dc8e4921a57 51-58
+internal/store/store.go
+  da7c9dc8e4921a57 52
+internal/docker/workbench.go
+  da7c9dc8e4921a57 21,42-44,62-63,66-74,135-136,147-151,153-159,162-164,166,168-170,172-173,176,216,226,230-236,238-244,254-255,271-293,298-304
+internal/store/migrations.go
+  da7c9dc8e4921a57 27,31-32
+internal/daemon/daemon.go
+  da7c9dc8e4921a57 5,7,173,278-288,295-297,328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "239bac73845b4bae6dd38cc223280a4f1467afad",
+  "prompts": {
+    "da7c9dc8e4921a57": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2434fc1-c328-4932-86fd-8a5a1f5d0d2b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 198,
+      "total_deletions": 75,
+      "accepted_lines": 198,
+      "overriden_lines": 0
+    }
+  }
+}
