@@ -34,10 +34,18 @@ fi
 # ─── tmux session setup ────────────────────────────────────────────
 # Two windows: 'agent' runs the vendor CLI, 'shell' is for debugging.
 # If BELAYER_AGENT_CMD is empty, both windows are interactive shells.
+# tmux attach requires a TTY; fall back to sleep when none is allocated
+# (e.g. docker compose up without tty: true).
 AGENT_CMD="${BELAYER_AGENT_CMD:-bash}"
 
-exec sudo -u belayer -E env "PATH=$PATH" "HOME=/home/belayer" \
-    tmux new-session -d -s belayer -n agent "$AGENT_CMD; EXIT_CODE=\$?; echo ''; echo \"Agent exited with code \$EXIT_CODE. Shell available for debugging.\"; exec bash" \; \
-    new-window -t belayer -n shell \; \
-    select-window -t belayer:agent \; \
-    attach-session -t belayer
+if [ -t 0 ] && [ -t 1 ]; then
+    exec sudo -u belayer -E env "PATH=$PATH" "HOME=/home/belayer" \
+        tmux new-session -d -s belayer -n agent "$AGENT_CMD; EXIT_CODE=\$?; echo ''; echo \"Agent exited with code \$EXIT_CODE. Shell available for debugging.\"; exec bash" \; \
+        new-window -t belayer -n shell \; \
+        select-window -t belayer:agent \; \
+        attach-session -t belayer
+else
+    echo "No TTY allocated — running agent without tmux (attach will not work)" >&2
+    exec sudo -u belayer -E env "PATH=$PATH" "HOME=/home/belayer" \
+        bash -c "$AGENT_CMD"
+fi
