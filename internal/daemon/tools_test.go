@@ -369,6 +369,50 @@ func TestRegisterToolsForSession_LogsEvents(t *testing.T) {
 	}
 }
 
+func TestExecuteTool_Timeout(t *testing.T) {
+	d := testDaemon(t)
+	sessID := createTestSession(t, d)
+
+	// Register a tool with a very short timeout that will exceed it.
+	doRequest(t, d, "POST", "/sessions/"+sessID+"/tools", agent.ToolSpec{
+		Name: "slow-tool",
+		Exec: agent.ToolExec{
+			Target:  "host",
+			Command: "sleep 10",
+			Timeout: 1, // 1 second timeout
+		},
+	})
+
+	rr := doRequest(t, d, "POST", "/sessions/"+sessID+"/tools/slow-tool",
+		map[string]string{},
+	)
+	if rr.Code != http.StatusGatewayTimeout {
+		t.Fatalf("expected 504, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestExecuteTool_MissingInputKey(t *testing.T) {
+	d := testDaemon(t)
+	sessID := createTestSession(t, d)
+
+	doRequest(t, d, "POST", "/sessions/"+sessID+"/tools", agent.ToolSpec{
+		Name: "template-tool",
+		Exec: agent.ToolExec{
+			Target:  "host",
+			Command: "echo {{.required_key}}",
+			Timeout: 5,
+		},
+	})
+
+	// Execute without providing the required key.
+	rr := doRequest(t, d, "POST", "/sessions/"+sessID+"/tools/template-tool",
+		map[string]string{"wrong_key": "value"},
+	)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing template key, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestExecuteTool_ExitCode(t *testing.T) {
 	d := testDaemon(t)
 	sessID := createTestSession(t, d)
