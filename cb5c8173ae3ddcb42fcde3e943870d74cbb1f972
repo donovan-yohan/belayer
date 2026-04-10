@@ -1,0 +1,27 @@
+internal/cli/session.go
+  847a7839ef826ae4 6,186-204,207-219,228-232,339,345-347,350,352-357,361-363,366-368,370-373,387-480
+internal/cli/session_test.go
+  847a7839ef826ae4 37-39,42-46,105-106,121,127-128,136-140,146,163-164
+internal/cli/session_start.go
+  847a7839ef826ae4 459-460
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "cb5c8173ae3ddcb42fcde3e943870d74cbb1f972",
+  "prompts": {
+    "847a7839ef826ae4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d41fe01b-ff37-4665-83de-304e9bdea8bc",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 178,
+      "total_deletions": 198,
+      "accepted_lines": 178,
+      "overriden_lines": 0
+    }
+  }
+}
