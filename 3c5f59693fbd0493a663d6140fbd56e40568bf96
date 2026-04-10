@@ -1,0 +1,23 @@
+docs/PHILOSOPHY.md
+  7b626a68e8f1388e 50,53,163,165,169,172-174,178,180-181,184-186,188,219-256,259,266-267,291-298,309,319,329,381,383,415,417
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "3c5f59693fbd0493a663d6140fbd56e40568bf96",
+  "prompts": {
+    "7b626a68e8f1388e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7558eb7-1a07-4c9b-9ff1-9216fb2bdb6e",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 73,
+      "total_deletions": 39,
+      "accepted_lines": 73,
+      "overriden_lines": 0
+    }
+  }
+}
