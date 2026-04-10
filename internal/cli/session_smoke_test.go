@@ -67,6 +67,7 @@ exit 0
 	return logPath
 }
 
+
 func startTestDaemon(t *testing.T) (context.CancelFunc, string) {
 	t.Helper()
 	baseDir, err := os.MkdirTemp("/tmp", "belayer-cli-daemon-")

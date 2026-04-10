@@ -110,6 +110,9 @@ config that controls network isolation, compose extensions, and repos.`,
 			}
 
 			// 10. Launch agents using the selected runtime backend.
+			if dockerMode && clamshellMode {
+				return fmt.Errorf("--docker and --clamshell are mutually exclusive")
+			}
 			selectedRuntime := runtimepkg.Select(dockerMode, clamshellMode)
 			switch selectedRuntime.Mode() {
 			case runtimepkg.ModeDocker:
@@ -460,7 +463,7 @@ func launchClamshell(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate
 			Name:       sandboxName,
 			PolicyPath: policyPath,
 			Workspaces: mounts,
-			Command:    []string{"sh", "-lc", agentCmd},
+			Command:    []string{"sh", "-lc", fmt.Sprintf("export BELAYER_SESSION_ID=%s BELAYER_AGENT_ID=%s; cd /workspace 2>/dev/null; %s", shell.Quote(sess.ID), shell.Quote(spec.Name), agentCmd)},
 		}, os.Stdout, os.Stderr); err != nil {
 			return err
 		}
@@ -585,16 +588,18 @@ func launchTmux(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, ses
 			Team:      team,
 		})
 
-		sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", sessionName, spec.Name))
+		safeSessName := sanitizeName(sessionName)
+		safeSpecName := sanitizeName(spec.Name)
+		sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", safeSessName, safeSpecName))
 		if err := os.WriteFile(sysPromptFile, []byte(compiled), 0600); err != nil {
 			return fmt.Errorf("write system prompt for %s: %w", spec.Name, err)
 		}
-		taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", sessionName, spec.Name))
+		taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", safeSessName, safeSpecName))
 		if err := os.WriteFile(taskFile, []byte(taskInput), 0600); err != nil {
 			return fmt.Errorf("write task file for %s: %w", spec.Name, err)
 		}
 
-		tmuxSessionName := fmt.Sprintf("%s-%s", sessionName, spec.Name)
+		tmuxSessionName := fmt.Sprintf("%s-%s", safeSessName, safeSpecName)
 		launchCmd := buildLaunchCmd(spec, sess.ID, sysPromptFile, taskFile, agentWorkDirs[spec.Name])
 
 		if err := runner.CreateSession(tmuxSessionName, launchCmd); err != nil {

@@ -304,9 +304,9 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			afterID = existing[len(existing)-1].ID
 		}
 	}
-	if waitFor <= 0 {
-		waitFor = 30 * time.Second
-	}
+	// When the client omits 'wait', keep streaming until the client
+	// disconnects instead of forcing a 30s deadline.  This makes the
+	// endpoint suitable for long-running "watch" commands.
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -333,7 +333,8 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		events, err := d.store.QueryEventsForSessionsAfter(filtered, lastID)
 		if err != nil {
-			fmt.Fprintf(w, "event: error\ndata: %q\n\n", err.Error())
+			errJSON, _ := json.Marshal(map[string]string{"error": err.Error()})
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", errJSON)
 			flusher.Flush()
 			return
 		}

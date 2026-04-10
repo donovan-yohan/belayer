@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -390,8 +391,10 @@ func newSessionAddAgentCmd() *cobra.Command {
 				SessionID: sessionID,
 			})
 
-			sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", sess.Name, spec.Name))
-			taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", sess.Name, spec.Name))
+			safeSessName := sanitizeName(sess.Name)
+			safeSpecName := sanitizeName(spec.Name)
+			sysPromptFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-sysprompt-%s-%s.txt", safeSessName, safeSpecName))
+			taskFile := filepath.Join(os.TempDir(), fmt.Sprintf("belayer-task-%s-%s.txt", safeSessName, safeSpecName))
 			if err := os.WriteFile(sysPromptFile, []byte(compiled), 0o600); err != nil {
 				return fmt.Errorf("write system prompt: %w", err)
 			}
@@ -400,7 +403,7 @@ func newSessionAddAgentCmd() *cobra.Command {
 			}
 
 			runner := tmux.NewLocalRunner()
-			if err := runner.CreateSession(fmt.Sprintf("%s-%s", sess.Name, spec.Name), buildLaunchCmd(spec, sessionID, sysPromptFile, taskFile, workDir)); err != nil {
+			if err := runner.CreateSession(fmt.Sprintf("%s-%s", safeSessName, safeSpecName), buildLaunchCmd(spec, sessionID, sysPromptFile, taskFile, workDir)); err != nil {
 				return fmt.Errorf("launch agent: %w", err)
 			}
 
@@ -665,10 +668,16 @@ With --agent, attaches directly to that agent's tmux pane.`,
 				sessionID = target
 			}
 
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("resolve user home directory: %w", err)
+			}
 			sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sessionID)
-			runtimeMeta, _ := docker.LoadRuntimeMetadata(sandboxDir)
-			if runtimeMeta.Runtime == "clamshell" {
+			runtimeMeta, err := docker.LoadRuntimeMetadata(sandboxDir)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("load runtime metadata for session %q: %w", target, err)
+			}
+			if err == nil && runtimeMeta.Runtime == "clamshell" {
 				if agentName != "" {
 					if agent, ok := runtimeMeta.Agents[agentName]; ok && agent.SandboxName != "" {
 						return clamshell.ConnectSandbox(agent.SandboxName)
@@ -981,6 +990,13 @@ func newRecallCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	return cmd
+}
+
+// sanitizeName replaces path separators and other unsafe characters in a name
+// so it can be used safely in file paths and tmux session names.
+func sanitizeName(name string) string {
+	r := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
+	return r.Replace(name)
 }
 
 func resolveSocket(override string) string {
