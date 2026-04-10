@@ -1,0 +1,40 @@
+docs/DESIGN.md
+  122e389a46ddebf4 22-25
+docs/design-docs/index.md
+  122e389a46ddebf4 1-5
+docs/design-docs/2026-04-09-sandbox-runtime-architecture-design.md
+  122e389a46ddebf4 1-414
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "9b3ef5d67aff4593c13404a24465f921141ae3dc",
+  "prompts": {
+    "122e389a46ddebf4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6fc578d5-73f7-4fbe-8486-1ca1272fc7b4",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1089,
+      "total_deletions": 666,
+      "accepted_lines": 423,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
