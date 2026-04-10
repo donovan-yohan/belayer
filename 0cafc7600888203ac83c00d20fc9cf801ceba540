@@ -1,0 +1,25 @@
+internal/daemon/tools.go
+  2dba497c5a82bd3b 36-56
+internal/daemon/tools_test.go
+  2dba497c5a82bd3b 298-371
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "0cafc7600888203ac83c00d20fc9cf801ceba540",
+  "prompts": {
+    "2dba497c5a82bd3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "be765410-d07d-40b1-aa21-41e9c3fb263b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 93,
+      "total_deletions": 0,
+      "accepted_lines": 906,
+      "overriden_lines": 0
+    }
+  }
+}
