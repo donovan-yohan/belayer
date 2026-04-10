@@ -48,13 +48,14 @@ type WorkbenchConfigSpec struct {
 
 // ServiceDecl describes a service to be provisioned in the workbench (YAML parsing).
 type ServiceDecl struct {
-	Name    string            `yaml:"name"`
-	Build   string            `yaml:"build"` // path or ${WORKTREE_*} template
-	Image   string            `yaml:"image"` // or use pre-built image
-	Ports   []string          `yaml:"ports"` // for documentation, actual allocation is dynamic
-	Env     map[string]string `yaml:"environment"`
-	Depends []string          `yaml:"depends_on"`
-	Health  *HealthDecl       `yaml:"health_check"`
+	Name     string            `yaml:"name"`
+	Build    string            `yaml:"build"` // path or ${WORKTREE_*} template
+	Image    string            `yaml:"image"` // or use pre-built image
+	Ports    []string          `yaml:"ports"`
+	Env      map[string]string `yaml:"environment"`
+	Depends  []string          `yaml:"depends_on"`
+	Health   *HealthDecl       `yaml:"health_check"`
+	Networks []string          `yaml:"networks"` // e.g., ["infra-net"] for explicit network assignment
 }
 
 // HealthDecl describes a health check for a service (YAML parsing).

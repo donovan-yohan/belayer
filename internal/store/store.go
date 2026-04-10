@@ -49,7 +49,7 @@ type Store struct {
 func Open(dbPath string) (*Store, error) {
 	dsn := dbPath
 	if dbPath != ":memory:" {
-		dsn = fmt.Sprintf("file:%s?_pragma=journal_mode(wal)", dbPath)
+		dsn = fmt.Sprintf("file:%s?_pragma=journal_mode(wal)&_pragma=foreign_keys(1)", dbPath)
 	}
 
 	db, err := sql.Open("sqlite", dsn)

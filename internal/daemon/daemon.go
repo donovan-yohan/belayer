@@ -2,13 +2,14 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -169,7 +170,7 @@ func (d *Daemon) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sess, err := d.store.GetSession(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 			return
 		}
@@ -268,19 +269,32 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 type createWorkbenchRequest struct {
-	SessionID string `json:"session_id"`
 	Spec      string `json:"spec,omitempty"`
 	Endpoints string `json:"endpoints,omitempty"`
 }
 
 func (d *Daemon) handleCreateWorkbench(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+
+	// Verify session exists before creating workbench.
+	if _, err := d.store.GetSession(id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
 	var req createWorkbenchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	// NOTE: This endpoint currently creates a state record only.
+	// Actual Docker compose provisioning (generate, up, wait-for-healthy)
+	// will be wired in when the workbench runtime is integrated.
 	wb := store.WorkbenchState{
 		SessionID: id,
 		Spec:      req.Spec,
@@ -311,7 +325,7 @@ func (d *Daemon) handleGetWorkbench(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	wb, err := d.store.GetWorkbenchBySession(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "no rows") {
+		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "workbench not found"})
 			return
 		}

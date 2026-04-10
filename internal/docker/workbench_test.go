@@ -1,6 +1,8 @@
 package docker
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,23 @@ func TestNewWorkbench_RequiresSessionID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "SessionID is required") {
 		t.Errorf("expected error about SessionID, got: %v", err)
+	}
+}
+
+func TestNewWorkbench_RejectsPathTraversalSessionID(t *testing.T) {
+	for _, bad := range []string{"../evil", "a/b", "a\\b"} {
+		_, err := NewWorkbench(WorkbenchConfig{
+			SessionID: bad,
+			Spec: WorkbenchConfigSpec{
+				Services: []ServiceDecl{{Name: "test"}},
+			},
+		})
+		if err == nil {
+			t.Fatalf("expected error for SessionID %q, got nil", bad)
+		}
+		if !strings.Contains(err.Error(), "invalid path characters") {
+			t.Errorf("expected path character error for %q, got: %v", bad, err)
+		}
 	}
 }
 
@@ -169,6 +188,31 @@ func TestGenerateWorkbenchCompose_Environment(t *testing.T) {
 	}
 }
 
+func TestGenerateWorkbenchCompose_EnvironmentQuoting(t *testing.T) {
+	cfg := WorkbenchConfig{
+		SessionID: "test-session",
+		Spec: WorkbenchConfigSpec{
+			Services: []ServiceDecl{
+				{
+					Name: "api",
+					Env: map[string]string{
+						"QUOTED": `value with "quotes"`,
+					},
+				},
+			},
+		},
+	}
+	out, err := generateWorkbenchCompose(cfg)
+	if err != nil {
+		t.Fatalf("generateWorkbenchCompose returned error: %v", err)
+	}
+	content := string(out)
+	// Values should be safely quoted (Go %q escapes inner quotes)
+	if !strings.Contains(content, `QUOTED: "value with \"quotes\""`) {
+		t.Errorf("expected safely quoted env value in compose output, got:\n%s", content)
+	}
+}
+
 func TestGenerateWorkbenchCompose_DependsOn(t *testing.T) {
 	cfg := WorkbenchConfig{
 		SessionID: "test-session",
@@ -225,8 +269,9 @@ func TestGenerateWorkbenchCompose_HealthCheck(t *testing.T) {
 	if !strings.Contains(content, "healthcheck:") {
 		t.Errorf("expected 'healthcheck:' in compose output, got:\n%s", content)
 	}
-	if !strings.Contains(content, "test: [CMD pg_isready -U postgres]") {
-		t.Errorf("expected healthcheck test in compose output, got:\n%s", content)
+	// Healthcheck test should be serialized as a valid JSON array
+	if !strings.Contains(content, `test: ["CMD","pg_isready","-U","postgres"]`) {
+		t.Errorf("expected healthcheck test as JSON array in compose output, got:\n%s", content)
 	}
 	if !strings.Contains(content, "interval: 5s") {
 		t.Errorf("expected interval in compose output, got:\n%s", content)
@@ -313,24 +358,45 @@ func TestGenerateWorkbenchCompose_WorktreePathSubstitution(t *testing.T) {
 	}
 }
 
-func TestGenerateWorkbenchCompose_InfraService(t *testing.T) {
+func TestGenerateWorkbenchCompose_ExplicitInfraNetwork(t *testing.T) {
 	cfg := WorkbenchConfig{
 		SessionID: "test-session",
 		Spec: WorkbenchConfigSpec{
 			Services: []ServiceDecl{
-				{Name: "infra", Image: "extend/infra:latest"},
+				{
+					Name:     "db",
+					Image:    "postgres:15",
+					Networks: []string{"infra-net"},
+				},
 			},
 		},
-		Networks: []string{"workbench-net", "infra-net"},
 	}
 	out, err := generateWorkbenchCompose(cfg)
 	if err != nil {
 		t.Fatalf("generateWorkbenchCompose returned error: %v", err)
 	}
 	content := string(out)
-	infraNetCount := strings.Count(content, "- infra-net")
-	if infraNetCount != 1 {
-		t.Errorf("expected infra service to have infra-net network, got %d occurrences in:\n%s", infraNetCount, content)
+	if !strings.Contains(content, "- infra-net") {
+		t.Errorf("expected infra-net in service networks, got:\n%s", content)
+	}
+}
+
+func TestGenerateWorkbenchCompose_NoExtraNetworksByDefault(t *testing.T) {
+	cfg := WorkbenchConfig{
+		SessionID: "test-session",
+		Spec: WorkbenchConfigSpec{
+			Services: []ServiceDecl{
+				{Name: "api", Image: "extend/api:latest"},
+			},
+		},
+	}
+	out, err := generateWorkbenchCompose(cfg)
+	if err != nil {
+		t.Fatalf("generateWorkbenchCompose returned error: %v", err)
+	}
+	content := string(out)
+	if strings.Contains(content, "- infra-net") {
+		t.Errorf("expected no infra-net for service without Networks, got:\n%s", content)
 	}
 }
 
@@ -352,8 +418,10 @@ func TestGenerateWorkbenchCompose_Version(t *testing.T) {
 }
 
 func TestWorkbench_Create_SetsComposeDir(t *testing.T) {
+	dir := t.TempDir()
 	w, err := NewWorkbench(WorkbenchConfig{
 		SessionID: "test-session",
+		BaseDir:   dir,
 		Spec: WorkbenchConfigSpec{
 			Services: []ServiceDecl{{Name: "api", Image: "extend/api:latest"}},
 		},
@@ -370,7 +438,11 @@ func TestWorkbench_Create_SetsComposeDir(t *testing.T) {
 		t.Error("expected ComposeDir to be set after Create")
 	}
 
-	_ = w.Stop()
+	// Verify compose file was actually written
+	composePath := filepath.Join(w.ComposeDir(), "docker-compose.yml")
+	if _, err := os.Stat(composePath); err != nil {
+		t.Errorf("expected compose file at %s, got error: %v", composePath, err)
+	}
 }
 
 func TestWorkbench_Start_RequiresCreate(t *testing.T) {

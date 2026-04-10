@@ -18,6 +18,7 @@ type WorkbenchConfig struct {
 	Spec          WorkbenchConfigSpec
 	WorktreePaths map[string]string
 	Networks      []string
+	BaseDir       string // override compose output dir (defaults to ~/.belayer/workbenches)
 }
 
 // WorkbenchStatus represents the status of a workbench service.
@@ -38,6 +39,9 @@ func NewWorkbench(cfg WorkbenchConfig) (*Workbench, error) {
 	if cfg.SessionID == "" {
 		return nil, fmt.Errorf("docker: workbench: SessionID is required")
 	}
+	if strings.ContainsAny(cfg.SessionID, "/\\") {
+		return nil, fmt.Errorf("docker: workbench: SessionID contains invalid path characters")
+	}
 	if len(cfg.Spec.Services) == 0 {
 		return nil, fmt.Errorf("docker: workbench: Spec.Services is required")
 	}
@@ -55,15 +59,21 @@ func NewWorkbench(cfg WorkbenchConfig) (*Workbench, error) {
 	return &Workbench{config: cfg}, nil
 }
 
-// Create generates the docker-compose.yml in ~/.belayer/workbenches/<sessionID>/.
+// Create generates the docker-compose.yml in the workbench directory.
+// Uses BaseDir if set, otherwise ~/.belayer/workbenches/<sessionID>/.
 // Must be called before Start.
 func (w *Workbench) Create() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("docker: workbench: get home dir: %w", err)
+	var dir string
+	if w.config.BaseDir != "" {
+		dir = filepath.Join(w.config.BaseDir, w.config.SessionID)
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("docker: workbench: get home dir: %w", err)
+		}
+		dir = filepath.Join(home, ".belayer", "workbenches", w.config.SessionID)
 	}
 
-	dir := filepath.Join(home, ".belayer", "workbenches", w.config.SessionID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("docker: workbench: create compose dir: %w", err)
 	}
@@ -113,7 +123,6 @@ func (w *Workbench) Status() ([]WorkbenchStatus, error) {
 		return nil, fmt.Errorf("docker: workbench: status: %w", err)
 	}
 
-	// Docker Compose ps --format json returns a JSON array
 	var statuses []WorkbenchStatus
 	if err := json.Unmarshal(out.Bytes(), &statuses); err != nil {
 		return nil, fmt.Errorf("docker: workbench: parse status: %w", err)
@@ -123,6 +132,8 @@ func (w *Workbench) Status() ([]WorkbenchStatus, error) {
 }
 
 // WaitForHealthy polls Status() until all services are healthy or timeout exceeded.
+// Services without a healthcheck (health is empty or "none") are considered ready
+// when their state is "running".
 // Create must be called first.
 func (w *Workbench) WaitForHealthy(timeout time.Duration) error {
 	if w.composeDir == "" {
@@ -133,31 +144,36 @@ func (w *Workbench) WaitForHealthy(timeout time.Duration) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			statuses, err := w.Status()
-			if err != nil {
-				return fmt.Errorf("docker: workbench: wait for healthy: %w", err)
-			}
+	for range ticker.C {
+		statuses, err := w.Status()
+		if err != nil {
+			return fmt.Errorf("docker: workbench: wait for healthy: %w", err)
+		}
 
-			allHealthy := true
-			for _, s := range statuses {
-				if s.Health != "healthy" {
-					allHealthy = false
+		allReady := true
+		for _, s := range statuses {
+			health := strings.ToLower(strings.TrimSpace(s.Health))
+			if health == "" || health == "none" {
+				// No healthcheck defined — treat "running" as ready.
+				if strings.ToLower(s.State) != "running" {
+					allReady = false
 					break
 				}
-			}
-
-			if allHealthy && len(statuses) > 0 {
-				return nil
-			}
-
-			if time.Now().After(deadline) {
-				return fmt.Errorf("docker: workbench: wait for healthy: timeout exceeded")
+			} else if health != "healthy" {
+				allReady = false
+				break
 			}
 		}
+
+		if allReady && len(statuses) > 0 {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("docker: workbench: wait for healthy: timeout exceeded")
+		}
 	}
+	return nil
 }
 
 // Stop runs `docker compose down` to tear down the workbench.
@@ -197,7 +213,7 @@ services:
       context: {{ .Build }}
 {{ end }}{{ if .Image }}    image: {{ .Image }}
 {{ end }}{{ if .Environment }}    environment:
-{{ range $k, $v := .Environment }}      {{ $k }}: "{{ $v }}"
+{{ range $k, $v := .Environment }}      {{ $k }}: {{ $v }}
 {{ end }}{{ end }}{{ if .DependsOn }}    depends_on:
 {{ range .DependsOn }}      - {{ . }}
 {{ end }}{{ end }}{{ if .HealthCheck }}    healthcheck:
@@ -207,20 +223,25 @@ services:
       retries: {{ .HealthCheck.Retries }}
 {{ end }}    networks:
       - workbench-net
-{{ if .IsInfra }}      - infra-net
+{{ range .ExtraNetworks }}      - {{ . }}
 {{ end }}
 {{ end }}`
 
+type healthCheckTemplateData struct {
+	Test     string // pre-formatted as JSON array
+	Interval string
+	Timeout  string
+	Retries  int
+}
+
 type workbenchServiceTemplateData struct {
-	Name        string
-	Build       string
-	Image       string
-	Ports       []string
-	Environment map[string]string
-	DependsOn   []string
-	HealthCheck *HealthDecl
-	Command     []string
-	IsInfra     bool
+	Name          string
+	Build         string
+	Image         string
+	Environment   map[string]string
+	DependsOn     []string
+	HealthCheck   *healthCheckTemplateData
+	ExtraNetworks []string
 }
 
 type workbenchTemplateData struct {
@@ -230,7 +251,8 @@ type workbenchTemplateData struct {
 
 // generateWorkbenchCompose returns docker-compose.yml content for the given WorkbenchConfig.
 func generateWorkbenchCompose(cfg WorkbenchConfig) ([]byte, error) {
-	tmpl, err := template.New("workbench").Parse(workbenchComposeTmpl)
+	funcMap := template.FuncMap{}
+	tmpl, err := template.New("workbench").Funcs(funcMap).Parse(workbenchComposeTmpl)
 	if err != nil {
 		return nil, fmt.Errorf("docker: parse workbench template: %w", err)
 	}
@@ -246,24 +268,40 @@ func generateWorkbenchCompose(cfg WorkbenchConfig) ([]byte, error) {
 			}
 		}
 
-		// Check if this is an infra service (in infra-net)
-		isInfra := false
-		for _, net := range cfg.Networks {
-			if net == "infra-net" && svc.Name == "infra" {
-				isInfra = true
-				break
+		// Safely quote environment values for YAML
+		safeEnv := make(map[string]string, len(svc.Env))
+		for k, v := range svc.Env {
+			safeEnv[k] = fmt.Sprintf("%q", v)
+		}
+
+		// Convert healthcheck to template data with properly serialized test command
+		var hc *healthCheckTemplateData
+		if svc.Health != nil {
+			testJSON, _ := json.Marshal(svc.Health.Test)
+			hc = &healthCheckTemplateData{
+				Test:     string(testJSON),
+				Interval: svc.Health.Interval,
+				Timeout:  svc.Health.Timeout,
+				Retries:  svc.Health.Retries,
+			}
+		}
+
+		// Use explicit Networks field from ServiceDecl for extra network assignment
+		var extraNets []string
+		for _, net := range svc.Networks {
+			if net != "workbench-net" { // workbench-net is always included
+				extraNets = append(extraNets, net)
 			}
 		}
 
 		services = append(services, workbenchServiceTemplateData{
-			Name:        svc.Name,
-			Build:       build,
-			Image:       svc.Image,
-			Ports:       svc.Ports,
-			Environment: svc.Env,
-			DependsOn:   svc.Depends,
-			HealthCheck: svc.Health,
-			IsInfra:     isInfra,
+			Name:          svc.Name,
+			Build:         build,
+			Image:         svc.Image,
+			Environment:   safeEnv,
+			DependsOn:     svc.Depends,
+			HealthCheck:   hc,
+			ExtraNetworks: extraNets,
 		})
 	}
 
