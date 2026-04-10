@@ -4,6 +4,7 @@ set -euo pipefail
 # Generate tinyproxy filter from ALLOWED_HOSTS env var.
 # Entries are escaped for POSIX extended regex and anchored.
 # Supports exact hosts (github.com) and wildcard prefixes (*.github.com).
+# Emits two patterns per host: one for HTTP URLs, one for HTTPS CONNECT.
 FILTER_FILE="/etc/tinyproxy/filter"
 FILTER_DIR="$(dirname "$FILTER_FILE")"
 mkdir -p "$FILTER_DIR"
@@ -21,14 +22,16 @@ for host in "${HOSTS[@]}"; do
 
     # Handle wildcard prefix: *.example.com → match any subdomain
     if [[ "$host" == \*.* ]]; then
-        # Strip leading *. then validate the remainder
         base="${host#\*.}"
         if [[ ! "$base" =~ ^([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]; then
             echo "Skipping invalid ALLOWED_HOSTS entry: $host" >&2
             continue
         fi
         escaped_base=$(printf '%s' "$base" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
+        # HTTP full-URL match
         echo "^https?://([^.]+\\.)*${escaped_base}(:[0-9]+)?/" >> "$FILTER_FILE"
+        # HTTPS CONNECT match (host:port without scheme)
+        echo "^([^.]+\\.)*${escaped_base}(:[0-9]+)?$" >> "$FILTER_FILE"
         continue
     fi
 
@@ -38,10 +41,12 @@ for host in "${HOSTS[@]}"; do
         continue
     fi
 
-    # Escape regex metacharacters: . → \. and other specials
+    # Escape regex metacharacters
     escaped=$(printf '%s' "$host" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
-    # Anchor the pattern so it only matches the intended host
+    # HTTP full-URL match
     echo "^https?://${escaped}(:[0-9]+)?/" >> "$FILTER_FILE"
+    # HTTPS CONNECT match (host:port without scheme)
+    echo "^${escaped}(:[0-9]+)?$" >> "$FILTER_FILE"
 done
 
 exec tinyproxy -d

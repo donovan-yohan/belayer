@@ -451,6 +451,23 @@ type createWorkbenchRequest struct {
 	Endpoints string `json:"endpoints,omitempty"`
 }
 
+type workbenchServiceResponse struct {
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Health string `json:"health,omitempty"`
+}
+
+type workbenchResponse struct {
+	ID        string                     `json:"id"`
+	SessionID string                     `json:"session_id"`
+	Status    string                     `json:"status"`
+	Endpoints map[string]string          `json:"endpoints"`
+	Services  []workbenchServiceResponse `json:"services"`
+	Spec      string                     `json:"spec,omitempty"`
+	CreatedAt time.Time                  `json:"created_at"`
+	UpdatedAt time.Time                  `json:"updated_at"`
+}
+
 func (d *Daemon) handleCreateWorkbench(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -561,7 +578,11 @@ func (d *Daemon) handleCreateWorkbench(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := workbench.WaitForHealthy(timeout); err != nil {
 		_ = d.store.UpdateWorkbenchStatus(workbenchState.ID, "failed")
-		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": err.Error()})
+		payload := map[string]any{"error": err.Error()}
+		if timeoutErr, ok := err.(*docker.WorkbenchWaitTimeoutError); ok {
+			payload["services"] = serviceResponses(timeoutErr.Statuses)
+		}
+		writeJSON(w, http.StatusGatewayTimeout, payload)
 		return
 	}
 
@@ -585,6 +606,11 @@ func (d *Daemon) handleCreateWorkbench(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	statuses, err := workbench.Status()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 
 	d.store.LogEvent(store.SessionEvent{
 		SessionID: id,
@@ -592,7 +618,7 @@ func (d *Daemon) handleCreateWorkbench(w http.ResponseWriter, r *http.Request) {
 		Data:      mustJSON(map[string]string{"workbench_id": created.ID, "status": created.Status}),
 	})
 
-	writeJSON(w, http.StatusCreated, created)
+	writeJSON(w, http.StatusCreated, buildWorkbenchResponse(created, statuses))
 }
 
 func (d *Daemon) handleGetWorkbench(w http.ResponseWriter, r *http.Request) {
@@ -606,7 +632,12 @@ func (d *Daemon) handleGetWorkbench(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, wb)
+	statuses, err := loadWorkbenchStatuses(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, buildWorkbenchResponse(wb, statuses))
 }
 
 func (d *Daemon) handleDeleteWorkbench(w http.ResponseWriter, r *http.Request) {
@@ -637,4 +668,65 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+func buildWorkbenchResponse(wb store.WorkbenchState, statuses []docker.WorkbenchStatus) workbenchResponse {
+	return workbenchResponse{
+		ID:        wb.ID,
+		SessionID: wb.SessionID,
+		Status:    wb.Status,
+		Endpoints: decodeWorkbenchEndpoints(wb.Endpoints),
+		Services:  serviceResponses(statuses),
+		Spec:      wb.Spec,
+		CreatedAt: wb.CreatedAt,
+		UpdatedAt: wb.UpdatedAt,
+	}
+}
+
+func loadWorkbenchStatuses(sessionID string) ([]docker.WorkbenchStatus, error) {
+	workbench := docker.OpenWorkbench(sessionID, "")
+	statuses, err := workbench.Status()
+	if err != nil {
+		return nil, fmt.Errorf("workbench status: %w", err)
+	}
+	return statuses, nil
+}
+
+func serviceResponses(statuses []docker.WorkbenchStatus) []workbenchServiceResponse {
+	if len(statuses) == 0 {
+		return nil
+	}
+	resp := make([]workbenchServiceResponse, 0, len(statuses))
+	for _, status := range statuses {
+		resp = append(resp, workbenchServiceResponse{
+			Name:   status.Name,
+			State:  status.State,
+			Health: status.Health,
+		})
+	}
+	return resp
+}
+
+func decodeWorkbenchEndpoints(raw string) map[string]string {
+	if strings.TrimSpace(raw) == "" {
+		return map[string]string{}
+	}
+
+	var structured map[string]docker.WorkbenchEndpoint
+	if err := json.Unmarshal([]byte(raw), &structured); err == nil {
+		endpoints := make(map[string]string, len(structured))
+		for name, endpoint := range structured {
+			if endpoint.URL != "" {
+				endpoints[name] = endpoint.URL
+			}
+		}
+		return endpoints
+	}
+
+	var flat map[string]string
+	if err := json.Unmarshal([]byte(raw), &flat); err == nil {
+		return flat
+	}
+
+	return map[string]string{}
 }

@@ -8,6 +8,30 @@ import (
 	"time"
 )
 
+func installFakeDockerForWorkbenchTests(t *testing.T, statusesJSON string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "docker")
+	body := `#!/bin/sh
+set -eu
+if [ "$1" = "compose" ] && [ "$4" = "up" ]; then
+  exit 0
+fi
+if [ "$1" = "compose" ] && [ "$4" = "ps" ]; then
+  printf '%s' '` + statusesJSON + `'
+  exit 0
+fi
+if [ "$1" = "compose" ] && [ "$4" = "down" ]; then
+  exit 0
+fi
+exit 0
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake docker: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestNewWorkbench_RequiresSessionID(t *testing.T) {
 	_, err := NewWorkbench(WorkbenchConfig{
 		Spec: WorkbenchConfigSpec{
@@ -599,5 +623,43 @@ func TestWorkbench_Endpoints(t *testing.T) {
 	}
 	if endpoints["postgres"].URL != "postgres:5432" {
 		t.Fatalf("unexpected postgres endpoint: %#v", endpoints["postgres"])
+	}
+}
+
+func TestWorkbench_WaitForHealthy_TimeoutIncludesLastStatuses(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installFakeDockerForWorkbenchTests(t, `[{"name":"extend-api","state":"running","health":"starting"},{"name":"postgres","state":"running","health":"healthy"}]`)
+
+	w, err := NewWorkbench(WorkbenchConfig{
+		SessionID: "test-session",
+		BaseDir:   t.TempDir(),
+		Spec: WorkbenchConfigSpec{
+			Services: []ServiceDecl{
+				{Name: "extend-api", Image: "example/api:latest", Ports: []string{"8080"}},
+				{Name: "postgres", Image: "postgres:15", Ports: []string{"5432"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewWorkbench returned error: %v", err)
+	}
+	if err := w.Create(); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	originalPollInterval := workbenchPollInterval
+	workbenchPollInterval = 5 * time.Millisecond
+	defer func() { workbenchPollInterval = originalPollInterval }()
+
+	err = w.WaitForHealthy(20 * time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timeout exceeded") {
+		t.Fatalf("expected timeout error, got: %v", err)
+	}
+	for _, want := range []string{"extend-api=running/starting", "postgres=running/healthy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected timeout to include %q, got: %v", want, err)
+		}
 	}
 }

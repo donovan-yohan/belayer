@@ -443,12 +443,46 @@ func TestCreateWorkbench_ProvisionsAndWaitsForHealthy(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
-	wb := decodeJSON[store.WorkbenchState](t, rr)
+	wb := decodeJSON[workbenchResponse](t, rr)
 	if wb.Status != "ready" {
 		t.Fatalf("expected ready status, got %q", wb.Status)
 	}
-	if !strings.Contains(wb.Endpoints, "extend-api") || !strings.Contains(wb.Endpoints, "http://extend-api:8080") {
-		t.Fatalf("unexpected endpoints: %s", wb.Endpoints)
+	if got := wb.Endpoints["extend-api"]; got != "http://extend-api:8080" {
+		t.Fatalf("unexpected endpoints: %#v", wb.Endpoints)
+	}
+	if len(wb.Services) != 1 {
+		t.Fatalf("expected one service status, got %#v", wb.Services)
+	}
+	if wb.Services[0].Name != "extend-api" || wb.Services[0].State != "running" || wb.Services[0].Health != "healthy" {
+		t.Fatalf("unexpected service status: %#v", wb.Services[0])
+	}
+}
+
+func TestGetWorkbench_ReturnsStructuredStatusAndServices(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	installFakeDocker(t, `[{"name":"extend-api","state":"running","health":"healthy"}]`)
+
+	d := testDaemon(t)
+	sessID := createTestSession(t, d)
+	if _, err := d.store.CreateWorkbench(store.WorkbenchState{
+		SessionID: sessID,
+		Status:    "ready",
+		Spec:      `{"services":[{"name":"extend-api","image":"example/api:latest","ports":["8080"]}]}`,
+		Endpoints: `{"extend-api":{"service":"extend-api","url":"http://extend-api:8080"}}`,
+	}); err != nil {
+		t.Fatalf("CreateWorkbench: %v", err)
+	}
+
+	rr := doRequest(t, d, "GET", "/sessions/"+sessID+"/workbench", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	wb := decodeJSON[workbenchResponse](t, rr)
+	if got := wb.Endpoints["extend-api"]; got != "http://extend-api:8080" {
+		t.Fatalf("unexpected endpoints: %#v", wb.Endpoints)
+	}
+	if len(wb.Services) != 1 || wb.Services[0].Health != "healthy" {
+		t.Fatalf("unexpected services: %#v", wb.Services)
 	}
 }
 

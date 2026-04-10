@@ -33,6 +33,20 @@ type WorkbenchStatus struct {
 	Health string `json:"health"`
 }
 
+// WorkbenchWaitTimeoutError captures the final observed service states when a
+// workbench fails to become ready before the timeout expires.
+type WorkbenchWaitTimeoutError struct {
+	Statuses []WorkbenchStatus
+}
+
+func (e *WorkbenchWaitTimeoutError) Error() string {
+	summary := formatWorkbenchStatuses(e.Statuses)
+	if summary == "" {
+		return "docker: workbench: wait for healthy: timeout exceeded"
+	}
+	return fmt.Sprintf("docker: workbench: wait for healthy: timeout exceeded (%s)", summary)
+}
+
 // WorkbenchEndpoint is a structured endpoint returned to callers after
 // provisioning succeeds.
 type WorkbenchEndpoint struct {
@@ -155,12 +169,14 @@ func (w *Workbench) WaitForHealthy(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(workbenchPollInterval)
 	defer ticker.Stop()
+	var lastStatuses []WorkbenchStatus
 
 	for {
 		statuses, err := w.Status()
 		if err != nil {
 			return fmt.Errorf("docker: workbench: wait for healthy: %w", err)
 		}
+		lastStatuses = statuses
 
 		allReady := true
 		for _, s := range statuses {
@@ -182,7 +198,7 @@ func (w *Workbench) WaitForHealthy(timeout time.Duration) error {
 		}
 
 		if time.Now().After(deadline) {
-			return fmt.Errorf("docker: workbench: wait for healthy: timeout exceeded")
+			return &WorkbenchWaitTimeoutError{Statuses: append([]WorkbenchStatus(nil), lastStatuses...)}
 		}
 
 		<-ticker.C
@@ -430,4 +446,28 @@ func (w *Workbench) Endpoints() map[string]WorkbenchEndpoint {
 		}
 	}
 	return endpoints
+}
+
+func formatWorkbenchStatuses(statuses []WorkbenchStatus) string {
+	if len(statuses) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		label := strings.TrimSpace(status.State)
+		health := strings.TrimSpace(status.Health)
+		if health != "" && !strings.EqualFold(health, "none") {
+			if label != "" {
+				label += "/"
+			}
+			label += health
+		}
+		if label == "" {
+			label = "unknown"
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", status.Name, label))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
