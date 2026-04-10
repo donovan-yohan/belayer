@@ -3,7 +3,10 @@ package docker
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/donovan-yohan/belayer/internal/agent"
 )
 
 const validEnvironmentYAML = `
@@ -270,5 +273,65 @@ func TestEnvironmentConfig_ResolveRepoPath(t *testing.T) {
 	}
 	if got := cfg.ResolveRepoPath("nonexistent"); got != "" {
 		t.Errorf("expected empty for nonexistent repo, got %q", got)
+	}
+}
+
+func TestValidateEnvironment_ToolMissingName(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Tools: []agent.ToolSpec{
+			{Exec: agent.ToolExec{Target: "host", Command: "echo hi"}},
+		},
+	}
+	err := ValidateEnvironment(cfg)
+	if err == nil {
+		t.Fatal("expected error for tool with missing name")
+	}
+	if !strings.Contains(err.Error(), "name") {
+		t.Errorf("error should mention name, got: %v", err)
+	}
+}
+
+func TestValidateEnvironment_ToolInvalidTarget(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Tools: []agent.ToolSpec{
+			{Name: "bad", Exec: agent.ToolExec{Target: "nowhere", Command: "echo hi"}},
+		},
+	}
+	err := ValidateEnvironment(cfg)
+	if err == nil {
+		t.Fatal("expected error for tool with invalid target")
+	}
+	if !strings.Contains(err.Error(), "target") {
+		t.Errorf("error should mention target, got: %v", err)
+	}
+}
+
+func TestValidateEnvironment_ToolMissingCommand(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Tools: []agent.ToolSpec{
+			{Name: "bad", Exec: agent.ToolExec{Target: "host"}},
+		},
+	}
+	err := ValidateEnvironment(cfg)
+	if err == nil {
+		t.Fatal("expected error for tool with missing command")
+	}
+}
+
+func TestValidateEnvironment_ValidTools(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Tools: []agent.ToolSpec{
+			{
+				Name: "echo",
+				Exec: agent.ToolExec{Target: "host", Command: "echo {{.msg}}"},
+			},
+			{
+				Name: "build",
+				Exec: agent.ToolExec{Target: "workbench", Command: "make build"},
+			},
+		},
+	}
+	if err := ValidateEnvironment(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
