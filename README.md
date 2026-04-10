@@ -1,10 +1,12 @@
 # belayer
 
-Session runtime for autonomous coding agents. Many robots, bring your own pilots.
+A Go implementation of the [multi-agent coding runtime specification](docs/PHILOSOPHY.md).
 
-## What It Does
+## The Spec
 
-Belayer provides the infrastructure for multi-agent coding sessions: a daemon that manages sessions, messaging, memory, and execution environments. You bring the AI agents (Claude, Codex, or any terminal program); belayer provides the coordination layer. Agent sandboxes are powered by [clamshell](https://github.com/anthropics/clamshell) for deny-by-default network isolation, host-owned credential management, and per-binary egress policy.
+Multi-agent coding sessions require six infrastructure interfaces — **Session**, **Orchestration**, **Sandbox**, **Communication**, **Memory**, and **Tools** — regardless of which LLMs or vendors power the agents. The [specification](docs/PHILOSOPHY.md) defines these interfaces, the agent roles that operate through them (orchestrator, worker, validator), and the invariants that bind them. It is language-agnostic and could be realized on any stack.
+
+Belayer is one implementation, in Go. It provides a daemon that manages sessions, messaging, memory, and execution environments. You bring the AI agents (Claude, Codex, Letta, or any terminal program); belayer provides the coordination layer. Agent sandboxes are powered by [clamshell](https://github.com/anthropics/clamshell) for deny-by-default network isolation, host-owned credential management, and per-binary egress policy.
 
 ## Quick Start
 
@@ -59,21 +61,23 @@ Pilot decomposes spec → messages implementer with task
   → On PASS: session complete (or next phase for fullstack)
 ```
 
-Review loops evolve via agent memory and reflection, not hardcoded rules. The pilot adapts based on accumulated coordination knowledge.
+Review loops evolve via agent memory and sleep-time compute, not hardcoded rules. The pilot adapts based on accumulated coordination knowledge.
 
 ### Multi-Repo (Fullstack)
 
 Both implementers work in parallel on separate repos. The pilot watches events from both, detects semantic drift (e.g., API changed a response shape but the frontend still expects the old one), and intervenes proactively. After both PRs pass review, the pilot provisions a workbench and runs E2E validation.
 
-### Three-Tier Memory
+### Agent Identity & Memory
 
-All agents get personal memory that persists across sessions, backed by a three-tier system:
+Each agent is a portable directory of files — config, system prompt, sleep-time prompt, memory, and skills. The process (Claude Code, Codex, Letta) is the runtime detail; the identity is what persists. See the [spec](docs/PHILOSOPHY.md#agent-identity) for the full model.
 
-- **Core** — session-scoped key-value pairs, always in the prompt (e.g., current task, review status)
-- **Archival** — long-term learnings with full-text search via FTS5 (e.g., "SpiceDB permission patterns")
+Memory is agent-managed and backed by a three-tier system:
+
+- **Core** — always injected into agent prompts, small, frequently updated (the agent's identity)
+- **Archival** — searchable long-term knowledge with full-text search via FTS5
 - **Recall** — combines core + archival search results on demand (`belayer recall "query"`)
 
-Markdown files on disk are authoritative; SQLite is a derived index. The pilot learns coordination patterns. Implementers learn codebase conventions. The reviewer's checklist evolves from experience. Post-session reflection consolidates both personal agent memory and shared institutional learnings.
+Agents write their own memory using the same tools they use for code. Sleep-time compute consolidates experience during idle periods — the orchestrator learns coordination patterns, workers learn codebase conventions, the validator's review checklist evolves from experience.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full collaboration model, message flow, memory structure, and observability details.
 
