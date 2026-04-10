@@ -1,0 +1,29 @@
+internal/cli/client.go
+  86dea09ac21fc0ba 11,281,283,303
+internal/agent/toolspec.go
+  86dea09ac21fc0ba 25-28,30-31,33-35
+internal/daemon/tools.go
+  86dea09ac21fc0ba 4,6,19-24,165-171,173,176-185
+internal/agent/executor.go
+  86dea09ac21fc0ba 6,18-27,66,136-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "829d88f7e1496695d1f6512d96fcd3afdd6c0ba9",
+  "prompts": {
+    "86dea09ac21fc0ba": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "78a475b6-0801-4c02-b71b-4c4c0c8190c0",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 57,
+      "total_deletions": 10,
+      "accepted_lines": 57,
+      "overriden_lines": 0
+    }
+  }
+}
