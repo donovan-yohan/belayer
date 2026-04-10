@@ -1,0 +1,29 @@
+docker/belayer-entrypoint.sh
+  9470797ca73ff138 37-38,41-51
+docker/tinyproxy.conf
+  9470797ca73ff138 2-4
+docker/proxy-entrypoint.sh
+  9470797ca73ff138 2-3,6,8-9,12,17,21-40,42
+docker/Dockerfile.agent
+  9470797ca73ff138 8-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "dc2e1d95bc8755656212b2689cfd6111f3d60a3e",
+  "prompts": {
+    "9470797ca73ff138": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f9040640-fb5f-4084-ad06-75d7e0ba7dd1",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 11,
+      "accepted_lines": 46,
+      "overriden_lines": 0
+    }
+  }
+}
