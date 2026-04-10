@@ -15,6 +15,7 @@ type RuntimeMetadata struct {
 	SessionID          string                          `json:"session_id"`
 	SessionName        string                          `json:"session_name,omitempty"`
 	Template           string                          `json:"template,omitempty"`
+	Runtime            string                          `json:"runtime,omitempty"`
 	Environment        string                          `json:"environment,omitempty"`
 	EnvironmentPath    string                          `json:"environment_path,omitempty"`
 	BelayerDir         string                          `json:"belayer_dir,omitempty"`
@@ -32,9 +33,10 @@ type RuntimeMetadata struct {
 
 // AgentRuntimeMetadata describes a configured agent in the runtime metadata.
 type AgentRuntimeMetadata struct {
-	Name string `json:"name"`
-	Repo string `json:"repo,omitempty"`
-	Tier string `json:"tier,omitempty"`
+	Name        string `json:"name"`
+	Repo        string `json:"repo,omitempty"`
+	Tier        string `json:"tier,omitempty"`
+	SandboxName string `json:"sandbox_name,omitempty"`
 }
 
 // MetadataPath returns the canonical metadata file path for a sandbox dir.

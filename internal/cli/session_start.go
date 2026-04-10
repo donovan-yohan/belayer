@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
+	"github.com/donovan-yohan/belayer/internal/clamshell"
 	"github.com/donovan-yohan/belayer/internal/docker"
 	runtimepkg "github.com/donovan-yohan/belayer/internal/runtime"
 	"github.com/donovan-yohan/belayer/internal/session"
@@ -19,7 +20,7 @@ import (
 
 func newSessionStartCmd() *cobra.Command {
 	var template, input, name, repo, socket, attachAgent, environment string
-	var attach, dockerMode bool
+	var attach, dockerMode, clamshellMode bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -109,12 +110,17 @@ config that controls network isolation, compose extensions, and repos.`,
 			}
 
 			// 10. Launch agents using the selected runtime backend.
-			selectedRuntime := runtimepkg.Select(dockerMode)
-			if selectedRuntime.Mode() == runtimepkg.ModeDocker {
+			selectedRuntime := runtimepkg.Select(dockerMode, clamshellMode)
+			switch selectedRuntime.Mode() {
+			case runtimepkg.ModeDocker:
 				if err := launchDocker(cmd, c, tmpl, sess, agentNames, taskInput, workDir, workspaceRoot, belayerDir, environment, name, envCfg); err != nil {
 					return err
 				}
-			} else {
+			case runtimepkg.ModeClamshell:
+				if err := launchClamshell(cmd, c, tmpl, sess, agentNames, taskInput, workDir, workspaceRoot, belayerDir, environment, name, envCfg); err != nil {
+					return err
+				}
+			default:
 				if err := launchTmux(cmd, c, tmpl, sess, agentNames, taskInput, workDir, workspaceRoot, belayerDir, environment, name, envCfg); err != nil {
 					return err
 				}
@@ -129,7 +135,7 @@ config that controls network isolation, compose extensions, and repos.`,
 
 			// 12. Print summary.
 			fmt.Fprintf(cmd.OutOrStdout(), "Session started: %s (template: %s)\n", sess.ID, template)
-			if !dockerMode {
+			if selectedRuntime.Mode() != runtimepkg.ModeDocker {
 				for _, spec := range tmpl.Agents {
 					label := fmt.Sprintf("%-14s", spec.Name+":")
 					fmt.Fprintf(cmd.OutOrStdout(), "  %s belayer-%s-%s (%s/%s)\n",
@@ -147,13 +153,16 @@ config that controls network isolation, compose extensions, and repos.`,
 			fmt.Fprintf(cmd.OutOrStdout(), "  belayer logs %s\n", sess.ID)
 
 			// 13. Auto-attach if requested (local tmux only).
-			if attach && !dockerMode {
+			if attach && selectedRuntime.Mode() != runtimepkg.ModeDocker {
 				target := attachAgent
 				if target == "" && len(tmpl.Agents) > 0 {
 					target = tmpl.Agents[0].Name
 				}
-				tmuxTarget := "belayer-" + name + "-" + target
 				fmt.Fprintf(cmd.OutOrStdout(), "\nAttaching to %s...\n", target)
+				if selectedRuntime.Mode() == runtimepkg.ModeClamshell {
+					return clamshell.ConnectSandbox("belayer-" + name + "-" + target)
+				}
+				tmuxTarget := "belayer-" + name + "-" + target
 				tmuxCmd := exec.Command("tmux", "attach-session", "-t", tmuxTarget)
 				tmuxCmd.Stdin = os.Stdin
 				tmuxCmd.Stdout = os.Stdout
@@ -173,6 +182,7 @@ config that controls network isolation, compose extensions, and repos.`,
 	cmd.Flags().BoolVar(&attach, "attach", false, "Attach to the first agent's tmux pane after launch")
 	cmd.Flags().StringVar(&attachAgent, "attach-agent", "", "Agent to attach to (requires --attach)")
 	cmd.Flags().BoolVar(&dockerMode, "docker", false, "Run agents in Docker containers instead of local tmux")
+	cmd.Flags().BoolVar(&clamshellMode, "clamshell", false, "Run agents in clamshell sandboxes")
 	cmd.Flags().StringVar(&environment, "environment", "", "Environment config name (from .belayer/environments/<name>.yaml)")
 	return cmd
 }
@@ -373,6 +383,134 @@ func launchDocker(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, s
 		"environment": environment,
 	}))
 	fmt.Fprintf(cmd.OutOrStdout(), "Docker sandbox started: %s (network: %s)\n", sandbox.ComposeDir(), envCfg.Networking.Type)
+
+	return nil
+}
+
+// launchClamshell starts agents in clamshell sandboxes using the environment policy.
+func launchClamshell(cmd *cobra.Command, c *Client, tmpl session.SessionTemplate, sess sessionResponse, agentNames []string, taskInput, workDir, workspaceRoot, belayerDir, environment, sessionName string, envCfg *docker.EnvironmentConfig) error {
+	if envCfg == nil {
+		return fmt.Errorf("clamshell mode requires --environment")
+	}
+	if envCfg.Clamshell == nil || envCfg.Clamshell.Policy == "" {
+		return fmt.Errorf("environment %q does not define a clamshell policy", environment)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home directory: %w", err)
+	}
+	sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sess.ID)
+	if err := os.MkdirAll(sandboxDir, 0o700); err != nil {
+		return fmt.Errorf("create sandbox dir: %w", err)
+	}
+	taskFile := filepath.Join(sandboxDir, "task.txt")
+	if err := os.WriteFile(taskFile, []byte(taskInput), 0o600); err != nil {
+		return fmt.Errorf("write task file: %w", err)
+	}
+
+	repoWorkDirs := make(map[string]string)
+	for _, repoRef := range envCfg.Repos {
+		repoPath := expandHomePath(repoRef.Path)
+		if repoPath == "" {
+			continue
+		}
+		wt, err := createWorktree(repoPath, filepath.Join(sandboxDir, "repo-worktrees"), repoRef.Name, "")
+		if err != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "  warning: repo worktree for %s: %v (using source repo)\n", repoRef.Name, err)
+			repoWorkDirs[repoRef.Name] = repoPath
+			continue
+		}
+		repoWorkDirs[repoRef.Name] = wt
+	}
+
+	agentMeta := make(map[string]docker.AgentRuntimeMetadata, len(tmpl.Agents))
+	for _, spec := range tmpl.Agents {
+		team := make([]agent.TeamMember, 0, len(tmpl.Agents)-1)
+		for _, s := range tmpl.Agents {
+			if s.Name != spec.Name {
+				team = append(team, agent.TeamMember{Name: s.Name, Vendor: s.Vendor, Model: s.Model, Role: s.Role})
+			}
+		}
+
+		cfg := agent.AgentConfig{Name: spec.Name, Vendor: spec.Vendor, Model: spec.Model, SystemPrompt: spec.SystemPrompt}
+		compiled := agent.CompilePrompt(agent.PromptContext{Config: cfg, TaskInput: taskInput, SessionID: sess.ID, Team: team})
+		sysPromptFile := filepath.Join(sandboxDir, fmt.Sprintf("sysprompt-%s.txt", spec.Name))
+		if err := os.WriteFile(sysPromptFile, []byte(compiled), 0o600); err != nil {
+			return fmt.Errorf("write system prompt for %s: %w", spec.Name, err)
+		}
+
+		containerPrompt := fmt.Sprintf("/belayer/session/sysprompt-%s.txt", spec.Name)
+		containerTask := "/belayer/session/task.txt"
+		agentCmd := buildVendorCmd(spec, containerPrompt, containerTask)
+
+		mounts := []clamshell.WorkspaceMount{{HostPath: sandboxDir, Target: "/belayer/session"}}
+		if spec.Repo != "" {
+			if repoDir, ok := repoWorkDirs[spec.Repo]; ok {
+				mounts = append(mounts, clamshell.WorkspaceMount{HostPath: repoDir, Target: "/workspace"})
+			}
+		}
+
+		sandboxName := fmt.Sprintf("belayer-%s-%s", sessionName, spec.Name)
+		policyPath := envCfg.Clamshell.Policy
+		if !filepath.IsAbs(policyPath) {
+			policyPath = filepath.Join(belayerDir, "policies", policyPath)
+		}
+		if err := clamshell.CreateSandbox(clamshell.SandboxConfig{
+			Name:       sandboxName,
+			PolicyPath: policyPath,
+			Workspaces: mounts,
+			Command:    []string{"sh", "-lc", agentCmd},
+		}, os.Stdout, os.Stderr); err != nil {
+			return err
+		}
+
+		agentMeta[spec.Name] = docker.AgentRuntimeMetadata{
+			Name:        spec.Name,
+			Repo:        spec.Repo,
+			Tier:        spec.Tier,
+			SandboxName: sandboxName,
+		}
+		_ = c.LogEvent(sess.ID, "agent_launched", mustJSON(map[string]string{
+			"agent":   spec.Name,
+			"vendor":  spec.Vendor,
+			"model":   spec.Model,
+			"tier":    spec.Tier,
+			"runtime": "clamshell",
+		}))
+	}
+
+	var workbenchSpec *docker.WorkbenchConfigSpec
+	if envCfg.Workbench != nil {
+		spec, err := envCfg.ResolveWorkbenchSpec()
+		if err != nil {
+			return fmt.Errorf("resolve workbench spec: %w", err)
+		}
+		workbenchSpec = &spec
+	}
+
+	if err := docker.WriteRuntimeMetadata(sandboxDir, docker.RuntimeMetadata{
+		SessionID:       sess.ID,
+		SessionName:     sessionName,
+		Template:        tmpl.Name,
+		Runtime:         "clamshell",
+		Environment:     environment,
+		EnvironmentPath: envCfg.SourcePath(),
+		BelayerDir:      belayerDir,
+		WorkspaceRoot:   workspaceRoot,
+		Workbench:       workbenchSpec,
+		Tools:           envCfg.Tools,
+		RepoWorktrees:   repoWorkDirs,
+		Agents:          agentMeta,
+	}); err != nil {
+		return fmt.Errorf("write runtime metadata: %w", err)
+	}
+
+	for _, tool := range envCfg.Tools {
+		if err := c.RegisterTool(sess.ID, tool); err != nil {
+			return fmt.Errorf("register environment tool %q: %w", tool.Name, err)
+		}
+	}
 
 	return nil
 }
