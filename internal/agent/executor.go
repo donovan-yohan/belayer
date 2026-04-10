@@ -105,18 +105,18 @@ func (e *Executor) runCompose(ctx context.Context, service, command string) (Exe
 		"exec", "-T", service,
 		"sh", "-c", command,
 	)
-	return captureCommand(cmd)
+	return captureCommand(ctx, cmd)
 }
 
 // runHost executes command directly on the host via sh -c.
 // This is opt-in and should only be used when the target is explicitly "host".
 func runHost(ctx context.Context, command string) (ExecResult, error) {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	return captureCommand(cmd)
+	return captureCommand(ctx, cmd)
 }
 
 // captureCommand runs cmd and returns stdout, stderr, exit code, and any error.
-func captureCommand(cmd *exec.Cmd) (ExecResult, error) {
+func captureCommand(ctx context.Context, cmd *exec.Cmd) (ExecResult, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -128,16 +128,18 @@ func captureCommand(cmd *exec.Cmd) (ExecResult, error) {
 		ExitCode: 0,
 	}
 	if err != nil {
+		// Check context cancellation/deadline first: exec.CommandContext kills the
+		// process when the context fires, which surfaces as an *exec.ExitError with
+		// exit code -1. We must check ctx.Err() before the ExitError branch so the
+		// caller receives context.DeadlineExceeded rather than a silent non-zero exit.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) {
+			result.ExitCode = 130
+			return result, ctx.Err()
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitErr.ExitCode()
 			// Non-zero exit is not an executor error — it's a tool result.
 			return result, nil
-		}
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			// Context timeout/cancel: set conventional exit code 130 (SIGKILL) so
-			// callers and audit logs can distinguish timeouts from infrastructure failures.
-			result.ExitCode = 130
-			return result, err
 		}
 		// Process couldn't be started or was killed by signal.
 		return result, fmt.Errorf("executor: command failed: %w", err)

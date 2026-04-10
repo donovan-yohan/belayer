@@ -337,6 +337,101 @@ func TestValidateEnvironment_ToolDuplicateName(t *testing.T) {
 	}
 }
 
+func TestLoadEnvironment_ToolsParsed(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "env.yaml")
+	content := `
+name: test-env
+type: docker-compose
+networking:
+  type: none
+tools:
+  - name: db-query
+    description: "Read-only SQL query"
+    input:
+      query: string
+    exec:
+      target: infra
+      command: 'psql "$DATABASE_URL" -c {{.query}}'
+      timeout: 30
+    constraints:
+      read_only: true
+      audit: true
+  - name: build-check
+    description: "Compile the project"
+    exec:
+      target: workbench
+      command: "make build 2>&1"
+`
+	if err := os.WriteFile(envPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadEnvironment(envPath)
+	if err != nil {
+		t.Fatalf("LoadEnvironment: %v", err)
+	}
+
+	if len(cfg.Tools) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(cfg.Tools))
+	}
+
+	// First tool: db-query
+	tool := cfg.Tools[0]
+	if tool.Name != "db-query" {
+		t.Errorf("tools[0].Name = %q, want db-query", tool.Name)
+	}
+	if tool.Description != "Read-only SQL query" {
+		t.Errorf("tools[0].Description = %q", tool.Description)
+	}
+	if tool.Exec.Target != "infra" {
+		t.Errorf("tools[0].Exec.Target = %q, want infra", tool.Exec.Target)
+	}
+	if tool.Exec.Timeout != 30 {
+		t.Errorf("tools[0].Exec.Timeout = %d, want 30", tool.Exec.Timeout)
+	}
+	if !tool.Constraints.ReadOnly {
+		t.Error("tools[0].Constraints.ReadOnly should be true")
+	}
+	if !tool.Constraints.Audit {
+		t.Error("tools[0].Constraints.Audit should be true")
+	}
+	if tool.InputSchema == nil || tool.InputSchema["query"] != "string" {
+		t.Errorf("tools[0].InputSchema = %v, want {query: string}", tool.InputSchema)
+	}
+
+	// Second tool: build-check
+	tool2 := cfg.Tools[1]
+	if tool2.Name != "build-check" {
+		t.Errorf("tools[1].Name = %q, want build-check", tool2.Name)
+	}
+	if tool2.Exec.Target != "workbench" {
+		t.Errorf("tools[1].Exec.Target = %q, want workbench", tool2.Exec.Target)
+	}
+}
+
+func TestLoadEnvironment_NoTools(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "env.yaml")
+	content := `
+name: bare-env
+type: docker-compose
+networking:
+  type: none
+`
+	if err := os.WriteFile(envPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadEnvironment(envPath)
+	if err != nil {
+		t.Fatalf("LoadEnvironment: %v", err)
+	}
+	if len(cfg.Tools) != 0 {
+		t.Errorf("expected 0 tools, got %d", len(cfg.Tools))
+	}
+}
+
 func TestValidateEnvironment_ValidTools(t *testing.T) {
 	cfg := &EnvironmentConfig{
 		Tools: []agent.ToolSpec{
