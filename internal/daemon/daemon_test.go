@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/donovan-yohan/belayer/internal/agent"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -20,7 +21,7 @@ func testDaemon(t *testing.T) *Daemon {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	d := &Daemon{store: st, config: Config{}}
+	d := &Daemon{store: st, config: Config{}, tools: make(map[string][]agent.ToolSpec)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", d.handleHealth)
 	mux.HandleFunc("POST /sessions", d.handleCreateSession)
@@ -30,6 +31,9 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("GET /sessions/{id}/events", d.handleGetEvents)
 	mux.HandleFunc("POST /sessions/{id}/events", d.handleLogEvent)
 	mux.HandleFunc("GET /search", d.handleSearch)
+	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
+	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
+	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
 	d.server = &http.Server{Handler: mux}
 	return d
 }
