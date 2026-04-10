@@ -316,6 +316,25 @@ func TestValidateEnvironment_ToolMissingCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for tool with missing command")
 	}
+	if !strings.Contains(err.Error(), "exec.command") {
+		t.Errorf("error should mention exec.command, got: %v", err)
+	}
+}
+
+func TestValidateEnvironment_ToolDuplicateName(t *testing.T) {
+	cfg := &EnvironmentConfig{
+		Tools: []agent.ToolSpec{
+			{Name: "echo", Exec: agent.ToolExec{Target: "host", Command: "echo a"}},
+			{Name: "echo", Exec: agent.ToolExec{Target: "host", Command: "echo b"}},
+		},
+	}
+	err := ValidateEnvironment(cfg)
+	if err == nil {
+		t.Fatal("expected error for duplicate tool name")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("error should mention duplicate, got: %v", err)
+	}
 }
 
 func TestValidateEnvironment_ValidTools(t *testing.T) {

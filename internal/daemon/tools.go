@@ -34,8 +34,9 @@ type toolResult struct {
 }
 
 // RegisterToolsForSession loads a slice of ToolSpecs into the daemon's in-memory
-// registry for the given session. This is called when a session starts with an
-// environment that declares tools. Each tool is logged as a tool_registered event.
+// registry for the given session. Called once at session creation when the
+// environment declares tools. Not idempotent — callers must not invoke twice
+// for the same session. Each tool is logged as a tool_registered event.
 func (d *Daemon) RegisterToolsForSession(sessionID string, tools []agent.ToolSpec) {
 	if len(tools) == 0 {
 		return

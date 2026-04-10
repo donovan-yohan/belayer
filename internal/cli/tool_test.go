@@ -29,9 +29,16 @@ func TestToolRunCmd_RequiresToolName(t *testing.T) {
 	cmd := newToolRunCmd()
 	cmd.SetArgs([]string{"--session", "abc"})
 
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected error when tool name is missing")
+	}
+	if !strings.Contains(err.Error(), "accepts 1 arg") {
+		t.Errorf("error = %q, want mention of arg count", err.Error())
 	}
 }
 
