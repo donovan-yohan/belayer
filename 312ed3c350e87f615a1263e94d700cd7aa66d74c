@@ -1,0 +1,25 @@
+internal/docker/environment_test.go
+  2dba497c5a82bd3b 340-434
+internal/agent/executor.go
+  2dba497c5a82bd3b 108,115,119,131-138
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "312ed3c350e87f615a1263e94d700cd7aa66d74c",
+  "prompts": {
+    "2dba497c5a82bd3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "be765410-d07d-40b1-aa21-41e9c3fb263b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 164,
+      "total_deletions": 19,
+      "accepted_lines": 872,
+      "overriden_lines": 0
+    }
+  }
+}
