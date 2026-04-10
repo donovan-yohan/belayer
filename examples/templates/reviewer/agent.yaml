@@ -1,0 +1,8 @@
+schema_version: "1"
+description: "Reviewer — evaluates diffs for correctness, style, and completeness"
+vendor: claude
+model: sonnet
+max_turns: 20
+max_duration: "30m"
+ephemeral: true
+workspace: none

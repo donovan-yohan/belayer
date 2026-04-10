@@ -19,6 +19,10 @@ Status: `implemented` — v6 session runtime (2026-04-09)
 - **Multi-repo mapping**: AgentSpec YAML supports optional `repo` field for per-agent repository targeting. Environment config maps repo names to paths via `ResolveRepoPath`.
 - **Per-session worktrees**: Each agent gets an isolated `git worktree` from `origin/main`, preventing agents from trampling each other's work or the user's checkout.
 - **Sleep-time compute**: Post-session Reflector consolidates core memory into archival entries.
+- **Sandbox as tool**: Agents don't run code in their own containers — they call `belayer sandbox up` to provision an execution environment on demand (Anthropic managed agents pattern).
+- **Pluggable runtime**: Six OS-like primitives (agent, environment, session, sandbox, tool, event) with a Runtime interface that maps to Local/Docker/Kubernetes backends.
+- **Tiered agents**: Main characters (persistent, peer-to-peer messaging), peripheral (session-scoped), ephemeral (task-scoped, spawned by any main character). Scion athenaeum pattern.
+- **Tool execution routing**: User-defined tools in environment config, routed to agent/sandbox/infra/host targets by the daemon with audit trail.
 
 ## Observability
 
