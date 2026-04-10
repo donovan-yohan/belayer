@@ -36,7 +36,7 @@ func TestNew_CreatesReflector(t *testing.T) {
 	m := openMemory(t)
 	s := openStore(t)
 
-	r := New(m, s, nil)
+	r := New(m, s, nil, nil)
 	if r == nil {
 		t.Fatal("expected non-nil Reflector")
 	}
@@ -47,13 +47,13 @@ func TestNew_CreatesReflector(t *testing.T) {
 func TestReflect_CreateArchivalEntry(t *testing.T) {
 	m := openMemory(t)
 	s := openStore(t)
-	r := New(m, s, nil)
+	r := New(m, s, nil, nil)
 
 	sessionID := "session-reflect-1"
 	if err := m.WriteCore(sessionID, "goal", "build memory system"); err != nil {
 		t.Fatalf("WriteCore: %v", err)
 	}
-	if err := m.WriteCore(sessionID, "phase", "climb"); err != nil {
+	if err := m.WriteCore(sessionID, "phase", "implement"); err != nil {
 		t.Fatalf("WriteCore: %v", err)
 	}
 
@@ -92,7 +92,7 @@ func TestReflect_CreateArchivalEntry(t *testing.T) {
 func TestReflect_EmptyCoreIsNoOp(t *testing.T) {
 	m := openMemory(t)
 	s := openStore(t)
-	r := New(m, s, nil)
+	r := New(m, s, nil, nil)
 
 	sessionID := "session-empty"
 
@@ -116,7 +116,7 @@ func TestReflect_EmptyCoreIsNoOp(t *testing.T) {
 func TestReflect_Serial(t *testing.T) {
 	m := openMemory(t)
 	s := openStore(t)
-	r := New(m, s, nil)
+	r := New(m, s, nil, nil)
 
 	sessA := "session-serial-a"
 	sessB := "session-serial-b"
@@ -166,11 +166,11 @@ func TestReflect_Serial(t *testing.T) {
 func TestConsolidate_FormatsMarkdown(t *testing.T) {
 	m := openMemory(t)
 	s := openStore(t)
-	r := New(m, s, nil)
+	r := New(m, s, nil, nil)
 
 	entries := []memory.CoreEntry{
 		{Key: "goal", Value: "build a memory system"},
-		{Key: "phase", Value: "climb"},
+		{Key: "phase", Value: "implement"},
 	}
 
 	got := r.Consolidate(entries)
@@ -181,7 +181,7 @@ func TestConsolidate_FormatsMarkdown(t *testing.T) {
 	if !strings.Contains(got, "- **goal**: build a memory system\n") {
 		t.Errorf("expected goal entry in output, got: %q", got)
 	}
-	if !strings.Contains(got, "- **phase**: climb\n") {
+	if !strings.Contains(got, "- **phase**: implement\n") {
 		t.Errorf("expected phase entry in output, got: %q", got)
 	}
 }
@@ -191,7 +191,7 @@ func TestConsolidate_FormatsMarkdown(t *testing.T) {
 func TestConsolidate_EmptyEntriesReturnsEmptyString(t *testing.T) {
 	m := openMemory(t)
 	s := openStore(t)
-	r := New(m, s, nil)
+	r := New(m, s, nil, nil)
 
 	got := r.Consolidate([]memory.CoreEntry{})
 	if got != "" {
@@ -204,7 +204,7 @@ func TestConsolidate_EmptyEntriesReturnsEmptyString(t *testing.T) {
 func TestDetectStale_ReturnsUnreferencedEntries(t *testing.T) {
 	m := openMemory(t)
 	s := openStore(t)
-	r := New(m, s, nil)
+	r := New(m, s, nil, nil)
 
 	// Write two archival entries.
 	if err := m.WriteArchival("s1", "the implementer wrote auth module", "auth", ""); err != nil {
@@ -246,7 +246,7 @@ func TestDetectStale_ReturnsUnreferencedEntries(t *testing.T) {
 func TestDetectStale_NoArchivalEntries(t *testing.T) {
 	m := openMemory(t)
 	s := openStore(t)
-	r := New(m, s, nil)
+	r := New(m, s, nil, nil)
 
 	stale, err := r.DetectStale(5)
 	if err != nil {
@@ -257,5 +257,169 @@ func TestDetectStale_NoArchivalEntries(t *testing.T) {
 	}
 	if len(stale) != 0 {
 		t.Errorf("expected 0 stale entries, got %d", len(stale))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReflectionConfig
+// ---------------------------------------------------------------------------
+
+func TestDefaultReflectionConfig(t *testing.T) {
+	cfg := DefaultReflectionConfig()
+	if cfg.Vendor != "claude" {
+		t.Errorf("Vendor: got %q, want %q", cfg.Vendor, "claude")
+	}
+	if cfg.Model != "sonnet" {
+		t.Errorf("Model: got %q, want %q", cfg.Model, "sonnet")
+	}
+	if cfg.Trigger != "post-session" {
+		t.Errorf("Trigger: got %q, want %q", cfg.Trigger, "post-session")
+	}
+	if cfg.Limits.MaxReviewLoops != 10 {
+		t.Errorf("MaxReviewLoops: got %d, want 10", cfg.Limits.MaxReviewLoops)
+	}
+}
+
+func TestReflectionConfig_Validate_Valid(t *testing.T) {
+	cfg := DefaultReflectionConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() on default config: %v", err)
+	}
+}
+
+func TestReflectionConfig_Validate_EmptyVendor(t *testing.T) {
+	cfg := DefaultReflectionConfig()
+	cfg.Vendor = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for empty vendor")
+	}
+}
+
+func TestReflectionConfig_Validate_BadTrigger(t *testing.T) {
+	cfg := DefaultReflectionConfig()
+	cfg.Trigger = "on-full-moon"
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for unknown trigger")
+	}
+}
+
+func TestLoadReflectionConfig_MissingFileReturnsDefault(t *testing.T) {
+	cfg, err := LoadReflectionConfig("/nonexistent/path/config.yaml")
+	if err != nil {
+		t.Fatalf("LoadReflectionConfig: %v", err)
+	}
+	if cfg.Vendor != "claude" {
+		t.Errorf("expected default vendor 'claude', got %q", cfg.Vendor)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Reflection Prompt
+// ---------------------------------------------------------------------------
+
+func TestCompileReflectionPrompt_ContainsSections(t *testing.T) {
+	ctx := ReflectionPromptContext{
+		SessionID:  "sess-123",
+		EventsPath: "/tmp/events.txt",
+		MemoryDir:  "/home/user/.belayer/memory/system",
+		ArchiveDir: "/home/user/.belayer/memory/archive",
+	}
+	result := CompileReflectionPrompt(ctx)
+
+	checks := []string{
+		"reflection agent",
+		"Session ID: sess-123",
+		"Memory directory: /home/user/.belayer/memory/system",
+		"Archive directory: /home/user/.belayer/memory/archive",
+		"Events are available at: /tmp/events.txt",
+		"What Good Reflection Looks Like",
+		"What To Look For",
+	}
+	for _, want := range checks {
+		if !strings.Contains(result, want) {
+			t.Errorf("CompileReflectionPrompt() missing %q", want)
+		}
+	}
+}
+
+func TestCompileReflectionPrompt_NoEventsPath(t *testing.T) {
+	ctx := ReflectionPromptContext{
+		SessionID: "sess-456",
+		MemoryDir: "/tmp/mem",
+	}
+	result := CompileReflectionPrompt(ctx)
+
+	if strings.Contains(result, "Events are available at") {
+		t.Error("should omit events section when EventsPath is empty")
+	}
+}
+
+func TestFormatEventsForReflection_Empty(t *testing.T) {
+	result := FormatEventsForReflection(nil)
+	if result != "No events recorded for this session." {
+		t.Errorf("unexpected result for empty events: %q", result)
+	}
+}
+
+func TestFormatEventsForReflection_MultipleEvents(t *testing.T) {
+	events := []SessionEvent{
+		{Type: "session_started", Data: `{"template":"implement"}`},
+		{Type: "agent_launched", Data: `{"agent":"pilot"}`},
+	}
+	result := FormatEventsForReflection(events)
+
+	if !strings.Contains(result, "[session_started]") {
+		t.Errorf("missing session_started event type")
+	}
+	if !strings.Contains(result, "[agent_launched]") {
+		t.Errorf("missing agent_launched event type")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BuildReflectionCmd
+// ---------------------------------------------------------------------------
+
+func TestBuildReflectionCmd_Claude(t *testing.T) {
+	m := openMemory(t)
+	s := openStore(t)
+	cfg := DefaultReflectionConfig() // vendor=claude, model=sonnet
+	r := New(m, s, nil, &cfg)
+
+	cmd, err := r.BuildReflectionCmd("sess-1", "/tmp/events.txt", "/tmp/mem", "/tmp/archive")
+	if err != nil {
+		t.Fatalf("BuildReflectionCmd: %v", err)
+	}
+	if !strings.HasPrefix(cmd, "claude --dangerously-skip-permissions") {
+		t.Errorf("expected claude command prefix, got: %s", cmd[:60])
+	}
+	if !strings.Contains(cmd, "--model sonnet") {
+		t.Errorf("expected --model sonnet in command, got: %s", cmd[:80])
+	}
+}
+
+func TestBuildReflectionCmd_NoConfig(t *testing.T) {
+	m := openMemory(t)
+	s := openStore(t)
+	r := New(m, s, nil, nil)
+
+	_, err := r.BuildReflectionCmd("sess-1", "/tmp/events.txt", "/tmp/mem", "/tmp/archive")
+	if err == nil {
+		t.Error("expected error when config is nil")
+	}
+}
+
+func TestBuildReflectionCmd_OpenCode(t *testing.T) {
+	m := openMemory(t)
+	s := openStore(t)
+	cfg := ReflectionConfig{Vendor: "opencode", Model: "gpt-5.1", Trigger: "post-session"}
+	r := New(m, s, nil, &cfg)
+
+	cmd, err := r.BuildReflectionCmd("sess-2", "/tmp/events.txt", "/tmp/mem", "/tmp/archive")
+	if err != nil {
+		t.Fatalf("BuildReflectionCmd: %v", err)
+	}
+	if !strings.HasPrefix(cmd, "opencode") {
+		t.Errorf("expected opencode command, got: %s", cmd[:40])
 	}
 }

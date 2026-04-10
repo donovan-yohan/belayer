@@ -189,7 +189,7 @@ func TestSearchArchival_NoMatches(t *testing.T) {
 func TestRecall_CombinesCoreAndArchival(t *testing.T) {
 	m := openMemory(t)
 
-	m.WriteCore("session-recall", "phase", "climb")
+	m.WriteCore("session-recall", "phase", "implement")
 	m.WriteCore("session-recall", "agent", "implementer")
 	m.WriteArchival("session-recall", "the implementer wrote excellent tests", "quality", "docs/LEARNINGS.md")
 	m.WriteArchival("session-recall", "the pilot planned the sprint carefully", "planning", "docs/PLANS.md")

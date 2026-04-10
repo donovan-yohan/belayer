@@ -16,12 +16,15 @@ func NewRootCmd() *cobra.Command {
 		Long: `Belayer v6 — session runtime for autonomous coding agents.
 
 Commands:
-  daemon    Start the belayer daemon (long-running supervisor)
-  session   Create, list, and stop agent sessions
-  attach    Attach to a session's tmux pane
-  logs      Show session events
-  status    Show running sessions
-  recall    Search events via FTS5`,
+  implement   Launch an implementation session (pilot + implementer + reviewer)
+  daemon      Start the belayer daemon (long-running supervisor)
+  session     Create, list, and stop agent sessions
+  attach      Attach to a session's agent tmux panes
+  setup       Bootstrap a .belayer/ workspace
+  status      Show running sessions
+  logs        Show session events
+  watch       Stream events from one or more sessions
+  recall      Search events via FTS5`,
 	}
 
 	cmd.Version = version
@@ -31,13 +34,16 @@ Commands:
 		newSessionCmd(),
 		newAttachCmd(),
 		newLogsCmd(),
+		newWatchCmd(),
 		newStatusCmd(),
+		newDebugCmd(),
 		newRecallCmd(),
 		newMessageCmd(),
 		newContextCmd(),
 		newNoteCmd(),
-		newScaffoldCmd("climb", "Reserved v6 task/session entrypoint", "Implement the v6 session runtime before restoring climb behavior."),
-		newScaffoldCmd("setup", "Reserved v6 bootstrap command", "Replace framework installation with session-runtime bootstrap once the new design lands."),
+		newSetupCmd(),
+		newWorkbenchCmd(),
+		newToolCmd(),
 		newScaffoldCmd("submit", "Reserved v6 submission surface", "Restore submit after the new runtime decides how tasks enter the system."),
 	)
 	return cmd

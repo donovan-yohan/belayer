@@ -29,9 +29,6 @@ tools:
 	if cfg.Name != "pilot-agent" {
 		t.Errorf("Name = %q, want %q", cfg.Name, "pilot-agent")
 	}
-	if cfg.Role != RolePilot {
-		t.Errorf("Role = %q, want %q", cfg.Role, RolePilot)
-	}
 	if cfg.Vendor != "claude" {
 		t.Errorf("Vendor = %q, want %q", cfg.Vendor, "claude")
 	}
@@ -67,7 +64,6 @@ func TestLoadAgentConfig_MissingFile(t *testing.T) {
 func TestValidateAgentConfig_Valid(t *testing.T) {
 	cfg := AgentConfig{
 		Name:   "my-agent",
-		Role:   RoleImplementer,
 		Vendor: "codex",
 	}
 	if err := ValidateAgentConfig(cfg); err != nil {
@@ -78,7 +74,6 @@ func TestValidateAgentConfig_Valid(t *testing.T) {
 func TestValidateAgentConfig_EmptyName(t *testing.T) {
 	cfg := AgentConfig{
 		Name:   "",
-		Role:   RolePilot,
 		Vendor: "claude",
 	}
 	if err := ValidateAgentConfig(cfg); err == nil {
@@ -86,22 +81,9 @@ func TestValidateAgentConfig_EmptyName(t *testing.T) {
 	}
 }
 
-func TestValidateAgentConfig_InvalidRole(t *testing.T) {
-	cfg := AgentConfig{
-		Name:   "bad-agent",
-		Role:   Role("overlord"),
-		Vendor: "claude",
-	}
-	err := ValidateAgentConfig(cfg)
-	if err == nil {
-		t.Error("ValidateAgentConfig() expected error for invalid role, got nil")
-	}
-}
-
 func TestValidateAgentConfig_EmptyVendor(t *testing.T) {
 	cfg := AgentConfig{
 		Name:   "my-agent",
-		Role:   RoleReviewer,
 		Vendor: "",
 	}
 	if err := ValidateAgentConfig(cfg); err == nil {
@@ -203,17 +185,17 @@ func TestLoadAgentConfigs_MultipleAgents(t *testing.T) {
 		t.Fatalf("len(cfgs) = %d, want 3", len(cfgs))
 	}
 
-	if cfgs[0].Name != "pilot-agent" || cfgs[0].Role != RolePilot {
-		t.Errorf("cfgs[0] = {%q, %q}, want {pilot-agent, pilot}", cfgs[0].Name, cfgs[0].Role)
+	if cfgs[0].Name != "pilot-agent" {
+		t.Errorf("cfgs[0].Name = %q, want %q", cfgs[0].Name, "pilot-agent")
 	}
-	if cfgs[1].Name != "implementer-agent" || cfgs[1].Role != RoleImplementer {
-		t.Errorf("cfgs[1] = {%q, %q}, want {implementer-agent, implementer}", cfgs[1].Name, cfgs[1].Role)
+	if cfgs[1].Name != "implementer-agent" {
+		t.Errorf("cfgs[1].Name = %q, want %q", cfgs[1].Name, "implementer-agent")
 	}
 	if len(cfgs[1].Tools) != 1 || cfgs[1].Tools[0].Name != "git-status" {
 		t.Errorf("cfgs[1].Tools unexpected: %v", cfgs[1].Tools)
 	}
-	if cfgs[2].Name != "reviewer-agent" || cfgs[2].Role != RoleReviewer {
-		t.Errorf("cfgs[2] = {%q, %q}, want {reviewer-agent, reviewer}", cfgs[2].Name, cfgs[2].Role)
+	if cfgs[2].Name != "reviewer-agent" {
+		t.Errorf("cfgs[2].Name = %q, want %q", cfgs[2].Name, "reviewer-agent")
 	}
 }
 

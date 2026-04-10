@@ -5,7 +5,7 @@ import "testing"
 func TestRootCmdRegistersV6ScaffoldCommands(t *testing.T) {
 	cmd := NewRootCmd()
 
-	want := []string{"attach", "climb", "context", "daemon", "logs", "message", "note", "recall", "session", "setup", "status", "submit"}
+	want := []string{"attach", "context", "daemon", "debug", "logs", "message", "note", "recall", "session", "setup", "status", "submit", "watch"}
 	seen := map[string]bool{}
 	for _, child := range cmd.Commands() {
 		seen[child.Name()] = true

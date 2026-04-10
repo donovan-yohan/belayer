@@ -19,16 +19,19 @@ type Reflector struct {
 	mu     sync.Mutex // ensures serial reflection queue
 	memory memory.MemoryStore
 	store  *store.Store
-	memfs  *memory.MemFS // can be nil (skip markdown writes)
+	memfs  *memory.MemFS        // can be nil (skip markdown writes)
+	config *ReflectionConfig    // can be nil (uses deterministic fallback)
 }
 
 // New creates a Reflector backed by the given memory store and session store.
 // fs may be nil, in which case markdown writes are skipped.
-func New(mem memory.MemoryStore, st *store.Store, fs *memory.MemFS) *Reflector {
+// cfg may be nil, in which case deterministic consolidation is used.
+func New(mem memory.MemoryStore, st *store.Store, fs *memory.MemFS, cfg *ReflectionConfig) *Reflector {
 	return &Reflector{
 		memory: mem,
 		store:  st,
 		memfs:  fs,
+		config: cfg,
 	}
 }
 
@@ -95,6 +98,41 @@ func (r *Reflector) Reflect(sessionID string) error {
 	}
 
 	return nil
+}
+
+// BuildReflectionCmd returns the vendor CLI command string that launches the
+// reflection agent for a session. The caller is responsible for executing it
+// (e.g., in a tmux session or as a subprocess).
+//
+// This is the LLM-powered reflection path. The reflection agent receives the
+// session events and memory paths, and uses its judgment to update memory files.
+// The code is just plumbing — the intelligence lives in the prompt.
+func (r *Reflector) BuildReflectionCmd(sessionID, eventsPath, memoryDir, archiveDir string) (string, error) {
+	if r.config == nil {
+		return "", fmt.Errorf("reflection: no config set, cannot build LLM reflection command")
+	}
+
+	prompt := CompileReflectionPrompt(ReflectionPromptContext{
+		SessionID:  sessionID,
+		EventsPath: eventsPath,
+		MemoryDir:  memoryDir,
+		ArchiveDir: archiveDir,
+	})
+
+	// Build vendor-specific CLI command.
+	switch r.config.Vendor {
+	case "claude":
+		return fmt.Sprintf("claude --dangerously-skip-permissions --model %s -p %q",
+			r.config.Model, prompt), nil
+	case "opencode":
+		model := r.config.Model
+		if model == "" {
+			model = "default"
+		}
+		return fmt.Sprintf("opencode -m %q --prompt %q", model, prompt), nil
+	default:
+		return fmt.Sprintf("echo 'Unsupported reflection vendor: %s'", r.config.Vendor), nil
+	}
 }
 
 // DetectStale returns archival entries that have not been referenced in recent
