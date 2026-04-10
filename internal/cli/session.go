@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
+	"github.com/donovan-yohan/belayer/internal/clamshell"
 	"github.com/donovan-yohan/belayer/internal/docker"
 	"github.com/donovan-yohan/belayer/internal/tmux"
 	"github.com/spf13/cobra"
@@ -643,22 +645,55 @@ With --agent, attaches directly to that agent's tmux pane.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := args[0]
+			var sessionID string
 
 			// Try to resolve session name via daemon.
 			c := NewClient(resolveSocket(socket))
 			sessionName := target
 			if err := c.Health(); err == nil {
-				if sessionID, err := lookupSessionID(c, target); err == nil {
+				if resolvedID, err := lookupSessionID(c, target); err == nil {
+					sessionID = resolvedID
 					// Look up name from the resolved ID.
 					if sessions, err := c.ListSessions(); err == nil {
 						for _, s := range sessions {
-							if s.ID == sessionID {
+							if s.ID == resolvedID {
 								sessionName = s.Name
 								break
 							}
 						}
 					}
 				}
+			}
+			if sessionID == "" {
+				sessionID = target
+			}
+
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("resolve user home directory: %w", err)
+			}
+			sandboxDir := filepath.Join(home, ".belayer", "sandboxes", sessionID)
+			runtimeMeta, err := docker.LoadRuntimeMetadata(sandboxDir)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("load runtime metadata for session %q: %w", target, err)
+			}
+			if err == nil && runtimeMeta.Runtime == "clamshell" {
+				if agentName != "" {
+					if agent, ok := runtimeMeta.Agents[agentName]; ok && agent.SandboxName != "" {
+						return clamshell.ConnectSandbox(agent.SandboxName)
+					}
+					return fmt.Errorf("no clamshell sandbox metadata found for agent %q", agentName)
+				}
+				if len(runtimeMeta.Agents) == 0 {
+					return fmt.Errorf("no clamshell agent metadata found for session %q", target)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Session: %s\n\n", sessionName)
+				fmt.Fprintln(cmd.OutOrStdout(), "Agents:")
+				for _, agent := range runtimeMeta.Agents {
+					fmt.Fprintf(cmd.OutOrStdout(), "  %-16s clamshell sandbox connect --name %s\n", agent.Name, agent.SandboxName)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "\nAttach directly:\n  belayer attach %s --agent <name>\n", target)
+				return nil
 			}
 
 			// If --agent specified, attach directly.

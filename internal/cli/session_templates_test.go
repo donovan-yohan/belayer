@@ -82,3 +82,19 @@ func TestLoadLaunchTemplate_ClimbSingleRepoSelectsMatchingImplementer(t *testing
 		t.Fatalf("implementer name = %q, want api-implementer", tmpl.Agents[1].Name)
 	}
 }
+
+func TestLoadLaunchTemplate_EpicUsesPilotOnly(t *testing.T) {
+	belayerDir := t.TempDir()
+	writeAgentTemplate(t, belayerDir, "pilot", "claude", "opus", "none", false)
+
+	tmpl, err := loadLaunchTemplate("", belayerDir, testEnvironmentConfig(), "epic", "")
+	if err != nil {
+		t.Fatalf("loadLaunchTemplate returned error: %v", err)
+	}
+	if len(tmpl.Agents) != 1 {
+		t.Fatalf("Agents = %d, want 1", len(tmpl.Agents))
+	}
+	if tmpl.Agents[0].Name != "pilot" {
+		t.Fatalf("pilot agent = %q, want pilot", tmpl.Agents[0].Name)
+	}
+}

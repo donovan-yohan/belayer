@@ -33,6 +33,8 @@ func loadLaunchTemplate(templatesDir, belayerDir string, envCfg *docker.Environm
 			return session.SessionTemplate{}, fmt.Errorf("--environment is required for template %q", template)
 		}
 		return buildEnvironmentSessionTemplate(belayerDir, envCfg, template, repo)
+	case "epic":
+		return buildEpicSessionTemplate(belayerDir, envCfg)
 	}
 	return session.LoadTemplateFromDir(templatesDir, template)
 }
@@ -102,6 +104,23 @@ func buildEnvironmentSessionTemplate(belayerDir string, envCfg *docker.Environme
 		Phase:       session.PhaseImplement,
 		Description: fmt.Sprintf("%s session built from environment %s", template, envCfg.Name),
 		Agents:      agents,
+	}, nil
+}
+
+func buildEpicSessionTemplate(belayerDir string, envCfg *docker.EnvironmentConfig) (session.SessionTemplate, error) {
+	pilot, err := loadAgentTemplateSpec(belayerDir, "pilot", "")
+	if err != nil {
+		return session.SessionTemplate{}, err
+	}
+	desc := "Epic orchestration session"
+	if envCfg != nil && envCfg.Name != "" {
+		desc = fmt.Sprintf("Epic orchestration session for environment %s", envCfg.Name)
+	}
+	return session.SessionTemplate{
+		Name:        "epic",
+		Phase:       session.PhaseImplement,
+		Description: desc,
+		Agents:      []session.AgentSpec{pilot},
 	}, nil
 }
 

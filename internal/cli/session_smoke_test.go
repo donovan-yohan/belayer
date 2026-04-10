@@ -50,6 +50,24 @@ esac
 	return filepath.Join(logDir, "tmux.log")
 }
 
+func installFakeClamshell(t *testing.T) string {
+	t.Helper()
+	binDir := t.TempDir()
+	logPath := filepath.Join(binDir, "clamshell.log")
+	script := filepath.Join(binDir, "clamshell")
+	body := `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "` + logPath + `"
+exit 0
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatalf("write fake clamshell: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return logPath
+}
+
+
 func startTestDaemon(t *testing.T) (context.CancelFunc, string) {
 	t.Helper()
 	baseDir, err := os.MkdirTemp("/tmp", "belayer-cli-daemon-")
@@ -273,6 +291,114 @@ func TestSessionCreateClimbFullstackStartsEnvironmentRoster(t *testing.T) {
 		t.Fatalf("read runtime metadata: %v", err)
 	}
 	for _, want := range []string{"\"environment\": \"extend-fullstack\"", apiRepo, appRepo} {
+		if !strings.Contains(string(metaData), want) {
+			t.Fatalf("expected runtime metadata to contain %q, got:\n%s", want, string(metaData))
+		}
+	}
+}
+
+func TestSessionCreateEpicStartsPilotOnlyRoster(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	logPath := installFakeTmux(t)
+	cancel, socketPath := startTestDaemon(t)
+	defer cancel()
+
+	root := repoRoot(t)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	copyFile(t, filepath.Join(root, ".belayer", "environments", "extend-fullstack", "environment.yaml"), filepath.Join(workspace, ".belayer", "environments", "extend-fullstack", "environment.yaml"))
+	copyFile(t, filepath.Join(root, ".belayer", "environments", "extend-fullstack", "workbench.yaml"), filepath.Join(workspace, ".belayer", "environments", "extend-fullstack", "workbench.yaml"))
+	for _, name := range []string{"pilot"} {
+		copyFile(t, filepath.Join(root, ".belayer", "templates", name, "agent.yaml"), filepath.Join(workspace, ".belayer", "templates", name, "agent.yaml"))
+		copyFile(t, filepath.Join(root, ".belayer", "templates", name, "system-prompt.md"), filepath.Join(workspace, ".belayer", "templates", name, "system-prompt.md"))
+	}
+
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(prevWD) }()
+	if err := os.Chdir(workspace); err != nil {
+		t.Fatalf("chdir workspace: %v", err)
+	}
+
+	out := runRootCmd(t,
+		"session", "create",
+		"--socket", socketPath,
+		"--template", "epic",
+		"--environment", "extend-fullstack",
+		"--input", "JIRA-1234",
+		"--name", "smoke-epic",
+	)
+	if !strings.Contains(out, "pilot:") {
+		t.Fatalf("expected epic output to contain pilot roster, got:\n%s", out)
+	}
+	if strings.Contains(out, "reviewer:") || strings.Contains(out, "implementer:") {
+		t.Fatalf("expected epic output to be pilot-only, got:\n%s", out)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read tmux log: %v", err)
+	}
+	if !strings.Contains(string(logData), "belayer-smoke-epic-pilot") {
+		t.Fatalf("expected pilot tmux launch, got:\n%s", string(logData))
+	}
+}
+
+func TestSessionCreateEpicClamshellLaunchesPilotSandbox(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	logPath := installFakeClamshell(t)
+	cancel, socketPath := startTestDaemon(t)
+	defer cancel()
+
+	root := repoRoot(t)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	copyFile(t, filepath.Join(root, ".belayer", "environments", "extend-fullstack", "environment.yaml"), filepath.Join(workspace, ".belayer", "environments", "extend-fullstack", "environment.yaml"))
+	copyFile(t, filepath.Join(root, ".belayer", "environments", "extend-fullstack", "workbench.yaml"), filepath.Join(workspace, ".belayer", "environments", "extend-fullstack", "workbench.yaml"))
+	copyFile(t, filepath.Join(root, ".belayer", "policies", "extend-fullstack.yaml"), filepath.Join(workspace, ".belayer", "policies", "extend-fullstack.yaml"))
+	copyFile(t, filepath.Join(root, ".belayer", "templates", "pilot", "agent.yaml"), filepath.Join(workspace, ".belayer", "templates", "pilot", "agent.yaml"))
+	copyFile(t, filepath.Join(root, ".belayer", "templates", "pilot", "system-prompt.md"), filepath.Join(workspace, ".belayer", "templates", "pilot", "system-prompt.md"))
+
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() { _ = os.Chdir(prevWD) }()
+	if err := os.Chdir(workspace); err != nil {
+		t.Fatalf("chdir workspace: %v", err)
+	}
+
+	out := runRootCmd(t,
+		"session", "create",
+		"--socket", socketPath,
+		"--template", "epic",
+		"--environment", "extend-fullstack",
+		"--clamshell",
+		"--input", "JIRA-9999",
+		"--name", "smoke-epic-clamshell",
+	)
+	if !strings.Contains(out, "pilot:") {
+		t.Fatalf("expected clamshell epic output to contain pilot roster, got:\n%s", out)
+	}
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read clamshell log: %v", err)
+	}
+	if !strings.Contains(string(logData), "sandbox create --name belayer-smoke-epic-clamshell-pilot") {
+		t.Fatalf("expected clamshell sandbox create invocation, got:\n%s", string(logData))
+	}
+	metaClient := NewClient(socketPath)
+	sessions, err := metaClient.ListSessions()
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("unexpected sessions: %#v err=%v", sessions, err)
+	}
+	metaPath := filepath.Join(home, ".belayer", "sandboxes", sessions[0].ID, "runtime.json")
+	metaData, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read runtime metadata: %v", err)
+	}
+	for _, want := range []string{`"runtime": "clamshell"`, `"sandbox_name": "belayer-smoke-epic-clamshell-pilot"`} {
 		if !strings.Contains(string(metaData), want) {
 			t.Fatalf("expected runtime metadata to contain %q, got:\n%s", want, string(metaData))
 		}
