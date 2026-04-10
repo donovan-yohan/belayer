@@ -320,6 +320,25 @@ func ValidateEnvironment(cfg *EnvironmentConfig) error {
 			}
 		}
 	}
+	seen := make(map[string]int, len(cfg.Tools))
+	for i, tool := range cfg.Tools {
+		if tool.Name == "" {
+			return fmt.Errorf("docker: environment: tools[%d]: name is required", i)
+		}
+		if prev, ok := seen[tool.Name]; ok {
+			return fmt.Errorf("docker: environment: tools[%d] (%s): duplicate name (first at tools[%d])", i, tool.Name, prev)
+		}
+		seen[tool.Name] = i
+		if tool.Exec.Target == "" {
+			return fmt.Errorf("docker: environment: tools[%d] (%s): exec.target is required", i, tool.Name)
+		}
+		if !agent.ValidTargets[tool.Exec.Target] {
+			return fmt.Errorf("docker: environment: tools[%d] (%s): invalid exec.target %q", i, tool.Name, tool.Exec.Target)
+		}
+		if tool.Exec.Command == "" {
+			return fmt.Errorf("docker: environment: tools[%d] (%s): exec.command is required", i, tool.Name)
+		}
+	}
 	return nil
 }
 

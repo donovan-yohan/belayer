@@ -97,6 +97,15 @@ config that controls network isolation, compose extensions, and repos.`,
 				return fmt.Errorf("create session: %w", err)
 			}
 
+			// 7.5. Register environment tools with the session.
+			if envCfg != nil {
+				for _, tool := range envCfg.Tools {
+					if err := c.RegisterTool(sess.ID, tool); err != nil {
+						return fmt.Errorf("register tool %q: %w", tool.Name, err)
+					}
+				}
+			}
+
 			// 8. Build list of agent names.
 			agentNames := make([]string, len(tmpl.Agents))
 			for i, a := range tmpl.Agents {
