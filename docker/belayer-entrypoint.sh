@@ -41,7 +41,8 @@ fi
 # ─── tmux session setup ────────────────────────────────────────────
 # Two windows: 'agent' runs the vendor CLI, 'shell' is for debugging.
 # If BELAYER_AGENT_CMD is empty, both windows are interactive shells.
-# tmux attach requires a TTY; fall back when none is allocated.
+# tmux attach requires a TTY; fall back when none is allocated
+# (e.g. docker compose up without tty: true).
 AGENT_CMD="${BELAYER_AGENT_CMD:-bash}"
 AGENT_WRAPPER="$AGENT_CMD; EXIT_CODE=\$?; $EXIT_LOG_CMD echo ''; echo \"Agent exited with code \$EXIT_CODE. Shell available for debugging.\"; exec bash"
 

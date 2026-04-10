@@ -4,7 +4,7 @@ Session runtime for autonomous coding agents. Many robots, bring your own pilots
 
 ## What It Does
 
-Belayer provides the infrastructure for multi-agent coding sessions: a daemon that manages sessions, messaging, memory, and execution environments. You bring the AI agents (Claude, Codex, or any terminal program); belayer provides the coordination layer.
+Belayer provides the infrastructure for multi-agent coding sessions: a daemon that manages sessions, messaging, memory, and execution environments. You bring the AI agents (Claude, Codex, or any terminal program); belayer provides the coordination layer. Agent sandboxes are powered by [clamshell](https://github.com/anthropics/clamshell) for deny-by-default network isolation, host-owned credential management, and per-binary egress policy.
 
 ## Quick Start
 
@@ -18,13 +18,16 @@ belayer setup
 # Start the daemon
 belayer daemon
 
-# Launch an implementation session
-belayer session start --template implement --input "Add rate limiting to /api/v1/cards"
+# Launch an implementation session (local tmux)
+belayer session start --template climb --input "Add rate limiting to /api/v1/cards"
 
-# Or with Docker sandboxing
-belayer session start --template implement --docker --environment extend-fullstack --input "Add rate limiting"
+# Launch with clamshell sandboxing
+belayer session start --template climb --clamshell --environment extend-fullstack --input "Add rate limiting"
 
-# Attach to the pilot agent
+# Launch an epic orchestration session (pilot only)
+belayer session start --template epic --environment extend-fullstack --input "JIRA-1234"
+
+# Attach to an agent
 belayer attach <session-name> --agent pilot
 
 # Monitor
@@ -33,13 +36,46 @@ belayer logs <session-id> -f
 belayer debug <session-id>
 ```
 
-## Three Phases
+## Session Templates
 
-| Phase | Command | Agents | Purpose |
-|---|---|---|---|
-| **Intake** | `belayer intake` | 1 (explorer) | Idea to spec |
-| **Implement** | `belayer implement` | 3 (pilot, implementer, reviewer) | Code with review loop |
-| **Deliver** | `belayer deliver` | 2 (QA, merger) | Validate, merge, monitor |
+| Template | Agents | Purpose |
+|----------|--------|---------|
+| **climb** | 3 (pilot, implementer, reviewer) | Single-repo implementation with review loop |
+| **climb-fullstack** | 4 (pilot, api-impl, app-impl, reviewer) | Multi-repo implementation (e.g. API + frontend) |
+| **epic** | 1 (pilot) | Workspace orchestration — decomposes epics, creates parallel sessions |
+
+## How Agents Work Together
+
+The pilot (opus) orchestrates. Implementers (sonnet) write code. The reviewer (codex) provides fresh-eyes feedback. All communication flows through the daemon's message broker — agents never talk directly.
+
+### The Review Loop
+
+```
+Pilot decomposes spec → messages implementer with task
+  → Implementer writes code, runs tests, creates PR
+  → Pilot routes PR to reviewer with spec context
+  → Reviewer provides structured pass/fail feedback
+  → On FAIL: pilot sends feedback to implementer → fix → re-review
+  → On PASS: session complete (or next phase for fullstack)
+```
+
+Review loops evolve via agent memory and reflection, not hardcoded rules. The pilot adapts based on accumulated coordination knowledge.
+
+### Multi-Repo (Fullstack)
+
+Both implementers work in parallel on separate repos. The pilot watches events from both, detects semantic drift (e.g., API changed a response shape but the frontend still expects the old one), and intervenes proactively. After both PRs pass review, the pilot provisions a workbench and runs E2E validation.
+
+### Three-Tier Memory
+
+All agents get personal memory that persists across sessions, backed by a three-tier system:
+
+- **Core** — session-scoped key-value pairs, always in the prompt (e.g., current task, review status)
+- **Archival** — long-term learnings with full-text search via FTS5 (e.g., "SpiceDB permission patterns")
+- **Recall** — combines core + archival search results on demand (`belayer recall "query"`)
+
+Markdown files on disk are authoritative; SQLite is a derived index. The pilot learns coordination patterns. Implementers learn codebase conventions. The reviewer's checklist evolves from experience. Post-session reflection consolidates both personal agent memory and shared institutional learnings.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full collaboration model, message flow, memory structure, and observability details.
 
 ## Architecture
 
@@ -57,20 +93,15 @@ flowchart TB
     end
 
     subgraph Templates["Session Templates"]
-        Intake["Intake Phase"]
-        Implement["Implement Phase"]
-        Deliver["Deliver Phase"]
+        Climb["Climb"]
+        ClimbFS["Climb Fullstack"]
+        Epic["Epic"]
     end
 
-    subgraph Execution["Agent Execution"]
-        subgraph Local["Local Mode"]
-            Tmux["tmux Runner"]
-        end
-        
-        subgraph DockerMode["Docker Mode"]
-            Sandbox["Docker Sandbox"]
-            Proxy["tinyproxy"]
-        end
+    subgraph Runtime["Runtime Interface"]
+        Local["Local (tmux)"]
+        Clamshell["Clamshell (sandbox)"]
+        Docker["Docker (compose)"]
     end
 
     subgraph Vendors["Vendor Adapters"]
@@ -85,16 +116,14 @@ flowchart TB
     HTTP --> Memory
     
     Store --> Templates
-    Broker --> Execution
-    Memory --> Execution
+    Broker --> Runtime
+    Memory --> Runtime
     
-    Execution --> Vendors
+    Runtime --> Vendors
     
-    Templates -.-> Workspaces
-    
-    Tmux --> Vendors
-    Sandbox --> Vendors
-    Sandbox --> Proxy
+    Local --> Vendors
+    Clamshell --> Vendors
+    Docker --> Vendors
 ```
 
 ### Component Overview
@@ -106,13 +135,13 @@ flowchart TB
 | | SQLite + FTS5 | Persistent session/event storage with full-text search |
 | | Message Broker | Agent-to-agent communication with debouncing |
 | | Memory System | Three-tier memory: core (hot), archival (searchable), recall (combined) |
-| **Sessions** | Templates (intake/implement/deliver) | Multi-phase agent orchestration |
-| **Execution** | tmux Runner | Local agent execution via tmux sessions |
-| | Docker Sandbox | Containerized agents with network isolation |
-| | tinyproxy | Network filtering (none/limited/full modes) |
+| **Sessions** | Templates (climb/climb-fullstack/epic) | Multi-phase agent orchestration |
+| **Runtime** | Local (tmux) | Agent execution via tmux sessions — no isolation |
+| | Clamshell (sandbox) | Deny-by-default sandboxes with credential isolation |
+| | Docker (compose) | Containerized agents with network isolation (legacy) |
 | **Vendors** | Claude, Codex, Generic adapters | Pluggable AI agent backends |
 
-### Session Lifecycle (Implement Phase)
+### Session Lifecycle (Climb)
 
 ```mermaid
 sequenceDiagram
@@ -124,16 +153,16 @@ sequenceDiagram
     participant I as Implementer
     participant R as Reviewer
 
-    U->>C: belayer session start --template implement --input "task"
+    U->>C: belayer session start --template climb --input "task"
     C->>D: POST /sessions {name, template}
     D->>S: INSERT session
     D-->>C: {session_id, status: pending}
     
     Note over D: Load template (pilot, implementer, reviewer)
     
-    D->>P: Launch via tmux/Docker
-    D->>I: Launch via tmux/Docker
-    D->>R: Launch via tmux/Docker
+    D->>P: Launch via runtime (tmux/clamshell)
+    D->>I: Launch via runtime (tmux/clamshell)
+    D->>R: Launch via runtime (tmux/clamshell)
     
     loop Agent Coordination
         P->>D: POST /messages (instruction)
@@ -158,73 +187,45 @@ sequenceDiagram
     C-->>U: Display logs
 ```
 
-## Docker Sandboxing
-
-Run agents in isolated Docker containers with network controls:
-
-```bash
-# Create an environment config
-cat > .belayer/environments/myenv.yaml << 'EOF'
-name: myenv
-type: docker-compose
-networking:
-  type: limited                    # none | limited | full
-  allowed_hosts:
-    - api.anthropic.com
-    - api.openai.com
-    - "*.github.com"
-  allow_package_managers: true
-EOF
-
-# Launch with Docker isolation
-belayer session start --template implement --docker --environment myenv --input "task"
-```
-
-Network modes:
-- **none** — no internet access (internal Docker network only)
-- **limited** — allowlisted hosts via tinyproxy (vendor APIs, package managers)
-- **full** — unrestricted internet access
-
-Each session gets an isolated Docker network. Agents communicate with the daemon via mounted Unix socket, enabling `belayer recall`, `belayer note`, and `belayer logs` from inside containers.
-
 ## Isolation Model
 
-Belayer provides defense in depth through multiple isolation layers:
+Belayer supports three runtime backends via a pluggable `Runtime` interface:
 
-### Network Isolation
+### Clamshell Sandboxes (recommended)
 
-| Layer | Mechanism | Guarantee |
-|-------|-----------|-----------|
-| **Docker Network** | `internal: true` | Containers cannot reach host network directly |
-| **Per-Session Networks** | Unique network per session | Agents from different sessions cannot communicate |
-| **tinyproxy** | HTTP proxy with regex allowlist | Only explicitly allowed hosts reachable in "limited" mode |
-| **Host Validation** | Rejects broad patterns (`.*`, `.`, `*`) | Prevents accidental wildcard allowlisting |
+Clamshell is the primary isolation backend. Each agent runs in its own clamshell sandbox with:
 
-**Network Modes:**
+| Concern | How clamshell solves it |
+|---------|----------------------|
+| **Network isolation** | Deny-by-default iptables. Sandbox processes can only reach the managed proxy on loopback. |
+| **Credential isolation** | Host-owned secrets, never mounted into sandbox. `inference.local` routing injects credentials at the proxy boundary. Agent sees no real API keys. |
+| **Egress control** | Per-binary policy — `claude` can reach `api.anthropic.com`; a Python script the agent wrote cannot. |
+| **Filesystem isolation** | Writable `/workspace`, read-only root. Host control plane state never visible inside sandbox. |
+| **Audit** | Deny event logs with binary identity, target, reason. `clamshell doctor` for health. |
+| **Interactive access** | tmux-backed sessions. `belayer attach` wraps `clamshell sandbox connect`. |
 
-- **`none`** — Internal Docker network only. No internet access. Use for air-gapped environments or when agents should only access local resources.
-- **`limited`** — HTTP/HTTPS via tinyproxy with host allowlist. Vendor APIs and package managers work; everything else is blocked.
-- **`full`** — Unrestricted access. Use when you trust the agents or need unfettered internet access.
+```bash
+# Launch with clamshell (uses environment policy)
+belayer session start --template climb --clamshell --environment extend-fullstack --input "task"
 
-### Filesystem Isolation
+# Attach to an agent's sandbox
+belayer attach <session> --agent implementer
+```
 
-| Layer | Mechanism | Guarantee |
-|-------|-----------|-----------|
-| **Container Filesystem** | Docker overlayfs | Agent changes are isolated to container unless explicitly mounted |
-| **Workspace Mount** | Read-write bind mount to `/workspace` | Agents can modify project files, but only within the workspace |
-| **Daemon Socket Mount** | Unix socket at `/belayer/daemon.sock` | Agents can query daemon for logs/recall, but cannot escape container |
-| **Git Worktrees** | Per-agent worktrees (optional) | Each agent gets isolated git working directory |
-| **.env Mount** | Credentials mounted as file (0600) | API keys never embedded in compose YAML or shell commands |
-| **Directory Permissions** | `.belayer/` directories use 0700 | Only owner can access workspace configuration |
+### Local Mode (tmux)
 
-### Local Mode Isolation
+Agents run as tmux sessions on the host. No network or filesystem isolation.
 
-When running without Docker (`--docker` not specified), agents run in tmux sessions on the host:
+| Aspect | Detail |
+|--------|--------|
+| Process | Separate tmux session (`belayer-{session}-{agent}`) |
+| Filesystem | Full host access (runs in CWD or worktree) |
+| Network | Full host network access |
+| Use case | Trusted environments, development, no Docker/clamshell overhead |
 
-- **Process isolation**: Each agent is a separate tmux session with unique name prefix (`belayer-{session}-{agent}`)
-- **Working directory**: Agents run in the current working directory (no chroot)
-- **Network**: Full host network access (no sandboxing)
-- **Use case**: Trusted environments where Docker overhead isn't acceptable
+### Docker Mode (legacy)
+
+Containerized agents with compose-based network isolation. Superceded by clamshell for new deployments.
 
 ### Security Boundaries
 
@@ -233,25 +234,37 @@ When running without Docker (`--docker` not specified), agents run in tmux sessi
 │                          ISOLATION BOUNDARIES                               │
 └─────────────────────────────────────────────────────────────────────────────┘
 
-  Host System
-  ├─ Daemon (Unix socket ~/.belayer/daemon.sock, chmod 0600)
-  │   └─ HTTP API with session-scoped access control
-  │
-  ├─ Docker Daemon
-  │   └─ Per-Session Networks (internal: true)
-  │       └─ Container A ──► tinyproxy ──► Internet (if allowed)
-  │       └─ Container B ──► tinyproxy ──► Internet (if allowed)
-  │           │
-  │           ├─ Mounted: /workspace (RW)       ← Project files
-  │           ├─ Mounted: /belayer/daemon.sock (RO) ← Daemon API
-  │           ├─ Mounted: /belayer/.env (RO)    ← Credentials
-  │           └─ Container filesystem (overlay) ← Ephemeral changes
-  │
-  └─ tmux sessions (local mode, no network/filesystem isolation)
+  Belayer Daemon (trusted control plane)
+  ├── Pure Go binary, never runs LLM-generated code
+  ├── Manages session lifecycle, messaging, events
+  └── HTTP API on Unix socket (chmod 0600)
 
-  Key Principle: Agents cannot escape their session boundary. Even if an agent
-  is compromised, it can only affect its own session and explicitly mounted paths.
+  Clamshell Gateway (trusted, host-side)
+  ├── Holds real credentials (API keys, tokens)
+  ├── Managed proxy with policy enforcement
+  ├── inference.local routing (credential injection at proxy boundary)
+  └── Audit logging of all egress
+
+  Agent Sandboxes (untrusted, clamshell-managed)
+  ├── Vendor CLI + git + belayer CLI
+  ├── Worktree mounted at /workspace
+  ├── NO real credentials (inference.local handles auth)
+  ├── Deny-by-default network (only proxy on loopback)
+  └── Per-binary egress policy
+
+  Key Principle: Agents cannot escape their session boundary. Credentials
+  never enter the sandbox. The host proxy is the only network exit.
 ```
+
+## Planned
+
+The following capabilities are defined in the [sandbox runtime design doc](docs/design-docs/2026-04-09-sandbox-runtime-architecture-design.md) and tracked as open issues:
+
+- **Workbench provisioning** ([#43](https://github.com/donovan-yohan/belayer/issues/43), [#52](https://github.com/donovan-yohan/belayer/issues/52)) — On-demand test infrastructure (`belayer workbench up/down`) with health checks
+- **Tool execution routing** ([#44](https://github.com/donovan-yohan/belayer/issues/44)) — Daemon routes `belayer tool run` to workbench/infra/host targets
+- **Tiered agents** ([#49](https://github.com/donovan-yohan/belayer/issues/49)) — Main character / peripheral / ephemeral agent lifecycle
+- **Pilot orchestration** ([#50](https://github.com/donovan-yohan/belayer/issues/50)) — Cross-session epic decomposition and monitoring
+- **Event-driven monitoring** ([#53](https://github.com/donovan-yohan/belayer/issues/53)) — SSE/long-poll replacing polling for multi-session pilots
 
 ## Development
 
