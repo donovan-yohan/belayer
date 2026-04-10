@@ -320,16 +320,6 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 
 	enc := json.NewEncoder(w)
 	lastID := afterID
-	if lastID == 0 {
-		existing, err := d.store.QueryEventsForSessionsAfter(filtered, 0)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		if len(existing) > 0 {
-			lastID = existing[len(existing)-1].ID
-		}
-	}
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	keepalive := time.NewTicker(15 * time.Second)
