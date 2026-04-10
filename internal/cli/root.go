@@ -39,6 +39,7 @@ See docs/PIPELINE_REFERENCE.md for the full YAML schema.`,
 		newSetupCmd(),
 		newSubmitCmd(),
 		newLogsCmd(),
+		newToolCmd(),
 	)
 
 	return cmd
