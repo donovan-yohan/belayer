@@ -283,16 +283,51 @@ All agents — including the pilot — get personal memory that persists across 
 └── learnings/                                ← shared institutional knowledge all agents see
 ```
 
-**Memory tiers:**
-- **Core** (in-context): Always injected into the agent's prompt on session start. Personal memory + shared learnings.
-- **Archival** (FTS5): Searchable via `belayer recall`. Consolidated by reflection.
-- **Recall** (combined): Core + archival query results, assembled on demand.
+**Three-tier memory** (`internal/memory/`):
+
+The memory system has three tiers designed for different access patterns. SQLite is the runtime index; markdown files on disk are authoritative. The FTS5 index can be rebuilt from markdown at any time via `RebuildIndex`.
+
+| Tier | What it stores | Access pattern | Implementation |
+|------|---------------|----------------|----------------|
+| **Core** | Session-scoped key-value pairs (e.g., "current_task", "review_status") | Always in context — injected into every prompt. Small, frequently updated. | `core_memory` table, upsert by `(session_id, key)`. MemFS writes `core.md` per repo. |
+| **Archival** | Long-term learnings with provenance (session, source file, date, tags) | Append-mostly, full-text searchable via FTS5. Grows over time. | `archival_memory` table + `archival_memory_fts` virtual table. MemFS writes `archival/{topic}.md` per repo. |
+| **Recall** | Combined view: core entries for current session + archival search results for a query | On-demand assembly when agent calls `belayer recall "query"`. | `Recall()` combines `ReadCore(sessionID)` + `SearchArchival(query, 20)`. |
+
+**How memory flows through a session:**
+
+```
+Session start
+  │
+  ├─ Core memory loaded for this session (key-value pairs)
+  ├─ Personal agent memory loaded from .belayer/agents/{name}/memory/
+  ├─ Shared learnings loaded from .belayer/learnings/
+  └─ All injected into compiled prompt
+  │
+  ▼
+During session
+  │
+  ├─ Agent writes core memory: belayer recall write --key "task_status" --value "PR created"
+  ├─ Agent searches archival: belayer recall "SpiceDB permission patterns"
+  └─ Agent notes observations: belayer note "implementer forgot TS types again"
+  │
+  ▼
+Session ends (or agent goes idle)
+  │
+  ├─ Daemon launches reflection agent in its own sandbox
+  ├─ Reflection reads exported session events + current memory
+  ├─ Consolidates into:
+  │     Personal memory updates (per agent) → .belayer/agents/{name}/memory/
+  │     Shared learnings (all agents see)   → .belayer/learnings/
+  └─ FTS5 index updated from new markdown files
+```
+
+**Markdown is authoritative:** The MemFS layer (`memfs.go`) manages markdown files that are the source of truth. Core memory is `{repo}/core.md` (h2-delimited key-value). Archival memory is `{repo}/archival/{topic}.md` (h2-delimited entries with provenance headers). SQLite FTS5 is a derived index — `RebuildIndex` can repopulate it from the markdown files after a fresh clone.
 
 **Reflection cycle:**
 1. Session completes (or agent goes idle)
 2. Daemon launches a reflection agent in its own sandbox
-3. Reflection reads exported session events + current memory
-4. Writes updated personal memory for each agent + shared learnings
+3. Reflection reads exported session events + current memory files
+4. Writes updated personal memory for each agent + shared learnings as markdown
 5. Over 50 sessions, each agent becomes an expert at its role for this codebase
 
 ### Prompt Compilation
@@ -382,8 +417,8 @@ Belayer v6 is built around a session runtime rather than a pipeline engine.
 
 4. **Runtime storage** (`internal/store/`, `internal/memory/`)
    - SQLite + WAL for sessions and events with FTS5 search
-   - Three-tier memory: core (in-context), archival (FTS5), recall (combined)
-   - Markdown is authoritative; FTS5 is a derived index
+   - Three-tier memory: core (session-scoped key-value, always in prompt), archival (append-only learnings with FTS5 full-text search), recall (combined core + archival query on demand)
+   - MemFS layer manages authoritative markdown files; SQLite FTS5 is a derived index rebuilt via `RebuildIndex`
 
 5. **Runtime interface** (`internal/runtime/`)
    - `Runtime` interface with `Mode()`, `Containerized()`, `SupportsDynamicAgents()`

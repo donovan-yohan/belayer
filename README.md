@@ -65,9 +65,15 @@ Review loops evolve via agent memory and reflection, not hardcoded rules. The pi
 
 Both implementers work in parallel on separate repos. The pilot watches events from both, detects semantic drift (e.g., API changed a response shape but the frontend still expects the old one), and intervenes proactively. After both PRs pass review, the pilot provisions a workbench and runs E2E validation.
 
-### Memory
+### Three-Tier Memory
 
-All agents get personal memory that persists across sessions. The pilot learns which coordination patterns work. Implementers learn codebase patterns. The reviewer's checklist evolves from experience. Post-session reflection consolidates learnings. Over 50 sessions, each agent becomes an expert at its role for the codebase.
+All agents get personal memory that persists across sessions, backed by a three-tier system:
+
+- **Core** — session-scoped key-value pairs, always in the prompt (e.g., current task, review status)
+- **Archival** — long-term learnings with full-text search via FTS5 (e.g., "SpiceDB permission patterns")
+- **Recall** — combines core + archival search results on demand (`belayer recall "query"`)
+
+Markdown files on disk are authoritative; SQLite is a derived index. The pilot learns coordination patterns. Implementers learn codebase conventions. The reviewer's checklist evolves from experience. Post-session reflection consolidates both personal agent memory and shared institutional learnings.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full collaboration model, message flow, memory structure, and observability details.
 

@@ -13,7 +13,7 @@ Status: `implemented` — v6 session runtime (2026-04-09)
 
 ## Key Patterns
 
-- **Three-tier memory** (Letta-inspired): core (always in context) / archival (FTS5 search) / recall (combined). Agent-driven, markdown is authoritative.
+- **Three-tier memory** (Letta-inspired): **Core** — session-scoped key-value pairs, always injected into prompts, upsert semantics for fast updates. **Archival** — append-only long-term learnings with provenance (session, source file, date, tags), full-text searchable via FTS5. **Recall** — on-demand combined view: core entries for the current session + archival search results for a query. Markdown files on disk are authoritative; SQLite FTS5 is a derived index rebuilt from markdown via `RebuildIndex` on fresh clones.
 - **Scion messaging**: Broker with bracketed paste delivery via tmux, 2s debounce for coalescing rapid messages, urgent bypass.
 - **Pilot-always-present**: Climb sessions enforce pilot (opus) + implementer (sonnet) + reviewer (codex) trio. Pilot orchestrates, facilitates PR-based review loops, detects cross-repo drift in fullstack sessions. Review loops evolve via agent memory, not hardcoded rules.
 - **PR-based review loop**: Implementer creates PR → pilot routes to reviewer with spec context → reviewer provides fresh-eyes pass/fail → on fail, pilot sends feedback to implementer → iterate until pass. The reviewer is a different vendor (codex) with no implementation context — genuinely independent review.
