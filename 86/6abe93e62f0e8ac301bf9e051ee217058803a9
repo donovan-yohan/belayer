@@ -1,0 +1,40 @@
+internal/cli/session_start.go
+  d169fdbee9c766f9 447-449,459-460
+internal/cli/session_test.go
+  d169fdbee9c766f9 1-275
+internal/cli/session.go
+  d169fdbee9c766f9 28,198,223-225,326-475
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "866abe93e62f0e8ac301bf9e051ee217058803a9",
+  "prompts": {
+    "d169fdbee9c766f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4077eb2-e01c-4a00-9c35-bee716cfaddc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 436,
+      "total_deletions": 1,
+      "accepted_lines": 435,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}
