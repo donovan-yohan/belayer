@@ -296,13 +296,20 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 }
 
 type workbenchResponse struct {
-	ID        string    `json:"ID"`
-	SessionID string    `json:"SessionID"`
-	Status    string    `json:"Status"`
-	Endpoints string    `json:"Endpoints"`
-	Spec      string    `json:"Spec"`
-	CreatedAt time.Time `json:"CreatedAt"`
-	UpdatedAt time.Time `json:"UpdatedAt"`
+	ID        string                   `json:"id"`
+	SessionID string                   `json:"session_id"`
+	Status    string                   `json:"status"`
+	Endpoints map[string]string        `json:"endpoints"`
+	Services  []workbenchServiceStatus `json:"services"`
+	Spec      string                   `json:"spec"`
+	CreatedAt time.Time                `json:"created_at"`
+	UpdatedAt time.Time                `json:"updated_at"`
+}
+
+type workbenchServiceStatus struct {
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Health string `json:"health"`
 }
 
 // CreateWorkbench provisions a workbench for a session via the daemon.
