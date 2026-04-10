@@ -62,6 +62,9 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/messages/broadcast", d.handleBroadcastMessage)
 	mux.HandleFunc("GET /sessions/{id}/messages", d.handleListMessages)
 	mux.HandleFunc("GET /search", d.handleSearch)
+	mux.HandleFunc("POST /sessions/{id}/workbench", d.handleCreateWorkbench)
+	mux.HandleFunc("GET /sessions/{id}/workbench", d.handleGetWorkbench)
+	mux.HandleFunc("DELETE /sessions/{id}/workbench", d.handleDeleteWorkbench)
 
 	d.server = &http.Server{Handler: mux}
 	return d, nil
@@ -262,6 +265,69 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+type createWorkbenchRequest struct {
+	SessionID string `json:"session_id"`
+	Spec      string `json:"spec,omitempty"`
+	Endpoints string `json:"endpoints,omitempty"`
+}
+
+func (d *Daemon) handleCreateWorkbench(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req createWorkbenchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	wb := store.WorkbenchState{
+		SessionID: id,
+		Spec:      req.Spec,
+		Endpoints: req.Endpoints,
+	}
+	wbID, err := d.store.CreateWorkbench(wb)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	created, err := d.store.GetWorkbenchBySession(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	d.store.LogEvent(store.SessionEvent{
+		SessionID: id,
+		Type:      "workbench_created",
+		Data:      mustJSON(map[string]string{"workbench_id": wbID}),
+	})
+
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (d *Daemon) handleGetWorkbench(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	wb, err := d.store.GetWorkbenchBySession(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "workbench not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, wb)
+}
+
+func (d *Daemon) handleDeleteWorkbench(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := d.store.DeleteWorkbenchBySession(id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- helpers ---
