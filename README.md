@@ -44,6 +44,33 @@ belayer debug <session-id>
 | **climb-fullstack** | 4 (pilot, api-impl, app-impl, reviewer) | Multi-repo implementation (e.g. API + frontend) |
 | **epic** | 1 (pilot) | Workspace orchestration — decomposes epics, creates parallel sessions |
 
+## How Agents Work Together
+
+The pilot (opus) orchestrates. Implementers (sonnet) write code. The reviewer (codex) provides fresh-eyes feedback. All communication flows through the daemon's message broker — agents never talk directly.
+
+### The Review Loop
+
+```
+Pilot decomposes spec → messages implementer with task
+  → Implementer writes code, runs tests, creates PR
+  → Pilot routes PR to reviewer with spec context
+  → Reviewer provides structured pass/fail feedback
+  → On FAIL: pilot sends feedback to implementer → fix → re-review
+  → On PASS: session complete (or next phase for fullstack)
+```
+
+Review loops evolve via agent memory and reflection, not hardcoded rules. The pilot adapts based on accumulated coordination knowledge.
+
+### Multi-Repo (Fullstack)
+
+Both implementers work in parallel on separate repos. The pilot watches events from both, detects semantic drift (e.g., API changed a response shape but the frontend still expects the old one), and intervenes proactively. After both PRs pass review, the pilot provisions a workbench and runs E2E validation.
+
+### Memory
+
+All agents get personal memory that persists across sessions. The pilot learns which coordination patterns work. Implementers learn codebase patterns. The reviewer's checklist evolves from experience. Post-session reflection consolidates learnings. Over 50 sessions, each agent becomes an expert at its role for the codebase.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full collaboration model, message flow, memory structure, and observability details.
+
 ## Architecture
 
 ```mermaid

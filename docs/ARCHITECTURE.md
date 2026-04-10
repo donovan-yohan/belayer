@@ -113,6 +113,251 @@ sequenceDiagram
 
 ---
 
+## Agent Collaboration Model
+
+The daemon handles plumbing. Agents handle judgment. The pilot orchestrates, implementers write code, the reviewer provides fresh-eyes feedback. All communication flows through the message broker — agents never talk directly.
+
+### Agent Roster
+
+#### Climb (single-repo)
+
+| Agent | Model | Workspace | Role |
+|-------|-------|-----------|------|
+| **Pilot** | claude opus | reads events + diffs | Orchestrate, facilitate review loop, decide done |
+| **Implementer** | claude sonnet | repo worktree | Write code, run tests, create PR |
+| **Reviewer** | codex | reads PR diffs | Review PR, provide structured feedback |
+
+#### Climb-Fullstack (multi-repo)
+
+| Agent | Model | Workspace | Role |
+|-------|-------|-----------|------|
+| **Pilot** | claude opus | reads events + diffs | Decompose spec, detect cross-repo drift, facilitate review loops |
+| **api-implementer** | claude sonnet | extend-api worktree | Implement API changes, create PR |
+| **app-implementer** | claude sonnet | extend-app worktree | Implement frontend changes, create PR |
+| **Reviewer** | codex | reads PR diffs | Review both PRs sequentially |
+
+#### Epic (workspace orchestration)
+
+| Agent | Model | Workspace | Role |
+|-------|-------|-----------|------|
+| **Pilot** | claude opus | cross-session | Decompose epic, create parallel sessions, monitor progress, trigger integration tests |
+
+### The Review Loop
+
+The core coordination pattern. PR-based, not diff-based — the reviewer sees the PR with fresh eyes and no implementation context.
+
+```
+Pilot reads spec, messages implementer with task
+  │
+  ▼
+Implementer works (write code, run tests, iterate)
+  │
+  ▼
+Implementer creates PR
+  │
+  ▼
+Pilot sees PR event, messages reviewer: "PR #42 ready. Spec context: ..."
+  │
+  ▼
+Reviewer reads PR diff (fresh eyes — different vendor, no implementation context)
+Reviewer provides structured feedback
+  │
+  ├─ PASS → Pilot proceeds (single-repo: done; fullstack: wait for other repo or E2E)
+  │
+  └─ FAIL → Pilot sends feedback to implementer
+            Implementer fixes, pushes to PR branch
+            Pilot messages reviewer: "Changes pushed, re-review"
+            Loop until PASS
+```
+
+Review loops evolve via agent memory and reflection, not hardcoded rules. The pilot adapts based on accumulated coordination knowledge — which patterns work, which drift patterns recur, what feedback implementers most often need.
+
+### Multi-Repo Coordination (Fullstack)
+
+```mermaid
+sequenceDiagram
+    participant P as Pilot (opus)
+    participant API as api-implementer (sonnet)
+    participant APP as app-implementer (sonnet)
+    participant R as Reviewer (codex)
+
+    P->>API: Decomposed API tasks + shared contract
+    P->>APP: Decomposed App tasks + shared contract
+    
+    par Parallel Implementation
+        API->>API: Write code, run tests
+        APP->>APP: Write code, run tests
+    end
+    
+    Note over P: Watches events from both, detects drift
+    
+    opt Contract Violation Detected
+        P->>APP: "API changed the response shape, update your types"
+    end
+    
+    API->>P: PR #42 created
+    P->>R: "Review PR #42. Spec context: ..."
+    R->>P: PASS
+    
+    APP->>P: PR #43 created
+    P->>R: "Review PR #43. Spec context: ..."
+    R->>P: FAIL — missing type updates
+    P->>APP: Review feedback + fix instructions
+    APP->>P: Changes pushed
+    P->>R: "Re-review PR #43"
+    R->>P: PASS
+    
+    Note over P: Both PRs pass → provision workbench → E2E validation
+    P->>P: belayer workbench up (planned, #43)
+    P->>P: E2E validation against running services
+    P->>P: Session complete with two PR artifacts
+```
+
+The pilot decomposes the spec into per-repo tasks with a shared contract (API shapes, types, endpoints). Both implementers work in parallel. The pilot monitors events from both and intervenes proactively when it detects semantic drift between repos.
+
+### Message Flow
+
+All agent-to-agent communication goes through the daemon's message broker:
+
+```
+Agent A                    Daemon                     Agent B
+   │                         │                          │
+   │  POST /messages         │                          │
+   │  {to: "implementer",   │                          │
+   │   body: "task..."}     │                          │
+   │────────────────────────►│                          │
+   │                         │  2s debounce window      │
+   │                         │  (coalesce rapid msgs)   │
+   │                         │                          │
+   │                         │  tmux send-keys          │
+   │                         │  (bracketed paste)       │
+   │                         │─────────────────────────►│
+   │                         │                          │
+   │                         │  POST /events            │
+   │                         │◄─────────────────────────│
+   │                         │  {type: "message_read"}  │
+```
+
+- **Debounce**: 2s window coalesces rapid messages (e.g., pilot sends task + context + constraints as separate messages — delivered as one)
+- **Urgent bypass**: Messages marked urgent skip debounce (e.g., "stop, the spec changed")
+- **Broadcast**: `belayer message broadcast` delivers to all agents in the session
+- **Bracketed paste**: tmux delivery uses bracketed paste mode to prevent injection
+
+### Agent Memory & Learning
+
+All agents — including the pilot — get personal memory that persists across sessions. The pilot's memory is especially valuable: it learns which coordination patterns work, which drift patterns recur, and what review feedback implementers most often need.
+
+```
+.belayer/
+├── agents/
+│   ├── pilot/
+│   │   ├── config.yaml
+│   │   ├── system-prompt.md
+│   │   ├── agents.md                      ← orchestration playbook
+│   │   └── memory/
+│   │       └── system/
+│   │           ├── coordination-patterns.md  ← "app always forgets TS types when API changes"
+│   │           ├── review-priorities.md      ← "SpiceDB permission check is highest-value review"
+│   │           └── codebase-relationships.md ← "cards endpoint depends on rate-limit middleware"
+│   │
+│   ├── api-implementer/
+│   │   ├── config.yaml
+│   │   ├── system-prompt.md
+│   │   └── memory/
+│   │       └── system/
+│   │           ├── codebase.md               ← "Spring Boot, Kotlin, Flyway, Redis for caching"
+│   │           └── patterns.md               ← "always register in PermissionRegistry.kt"
+│   │
+│   ├── app-implementer/
+│   │   └── memory/
+│   │       └── system/
+│   │           ├── codebase.md               ← "React, TypeScript, webpack, proxy to API"
+│   │           └── patterns.md               ← "shared types in src/models/"
+│   │
+│   └── reviewer/
+│       └── memory/
+│           └── system/
+│               ├── review-checklist.md       ← evolved from experience, not static config
+│               └── common-issues.md          ← "missing SpiceDB checks (caught 5x)"
+│
+└── learnings/                                ← shared institutional knowledge all agents see
+```
+
+**Memory tiers:**
+- **Core** (in-context): Always injected into the agent's prompt on session start. Personal memory + shared learnings.
+- **Archival** (FTS5): Searchable via `belayer recall`. Consolidated by reflection.
+- **Recall** (combined): Core + archival query results, assembled on demand.
+
+**Reflection cycle:**
+1. Session completes (or agent goes idle)
+2. Daemon launches a reflection agent in its own sandbox
+3. Reflection reads exported session events + current memory
+4. Writes updated personal memory for each agent + shared learnings
+5. Over 50 sessions, each agent becomes an expert at its role for this codebase
+
+### Prompt Compilation
+
+Each agent's prompt is compiled at session start from multiple sources:
+
+```
+┌─────────────────────────────────────────┐
+│            Compiled Prompt              │
+├─────────────────────────────────────────┤
+│ 1. system-prompt.md (role identity)    │
+│ 2. agents.md (team roster + playbook)  │
+│ 3. Personal memory (memory/system/*)   │
+│ 4. Shared learnings (.belayer/learnings)│
+│ 5. Task input (spec, ticket, etc.)     │
+│ 6. Tool registry (available tools)     │
+└─────────────────────────────────────────┘
+```
+
+The pilot's `agents.md` is the orchestration playbook — it contains the team roster, spawn commands, and coordination patterns. No hardcoded workflows. The pilot adapts orchestration to team composition through LLM judgment + accumulated memory.
+
+### Observability
+
+```bash
+# Watch all agents in real-time
+belayer logs <id> -f
+# → 10:01:00 [pilot/opus]       message_sent → api-implementer: "Implement rate limiting..."
+# → 10:05:00 [api-impl/sonnet]  tool_use: Edit src/middleware/RateLimiter.kt
+# → 10:08:00 [api-impl/sonnet]  tool_use: Bash ./gradlew test (pass)
+# → 10:09:00 [api-impl/sonnet]  artifact: PR #42
+# → 10:09:01 [pilot/opus]       message_sent → reviewer: "PR #42 ready"
+# → 10:11:00 [reviewer/codex]   message_sent → pilot: "FAIL: missing SpiceDB check"
+# → 10:11:01 [pilot/opus]       message_sent → api-implementer: "Review failed: ..."
+
+# Attach to any agent's terminal
+belayer attach pilot                # watch the orchestrator think
+belayer attach api-implementer      # watch code being written
+
+# Session status with cost tracking
+belayer status
+# → Session abc123: running (12m)
+# →   pilot (opus):             2,100 in / 800 out — $0.08
+# →   api-implementer (sonnet): 45,000 in / 12,000 out — $0.19
+# →   app-implementer (sonnet): 38,000 in / 11,000 out — $0.16
+# →   reviewer (codex):         8,000 in / 2,000 out — $0.04
+# →   Total: ~$0.47
+
+# Full-text search across all session events
+belayer recall "SpiceDB permission"
+
+# Restart a crashed agent with compiled context
+belayer session wake <id> --agent implementer
+```
+
+### Restart & Resume
+
+When an agent crashes, belayer preserves session state and can restart with full context:
+
+1. Agent crash detected → `session.agent_stopped` event emitted
+2. `belayer session wake --agent <name>` compiles restart context from: previous events, git state, pending review feedback, review loop state
+3. Vendor adapters provide `CompileRestartPrompt` for vendor-specific formatting
+4. Session continues from where it stopped; token usage aggregated across restart boundary
+
+---
+
 ## Component Overview
 
 Belayer v6 is built around a session runtime rather than a pipeline engine.

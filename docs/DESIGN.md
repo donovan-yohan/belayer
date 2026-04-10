@@ -15,7 +15,9 @@ Status: `implemented` — v6 session runtime (2026-04-09)
 
 - **Three-tier memory** (Letta-inspired): core (always in context) / archival (FTS5 search) / recall (combined). Agent-driven, markdown is authoritative.
 - **Scion messaging**: Broker with bracketed paste delivery via tmux, 2s debounce for coalescing rapid messages, urgent bypass.
-- **Pilot-always-present**: Climb sessions enforce pilot (opus) + implementer (sonnet) + reviewer (codex) trio.
+- **Pilot-always-present**: Climb sessions enforce pilot (opus) + implementer (sonnet) + reviewer (codex) trio. Pilot orchestrates, facilitates PR-based review loops, detects cross-repo drift in fullstack sessions. Review loops evolve via agent memory, not hardcoded rules.
+- **PR-based review loop**: Implementer creates PR → pilot routes to reviewer with spec context → reviewer provides fresh-eyes pass/fail → on fail, pilot sends feedback to implementer → iterate until pass. The reviewer is a different vendor (codex) with no implementation context — genuinely independent review.
+- **Agent memory & learning**: All agents get personal memory that persists across sessions. Pilot accumulates coordination patterns, implementers learn codebase conventions, reviewer's checklist evolves from experience. Post-session reflection consolidates both personal memory and shared institutional learnings.
 - **Clamshell sandbox**: Deny-by-default network, host-owned credentials via `inference.local` routing, per-binary egress policy, audit logging. Replaces Docker sandbox + tinyproxy model.
 - **Pluggable runtime**: `Runtime` interface in `internal/runtime/` with `LocalRuntime` (tmux), `DockerRuntime` (compose, legacy), `ClamshellRuntime` (sandbox). `Select()` dispatcher chooses backend based on CLI flags.
 - **Multi-repo mapping**: AgentSpec YAML supports optional `repo` field for per-agent repository targeting. Environment config maps repo names to paths via `ResolveRepoPath`.
