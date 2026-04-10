@@ -1,0 +1,27 @@
+docs/DESIGN.md
+  54ed856b0de0ccaa 9,12,18-20,22,24-25,27-35,40-41,47-51
+docs/ARCHITECTURE.md
+  54ed856b0de0ccaa 7,27-29,32-42,57-58,60-63,68,80,85,87-89,143-150,152-153,155,157,162,164-166,174-175,180,182,191,193,196-212,215,217-224,226,228-234,240-243,245,272,275-288,291,294-317,344-354,367-373,375-380
+README.md
+  54ed856b0de0ccaa 7,21-22,24-25,27-30,39,41-45,63-65,68-71,86-87,89,91-93,105-108,111,123,130-132,159,161,163,165-172,174-176,178-180,182,184,186-191,193,195,204-223,226-234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "65cf8e23bea4f3f53c3eb1d5e0d9f31295bff626",
+  "prompts": {
+    "54ed856b0de0ccaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86a2263c-e152-4871-8cae-c7907ce3cec6",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 276,
+      "total_deletions": 296,
+      "accepted_lines": 276,
+      "overriden_lines": 0
+    }
+  }
+}
