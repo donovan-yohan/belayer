@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -38,13 +40,12 @@ func newWorkbenchUpCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("workbench up: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Workbench provisioned: %s (status: %s)\n", wb.ID, wb.Status)
+			printWorkbench(cmd, wb, true)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&sessionID, "session", "", "Session ID (required)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	_ = cmd.MarkFlagRequired("session")
 	return cmd
 }
 
@@ -66,15 +67,52 @@ func newWorkbenchStatusCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("workbench status: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Status:    %s\n", wb.Status)
-			fmt.Fprintf(cmd.OutOrStdout(), "Endpoints: %s\n", wb.Endpoints)
+			printWorkbench(cmd, wb, false)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&sessionID, "session", "", "Session ID (required)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	_ = cmd.MarkFlagRequired("session")
 	return cmd
+}
+
+func printWorkbench(cmd *cobra.Command, wb workbenchResponse, includeID bool) {
+	out := cmd.OutOrStdout()
+	if includeID {
+		fmt.Fprintf(out, "Workbench: %s\n", wb.ID)
+	}
+	fmt.Fprintf(out, "Status: %s\n", wb.Status)
+	if len(wb.Endpoints) == 0 {
+		fmt.Fprintln(out, "Endpoints: none")
+	} else {
+		fmt.Fprintln(out, "Endpoints:")
+		names := make([]string, 0, len(wb.Endpoints))
+		for name := range wb.Endpoints {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			fmt.Fprintf(out, "  %s: %s\n", name, wb.Endpoints[name])
+		}
+	}
+	if len(wb.Services) == 0 {
+		return
+	}
+	fmt.Fprintln(out, "Services:")
+	for _, service := range wb.Services {
+		status := strings.TrimSpace(service.State)
+		health := strings.TrimSpace(service.Health)
+		if health != "" && !strings.EqualFold(health, "none") {
+			if status != "" {
+				status += "/"
+			}
+			status += health
+		}
+		if status == "" {
+			status = "unknown"
+		}
+		fmt.Fprintf(out, "  %s: %s\n", service.Name, status)
+	}
 }
 
 func newWorkbenchDownCmd() *cobra.Command {
@@ -100,6 +138,5 @@ func newWorkbenchDownCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&sessionID, "session", "", "Session ID (required)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	_ = cmd.MarkFlagRequired("session")
 	return cmd
 }
