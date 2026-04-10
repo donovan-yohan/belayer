@@ -33,28 +33,6 @@ type toolResult struct {
 	Target     string `json:"target"`
 }
 
-// RegisterToolsForSession loads a slice of ToolSpecs into the daemon's in-memory
-// registry for the given session. Called once at session creation when the
-// environment declares tools. Not idempotent — callers must not invoke twice
-// for the same session. Each tool is logged as a tool_registered event.
-func (d *Daemon) RegisterToolsForSession(sessionID string, tools []agent.ToolSpec) {
-	if len(tools) == 0 {
-		return
-	}
-
-	d.toolsMu.Lock()
-	d.tools[sessionID] = append(d.tools[sessionID], tools...)
-	d.toolsMu.Unlock()
-
-	for _, tool := range tools {
-		d.store.LogEvent(store.SessionEvent{
-			SessionID: sessionID,
-			Type:      "tool_registered",
-			Data:      mustJSON(map[string]string{"tool": tool.Name, "target": tool.Exec.Target, "source": "environment"}),
-		})
-	}
-}
-
 // handleRegisterTool registers a ToolSpec for a session.
 // POST /sessions/{id}/tools
 // Body: agent.ToolSpec JSON
