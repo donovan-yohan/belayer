@@ -1,0 +1,27 @@
+docs/ARCHITECTURE.md
+  54ed856b0de0ccaa 286,288-324,329-330,420-421
+docs/DESIGN.md
+  54ed856b0de0ccaa 16
+README.md
+  54ed856b0de0ccaa 68,70-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "257b4506549b34d8ffa07e1896ff80eb18167d57",
+  "prompts": {
+    "54ed856b0de0ccaa": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86a2263c-e152-4871-8cae-c7907ce3cec6",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 52,
+      "total_deletions": 11,
+      "accepted_lines": 52,
+      "overriden_lines": 0
+    }
+  }
+}
