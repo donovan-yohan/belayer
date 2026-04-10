@@ -1,0 +1,36 @@
+docs/exec-plans/active/2026-04-10-tool-execution-routing.md
+  2dba497c5a82bd3b 3,25-27,37-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "212934bcdd2ac9faf59983110a71cd7e0b4c7be3",
+  "prompts": {
+    "2dba497c5a82bd3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "be765410-d07d-40b1-aa21-41e9c3fb263b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 5,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    }
+  }
+}
