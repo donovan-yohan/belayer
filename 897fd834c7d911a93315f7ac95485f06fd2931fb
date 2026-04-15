@@ -1,0 +1,80 @@
+internal/daemon/tools_test.go
+  beecb793b04ae5d6 22
+internal/daemon/daemon.go
+  beecb793b04ae5d6 156-187,189-192,206-215,217-221,241,250-254,268,272-273,283-284,288-297,300-305,312
+internal/daemon/daemon_test.go
+  beecb793b04ae5d6 185,220,231,238,256,262,270,306,320,335,363,386,451,506,545,564,591,619-620,673,712
+internal/cli/run.go
+  beecb793b04ae5d6 5-6,22,33-39,45-49,51-53,57-69,71,75,81,84-90,101-102,105-161
+internal/cli/root_test.go
+  beecb793b04ae5d6 8
+internal/cli/session_start.go
+  beecb793b04ae5d6 95
+internal/store/store.go
+  beecb793b04ae5d6 15-22,109-111,114-115,117,129,134,146,158,180-181,183-184,187
+internal/store/migrations.go
+  beecb793b04ae5d6 9-16
+internal/cli/client.go
+  beecb793b04ae5d6 85-92,104-109,169-180
+internal/daemon/agents.go
+  beecb793b04ae5d6 33-34,48-67,312-319
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "897fd834c7d911a93315f7ac95485f06fd2931fb",
+  "prompts": {
+    "beecb793b04ae5d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60427526-396c-4ef4-ba78-847e76f541ec",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1191,
+      "total_deletions": 709,
+      "accepted_lines": 1024,
+      "overriden_lines": 0
+    },
+    "d856d8042ea64a99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d70c5-1b1e-7700-a4be-e750d5cd24de",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "fda605a95c703c40": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca9969ac-5f62-418b-b31a-9a19d96fdb2b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
