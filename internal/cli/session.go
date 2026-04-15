@@ -196,25 +196,6 @@ changes. Any work not committed will be lost.`,
 					}
 				}
 
-				workbenchDir := filepath.Join(home, ".belayer", "workbenches", sessionID)
-				workbenchComposePath := filepath.Join(workbenchDir, "docker-compose.yml")
-				if _, err := os.Stat(workbenchComposePath); err == nil {
-					fmt.Fprintln(cmd.OutOrStdout(), "Stopping workbench...")
-					stopWorkbenchCmd := exec.Command("docker", "compose", "-f", workbenchComposePath, "down")
-					stopWorkbenchCmd.Stdout = cmd.OutOrStdout()
-					stopWorkbenchCmd.Stderr = cmd.ErrOrStderr()
-					if err := stopWorkbenchCmd.Run(); err != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "Warning: workbench docker compose down failed: %v\n", err)
-					} else {
-						fmt.Fprintln(cmd.OutOrStdout(), "Workbench stopped.")
-					}
-					os.RemoveAll(workbenchDir) //nolint:errcheck
-				}
-			}
-
-			// Delete workbench record from store via daemon API if reachable.
-			if err := c.Health(); err == nil {
-				_ = c.DeleteWorkbenchBySession(sessionID) //nolint:errcheck
 			}
 
 			// Clean up git worktrees created for this session (tmux mode).

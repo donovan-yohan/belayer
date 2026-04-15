@@ -82,12 +82,14 @@ func (c *Client) Health() error {
 }
 
 type sessionResponse struct {
-	ID        string    `json:"ID"`
-	Name      string    `json:"Name"`
-	Status    string    `json:"Status"`
-	Template  string    `json:"Template"`
-	CreatedAt time.Time `json:"CreatedAt"`
-	UpdatedAt time.Time `json:"UpdatedAt"`
+	ID           string            `json:"ID"`
+	Name         string            `json:"Name"`
+	Status       string            `json:"Status"`
+	Template     string            `json:"Template"`
+	Repos        map[string]string `json:"Repos"`
+	WorkspaceDir string            `json:"WorkspaceDir"`
+	CreatedAt    time.Time         `json:"CreatedAt"`
+	UpdatedAt    time.Time         `json:"UpdatedAt"`
 }
 
 type eventResponse struct {
@@ -99,10 +101,12 @@ type eventResponse struct {
 }
 
 // CreateSession creates a new session via the daemon.
-func (c *Client) CreateSession(name, template string) (sessionResponse, error) {
-	resp, err := c.do("POST", "/sessions", map[string]string{
-		"name":     name,
-		"template": template,
+func (c *Client) CreateSession(name, template string, repos map[string]string, workspaceDir string) (sessionResponse, error) {
+	resp, err := c.do("POST", "/sessions", map[string]any{
+		"name":          name,
+		"template":      template,
+		"repos":         repos,
+		"workspace_dir": workspaceDir,
 	})
 	if err != nil {
 		return sessionResponse{}, err
@@ -160,6 +164,18 @@ func (c *Client) UpdateSession(id, status string) (sessionResponse, error) {
 		return sessionResponse{}, fmt.Errorf("decode session: %w", err)
 	}
 	return sess, nil
+}
+
+// UpdateSessionWorkspaceDir updates the workspace directory on a session.
+func (c *Client) UpdateSessionWorkspaceDir(id, workspaceDir string) error {
+	resp, err := c.do("PATCH", "/sessions/"+id, map[string]string{
+		"workspace_dir": workspaceDir,
+	})
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }
 
 // mustJSON serialises v to a JSON string, panicking on error (only for static values).
@@ -291,74 +307,6 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 	}
 	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
 		return err
-	}
-	return nil
-}
-
-type workbenchResponse struct {
-	ID        string                   `json:"id"`
-	SessionID string                   `json:"session_id"`
-	Status    string                   `json:"status"`
-	Endpoints map[string]string        `json:"endpoints"`
-	Services  []workbenchServiceStatus `json:"services"`
-	Spec      string                   `json:"spec"`
-	CreatedAt time.Time                `json:"created_at"`
-	UpdatedAt time.Time                `json:"updated_at"`
-}
-
-type workbenchServiceStatus struct {
-	Name   string `json:"name"`
-	State  string `json:"state"`
-	Health string `json:"health"`
-}
-
-// CreateWorkbench provisions a workbench for a session via the daemon.
-func (c *Client) CreateWorkbench(sessionID, spec string) (workbenchResponse, error) {
-	resp, err := c.do("POST", "/sessions/"+sessionID+"/workbench", map[string]string{
-		"session_id": sessionID,
-		"spec":       spec,
-	})
-	if err != nil {
-		return workbenchResponse{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return workbenchResponse{}, fmt.Errorf("create workbench: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var wb workbenchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&wb); err != nil {
-		return workbenchResponse{}, fmt.Errorf("decode workbench: %w", err)
-	}
-	return wb, nil
-}
-
-// GetWorkbenchStatus retrieves the workbench state for a session via the daemon.
-func (c *Client) GetWorkbenchStatus(sessionID string) (workbenchResponse, error) {
-	resp, err := c.do("GET", "/sessions/"+sessionID+"/workbench", nil)
-	if err != nil {
-		return workbenchResponse{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return workbenchResponse{}, fmt.Errorf("workbench for session %s not found", sessionID)
-	}
-	var wb workbenchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&wb); err != nil {
-		return workbenchResponse{}, fmt.Errorf("decode workbench: %w", err)
-	}
-	return wb, nil
-}
-
-// DeleteWorkbenchBySession deletes workbench records for a session via the daemon API.
-func (c *Client) DeleteWorkbenchBySession(sessionID string) error {
-	resp, err := c.do("DELETE", "/sessions/"+sessionID+"/workbench", nil)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("delete workbench: unexpected status %d", resp.StatusCode)
 	}
 	return nil
 }

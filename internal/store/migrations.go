@@ -6,12 +6,14 @@ import "database/sql"
 func Migrate(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS sessions (
-			id         TEXT PRIMARY KEY,
-			name       TEXT NOT NULL,
-			status     TEXT NOT NULL DEFAULT 'pending',
-			template   TEXT,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL
+			id            TEXT PRIMARY KEY,
+			name          TEXT NOT NULL,
+			status        TEXT NOT NULL DEFAULT 'pending',
+			template      TEXT,
+			repos         TEXT NOT NULL DEFAULT '{}',
+			workspace_dir TEXT NOT NULL DEFAULT '',
+			created_at    DATETIME NOT NULL,
+			updated_at    DATETIME NOT NULL
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS events (
@@ -20,17 +22,6 @@ func Migrate(db *sql.DB) error {
 			timestamp  DATETIME NOT NULL,
 			type       TEXT NOT NULL,
 			data       TEXT NOT NULL DEFAULT '{}'
-		)`,
-
-		`CREATE TABLE IF NOT EXISTS workbenches (
-			id         TEXT PRIMARY KEY,
-			session_id TEXT NOT NULL UNIQUE,
-			status     TEXT NOT NULL DEFAULT 'pending',
-			endpoints  TEXT DEFAULT '{}',
-			spec       TEXT DEFAULT '{}',
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS agent_runs (

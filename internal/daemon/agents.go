@@ -30,7 +30,8 @@ type finishAgentRequest struct {
 
 func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
-	if _, err := d.store.GetSession(sessionID); err != nil {
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
 	}
@@ -44,6 +45,26 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.SessionID = sessionID
+
+	// Resolve workdir from session repos when repo scope is set but workdir is not.
+	if req.Workdir == "" && req.Repo != "" {
+		var repos map[string]string
+		if err := json.Unmarshal([]byte(sess.Repos), &repos); err == nil {
+			if path, ok := repos[req.Repo]; ok {
+				req.Workdir = path
+			} else {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error": fmt.Sprintf("repo %q not found in session repos (available: %v)", req.Repo, repoNames(repos)),
+				})
+				return
+			}
+		}
+	}
+
+	// Fall back to session workspace dir if workdir still empty.
+	if req.Workdir == "" && sess.WorkspaceDir != "" {
+		req.Workdir = sess.WorkspaceDir
+	}
 	run := store.AgentRun{
 		SessionID: sessionID,
 		Name:      req.Name,
@@ -286,6 +307,14 @@ func (d *Daemon) watchAgentIdle(run store.AgentRun) {
 			lastNudge = now
 		}
 	}()
+}
+
+func repoNames(repos map[string]string) []string {
+	names := make([]string, 0, len(repos))
+	for name := range repos {
+		names = append(names, name)
+	}
+	return names
 }
 
 func normalizePaneForIdle(pane string) string {

@@ -92,7 +92,7 @@ config that controls network isolation, compose extensions, and repos.`,
 			}
 
 			// 7. Create session via daemon.
-			sess, err := c.CreateSession(name, template)
+			sess, err := c.CreateSession(name, template, nil, "")
 			if err != nil {
 				return fmt.Errorf("create session: %w", err)
 			}
