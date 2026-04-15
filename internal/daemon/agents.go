@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/broker"
@@ -179,7 +180,7 @@ func (d *Daemon) defaultLaunchAgent(req agentSpawnRequest) (string, error) {
 		SessionID:  req.SessionID,
 		AgentID:    req.Name,
 		RunDir:     runDir,
-		Skills:     []string{"belayer-support:belayer-communication"},
+		Skills:     []string{"belayer-communication"},
 	})
 	if err != nil {
 		return "", err
@@ -255,9 +256,10 @@ func (d *Daemon) watchAgentIdle(run store.AgentRun) {
 			if err != nil {
 				continue
 			}
+			normalizedPane := normalizePaneForIdle(pane)
 			now := d.now().UTC()
-			if lastPane == "" || pane != lastPane {
-				lastPane = pane
+			if lastPane == "" || normalizedPane != lastPane {
+				lastPane = normalizedPane
 				lastActivity = now
 				continue
 			}
@@ -292,4 +294,20 @@ func (d *Daemon) watchAgentIdle(run store.AgentRun) {
 			lastNudge = now
 		}
 	}()
+}
+
+func normalizePaneForIdle(pane string) string {
+	lines := strings.Split(strings.ReplaceAll(pane, "\r", ""), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "⚕ ") && strings.Contains(trimmed, "ctx") && strings.Contains(trimmed, "[") {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	return strings.Join(kept, "\n")
 }
