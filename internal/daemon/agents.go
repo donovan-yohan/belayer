@@ -80,6 +80,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		_ = d.deliverMessage(stored, msg)
 	})
 	d.watchAgentExit(stored)
+	d.watchAgentIdle(stored)
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
 		Type:      "agent_spawned",
@@ -225,6 +226,70 @@ func (d *Daemon) watchAgentExit(run store.AgentRun) {
 		if run.Name != "planner" {
 			msg := broker.Message{SessionID: run.SessionID, SenderID: run.Name, RecipientID: "planner", Type: broker.MessageStateChange, Content: run.Name + " exited without belayer finish and was marked blocked", Urgent: true, Timestamp: time.Now().UTC()}
 			_ = d.broker.Interrupt(run.SessionID, "planner", msg)
+		}
+	}()
+}
+
+func (d *Daemon) watchAgentIdle(run store.AgentRun) {
+	if d.runner == nil || run.TmuxSession == "" || d.idlePollInterval <= 0 || d.idleTimeout <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(d.idlePollInterval)
+		defer ticker.Stop()
+
+		lastPane := ""
+		lastActivity := d.now().UTC()
+		lastNudge := time.Time{}
+
+		for range ticker.C {
+			current, err := d.store.GetAgentRun(run.SessionID, run.Name)
+			if err != nil {
+				return
+			}
+			if current.Status != "running" {
+				return
+			}
+
+			pane, err := d.runner.CapturePane(current.TmuxSession)
+			if err != nil {
+				continue
+			}
+			now := d.now().UTC()
+			if lastPane == "" || pane != lastPane {
+				lastPane = pane
+				lastActivity = now
+				continue
+			}
+			if now.Sub(lastActivity) < d.idleTimeout {
+				continue
+			}
+			if !lastNudge.IsZero() && now.Sub(lastNudge) < d.idleNudgeCooldown {
+				continue
+			}
+
+			msg := broker.Message{
+				SessionID:   current.SessionID,
+				SenderID:    "belayer",
+				RecipientID: current.Name,
+				Type:        broker.MessageInstruction,
+				Content:     "Your session appears idle. Is your work complete? If so, please run `belayer finish \"summary\"` to mark completion. If you are blocked, run `belayer finish --blocked \"reason\"`. If you are still working, continue.",
+				Urgent:      true,
+				Timestamp:   now,
+			}
+			if err := d.deliverMessage(current, msg); err != nil {
+				continue
+			}
+			_ = d.store.LogEvent(store.SessionEvent{
+				SessionID: current.SessionID,
+				Type:      "agent_idle_nudged",
+				Data: mustJSON(map[string]string{
+					"agent":        current.Name,
+					"tmux_session": current.TmuxSession,
+					"idle_for":     now.Sub(lastActivity).String(),
+				}),
+			})
+			lastNudge = now
 		}
 	}()
 }
