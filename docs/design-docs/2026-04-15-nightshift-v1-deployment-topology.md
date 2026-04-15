@@ -33,6 +33,59 @@ If it works on a laptop, it should work on a Linux worker node with the same top
 
 ---
 
+## Future scaling: extend-localenv and extend-clamshell beyond MVP
+
+This topology is intentionally simple for v1, but both **extend-localenv** and **extend-clamshell** have clear roles in the future scaling path.
+
+### extend-localenv beyond MVP
+
+`xt` should grow into the **Extend-specific workbench interface** used by Nightshift runs.
+
+As the system matures, Belayer or Belayer-routed tools should use `xt` to:
+
+- validate worker readiness (`xt doctor`)
+- bring up app/api runtime dependencies (`xt up`)
+- inspect environment health (`xt status`)
+- tear down runtime state (`xt down`)
+- mint local auth/tokens where needed (`xt token`)
+
+This means the scaling path is not "replace xt with a generic workbench". It is:
+
+> **let Nightshift standardize on xt as the Extend workbench adapter**
+
+and let Belayer record the resulting readiness, validation evidence, and runtime outputs as artifacts.
+
+### extend-clamshell beyond MVP
+
+The current MVP proves the session bus with tmux and local execution. For production-oriented workers, clamshell should become the **sandbox boundary**.
+
+Clamshell scales into the topology by providing:
+
+- deny-by-default egress
+- host-owned credential mediation
+- policy-driven network and filesystem boundaries
+- audit and inspection surfaces for worker runs
+
+The likely medium-term production shape is:
+
+- Nightshift daemon keeps a small pool of Linux workers
+- each worker still handles one active request at a time
+- each active request gets its own run namespace
+- Belayer daemon runs inside that namespace as the run-local control plane
+- Hermes specialists execute inside or against clamshell-constrained workspaces
+- xt provides the Extend runtime/workbench behavior for validation
+
+### Why both matter together
+
+They solve different scaling problems:
+
+- **extend-localenv** answers: how do we bring up and validate the Extend stack?
+- **extend-clamshell** answers: how do we constrain and trust the agent execution environment?
+
+Nightshift needs both if it is going to move from laptop-proven MVP to a trustworthy Linux worker deployment.
+
+---
+
 ## Why this simplification matters
 
 It deliberately removes several sources of complexity from the MVP:
@@ -109,14 +162,14 @@ This is a much tighter and more realistic role for Belayer than "global orchestr
 
 ```mermaid
 flowchart LR
-    User["User / Jira / Reviewed Spec"] --> NCP["Nightshift Worker Control Plane\n(always on)"]
+    User["User / Jira / Reviewed Spec"] --> NCP["Nightshift daemon\n(always on)"]
     NCP --> Queue[("Request Queue / Run DB")]
     NCP --> W1["Worker 1\n(idle or running one request)"]
     NCP --> W2["Worker 2\n(idle or running one request)"]
-    NCP --> WN["Worker N\n(idle or running one request)"]
+    NCP --> W3["Worker 3\n(idle or running one request)"]
 
     subgraph Worker["One worker handling one request"]
-        B["Belayer\n(agent control plane)"]
+        B["Belayer daemon\n(agent control plane)"]
         S["Sandbox Runtime\n(clamshell or equivalent)"]
         H["Hermes specialist runs\n(planner, api, app, reviewer, qa)"]
         X["Extend workbench\n(xt / localenv runtime)"]
@@ -133,9 +186,63 @@ flowchart LR
     W1 --> Worker
 ```
 
+## Three-worker parallel picture
+
+```mermaid
+flowchart TB
+    NCP["Nightshift daemon\n(always on)"] --> W1["Worker 1\none active request"]
+    NCP --> W2["Worker 2\none active request"]
+    NCP --> W3["Worker 3\none active request"]
+
+    subgraph R1["Run A on Worker 1"]
+        B1["Belayer daemon"]
+        P1["planner"]
+        A1["api specialist"]
+        X1["xt / localenv"]
+        S1["clamshell sandbox"]
+        B1 --> P1
+        B1 --> A1
+        B1 --> X1
+        P1 --> S1
+        A1 --> S1
+    end
+
+    subgraph R2["Run B on Worker 2"]
+        B2["Belayer daemon"]
+        P2["planner"]
+        A2["api/app specialists"]
+        X2["xt / localenv"]
+        S2["clamshell sandbox"]
+        B2 --> P2
+        B2 --> A2
+        B2 --> X2
+        P2 --> S2
+        A2 --> S2
+    end
+
+    subgraph R3["Run C on Worker 3"]
+        B3["Belayer daemon"]
+        P3["planner"]
+        A3["specialists"]
+        X3["xt / localenv"]
+        S3["clamshell sandbox"]
+        B3 --> P3
+        B3 --> A3
+        B3 --> X3
+        P3 --> S3
+        A3 --> S3
+    end
+
+    W1 --> R1
+    W2 --> R2
+    W3 --> R3
+```
+
 ### Reading the diagram
 
-- The **outer Nightshift control plane** owns worker assignment and run lifecycle.
+- The **outer Nightshift daemon** owns worker assignment and run lifecycle.
+- Belayer is the **run-local** agent control plane inside each active worker run.
+- With three workers, Nightshift can process three requests in parallel while still keeping the simpler v1 rule of **one request per worker**.
 - A **worker** receives one request and becomes a self-contained execution cell.
 - Inside that worker, **Belayer** is the agent-session controller.
 - **Hermes** provides the actual specialist runs.

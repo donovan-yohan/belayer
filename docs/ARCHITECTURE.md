@@ -38,15 +38,17 @@ For v1:
 
 ```mermaid
 flowchart LR
-    User["User / Jira / reviewed spec"] --> NCP["Nightshift worker control plane"]
+    User["User / Jira / reviewed spec"] --> NCP["Nightshift daemon\n(worker control plane)"]
     NCP --> Queue[("Request queue / run DB")]
-    NCP --> Worker["Single worker handling one request"]
+    NCP --> W1["Worker 1"]
+    NCP --> W2["Worker 2"]
+    NCP --> W3["Worker 3"]
 
     subgraph WorkerRun["One Nightshift run on one worker"]
-        B["Belayer\nrun-local agent control plane"]
+        B["Belayer daemon\nrun-local agent control plane"]
         H["Hermes harness driver"]
         T["tmux transport adapter"]
-        S["Sandbox / local filesystem / repo workspace"]
+        S["Sandbox / repo workspace"]
         X["Extend localenv / xt workbench"]
         A[("Session DB, events, artifacts")]
 
@@ -59,12 +61,69 @@ flowchart LR
         X --> A
     end
 
-    Worker --> WorkerRun
+    W1 --> WorkerRun
+```
+
+### Parallel worker picture
+
+```mermaid
+flowchart TB
+    NCP["Nightshift daemon\n(always on)"] --> W1["Worker 1\none active request"]
+    NCP --> W2["Worker 2\none active request"]
+    NCP --> W3["Worker 3\none active request"]
+
+    subgraph R1["Run A on Worker 1"]
+        B1["Belayer daemon"]
+        P1["planner"]
+        A1["api specialist"]
+        Q1["qa / reviewer as needed"]
+        X1["xt / localenv"]
+        S1["clamshell sandbox"]
+        B1 --> P1
+        B1 --> A1
+        B1 --> Q1
+        B1 --> X1
+        P1 --> S1
+        A1 --> S1
+        Q1 --> S1
+    end
+
+    subgraph R2["Run B on Worker 2"]
+        B2["Belayer daemon"]
+        P2["planner"]
+        A2["api/app specialists"]
+        X2["xt / localenv"]
+        S2["clamshell sandbox"]
+        B2 --> P2
+        B2 --> A2
+        B2 --> X2
+        P2 --> S2
+        A2 --> S2
+    end
+
+    subgraph R3["Run C on Worker 3"]
+        B3["Belayer daemon"]
+        P3["planner"]
+        A3["specialists"]
+        X3["xt / localenv"]
+        S3["clamshell sandbox"]
+        B3 --> P3
+        B3 --> A3
+        B3 --> X3
+        P3 --> S3
+        A3 --> S3
+    end
+
+    W1 --> R1
+    W2 --> R2
+    W3 --> R3
 ```
 
 ### Reading the diagram
 
 - The **outer control plane** decides *where* a request runs.
+- Multiple workers can run in parallel, but each worker still handles **one request at a time** in v1.
+- Each worker hosts a **Belayer daemon** for the active run on that worker.
 - Belayer decides *how the agents inside that run coordinate*.
 - Hermes is the execution harness.
 - tmux is the wire used to launch and message harnesses.
@@ -185,6 +244,75 @@ The following is implemented today in the repo:
 - Belayer watcher marks an agent `blocked` if its tmux session exits without explicit finish
 
 This is enough to prove the run-local control-plane model works for planner + api slices.
+
+---
+
+## Future scaling: extend-localenv and extend-clamshell beyond MVP
+
+The current MVP proves the run-local control plane with Hermes + tmux + explicit finish/artifact discipline. The next scaling layers for real Nightshift deployments are **extend-localenv** and **extend-clamshell**.
+
+### extend-localenv beyond MVP
+
+`xt` should scale into Nightshift as the **Extend-specific workbench interface**, not as a side utility.
+
+Belayer/Nightshift should eventually treat `xt` as the standard way to:
+
+- validate host prerequisites (`xt doctor`)
+- bring up local Extend runtime dependencies (`xt up`)
+- inspect readiness (`xt status`)
+- tear down cleanly (`xt down`)
+- mint local runtime auth/tokens where appropriate (`xt token`)
+
+This means the future workbench shape should be:
+
+- **planner/specialists run in a sandbox/session workspace**
+- **Belayer invokes `xt` as the Extend runtime adapter**
+- **artifacts capture the resulting environment state, health, and verification evidence**
+
+In other words: Belayer should not reinvent a generic workbench if Extend-localenv already models the Extend environment well.
+
+### extend-clamshell beyond MVP
+
+Clamshell should scale into Nightshift as the **production sandbox boundary**.
+
+The current tmux-based transport and local filesystem execution are useful for proving the run model. But for higher trust and Linux worker deployment, clamshell provides:
+
+- deny-by-default egress
+- host-owned credential mediation
+- explicit policy control
+- runtime inspection and audit surfaces
+- stronger separation between trusted runtime and untrusted agent execution
+
+The intended future relationship is:
+
+- **Nightshift daemon** assigns a request to a worker
+- **worker** provisions a run namespace and sandbox policy
+- **Belayer daemon** runs inside that worker namespace as the agent control plane
+- **Hermes harnesses** execute inside or against clamshell-constrained workspaces
+- **xt/localenv** brings up Extend runtime dependencies for validation
+
+### Why both matter together
+
+These two systems solve different scaling problems:
+
+- **extend-localenv** answers: "how do we make the Extend app/api stack runnable and testable?"
+- **extend-clamshell** answers: "how do we make the coding agent environment trustworthy and bounded?"
+
+Nightshift needs both.
+
+### Practical future topology
+
+The likely near-future production shape is:
+
+1. Nightshift daemon manages a small pool of Linux workers
+2. each worker runs one active request at a time
+3. each active request gets a run-local Belayer daemon
+4. Belayer spawns Hermes specialists for that run
+5. clamshell constrains code execution / egress
+6. xt provides the Extend runtime/workbench behavior
+7. Belayer records artifacts, events, and handoff outputs
+
+That gives us parallelism at the **worker** level while keeping the run model simple inside each worker.
 
 ---
 
