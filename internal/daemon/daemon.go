@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,10 +17,8 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/agent"
 	"github.com/donovan-yohan/belayer/internal/broker"
-	"github.com/donovan-yohan/belayer/internal/docker"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/donovan-yohan/belayer/internal/tmux"
-	"gopkg.in/yaml.v3"
 )
 
 // Config holds daemon startup configuration.
@@ -104,9 +101,6 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
 	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
 	mux.HandleFunc("GET /search", d.handleSearch)
-	mux.HandleFunc("POST /sessions/{id}/workbench", d.handleCreateWorkbench)
-	mux.HandleFunc("GET /sessions/{id}/workbench", d.handleGetWorkbench)
-	mux.HandleFunc("DELETE /sessions/{id}/workbench", d.handleDeleteWorkbench)
 	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
 	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
@@ -159,9 +153,43 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// sessionAPIResponse is the JSON-serializable session type returned by the API.
+// It expands the store.Session.Repos JSON string into a proper map.
+type sessionAPIResponse struct {
+	ID           string            `json:"ID"`
+	Name         string            `json:"Name"`
+	Status       string            `json:"Status"`
+	Template     string            `json:"Template"`
+	Repos        map[string]string `json:"Repos"`
+	WorkspaceDir string            `json:"WorkspaceDir"`
+	CreatedAt    time.Time         `json:"CreatedAt"`
+	UpdatedAt    time.Time         `json:"UpdatedAt"`
+}
+
+// sessionToAPIResponse converts a store.Session to the API response type,
+// parsing the JSON-encoded Repos string into a map.
+func sessionToAPIResponse(s store.Session) sessionAPIResponse {
+	repos := map[string]string{}
+	if s.Repos != "" && s.Repos != "{}" {
+		_ = json.Unmarshal([]byte(s.Repos), &repos)
+	}
+	return sessionAPIResponse{
+		ID:           s.ID,
+		Name:         s.Name,
+		Status:       s.Status,
+		Template:     s.Template,
+		Repos:        repos,
+		WorkspaceDir: s.WorkspaceDir,
+		CreatedAt:    s.CreatedAt,
+		UpdatedAt:    s.UpdatedAt,
+	}
+}
+
 type createSessionRequest struct {
-	Name     string `json:"name"`
-	Template string `json:"template,omitempty"`
+	Name         string            `json:"name"`
+	Template     string            `json:"template,omitempty"`
+	Repos        map[string]string `json:"repos,omitempty"`
+	WorkspaceDir string            `json:"workspace_dir,omitempty"`
 }
 
 func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -175,10 +203,22 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reposJSON := "{}"
+	if len(req.Repos) > 0 {
+		b, err := json.Marshal(req.Repos)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repos"})
+			return
+		}
+		reposJSON = string(b)
+	}
+
 	sess := store.Session{
-		Name:     req.Name,
-		Template: req.Template,
-		Status:   "pending",
+		Name:         req.Name,
+		Template:     req.Template,
+		Status:       "pending",
+		Repos:        reposJSON,
+		WorkspaceDir: req.WorkspaceDir,
 	}
 	id, err := d.store.CreateSession(sess)
 	if err != nil {
@@ -198,7 +238,7 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Data:      mustJSON(map[string]string{"name": req.Name, "template": req.Template}),
 	})
 
-	writeJSON(w, http.StatusCreated, created)
+	writeJSON(w, http.StatusCreated, sessionToAPIResponse(created))
 }
 
 func (d *Daemon) handleListSessions(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +247,11 @@ func (d *Daemon) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, sessions)
+	resp := make([]sessionAPIResponse, len(sessions))
+	for i, s := range sessions {
+		resp[i] = sessionToAPIResponse(s)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (d *Daemon) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -221,11 +265,12 @@ func (d *Daemon) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, sess)
+	writeJSON(w, http.StatusOK, sessionToAPIResponse(sess))
 }
 
 type updateSessionRequest struct {
-	Status string `json:"status"`
+	Status       string `json:"status"`
+	WorkspaceDir string `json:"workspace_dir,omitempty"`
 }
 
 func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
@@ -235,28 +280,36 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if req.Status == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "status is required"})
+	if req.Status == "" && req.WorkspaceDir == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "status or workspace_dir is required"})
 		return
 	}
 
-	if err := d.store.UpdateSessionStatus(id, req.Status); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+	if req.Status != "" {
+		if err := d.store.UpdateSessionStatus(id, req.Status); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		d.store.LogEvent(store.SessionEvent{
+			SessionID: id,
+			Type:      "session_status_changed",
+			Data:      mustJSON(map[string]string{"status": req.Status}),
+		})
 	}
 
-	d.store.LogEvent(store.SessionEvent{
-		SessionID: id,
-		Type:      "session_status_changed",
-		Data:      mustJSON(map[string]string{"status": req.Status}),
-	})
+	if req.WorkspaceDir != "" {
+		if err := d.store.UpdateSessionWorkspaceDir(id, req.WorkspaceDir); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 
 	sess, err := d.store.GetSession(id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, sess)
+	writeJSON(w, http.StatusOK, sessionToAPIResponse(sess))
 }
 
 func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
@@ -333,9 +386,6 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			afterID = existing[len(existing)-1].ID
 		}
 	}
-	// When the client omits 'wait', keep streaming until the client
-	// disconnects instead of forcing a 30s deadline.  This makes the
-	// endpoint suitable for long-running "watch" commands.
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -475,217 +525,6 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, events)
 }
 
-type createWorkbenchRequest struct {
-	Spec      string `json:"spec,omitempty"`
-	Endpoints string `json:"endpoints,omitempty"`
-}
-
-type workbenchServiceResponse struct {
-	Name   string `json:"name"`
-	State  string `json:"state"`
-	Health string `json:"health,omitempty"`
-}
-
-type workbenchResponse struct {
-	ID        string                     `json:"id"`
-	SessionID string                     `json:"session_id"`
-	Status    string                     `json:"status"`
-	Endpoints map[string]string          `json:"endpoints"`
-	Services  []workbenchServiceResponse `json:"services"`
-	Spec      string                     `json:"spec,omitempty"`
-	CreatedAt time.Time                  `json:"created_at"`
-	UpdatedAt time.Time                  `json:"updated_at"`
-}
-
-func (d *Daemon) handleCreateWorkbench(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-
-	// Verify session exists before creating workbench.
-	if _, err := d.store.GetSession(id); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	var req createWorkbenchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	if existing, err := d.store.GetWorkbenchBySession(id); err == nil && existing.Status == "ready" {
-		writeJSON(w, http.StatusOK, existing)
-		return
-	}
-
-	sandboxPath, err := sandboxDir(id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	meta, err := docker.LoadRuntimeMetadata(sandboxPath)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("load runtime metadata: %v", err)})
-		return
-	}
-
-	spec := docker.WorkbenchConfigSpec{}
-	if meta.Workbench != nil {
-		spec = *meta.Workbench
-	}
-	if req.Spec != "" && req.Spec != "{}" {
-		if err := yaml.Unmarshal([]byte(req.Spec), &spec); err != nil {
-			if err := json.Unmarshal([]byte(req.Spec), &spec); err != nil {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("invalid workbench spec: %v", err)})
-				return
-			}
-		}
-	}
-	if len(spec.Services) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no workbench services configured for this session"})
-		return
-	}
-
-	specJSON, err := json.Marshal(spec)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("marshal workbench spec: %v", err)})
-		return
-	}
-
-	workbenchState, err := d.store.GetWorkbenchBySession(id)
-	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		workbenchState = store.WorkbenchState{
-			SessionID: id,
-			Status:    "provisioning",
-			Spec:      string(specJSON),
-			Endpoints: "{}",
-		}
-		if _, err := d.store.CreateWorkbench(workbenchState); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-		workbenchState, err = d.store.GetWorkbenchBySession(id)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
-	} else {
-		_ = d.store.UpdateWorkbenchStatus(workbenchState.ID, "provisioning")
-	}
-
-	workbench, err := docker.NewWorkbench(docker.WorkbenchConfig{
-		SessionID:     id,
-		Spec:          spec,
-		WorktreePaths: meta.RepoWorktrees,
-	})
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := workbench.Create(); err != nil {
-		_ = d.store.UpdateWorkbenchStatus(workbenchState.ID, "failed")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := workbench.Start(); err != nil {
-		_ = d.store.UpdateWorkbenchStatus(workbenchState.ID, "failed")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	timeout, err := time.ParseDuration(spec.Timeout)
-	if err != nil || timeout <= 0 {
-		timeout = 5 * time.Minute
-	}
-	if err := workbench.WaitForHealthy(timeout); err != nil {
-		_ = d.store.UpdateWorkbenchStatus(workbenchState.ID, "failed")
-		payload := map[string]any{"error": err.Error()}
-		if timeoutErr, ok := err.(*docker.WorkbenchWaitTimeoutError); ok {
-			payload["services"] = serviceResponses(timeoutErr.Statuses)
-		}
-		writeJSON(w, http.StatusGatewayTimeout, payload)
-		return
-	}
-
-	endpointsJSON, err := json.Marshal(workbench.Endpoints())
-	if err != nil {
-		_ = d.store.UpdateWorkbenchStatus(workbenchState.ID, "failed")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("marshal workbench endpoints: %v", err)})
-		return
-	}
-	if err := d.store.UpdateWorkbenchStatus(workbenchState.ID, "ready"); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if err := d.store.UpdateWorkbenchEndpoints(workbenchState.ID, string(endpointsJSON)); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	created, err := d.store.GetWorkbenchBySession(id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	statuses, err := workbench.Status()
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	d.store.LogEvent(store.SessionEvent{
-		SessionID: id,
-		Type:      "workbench_created",
-		Data:      mustJSON(map[string]string{"workbench_id": created.ID, "status": created.Status}),
-	})
-
-	writeJSON(w, http.StatusCreated, buildWorkbenchResponse(created, statuses))
-}
-
-func (d *Daemon) handleGetWorkbench(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	wb, err := d.store.GetWorkbenchBySession(id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "workbench not found"})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	statuses, err := loadWorkbenchStatuses(id)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, buildWorkbenchResponse(wb, statuses))
-}
-
-func (d *Daemon) handleDeleteWorkbench(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if home, err := os.UserHomeDir(); err == nil {
-		workbenchDir := filepath.Join(home, ".belayer", "workbenches", id)
-		composePath := filepath.Join(workbenchDir, "docker-compose.yml")
-		if _, err := os.Stat(composePath); err == nil {
-			_ = exec.Command("docker", "compose", "-f", composePath, "down").Run()
-		}
-		_ = os.RemoveAll(workbenchDir)
-	}
-	if err := d.store.DeleteWorkbenchBySession(id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // --- helpers ---
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -697,65 +536,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
-}
-
-func buildWorkbenchResponse(wb store.WorkbenchState, statuses []docker.WorkbenchStatus) workbenchResponse {
-	return workbenchResponse{
-		ID:        wb.ID,
-		SessionID: wb.SessionID,
-		Status:    wb.Status,
-		Endpoints: decodeWorkbenchEndpoints(wb.Endpoints),
-		Services:  serviceResponses(statuses),
-		Spec:      wb.Spec,
-		CreatedAt: wb.CreatedAt,
-		UpdatedAt: wb.UpdatedAt,
-	}
-}
-
-func loadWorkbenchStatuses(sessionID string) ([]docker.WorkbenchStatus, error) {
-	workbench := docker.OpenWorkbench(sessionID, "")
-	statuses, err := workbench.Status()
-	if err != nil {
-		return nil, fmt.Errorf("workbench status: %w", err)
-	}
-	return statuses, nil
-}
-
-func serviceResponses(statuses []docker.WorkbenchStatus) []workbenchServiceResponse {
-	if len(statuses) == 0 {
-		return nil
-	}
-	resp := make([]workbenchServiceResponse, 0, len(statuses))
-	for _, status := range statuses {
-		resp = append(resp, workbenchServiceResponse{
-			Name:   status.Name,
-			State:  status.State,
-			Health: status.Health,
-		})
-	}
-	return resp
-}
-
-func decodeWorkbenchEndpoints(raw string) map[string]string {
-	if strings.TrimSpace(raw) == "" {
-		return map[string]string{}
-	}
-
-	var structured map[string]docker.WorkbenchEndpoint
-	if err := json.Unmarshal([]byte(raw), &structured); err == nil {
-		endpoints := make(map[string]string, len(structured))
-		for name, endpoint := range structured {
-			if endpoint.URL != "" {
-				endpoints[name] = endpoint.URL
-			}
-		}
-		return endpoints
-	}
-
-	var flat map[string]string
-	if err := json.Unmarshal([]byte(raw), &flat); err == nil {
-		return flat
-	}
-
-	return map[string]string{}
 }

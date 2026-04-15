@@ -47,9 +47,7 @@ Commands:
 		newContextCmd(),
 		newNoteCmd(),
 		newSetupCmd(),
-		newWorkbenchCmd(),
 		newToolCmd(),
-		newScaffoldCmd("submit", "Reserved v6 submission surface", "Restore submit after the new runtime decides how tasks enter the system."),
 	)
 	return cmd
 }
