@@ -1,23 +1,7 @@
-README.md
-  7b626a68e8f1388e 3,5,7-9,64,70,72,74,76-77,80
 ---
 {
   "schema_version": "authorship/3.0.0",
   "git_ai_version": "1.2.8",
   "base_commit_sha": "813ccaad20ca247663595b200645f7db5183c6e1",
-  "prompts": {
-    "7b626a68e8f1388e": {
-      "agent_id": {
-        "tool": "claude",
-        "id": "b7558eb7-1a07-4c9b-9ff1-9216fb2bdb6e",
-        "model": "claude-opus-4-6"
-      },
-      "human_author": "Donovan Yohan",
-      "messages": [],
-      "total_additions": 13,
-      "total_deletions": 9,
-      "accepted_lines": 13,
-      "overriden_lines": 0
-    }
-  }
+  "prompts": {}
 }
