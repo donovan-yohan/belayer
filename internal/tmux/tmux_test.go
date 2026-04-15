@@ -121,6 +121,21 @@ func TestSendKeys_Bracketed(t *testing.T) {
 	}
 }
 
+func TestSendEnter_Command(t *testing.T) {
+	var calls []capturedCall
+	r := newMockRunner(&calls)
+
+	if err := r.SendEnter("mynode"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if !argsContain(calls[0].args, "send-keys", "-t", "belayer-mynode", "Enter") {
+		t.Errorf("unexpected args for send enter: %v", calls[0].args)
+	}
+}
+
 // ── CapturePane ──────────────────────────────────────────────────────────────
 
 func TestCapturePane_Command(t *testing.T) {

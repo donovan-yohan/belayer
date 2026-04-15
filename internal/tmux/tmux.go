@@ -12,6 +12,9 @@ type Runner interface {
 	// When bracketed is true, the keys are wrapped in bracketed-paste escape sequences.
 	SendKeys(session, keys string, bracketed bool) error
 
+	// SendEnter sends an Enter keypress to a tmux session.
+	SendEnter(session string) error
+
 	// CapturePane returns the current visible content of the session's pane.
 	CapturePane(session string) (string, error)
 

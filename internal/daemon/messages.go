@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/broker"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/google/uuid"
 )
@@ -46,6 +47,27 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if from == "" {
 		from = "operator"
 	}
+	msg := broker.Message{
+		ID:          msgID,
+		SessionID:   id,
+		SenderID:    from,
+		RecipientID: req.To,
+		Type:        broker.MessageType(req.Type),
+		Content:     req.Content,
+		Urgent:      req.Interrupt,
+		Timestamp:   time.Now().UTC(),
+	}
+
+	var err error
+	if req.Interrupt {
+		err = d.broker.Interrupt(id, req.To, msg)
+	} else {
+		err = d.broker.Send(id, req.To, msg)
+	}
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	data := mustJSON(map[string]any{
 		"id":        msgID,
@@ -54,19 +76,9 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		"content":   req.Content,
 		"type":      req.Type,
 		"interrupt": req.Interrupt,
-		"sent_at":   time.Now().UTC().Format(time.RFC3339Nano),
+		"sent_at":   msg.Timestamp.Format(time.RFC3339Nano),
 	})
-
-	evt := store.SessionEvent{
-		SessionID: id,
-		Type:      "message_sent",
-		Data:      data,
-	}
-	if err := d.store.LogEvent(evt); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
+	_ = d.store.LogEvent(store.SessionEvent{SessionID: id, Type: "message_sent", Data: data})
 	writeJSON(w, http.StatusCreated, map[string]string{"id": msgID})
 }
 
@@ -87,23 +99,26 @@ func (d *Daemon) handleBroadcastMessage(w http.ResponseWriter, r *http.Request) 
 	if from == "" {
 		from = "operator"
 	}
+	msg := broker.Message{
+		ID:        uuid.New().String(),
+		SessionID: id,
+		SenderID:  from,
+		Type:      broker.MessageType(req.Type),
+		Content:   req.Content,
+		Timestamp: time.Now().UTC(),
+	}
+	if err := d.broker.Broadcast(id, msg); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	data := mustJSON(map[string]any{
 		"from":    from,
 		"content": req.Content,
 		"type":    req.Type,
-		"sent_at": time.Now().UTC().Format(time.RFC3339Nano),
+		"sent_at": msg.Timestamp.Format(time.RFC3339Nano),
 	})
-
-	evt := store.SessionEvent{
-		SessionID: id,
-		Type:      "message_broadcast",
-		Data:      data,
-	}
-	if err := d.store.LogEvent(evt); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
+	_ = d.store.LogEvent(store.SessionEvent{SessionID: id, Type: "message_broadcast", Data: data})
 
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "broadcast"})
 }

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
+	"github.com/donovan-yohan/belayer/internal/broker"
 	"github.com/donovan-yohan/belayer/internal/docker"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
@@ -30,6 +31,9 @@ func testDaemon(t *testing.T) *Daemon {
 	t.Cleanup(func() { st.Close() })
 
 	d := &Daemon{store: st, config: Config{}, tools: make(map[string][]agent.ToolSpec)}
+	d.broker = broker.NewMemoryBroker(st)
+	d.launchAgent = func(req agentSpawnRequest) (string, error) { return req.Name + "-tmux", nil }
+	d.deliverMessage = func(_ store.AgentRun, _ broker.Message) error { return nil }
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", d.handleHealth)
 	mux.HandleFunc("POST /sessions", d.handleCreateSession)
@@ -39,6 +43,14 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("GET /sessions/{id}/events", d.handleGetEvents)
 	mux.HandleFunc("POST /sessions/{id}/events", d.handleLogEvent)
 	mux.HandleFunc("GET /events/stream", d.handleStreamEvents)
+	mux.HandleFunc("POST /sessions/{id}/messages", d.handleSendMessage)
+	mux.HandleFunc("POST /sessions/{id}/messages/broadcast", d.handleBroadcastMessage)
+	mux.HandleFunc("GET /sessions/{id}/messages", d.handleListMessages)
+	mux.HandleFunc("POST /sessions/{id}/agents", d.handleSpawnAgent)
+	mux.HandleFunc("GET /sessions/{id}/agents", d.handleListAgents)
+	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
+	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
+	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
 	mux.HandleFunc("GET /search", d.handleSearch)
 	mux.HandleFunc("POST /sessions/{id}/workbench", d.handleCreateWorkbench)
 	mux.HandleFunc("GET /sessions/{id}/workbench", d.handleGetWorkbench)
@@ -62,6 +74,16 @@ func doRequest(t *testing.T, d *Daemon, method, path string, body any) *httptest
 	d.server.Handler.ServeHTTP(rr, req)
 	return rr
 }
+
+type immediateRunner struct{}
+
+func (immediateRunner) CreateSession(name, cmd string) error { return nil }
+func (immediateRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
+func (immediateRunner) SendEnter(session string) error { return nil }
+func (immediateRunner) CapturePane(session string) (string, error) { return "", nil }
+func (immediateRunner) KillSession(session string) error { return nil }
+func (immediateRunner) WaitForSession(session string, timeout time.Duration) error { return nil }
+func (immediateRunner) ListSessions() ([]string, error) { return nil, nil }
 
 func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder) T {
 	t.Helper()
@@ -175,6 +197,122 @@ func TestUpdateSessionStatus(t *testing.T) {
 	sess := decodeJSON[store.Session](t, rr)
 	if sess.Status != "active" {
 		t.Fatalf("expected status=active, got %s", sess.Status)
+	}
+}
+
+func TestSpawnAgentAndListRoster(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "spawn-test"}))
+
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{
+		Name:    "planner",
+		Role:    "planner",
+		Profile: "nightshift-planner",
+		Workdir: "/tmp/workdir",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	run := decodeJSON[store.AgentRun](t, rr)
+	if run.Name != "planner" || run.Profile != "nightshift-planner" {
+		t.Fatalf("unexpected agent run: %#v", run)
+	}
+	if run.Status != "running" {
+		t.Fatalf("expected running status, got %q", run.Status)
+	}
+
+	rosterRR := doRequest(t, d, "GET", "/sessions/"+created.ID+"/agents", nil)
+	if rosterRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rosterRR.Code)
+	}
+	roster := decodeJSON[[]store.AgentRun](t, rosterRR)
+	if len(roster) != 1 || roster[0].Name != "planner" {
+		t.Fatalf("unexpected roster: %#v", roster)
+	}
+}
+
+func TestSendMessageDeliversToSpawnedAgent(t *testing.T) {
+	d := testDaemon(t)
+	var delivered []string
+	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
+		delivered = append(delivered, msg.Content)
+		return nil
+	}
+	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "msg-test"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "api", Role: "api", Profile: "nightshift-api"})
+
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "api", Content: "hello api", Type: "instruction", From: "planner", Interrupt: true})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(delivered) == 0 || delivered[len(delivered)-1] != "hello api" {
+		t.Fatalf("expected delivered message, got %#v", delivered)
+	}
+}
+
+func TestFinishAgentMarksComplete(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "finish-test"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "api", Role: "api", Profile: "nightshift-api"})
+
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents/api/finish", finishAgentRequest{Summary: "done"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	run := decodeJSON[store.AgentRun](t, rr)
+	if run.Status != "complete" {
+		t.Fatalf("expected complete status, got %q", run.Status)
+	}
+}
+
+func TestCreateAndListArtifacts(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "artifact-test"}))
+
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/artifacts", artifactCreateRequest{
+		Kind:     "shared-contract",
+		Path:     "artifacts/shared-contract.md",
+		Producer: "api",
+		Summary:  "Actual implemented API contract",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	artifact := decodeJSON[store.Artifact](t, rr)
+	if artifact.Kind != "shared-contract" || artifact.Producer != "api" {
+		t.Fatalf("unexpected artifact: %#v", artifact)
+	}
+
+	listRR := doRequest(t, d, "GET", "/sessions/"+created.ID+"/artifacts", nil)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", listRR.Code)
+	}
+	artifacts := decodeJSON[[]store.Artifact](t, listRR)
+	if len(artifacts) != 1 || artifacts[0].Path != "artifacts/shared-contract.md" {
+		t.Fatalf("unexpected artifacts: %#v", artifacts)
+	}
+}
+
+func TestWatchAgentExitMarksBlockedWithoutFinish(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "exit-watch-test"}))
+	d.runner = immediateRunner{}
+	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "api", Role: "api", Profile: "default", Workdir: t.TempDir(), TmuxSession: "exit-watch", Status: "running", Transport: "tmux"})
+	if err != nil {
+		t.Fatalf("CreateAgentRun: %v", err)
+	}
+	run, err := d.store.GetAgentRun(created.ID, "api")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	d.watchAgentExit(run)
+	time.Sleep(100 * time.Millisecond)
+	updated, err := d.store.GetAgentRun(created.ID, "api")
+	if err != nil {
+		t.Fatalf("GetAgentRun updated: %v", err)
+	}
+	if updated.Status != "blocked" {
+		t.Fatalf("expected blocked status, got %q", updated.Status)
 	}
 }
 

@@ -33,6 +33,35 @@ func Migrate(db *sql.DB) error {
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS agent_runs (
+			id           TEXT PRIMARY KEY,
+			session_id   TEXT NOT NULL,
+			name         TEXT NOT NULL,
+			role         TEXT NOT NULL DEFAULT '',
+			profile      TEXT NOT NULL DEFAULT '',
+			repo_scope   TEXT NOT NULL DEFAULT '',
+			workdir      TEXT NOT NULL DEFAULT '',
+			transport    TEXT NOT NULL DEFAULT 'tmux',
+			tmux_session TEXT NOT NULL DEFAULT '',
+			status       TEXT NOT NULL DEFAULT 'starting',
+			created_at   DATETIME NOT NULL,
+			updated_at   DATETIME NOT NULL,
+			UNIQUE(session_id, name),
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS artifacts (
+			id         TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			kind       TEXT NOT NULL,
+			path       TEXT NOT NULL,
+			producer   TEXT NOT NULL DEFAULT '',
+			summary    TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL,
+			updated_at DATETIME NOT NULL,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		)`,
+
 		// FTS5 virtual table for full-text search over event type and data.
 		`CREATE VIRTUAL TABLE IF NOT EXISTS events_fts
 			USING fts5(type, data, content=events, content_rowid=id)`,
