@@ -100,6 +100,41 @@ type paneSequenceRunner struct {
 	idx   int
 }
 
+type commandCaptureRunner struct {
+	lastName string
+	lastCmd  string
+}
+
+type hermesStatusRunner struct {
+	mu      sync.Mutex
+	counter int
+}
+
+func (r *hermesStatusRunner) CreateSession(name, cmd string) error { return nil }
+func (r *hermesStatusRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
+func (r *hermesStatusRunner) SendEnter(session string) error { return nil }
+func (r *hermesStatusRunner) KillSession(session string) error { return nil }
+func (r *hermesStatusRunner) WaitForSession(session string, timeout time.Duration) error { return fmt.Errorf("still running") }
+func (r *hermesStatusRunner) ListSessions() ([]string, error) { return nil, nil }
+func (r *hermesStatusRunner) CapturePane(session string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.counter++
+	return fmt.Sprintf("Welcome\n⚕ unknown │ ctx -- │ [░░░░░░░░░░] -- │ %ds\nTask still pending", r.counter), nil
+}
+
+func (r *commandCaptureRunner) CreateSession(name, cmd string) error {
+	r.lastName = name
+	r.lastCmd = cmd
+	return nil
+}
+func (r *commandCaptureRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
+func (r *commandCaptureRunner) SendEnter(session string) error { return nil }
+func (r *commandCaptureRunner) CapturePane(session string) (string, error) { return "", nil }
+func (r *commandCaptureRunner) KillSession(session string) error { return nil }
+func (r *commandCaptureRunner) WaitForSession(session string, timeout time.Duration) error { return nil }
+func (r *commandCaptureRunner) ListSessions() ([]string, error) { return nil, nil }
+
 func (r *paneSequenceRunner) CreateSession(name, cmd string) error { return nil }
 func (r *paneSequenceRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
 func (r *paneSequenceRunner) SendEnter(session string) error { return nil }
@@ -391,18 +426,29 @@ func TestWatchAgentIdleNudgesIdleAgent(t *testing.T) {
 		t.Fatal("expected idle nudge to be delivered")
 	}
 
-	events, err := d.store.QueryEvents(created.ID)
-	if err != nil {
-		t.Fatalf("ListEvents: %v", err)
-	}
+	deadline := time.Now().Add(300 * time.Millisecond)
 	found := false
-	for _, event := range events {
-		if event.Type == "agent_idle_nudged" && strings.Contains(event.Data, "api") {
-			found = true
+	for time.Now().Before(deadline) {
+		events, err := d.store.QueryEvents(created.ID)
+		if err != nil {
+			t.Fatalf("QueryEvents: %v", err)
+		}
+		for _, event := range events {
+			if event.Type == "agent_idle_nudged" && strings.Contains(event.Data, "api") {
+				found = true
+				break
+			}
+		}
+		if found {
 			break
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	if !found {
+		events, err := d.store.QueryEvents(created.ID)
+		if err != nil {
+			t.Fatalf("QueryEvents: %v", err)
+		}
 		t.Fatalf("expected agent_idle_nudged event, got %#v", events)
 	}
 }
@@ -438,6 +484,63 @@ func TestWatchAgentIdleDoesNotNudgeWhenPaneKeepsChanging(t *testing.T) {
 	case msg := <-delivered:
 		t.Fatalf("did not expect idle nudge, got %#v", msg)
 	default:
+	}
+}
+
+func TestDefaultLaunchAgentInjectsBelayerCommunicationSkill(t *testing.T) {
+	d := testDaemon(t)
+	runner := &commandCaptureRunner{}
+	d.runner = runner
+	d.config.SocketPath = "/tmp/test-belayer.sock"
+
+	_, err := d.defaultLaunchAgent(agentSpawnRequest{
+		SessionID: "sess-123",
+		Name:      "planner",
+		Role:      "planner",
+		Profile:   "default",
+		Workdir:   t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("defaultLaunchAgent: %v", err)
+	}
+	if !strings.Contains(runner.lastCmd, "--skills 'belayer-communication'") {
+		t.Fatalf("expected belayer-communication skill in launch command, got:\n%s", runner.lastCmd)
+	}
+}
+
+func TestWatchAgentIdleIgnoresHermesStatusLineChanges(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "idle-hermes-status-test"}))
+	d.runner = &hermesStatusRunner{}
+	d.idlePollInterval = 10 * time.Millisecond
+	d.idleTimeout = 20 * time.Millisecond
+	d.idleNudgeCooldown = time.Hour
+
+	delivered := make(chan broker.Message, 1)
+	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
+		delivered <- msg
+		_ = d.store.UpdateAgentRunStatus(created.ID, "planner", "complete")
+		return nil
+	}
+
+	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "planner", Role: "planner", Profile: "default", Workdir: t.TempDir(), TmuxSession: "idle-hermes-status", Status: "running", Transport: "tmux"})
+	if err != nil {
+		t.Fatalf("CreateAgentRun: %v", err)
+	}
+	run, err := d.store.GetAgentRun(created.ID, "planner")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+
+	d.watchAgentIdle(run)
+
+	select {
+	case msg := <-delivered:
+		if !strings.Contains(msg.Content, "session appears idle") {
+			t.Fatalf("expected idle nudge message, got %q", msg.Content)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("expected idle nudge despite Hermes status line changes")
 	}
 }
 

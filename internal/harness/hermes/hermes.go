@@ -30,12 +30,14 @@ func BuildLaunchCmd(cfg LaunchConfig) (string, error) {
 	}
 
 	parts := []string{fmt.Sprintf("cd %s", shell.Quote(cfg.Workdir))}
+	hermesHome := filepath.Join(cfg.RunDir, "hermes-home")
 	env := map[string]string{
-		"BELAYER_SESSION_ID":          cfg.SessionID,
-		"BELAYER_AGENT_ID":            cfg.AgentID,
-		"BELAYER_SOCKET":              cfg.SocketPath,
-		"BELAYER_RUN_DIR":             cfg.RunDir,
+		"BELAYER_SESSION_ID":            cfg.SessionID,
+		"BELAYER_AGENT_ID":              cfg.AgentID,
+		"BELAYER_SOCKET":                cfg.SocketPath,
+		"BELAYER_RUN_DIR":               cfg.RunDir,
 		"HERMES_ENABLE_PROJECT_PLUGINS": "true",
+		"HERMES_HOME":                   hermesHome,
 	}
 	for k, v := range cfg.ExtraEnv {
 		env[k] = v
@@ -51,6 +53,15 @@ func BuildLaunchCmd(cfg LaunchConfig) (string, error) {
 		cmd += " --skills " + shell.Quote(strings.Join(cfg.Skills, ","))
 	}
 	marker := shell.Quote(filepath.Join(cfg.RunDir, ".belayer-finished"))
+	defaultHome := "$HOME/.hermes"
+	projectPlugins := shell.Quote(filepath.Join(cfg.Workdir, ".hermes", "plugins"))
+	projectSkills := shell.Quote(filepath.Join(cfg.Workdir, ".hermes", "skills"))
+	hermesHomeQuoted := shell.Quote(hermesHome)
+	parts = append(parts, fmt.Sprintf("mkdir -p %s", hermesHomeQuoted))
+	parts = append(parts, fmt.Sprintf("if [ -f %s/config.yaml ] && [ ! -e %s/config.yaml ]; then ln -s %s/config.yaml %s/config.yaml; fi", defaultHome, hermesHomeQuoted, defaultHome, hermesHomeQuoted))
+	parts = append(parts, fmt.Sprintf("if [ -f %s/.env ] && [ ! -e %s/.env ]; then ln -s %s/.env %s/.env; fi", defaultHome, hermesHomeQuoted, defaultHome, hermesHomeQuoted))
+	parts = append(parts, fmt.Sprintf("if [ -d %s ] && [ ! -e %s/plugins ]; then ln -s %s %s/plugins; fi", projectPlugins, hermesHomeQuoted, projectPlugins, hermesHomeQuoted))
+	parts = append(parts, fmt.Sprintf("if [ -d %s ] && [ ! -e %s/skills ]; then ln -s %s %s/skills; fi", projectSkills, hermesHomeQuoted, projectSkills, hermesHomeQuoted))
 	parts = append(parts, fmt.Sprintf("rm -f %s", marker))
 	parts = append(parts, cmd)
 	parts = append(parts, "status=$?")

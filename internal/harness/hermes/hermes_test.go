@@ -13,14 +13,15 @@ func TestBuildLaunchCmd_EnablesProjectPluginsAndSkillInjection(t *testing.T) {
 		SessionID:  "sess-123",
 		AgentID:    "planner",
 		RunDir:     "/tmp/project/.belayer/runs/sess-123/planner",
-		Skills:     []string{"belayer-support:belayer-communication"},
+		Skills:     []string{"belayer-communication"},
 	})
 	if err != nil {
 		t.Fatalf("BuildLaunchCmd returned error: %v", err)
 	}
 	for _, want := range []string{
 		"HERMES_ENABLE_PROJECT_PLUGINS='true'",
-		"hermes --profile 'default' --skills 'belayer-support:belayer-communication'",
+		"HERMES_HOME='/tmp/project/.belayer/runs/sess-123/planner/hermes-home'",
+		"hermes --profile 'default' --skills 'belayer-communication'",
 		"belayer finish --blocked",
 		".belayer-finished",
 	} {
