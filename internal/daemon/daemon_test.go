@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,13 +25,21 @@ import (
 // testDaemon creates a Daemon backed by an in-memory store for use in tests.
 func testDaemon(t *testing.T) *Daemon {
 	t.Helper()
-	st, err := store.Open(":memory:")
+	st, err := store.Open(filepath.Join(t.TempDir(), "belayer.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 
-	d := &Daemon{store: st, config: Config{}, tools: make(map[string][]agent.ToolSpec)}
+	d := &Daemon{
+		store:             st,
+		config:            Config{},
+		tools:             make(map[string][]agent.ToolSpec),
+		idlePollInterval:  15 * time.Second,
+		idleTimeout:       2 * time.Minute,
+		idleNudgeCooldown: 1 * time.Minute,
+		now:               time.Now,
+	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.launchAgent = func(req agentSpawnRequest) (string, error) { return req.Name + "-tmux", nil }
 	d.deliverMessage = func(_ store.AgentRun, _ broker.Message) error { return nil }
@@ -84,6 +93,34 @@ func (immediateRunner) CapturePane(session string) (string, error) { return "", 
 func (immediateRunner) KillSession(session string) error { return nil }
 func (immediateRunner) WaitForSession(session string, timeout time.Duration) error { return nil }
 func (immediateRunner) ListSessions() ([]string, error) { return nil, nil }
+
+type paneSequenceRunner struct {
+	mu    sync.Mutex
+	panes []string
+	idx   int
+}
+
+func (r *paneSequenceRunner) CreateSession(name, cmd string) error { return nil }
+func (r *paneSequenceRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
+func (r *paneSequenceRunner) SendEnter(session string) error { return nil }
+func (r *paneSequenceRunner) KillSession(session string) error { return nil }
+func (r *paneSequenceRunner) WaitForSession(session string, timeout time.Duration) error {
+	return fmt.Errorf("still running")
+}
+func (r *paneSequenceRunner) ListSessions() ([]string, error) { return nil, nil }
+func (r *paneSequenceRunner) CapturePane(session string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.panes) == 0 {
+		return "", nil
+	}
+	if r.idx >= len(r.panes) {
+		return r.panes[len(r.panes)-1], nil
+	}
+	pane := r.panes[r.idx]
+	r.idx++
+	return pane, nil
+}
 
 func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder) T {
 	t.Helper()
@@ -313,6 +350,94 @@ func TestWatchAgentExitMarksBlockedWithoutFinish(t *testing.T) {
 	}
 	if updated.Status != "blocked" {
 		t.Fatalf("expected blocked status, got %q", updated.Status)
+	}
+}
+
+func TestWatchAgentIdleNudgesIdleAgent(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "idle-watch-test"}))
+	d.runner = &paneSequenceRunner{panes: []string{"still thinking", "still thinking", "still thinking", "still thinking"}}
+	d.idlePollInterval = 10 * time.Millisecond
+	d.idleTimeout = 20 * time.Millisecond
+	d.idleNudgeCooldown = time.Hour
+
+	delivered := make(chan broker.Message, 4)
+	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
+		delivered <- msg
+		_ = d.store.UpdateAgentRunStatus(created.ID, "api", "complete")
+		return nil
+	}
+
+	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "api", Role: "api", Profile: "default", Workdir: t.TempDir(), TmuxSession: "idle-watch", Status: "running", Transport: "tmux"})
+	if err != nil {
+		t.Fatalf("CreateAgentRun: %v", err)
+	}
+	run, err := d.store.GetAgentRun(created.ID, "api")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+
+	d.watchAgentIdle(run)
+
+	select {
+	case msg := <-delivered:
+		if msg.RecipientID != "api" {
+			t.Fatalf("expected recipient api, got %q", msg.RecipientID)
+		}
+		if !strings.Contains(msg.Content, "session appears idle") {
+			t.Fatalf("expected idle nudge message, got %q", msg.Content)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("expected idle nudge to be delivered")
+	}
+
+	events, err := d.store.QueryEvents(created.ID)
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Type == "agent_idle_nudged" && strings.Contains(event.Data, "api") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected agent_idle_nudged event, got %#v", events)
+	}
+}
+
+func TestWatchAgentIdleDoesNotNudgeWhenPaneKeepsChanging(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "idle-active-test"}))
+	d.runner = &paneSequenceRunner{panes: []string{"thinking 1", "thinking 2", "thinking 3", "thinking 4", "thinking 5", "thinking 6", "thinking 7", "thinking 8"}}
+	d.idlePollInterval = 10 * time.Millisecond
+	d.idleTimeout = 25 * time.Millisecond
+	d.idleNudgeCooldown = time.Hour
+
+	delivered := make(chan broker.Message, 1)
+	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
+		delivered <- msg
+		return nil
+	}
+
+	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "api", Role: "api", Profile: "default", Workdir: t.TempDir(), TmuxSession: "idle-active", Status: "running", Transport: "tmux"})
+	if err != nil {
+		t.Fatalf("CreateAgentRun: %v", err)
+	}
+	run, err := d.store.GetAgentRun(created.ID, "api")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+
+	d.watchAgentIdle(run)
+	time.Sleep(80 * time.Millisecond)
+	_ = d.store.UpdateAgentRunStatus(created.ID, "api", "complete")
+
+	select {
+	case msg := <-delivered:
+		t.Fatalf("did not expect idle nudge, got %#v", msg)
+	default:
 	}
 }
 

@@ -91,7 +91,6 @@ These are the real foundations of Nightshift v1.
 
 Still planned / not complete yet:
 
-- idle nudge for agents that stay alive but do not call `belayer finish`
 - richer planner profile / specialist profiles
 - stronger artifact conventions and artifact viewing
 - Extend-localenv-first workbench flows

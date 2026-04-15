@@ -52,6 +52,11 @@ type Daemon struct {
 	launchAgent    func(req agentSpawnRequest) (string, error)
 	deliverMessage func(run store.AgentRun, msg broker.Message) error
 
+	idlePollInterval  time.Duration
+	idleTimeout       time.Duration
+	idleNudgeCooldown time.Duration
+	now               func() time.Time
+
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
 	tools   map[string][]agent.ToolSpec
@@ -68,7 +73,15 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: open store: %w", err)
 	}
 
-	d := &Daemon{store: st, config: cfg, tools: make(map[string][]agent.ToolSpec)}
+	d := &Daemon{
+		store:             st,
+		config:            cfg,
+		tools:             make(map[string][]agent.ToolSpec),
+		idlePollInterval:  15 * time.Second,
+		idleTimeout:       2 * time.Minute,
+		idleNudgeCooldown: 1 * time.Minute,
+		now:               time.Now,
+	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.runner = tmux.NewLocalRunner()
 	d.launchAgent = d.defaultLaunchAgent

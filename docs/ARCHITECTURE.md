@@ -242,6 +242,7 @@ The following is implemented today in the repo:
 - Hermes project-local hook detects explicit `belayer finish`
 - launcher wrapper records finish marker
 - Belayer watcher marks an agent `blocked` if its tmux session exits without explicit finish
+- Belayer idle watcher nudges a still-running agent if its tmux pane stops changing without an explicit finish
 
 This is enough to prove the run-local control-plane model works for planner + api slices.
 
@@ -320,19 +321,16 @@ That gives us parallelism at the **worker** level while keeping the run model si
 
 The following are part of the intended architecture but not fully implemented yet:
 
-### 1. Live idle nudging
-If an agent remains running but appears idle without calling `belayer finish`, Belayer should nudge it through tmux and remind it to finish or mark blocked.
-
-### 2. Better specialist identities
+### 1. Better specialist identities
 The current slice uses existing Hermes profiles plus project-local skills/plugins. The longer-term direction is a more explicit identity model with role-specific profiles and portable skills/memory.
 
-### 3. Extend-first workbench integration
+### 2. Extend-first workbench integration
 Belayer should treat `xt` as the primary Extend workbench interface, not generic compose-first workbench provisioning.
 
-### 4. Worker control plane integration
+### 3. Worker control plane integration
 Belayer should remain the run-local control plane, while a higher-level Nightshift service handles queueing, worker assignment, and run lifecycle across machines.
 
-### 5. Centralized identity materialization
+### 4. Centralized identity materialization
 Longer term, profiles/skills/memory may be materialized from a git-backed canonical identity source rather than relying on purely local profile state.
 
 ---
