@@ -30,14 +30,14 @@ SEND_MESSAGE_SCHEMA = {
     "name": "belayer_send_message",
     "description": (
         "Send a message to another agent in this Belayer session. "
-        "Use this to communicate with the planner or other specialists."
+        "Use this to communicate with the supervisor or other specialists."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "to": {
                 "type": "string",
-                "description": "The recipient agent name (e.g. 'planner', 'api', 'reviewer')",
+                "description": "The recipient agent name (e.g. 'supervisor', 'backend', 'reviewer')",
             },
             "content": {
                 "type": "string",
@@ -136,10 +136,16 @@ SPAWN_AGENT_SCHEMA = {
 REQUEST_COMPLETION_SCHEMA = {
     "name": "belayer_request_completion",
     "description": (
-        "Signal that all implementation work is complete and ready for verification. "
-        "This triggers the product manager agent to verify the spec against the code. "
-        "Only call this when you believe ALL spec items have been implemented. "
-        "Do NOT call belayer finish directly — the PM agent controls run completion."
+        "Signal that the run is complete and ready to close. This is a terminal "
+        "workflow action — it ends the active work phase and spawns the PM agent "
+        "for adversarial spec-vs-reality verification. The PM will independently "
+        "verify every spec item against the code and either approve (closing the "
+        "session) or reject (returning gaps for remediation). "
+        "Do NOT call this until: all specialist agents have reported done, all "
+        "implementation branches have been merged or are ready, you have independently "
+        "verified the work (tests pass, builds succeed), and review/QA feedback has "
+        "been addressed. Once called, you must wait for the PM's verdict. You cannot "
+        "approve or reject the run yourself."
     ),
     "parameters": {
         "type": "object",
@@ -180,8 +186,8 @@ REJECT_COMPLETION_SCHEMA = {
     "name": "belayer_reject_completion",
     "description": (
         "Reject the run because the spec is not fully satisfied. "
-        "This sends the gap list back to the planner for remediation. "
-        "Be specific about what's missing so the planner can fix it."
+        "This sends the gap list back to the supervisor for remediation. "
+        "Be specific about what's missing so the supervisor can fix it."
     ),
     "parameters": {
         "type": "object",
@@ -360,7 +366,7 @@ def make_reject_completion_handler(agent_id: str, session_id: str, socket_path: 
             {"type": "bridge:completion_rejected", "data": event_data},
         )
         if status in (200, 201):
-            return "Completion rejected. Gap list sent to planner for remediation."
+            return "Completion rejected. Gap list sent to supervisor for remediation."
         log.warning("reject_completion failed (%d): %s", status, body[:200])
         return f"[System] Failed to reject completion. Error: {body[:200]}"
 
