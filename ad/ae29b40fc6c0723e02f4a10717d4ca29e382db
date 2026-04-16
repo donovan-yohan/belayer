@@ -1,0 +1,50 @@
+hermes_bridge/tools.py
+  1952714a6f942533 81-83,92-94
+internal/daemon/bridge_events_test.go
+  1952714a6f942533 7,268-528
+internal/daemon/messages.go
+  1952714a6f942533 48
+hermes_bridge/callbacks.py
+  1952714a6f942533 29-31,38-41,62
+internal/daemon/bridge_events.go
+  1952714a6f942533 58-64,86,113,122-126,132,138-147,153-155,164-167,171,178-180,182,190-192,196-200,202-204
+internal/daemon/agents.go
+  1952714a6f942533 417-419
+hermes_bridge/__main__.py
+  1952714a6f942533 391
+internal/store/store.go
+  1952714a6f942533 196-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "adae29b40fc6c0723e02f4a10717d4ca29e382db",
+  "prompts": {
+    "0c1fc59b3505dc91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21c65eec-df38-4e78-8216-92cdec2d7b16",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 525,
+      "overriden_lines": 0
+    },
+    "1952714a6f942533": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86523080-c1dc-4b91-9fc6-8e650ead6bdd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 348,
+      "total_deletions": 21,
+      "accepted_lines": 348,
+      "overriden_lines": 0
+    }
+  }
+}
