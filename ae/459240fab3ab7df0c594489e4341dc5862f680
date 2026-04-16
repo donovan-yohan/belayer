@@ -1,0 +1,65 @@
+internal/cli/run.go
+  0c1fc59b3505dc91 52-53
+internal/cli/nightshift.go
+  0c1fc59b3505dc91 17-19,151-153
+internal/daemon/messages.go
+  0c1fc59b3505dc91 81-84,124-127
+internal/harness/hermes/hermes.go
+  0c1fc59b3505dc91 31-42,68-75
+internal/daemon/daemon_test.go
+  0c1fc59b3505dc91 309-322
+internal/store/store.go
+  0c1fc59b3505dc91 363-374,410-426
+internal/cli/artifact.go
+  0c1fc59b3505dc91 110-112
+internal/daemon/artifacts.go
+  0c1fc59b3505dc91 33-34,38-39
+internal/daemon/agents.go
+  0c1fc59b3505dc91 113-116,165-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "ae459240fab3ab7df0c594489e4341dc5862f680",
+  "prompts": {
+    "0c1fc59b3505dc91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21c65eec-df38-4e78-8216-92cdec2d7b16",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 47480,
+      "total_deletions": 22,
+      "accepted_lines": 47480,
+      "overriden_lines": 0
+    },
+    "a12e7b72326dea5d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c8c01528-c8bd-4597-a050-baa263126c2b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "beecb793b04ae5d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60427526-396c-4ef4-ba78-847e76f541ec",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 247,
+      "overriden_lines": 0
+    }
+  }
+}
