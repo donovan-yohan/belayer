@@ -40,6 +40,34 @@ type WorkbenchState struct {
 	UpdatedAt time.Time
 }
 
+// AgentRun represents a launched agent/harness instance within a session.
+type AgentRun struct {
+	ID          string
+	SessionID   string
+	Name        string
+	Role        string
+	Profile     string
+	RepoScope   string
+	Workdir     string
+	Transport   string
+	TmuxSession string
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// Artifact represents a durable output produced by an agent during a run.
+type Artifact struct {
+	ID        string
+	SessionID string
+	Kind      string
+	Path      string
+	Producer  string
+	Summary   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // Store is a SQLite-backed session and event store.
 type Store struct {
 	db *sql.DB
@@ -246,6 +274,178 @@ func (s *Store) DeleteWorkbenchBySession(sessionID string) error {
 		return fmt.Errorf("store: delete workbench by session: %w", err)
 	}
 	return nil
+}
+
+// CreateAgentRun inserts a launched agent run. If run.ID is empty, a UUID is generated.
+func (s *Store) CreateAgentRun(run AgentRun) (string, error) {
+	if run.ID == "" {
+		run.ID = uuid.New().String()
+	}
+	now := time.Now().UTC()
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = now
+	}
+	if run.Status == "" {
+		run.Status = "starting"
+	}
+	if run.Transport == "" {
+		run.Transport = "tmux"
+	}
+
+	_, err := s.db.Exec(
+		`INSERT INTO agent_runs (id, session_id, name, role, profile, repo_scope, workdir, transport, tmux_session, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.SessionID, run.Name, run.Role, run.Profile, run.RepoScope, run.Workdir, run.Transport, run.TmuxSession, run.Status, run.CreatedAt, run.UpdatedAt,
+	)
+	if err != nil {
+		return "", fmt.Errorf("store: create agent run: %w", err)
+	}
+	return run.ID, nil
+}
+
+// GetAgentRun retrieves a single agent run by session + name.
+func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
+	row := s.db.QueryRow(
+		`SELECT id, session_id, name, role, profile, repo_scope, workdir, transport, tmux_session, status, created_at, updated_at
+		 FROM agent_runs WHERE session_id = ? AND name = ?`, sessionID, name,
+	)
+	var run AgentRun
+	var createdAt, updatedAt string
+	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Transport, &run.TmuxSession, &run.Status, &createdAt, &updatedAt)
+	if err != nil {
+		return AgentRun{}, fmt.Errorf("store: get agent run: %w", err)
+	}
+	run.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	run.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	return run, nil
+}
+
+// ListAgentRuns returns all agent runs for a session ordered by created_at.
+func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
+	rows, err := s.db.Query(
+		`SELECT id, session_id, name, role, profile, repo_scope, workdir, transport, tmux_session, status, created_at, updated_at
+		 FROM agent_runs WHERE session_id = ? ORDER BY created_at ASC`, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: list agent runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []AgentRun
+	for rows.Next() {
+		var run AgentRun
+		var createdAt, updatedAt string
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Transport, &run.TmuxSession, &run.Status, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("store: list agent runs scan: %w", err)
+		}
+		run.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		run.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+// UpdateAgentRunStatus updates status/tmux session metadata.
+func (s *Store) UpdateAgentRunStatus(sessionID, name, status string) error {
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET status = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		status, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run status: %w", err)
+	}
+	return nil
+}
+
+// UpdateAgentRunWorkdir updates the workdir for an agent run.
+func (s *Store) UpdateAgentRunWorkdir(sessionID, name, workdir string) error {
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET workdir = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		workdir, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run workdir: %w", err)
+	}
+	return nil
+}
+
+// UpdateAgentRunTmuxSession updates the tmux session name for an agent run.
+func (s *Store) UpdateAgentRunTmuxSession(sessionID, name, tmuxSession string) error {
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET tmux_session = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		tmuxSession, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run tmux session: %w", err)
+	}
+	return nil
+}
+
+// CreateArtifact inserts a new artifact record.
+func (s *Store) CreateArtifact(a Artifact) (string, error) {
+	if a.ID == "" {
+		a.ID = uuid.New().String()
+	}
+	now := time.Now().UTC()
+	if a.CreatedAt.IsZero() {
+		a.CreatedAt = now
+	}
+	if a.UpdatedAt.IsZero() {
+		a.UpdatedAt = now
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO artifacts (id, session_id, kind, path, producer, summary, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.SessionID, a.Kind, a.Path, a.Producer, a.Summary, a.CreatedAt, a.UpdatedAt,
+	)
+	if err != nil {
+		return "", fmt.Errorf("store: create artifact: %w", err)
+	}
+	return a.ID, nil
+}
+
+// GetArtifact retrieves a single artifact by ID.
+func (s *Store) GetArtifact(id string) (Artifact, error) {
+	row := s.db.QueryRow(
+		`SELECT id, session_id, kind, path, producer, summary, created_at, updated_at
+		 FROM artifacts WHERE id = ?`, id,
+	)
+	var a Artifact
+	var createdAt, updatedAt string
+	err := row.Scan(&a.ID, &a.SessionID, &a.Kind, &a.Path, &a.Producer, &a.Summary, &createdAt, &updatedAt)
+	if err != nil {
+		return Artifact{}, fmt.Errorf("store: get artifact: %w", err)
+	}
+	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	return a, nil
+}
+
+// ListArtifacts returns artifacts for a session ordered by created_at.
+func (s *Store) ListArtifacts(sessionID string) ([]Artifact, error) {
+	rows, err := s.db.Query(
+		`SELECT id, session_id, kind, path, producer, summary, created_at, updated_at
+		 FROM artifacts WHERE session_id = ? ORDER BY created_at ASC`, sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: list artifacts: %w", err)
+	}
+	defer rows.Close()
+	var artifacts []Artifact
+	for rows.Next() {
+		var a Artifact
+		var createdAt, updatedAt string
+		if err := rows.Scan(&a.ID, &a.SessionID, &a.Kind, &a.Path, &a.Producer, &a.Summary, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("store: list artifacts scan: %w", err)
+		}
+		a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		artifacts = append(artifacts, a)
+	}
+	return artifacts, rows.Err()
 }
 
 // LogEvent inserts an event row for a session.

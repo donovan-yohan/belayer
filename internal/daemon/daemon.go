@@ -17,8 +17,10 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
+	"github.com/donovan-yohan/belayer/internal/broker"
 	"github.com/donovan-yohan/belayer/internal/docker"
 	"github.com/donovan-yohan/belayer/internal/store"
+	"github.com/donovan-yohan/belayer/internal/tmux"
 	"gopkg.in/yaml.v3"
 )
 
@@ -44,6 +46,11 @@ type Daemon struct {
 	listener net.Listener
 	server   *http.Server
 	config   Config
+	broker   broker.Broker
+	runner   tmux.Runner
+
+	launchAgent    func(req agentSpawnRequest) (string, error)
+	deliverMessage func(run store.AgentRun, msg broker.Message) error
 
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
@@ -62,6 +69,10 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{store: st, config: cfg, tools: make(map[string][]agent.ToolSpec)}
+	d.broker = broker.NewMemoryBroker(st)
+	d.runner = tmux.NewLocalRunner()
+	d.launchAgent = d.defaultLaunchAgent
+	d.deliverMessage = d.defaultDeliverMessage
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", d.handleHealth)
 	mux.HandleFunc("POST /sessions", d.handleCreateSession)
@@ -74,6 +85,11 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/messages", d.handleSendMessage)
 	mux.HandleFunc("POST /sessions/{id}/messages/broadcast", d.handleBroadcastMessage)
 	mux.HandleFunc("GET /sessions/{id}/messages", d.handleListMessages)
+	mux.HandleFunc("POST /sessions/{id}/agents", d.handleSpawnAgent)
+	mux.HandleFunc("GET /sessions/{id}/agents", d.handleListAgents)
+	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
+	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
+	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
 	mux.HandleFunc("GET /search", d.handleSearch)
 	mux.HandleFunc("POST /sessions/{id}/workbench", d.handleCreateWorkbench)
 	mux.HandleFunc("GET /sessions/{id}/workbench", d.handleGetWorkbench)

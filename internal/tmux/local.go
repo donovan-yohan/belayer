@@ -78,6 +78,15 @@ func (r *LocalRunner) SendKeys(session, keys string, bracketed bool) error {
 	return nil
 }
 
+// SendEnter sends an Enter keypress to the session.
+func (r *LocalRunner) SendEnter(session string) error {
+	_, err := r.run("send-keys", "-t", r.sessionName(session), "Enter")
+	if err != nil {
+		return fmt.Errorf("send enter to session %q: %w", session, err)
+	}
+	return nil
+}
+
 // CapturePane returns the current visible content of the session's pane.
 func (r *LocalRunner) CapturePane(session string) (string, error) {
 	out, err := r.run("capture-pane", "-t", r.sessionName(session), "-p")

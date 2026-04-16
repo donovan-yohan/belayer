@@ -31,6 +31,7 @@ Commands:
 	cmd.AddCommand(
 		newVersionCmd(),
 		newDaemonCmd(),
+		newRunCmd(),
 		newSessionCmd(),
 		newAttachCmd(),
 		newLogsCmd(),
@@ -39,6 +40,10 @@ Commands:
 		newDebugCmd(),
 		newRecallCmd(),
 		newMessageCmd(),
+		newArtifactCmd(),
+		newRosterCmd(),
+		newSpawnCmd(),
+		newFinishCmd(),
 		newContextCmd(),
 		newNoteCmd(),
 		newSetupCmd(),

@@ -1,0 +1,5 @@
+name: belayer-support
+version: "1.0"
+description: Belayer communication skill + finish guard hooks for Nightshift runs
+provides_hooks:
+  - post_tool_call
