@@ -515,3 +515,7 @@ Hermes needs API keys or OAuth tokens. With clamshell, credentials should flow t
 ### 4. Crag persistence
 
 SQLite for the PoC. Workspace definitions as YAML files in `~/.crag/workspaces/`. No web UI yet — CLI only.
+
+### 5. `runtime.Endpoint` shape (deferred)
+
+`Endpoint` currently carries only `Name`/`Host`/`Port`. A protocol/scheme field plus a `URL()` helper was raised in code review (2026-04-16, CodeRabbit on PR #71) — it would help once endpoints drive sandbox egress policy or get injected as env vars for agents. Deferred until a real provider lands so we design the shape around concrete needs (e.g., does the clamshell policy need a protocol discriminator, or is host/port enough?). Revisit when implementing the command provider's endpoint wiring in Phase 5.

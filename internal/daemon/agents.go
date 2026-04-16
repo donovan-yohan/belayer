@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -396,9 +395,24 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	}
 
 	// Get or create sandbox handle for the session.
-	handle := sandbox.Handle{ID: req.SessionID}
+	sess, err := d.store.GetSession(req.SessionID)
+	if err != nil {
+		stdinR.Close()
+		stdinW.Close()
+		stdoutLog.Close()
+		stderrLog.Close()
+		return nil, fmt.Errorf("load session for sandbox handle: %w", err)
+	}
+	handle, err := d.ensureSandboxHandle(d.startCtx, sess)
+	if err != nil {
+		stdinR.Close()
+		stdinW.Close()
+		stdoutLog.Close()
+		stderrLog.Close()
+		return nil, fmt.Errorf("ensure sandbox handle: %w", err)
+	}
 
-	osProc, err := d.sandbox.Exec(context.Background(), handle, argv, sandbox.ExecOpts{
+	osProc, err := d.sandbox.Exec(d.startCtx, handle, argv, sandbox.ExecOpts{
 		Env:    env,
 		Dir:    workdir,
 		Stdin:  stdinR,
@@ -418,9 +432,12 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 
 	proc := bridge.NewProcess(osProc, stdinW)
 
-	// Close log files when process exits.
+	// Close log files and stdin writer when process exits. stdinW is our
+	// handle for sending interrupts; once the process is gone it's a pipe to
+	// nowhere, so closing it avoids leaking file descriptors.
 	go func() {
 		<-proc.Done()
+		stdinW.Close()
 		stdoutLog.Close()
 		stderrLog.Close()
 	}()

@@ -3,7 +3,6 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 )
 
@@ -18,10 +17,10 @@ func (n *Noop) Create(_ context.Context, cfg Config) (Handle, error) {
 	return Handle{ID: cfg.Name}, nil
 }
 
-// Exec runs cmd directly on the host using exec.CommandContext.
-// The process is started and its *os.Process is returned; the caller is
-// responsible for waiting on it.
-func (n *Noop) Exec(ctx context.Context, _ Handle, cmd []string, opts ExecOpts) (*os.Process, error) {
+// Exec runs cmd directly on the host using exec.CommandContext and returns
+// a Process that wraps the *exec.Cmd so callers get cmd.Wait() semantics
+// (stdio pumps drained, CommandContext watcher released).
+func (n *Noop) Exec(ctx context.Context, _ Handle, cmd []string, opts ExecOpts) (Process, error) {
 	if len(cmd) == 0 {
 		return nil, fmt.Errorf("sandbox/noop: exec requires at least one argument")
 	}
@@ -37,10 +36,36 @@ func (n *Noop) Exec(ctx context.Context, _ Handle, cmd []string, opts ExecOpts) 
 	if err := c.Start(); err != nil {
 		return nil, fmt.Errorf("sandbox/noop: start process: %w", err)
 	}
-	return c.Process, nil
+	return &noopProcess{cmd: c}, nil
 }
 
 // Stop is a no-op for the noop driver — there is no sandbox environment to tear down.
 func (n *Noop) Stop(_ context.Context, _ Handle) error {
 	return nil
+}
+
+// noopProcess wraps *exec.Cmd to satisfy Process. Using cmd.Wait (rather than
+// cmd.Process.Wait) is required so that stdout/stderr copy goroutines spawned
+// by exec when Stdout/Stderr are non-*os.File writers have finished before
+// Wait returns.
+type noopProcess struct {
+	cmd *exec.Cmd
+}
+
+func (p *noopProcess) Pid() int {
+	if p.cmd.Process == nil {
+		return 0
+	}
+	return p.cmd.Process.Pid
+}
+
+func (p *noopProcess) Wait() error {
+	return p.cmd.Wait()
+}
+
+func (p *noopProcess) Kill() error {
+	if p.cmd.Process == nil {
+		return nil
+	}
+	return p.cmd.Process.Kill()
 }

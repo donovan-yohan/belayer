@@ -197,6 +197,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 				log.Printf("ERROR: processAgentStatusEvent: failed to escalate session %s to needs_human_review: %v", sessionID, err)
 			} else {
 				log.Printf("Session %s escalated to human review: supervisor reported incomplete", sessionID)
+				d.terminateSandbox(d.startCtx, sessionID)
 			}
 		}
 
@@ -408,6 +409,7 @@ func (d *Daemon) handleBridgeCompletionApproved(sessionID, agentName string, dat
 			"report":      report[:min(len(report), 1000)],
 		}),
 	})
+	d.terminateSandbox(d.startCtx, sessionID)
 
 	log.Printf("Session %s marked complete (approved by %s)", sessionID, agentName)
 }
@@ -454,6 +456,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 				"rejections": fmt.Sprintf("%d", rejectionCount),
 			}),
 		})
+		d.terminateSandbox(d.startCtx, sessionID)
 		// Notify supervisor of escalation.
 		msg := broker.Message{
 			ID:          uuid.New().String(),

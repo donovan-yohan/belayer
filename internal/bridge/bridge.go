@@ -50,13 +50,22 @@ type Config struct {
 	Cmd []string
 }
 
+// ProcessHandle is the minimal contract bridge.NewProcess needs from a process
+// started by an external driver (e.g. sandbox.Process). Wait must block until
+// the process has fully exited — including any stdio pump goroutines — so the
+// daemon can safely close log writers once Wait returns.
+type ProcessHandle interface {
+	Wait() error
+	Kill() error
+}
+
 // Process wraps a running bridge subprocess.
 type Process struct {
 	cmd     *exec.Cmd
-	proc    *os.Process // set by NewProcess; used for kill when cmd is nil
+	handle  ProcessHandle // set by NewProcess; drives Wait/Kill when cmd is nil
 	stdin   io.WriteCloser
 	done    chan struct{} // closed when process exits
-	exitErr error        // set before done is closed
+	exitErr error         // set before done is closed
 	mu      sync.Mutex
 }
 
@@ -120,23 +129,20 @@ func BuildEnv(cfg Config) []string {
 	return env
 }
 
-// NewProcess creates a Process that wraps an already-started os.Process.
+// NewProcess creates a Process that wraps an already-started ProcessHandle.
 // This is used when process execution is handled by an external sandbox driver
-// rather than by Spawn().
-func NewProcess(proc *os.Process, stdin io.WriteCloser) *Process {
+// rather than by Spawn(). The handle's Wait is expected to synchronize with
+// stdio pumps so the caller can close log writers after Done fires.
+func NewProcess(handle ProcessHandle, stdin io.WriteCloser) *Process {
 	p := &Process{
-		proc:  proc,
-		stdin: stdin,
-		done:  make(chan struct{}),
+		handle: handle,
+		stdin:  stdin,
+		done:   make(chan struct{}),
 	}
 	go func() {
-		state, err := proc.Wait()
+		waitErr := handle.Wait()
 		p.mu.Lock()
-		if err != nil {
-			p.exitErr = err
-		} else if state != nil && !state.Success() {
-			p.exitErr = &exec.ExitError{ProcessState: state}
-		}
+		p.exitErr = waitErr
 		p.mu.Unlock()
 		close(p.done)
 	}()
@@ -253,14 +259,16 @@ func (p *Process) Stop(timeout time.Duration) error {
 		p.mu.Unlock()
 		return err
 	case <-ctx.Done():
-		// Graceful wait timed out — force kill.
-		var proc *os.Process
-		if p.cmd != nil {
-			proc = p.cmd.Process
-		} else {
-			proc = p.proc
+		// Graceful wait timed out — force kill via whichever backend owns
+		// the process.
+		var killErr error
+		switch {
+		case p.handle != nil:
+			killErr = p.handle.Kill()
+		case p.cmd != nil && p.cmd.Process != nil:
+			killErr = p.cmd.Process.Kill()
 		}
-		if killErr := proc.Kill(); killErr != nil {
+		if killErr != nil {
 			return fmt.Errorf("bridge: kill after stop timeout: %w", killErr)
 		}
 		<-p.done

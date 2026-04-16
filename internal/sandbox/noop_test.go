@@ -41,12 +41,8 @@ func TestNoopExecSimpleCommand(t *testing.T) {
 		t.Fatalf("Exec returned unexpected error: %v", err)
 	}
 
-	state, err := proc.Wait()
-	if err != nil {
+	if err := proc.Wait(); err != nil {
 		t.Fatalf("Wait returned unexpected error: %v", err)
-	}
-	if !state.Success() {
-		t.Errorf("expected process to exit successfully, got: %v", state)
 	}
 	if got := strings.TrimSpace(stdout.String()); got != "hello" {
 		t.Errorf("expected stdout %q, got %q", "hello", got)
@@ -66,12 +62,8 @@ func TestNoopExecEnvVars(t *testing.T) {
 		t.Fatalf("Exec returned unexpected error: %v", err)
 	}
 
-	state, err := proc.Wait()
-	if err != nil {
+	if err := proc.Wait(); err != nil {
 		t.Fatalf("Wait returned unexpected error: %v", err)
-	}
-	if !state.Success() {
-		t.Errorf("expected process to exit successfully, got: %v", state)
 	}
 	if !strings.Contains(stdout.String(), "BELAYER_TEST_VAR=sandwich") {
 		t.Errorf("expected env output to contain BELAYER_TEST_VAR=sandwich, got:\n%s", stdout.String())
@@ -93,23 +85,13 @@ func TestNoopExecWorkingDirectory(t *testing.T) {
 		t.Fatalf("Exec returned unexpected error: %v", err)
 	}
 
-	state, err := proc.Wait()
-	if err != nil {
+	if err := proc.Wait(); err != nil {
 		t.Fatalf("Wait returned unexpected error: %v", err)
 	}
-	if !state.Success() {
-		t.Errorf("expected process to exit successfully, got: %v", state)
-	}
 
-	// Resolve symlinks so we can compare cleanly (macOS /var -> /private/var).
-	resolvedDir, err := os.Stat(dir)
-	if err != nil {
-		t.Fatalf("stat temp dir: %v", err)
-	}
-	_ = resolvedDir
-
+	// pwd may differ from dir due to symlinks (e.g. macOS /var -> /private/var),
+	// so compare via os.SameFile rather than string equality.
 	got := strings.TrimSpace(stdout.String())
-	// The printed dir may differ from dir due to symlinks; compare via os.SameFile.
 	gotInfo, err := os.Stat(got)
 	if err != nil {
 		t.Fatalf("stat pwd output %q: %v", got, err)

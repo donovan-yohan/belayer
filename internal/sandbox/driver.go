@@ -6,7 +6,6 @@ package sandbox
 import (
 	"context"
 	"io"
-	"os"
 )
 
 // Driver manages the agent execution boundary. Belayer holds one driver per session.
@@ -16,11 +15,26 @@ type Driver interface {
 	Create(ctx context.Context, cfg Config) (Handle, error)
 
 	// Exec runs a command inside the sandbox. Used for each agent spawn.
-	// The caller manages stdin/stdout/stderr wiring.
-	Exec(ctx context.Context, h Handle, cmd []string, opts ExecOpts) (*os.Process, error)
+	// The caller manages stdin/stdout/stderr wiring via ExecOpts and waits on
+	// the returned Process.
+	Exec(ctx context.Context, h Handle, cmd []string, opts ExecOpts) (Process, error)
 
 	// Stop tears down the sandbox. Called when the session ends.
 	Stop(ctx context.Context, h Handle) error
+}
+
+// Process is a running process started by a Driver. Wait must block until the
+// process has exited and any stdio pump goroutines have finished, so callers
+// can safely close non-*os.File writers (e.g. io.MultiWriter) passed via
+// ExecOpts once Wait returns.
+type Process interface {
+	// Pid returns the underlying OS process id, or 0 if unavailable.
+	Pid() int
+	// Wait blocks until the process exits and returns the exit error
+	// (nil on success, typically *exec.ExitError on non-zero exit).
+	Wait() error
+	// Kill forcibly terminates the process.
+	Kill() error
 }
 
 // Config holds the parameters used to create a sandbox environment.
