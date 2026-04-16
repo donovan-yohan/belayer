@@ -11,20 +11,13 @@ var version = "dev"
 func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "belayer",
-		Short:        "Belayer v6 session-runtime scaffold",
+		Short:        "Belayer — agent control plane for Nightshift",
 		SilenceUsage: true,
-		Long: `Belayer is on the v6 clean-break baseline.
+		Long: `Belayer v7 — run-local agent control plane for Nightshift.
 
-Legacy v5 orchestration code (Temporal workers, YAML pipelines, framework installers,
-plugin registries, and vendor adapters) has been removed from this branch.
-
-What remains today:
-  - CLI entrypoint scaffolding
-  - Shared model types
-  - Shared event types and logger
-  - Documentation for the planned v6 session runtime
-
-Use this branch as the base for all v6 implementation work.`,
+Coordinates supervisor + specialist agents via the Hermes bridge within a single
+worker run. Daemon manages sessions, agent roster, messages, events, and artifacts
+over SQLite.`,
 	}
 
 	cmd.Version = version

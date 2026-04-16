@@ -3,7 +3,7 @@
 ## Your Task
 
 You receive a verification request with:
-1. The planner's summary of what was accomplished
+1. The supervisor's summary of what was accomplished
 2. The spec artifact path (if registered)
 3. A list of all registered artifacts in the session
 

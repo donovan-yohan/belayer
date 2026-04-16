@@ -143,7 +143,7 @@ func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, da
 	summary, _ := data["summary"].(string)
 	specArtifact, _ := data["spec_artifact"].(string)
 
-	// Build context for the PM: spec location, artifact list, planner summary.
+	// Build context for the PM: spec location, artifact list, supervisor summary.
 	artifacts, _ := d.store.ListArtifacts(sessionID)
 
 	// Find the spec artifact if not explicitly provided.
@@ -195,7 +195,7 @@ Instructions:
 5. Produce a structured verification report (Passed / Failed / Deferred).
 
 If ALL spec items are satisfied: call belayer_approve_completion with your verification report.
-If gaps exist: call belayer_reject_completion with the specific gaps so the planner can fix them.`,
+If gaps exist: call belayer_reject_completion with the specific gaps so the supervisor can fix them.`,
 		summary, specLine, artifactSummary,
 	)
 

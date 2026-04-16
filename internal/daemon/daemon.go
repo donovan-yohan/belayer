@@ -348,7 +348,7 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Process bridge events for side effects (status updates, planner notifications).
+	// Process bridge events for side effects (status updates, supervisor notifications).
 	if strings.HasPrefix(req.Type, "bridge:") {
 		d.processBridgeEvent(id, req.Type, req.Data)
 	}
