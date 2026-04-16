@@ -16,15 +16,16 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
+	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
 	"github.com/donovan-yohan/belayer/internal/store"
-	"github.com/donovan-yohan/belayer/internal/tmux"
 )
 
 // Config holds daemon startup configuration.
 type Config struct {
-	SocketPath string
-	DBPath     string
+	SocketPath  string
+	DBPath      string
+	BelayerRoot string // directory containing hermes_bridge/ (for PYTHONPATH)
 }
 
 // DefaultConfig returns config using ~/.belayer/ paths.
@@ -44,15 +45,12 @@ type Daemon struct {
 	server   *http.Server
 	config   Config
 	broker   broker.Broker
-	runner   tmux.Runner
 
-	launchAgent    func(req agentSpawnRequest) (string, error)
-	deliverMessage func(run store.AgentRun, msg broker.Message) error
+	spawnBridgeAgent func(req agentSpawnRequest) (*bridge.Process, error)
 
-	idlePollInterval  time.Duration
-	idleTimeout       time.Duration
-	idleNudgeCooldown time.Duration
-	now               func() time.Time
+	// Bridge process tracking: sessionID/agentName -> *bridge.Process
+	bridgeMu    sync.RWMutex
+	bridgeProcs map[string]*bridge.Process
 
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
@@ -71,18 +69,13 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		store:             st,
-		config:            cfg,
-		tools:             make(map[string][]agent.ToolSpec),
-		idlePollInterval:  15 * time.Second,
-		idleTimeout:       2 * time.Minute,
-		idleNudgeCooldown: 1 * time.Minute,
-		now:               time.Now,
+		store:       st,
+		config:      cfg,
+		tools:       make(map[string][]agent.ToolSpec),
+		bridgeProcs: make(map[string]*bridge.Process),
 	}
 	d.broker = broker.NewMemoryBroker(st)
-	d.runner = tmux.NewLocalRunner()
-	d.launchAgent = d.defaultLaunchAgent
-	d.deliverMessage = d.defaultDeliverMessage
+	d.spawnBridgeAgent = d.bridgeLaunchAgent
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", d.handleHealth)
 	mux.HandleFunc("POST /sessions", d.handleCreateSession)
@@ -354,6 +347,12 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Process bridge events for side effects (status updates, planner notifications).
+	if strings.HasPrefix(req.Type, "bridge:") {
+		d.processBridgeEvent(id, req.Type, req.Data)
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "logged"})
 }
 
@@ -536,4 +535,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// bridgeKey returns the map key for a bridge process given session and agent name.
+func bridgeKey(sessionID, agentName string) string {
+	return sessionID + "/" + agentName
 }

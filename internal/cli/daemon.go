@@ -12,7 +12,7 @@ import (
 )
 
 func newDaemonCmd() *cobra.Command {
-	var socketPath, dbPath string
+	var socketPath, dbPath, belayerRoot string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -25,6 +25,9 @@ func newDaemonCmd() *cobra.Command {
 			}
 			if dbPath != "" {
 				cfg.DBPath = dbPath
+			}
+			if belayerRoot != "" {
+				cfg.BelayerRoot = belayerRoot
 			}
 
 			d, err := daemon.New(cfg)
@@ -42,5 +45,6 @@ func newDaemonCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&socketPath, "socket", "", "Unix socket path (default ~/.belayer/daemon.sock)")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite database path (default ~/.belayer/belayer.db)")
+	cmd.Flags().StringVar(&belayerRoot, "belayer-root", "", "Path to belayer repo root (for hermes_bridge PYTHONPATH)")
 	return cmd
 }

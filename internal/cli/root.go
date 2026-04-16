@@ -11,43 +11,34 @@ var version = "dev"
 func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "belayer",
-		Short:        "Orchestrate autonomous coding agents through sessions",
+		Short:        "Belayer v6 session-runtime scaffold",
 		SilenceUsage: true,
-		Long: `Belayer v6 — session runtime for autonomous coding agents.
+		Long: `Belayer is on the v6 clean-break baseline.
 
-Commands:
-  implement   Launch an implementation session (pilot + implementer + reviewer)
-  daemon      Start the belayer daemon (long-running supervisor)
-  session     Create, list, and stop agent sessions
-  attach      Attach to a session's agent tmux panes
-  setup       Bootstrap a .belayer/ workspace
-  status      Show running sessions
-  logs        Show session events
-  watch       Stream events from one or more sessions
-  recall      Search events via FTS5`,
+Legacy v5 orchestration code (Temporal workers, YAML pipelines, framework installers,
+plugin registries, and vendor adapters) has been removed from this branch.
+
+What remains today:
+  - CLI entrypoint scaffolding
+  - Shared model types
+  - Shared event types and logger
+  - Documentation for the planned v6 session runtime
+
+Use this branch as the base for all v6 implementation work.`,
 	}
 
 	cmd.Version = version
 	cmd.AddCommand(
 		newVersionCmd(),
 		newDaemonCmd(),
-		newRunCmd(),
 		newSessionCmd(),
 		newAttachCmd(),
 		newLogsCmd(),
-		newWatchCmd(),
 		newStatusCmd(),
-		newDebugCmd(),
 		newRecallCmd(),
-		newMessageCmd(),
-		newArtifactCmd(),
-		newRosterCmd(),
-		newSpawnCmd(),
-		newFinishCmd(),
-		newContextCmd(),
-		newNoteCmd(),
-		newSetupCmd(),
-		newToolCmd(),
+		newScaffoldCmd("climb", "Reserved v6 task/session entrypoint", "Implement the v6 session runtime before restoring climb behavior."),
+		newScaffoldCmd("setup", "Reserved v6 bootstrap command", "Replace framework installation with session-runtime bootstrap once the new design lands."),
+		newScaffoldCmd("submit", "Reserved v6 submission surface", "Restore submit after the new runtime decides how tasks enter the system."),
 	)
 	return cmd
 }

@@ -9,11 +9,11 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
+	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
@@ -28,17 +28,13 @@ func testDaemon(t *testing.T) *Daemon {
 	t.Cleanup(func() { st.Close() })
 
 	d := &Daemon{
-		store:             st,
-		config:            Config{},
-		tools:             make(map[string][]agent.ToolSpec),
-		idlePollInterval:  15 * time.Second,
-		idleTimeout:       2 * time.Minute,
-		idleNudgeCooldown: 1 * time.Minute,
-		now:               time.Now,
+		store:       st,
+		config:      Config{},
+		tools:       make(map[string][]agent.ToolSpec),
+		bridgeProcs: make(map[string]*bridge.Process),
 	}
 	d.broker = broker.NewMemoryBroker(st)
-	d.launchAgent = func(req agentSpawnRequest) (string, error) { return req.Name + "-tmux", nil }
-	d.deliverMessage = func(_ store.AgentRun, _ broker.Message) error { return nil }
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", d.handleHealth)
 	mux.HandleFunc("POST /sessions", d.handleCreateSession)
@@ -77,78 +73,6 @@ func doRequest(t *testing.T, d *Daemon, method, path string, body any) *httptest
 	return rr
 }
 
-type immediateRunner struct{}
-
-func (immediateRunner) CreateSession(name, cmd string) error { return nil }
-func (immediateRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
-func (immediateRunner) SendEnter(session string) error { return nil }
-func (immediateRunner) CapturePane(session string) (string, error) { return "", nil }
-func (immediateRunner) KillSession(session string) error { return nil }
-func (immediateRunner) WaitForSession(session string, timeout time.Duration) error { return nil }
-func (immediateRunner) ListSessions() ([]string, error) { return nil, nil }
-
-type paneSequenceRunner struct {
-	mu    sync.Mutex
-	panes []string
-	idx   int
-}
-
-type commandCaptureRunner struct {
-	lastName string
-	lastCmd  string
-}
-
-type hermesStatusRunner struct {
-	mu      sync.Mutex
-	counter int
-}
-
-func (r *hermesStatusRunner) CreateSession(name, cmd string) error { return nil }
-func (r *hermesStatusRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
-func (r *hermesStatusRunner) SendEnter(session string) error { return nil }
-func (r *hermesStatusRunner) KillSession(session string) error { return nil }
-func (r *hermesStatusRunner) WaitForSession(session string, timeout time.Duration) error { return fmt.Errorf("still running") }
-func (r *hermesStatusRunner) ListSessions() ([]string, error) { return nil, nil }
-func (r *hermesStatusRunner) CapturePane(session string) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.counter++
-	return fmt.Sprintf("Welcome\n⚕ unknown │ ctx -- │ [░░░░░░░░░░] -- │ %ds\nTask still pending", r.counter), nil
-}
-
-func (r *commandCaptureRunner) CreateSession(name, cmd string) error {
-	r.lastName = name
-	r.lastCmd = cmd
-	return nil
-}
-func (r *commandCaptureRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
-func (r *commandCaptureRunner) SendEnter(session string) error { return nil }
-func (r *commandCaptureRunner) CapturePane(session string) (string, error) { return "", nil }
-func (r *commandCaptureRunner) KillSession(session string) error { return nil }
-func (r *commandCaptureRunner) WaitForSession(session string, timeout time.Duration) error { return nil }
-func (r *commandCaptureRunner) ListSessions() ([]string, error) { return nil, nil }
-
-func (r *paneSequenceRunner) CreateSession(name, cmd string) error { return nil }
-func (r *paneSequenceRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
-func (r *paneSequenceRunner) SendEnter(session string) error { return nil }
-func (r *paneSequenceRunner) KillSession(session string) error { return nil }
-func (r *paneSequenceRunner) WaitForSession(session string, timeout time.Duration) error {
-	return fmt.Errorf("still running")
-}
-func (r *paneSequenceRunner) ListSessions() ([]string, error) { return nil, nil }
-func (r *paneSequenceRunner) CapturePane(session string) (string, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.panes) == 0 {
-		return "", nil
-	}
-	if r.idx >= len(r.panes) {
-		return r.panes[len(r.panes)-1], nil
-	}
-	pane := r.panes[r.idx]
-	r.idx++
-	return pane, nil
-}
 
 func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder) T {
 	t.Helper()
@@ -298,11 +222,6 @@ func TestSpawnAgentAndListRoster(t *testing.T) {
 
 func TestSendMessageDeliversToSpawnedAgent(t *testing.T) {
 	d := testDaemon(t)
-	var delivered []string
-	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
-		delivered = append(delivered, msg.Content)
-		return nil
-	}
 	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "msg-test"}))
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "api", Role: "api", Profile: "nightshift-api"})
 
@@ -310,8 +229,16 @@ func TestSendMessageDeliversToSpawnedAgent(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if len(delivered) == 0 || delivered[len(delivered)-1] != "hello api" {
-		t.Fatalf("expected delivered message, got %#v", delivered)
+
+	// Bridge agents use pull-based delivery: messages are persisted in the store
+	// and pulled via GET /sessions/{id}/messages?for=api&pending=true.
+	msgsRR := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=api", nil)
+	if msgsRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 listing messages, got %d: %s", msgsRR.Code, msgsRR.Body.String())
+	}
+	msgs := decodeJSON[[]store.Message](t, msgsRR)
+	if len(msgs) == 0 || msgs[len(msgs)-1].Content != "hello api" {
+		t.Fatalf("expected persisted message, got %#v", msgs)
 	}
 }
 
@@ -355,185 +282,6 @@ func TestCreateAndListArtifacts(t *testing.T) {
 	artifacts := decodeJSON[[]store.Artifact](t, listRR)
 	if len(artifacts) != 1 || artifacts[0].Path != "artifacts/shared-contract.md" {
 		t.Fatalf("unexpected artifacts: %#v", artifacts)
-	}
-}
-
-func TestWatchAgentExitMarksBlockedWithoutFinish(t *testing.T) {
-	d := testDaemon(t)
-	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "exit-watch-test"}))
-	d.runner = immediateRunner{}
-	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "api", Role: "api", Profile: "default", Workdir: t.TempDir(), TmuxSession: "exit-watch", Status: "running", Transport: "tmux"})
-	if err != nil {
-		t.Fatalf("CreateAgentRun: %v", err)
-	}
-	run, err := d.store.GetAgentRun(created.ID, "api")
-	if err != nil {
-		t.Fatalf("GetAgentRun: %v", err)
-	}
-	d.watchAgentExit(run)
-	time.Sleep(100 * time.Millisecond)
-	updated, err := d.store.GetAgentRun(created.ID, "api")
-	if err != nil {
-		t.Fatalf("GetAgentRun updated: %v", err)
-	}
-	if updated.Status != "blocked" {
-		t.Fatalf("expected blocked status, got %q", updated.Status)
-	}
-}
-
-func TestWatchAgentIdleNudgesIdleAgent(t *testing.T) {
-	d := testDaemon(t)
-	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "idle-watch-test"}))
-	d.runner = &paneSequenceRunner{panes: []string{"still thinking", "still thinking", "still thinking", "still thinking"}}
-	d.idlePollInterval = 10 * time.Millisecond
-	d.idleTimeout = 20 * time.Millisecond
-	d.idleNudgeCooldown = time.Hour
-
-	delivered := make(chan broker.Message, 4)
-	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
-		delivered <- msg
-		_ = d.store.UpdateAgentRunStatus(created.ID, "api", "complete")
-		return nil
-	}
-
-	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "api", Role: "api", Profile: "default", Workdir: t.TempDir(), TmuxSession: "idle-watch", Status: "running", Transport: "tmux"})
-	if err != nil {
-		t.Fatalf("CreateAgentRun: %v", err)
-	}
-	run, err := d.store.GetAgentRun(created.ID, "api")
-	if err != nil {
-		t.Fatalf("GetAgentRun: %v", err)
-	}
-
-	d.watchAgentIdle(run)
-
-	select {
-	case msg := <-delivered:
-		if msg.RecipientID != "api" {
-			t.Fatalf("expected recipient api, got %q", msg.RecipientID)
-		}
-		if !strings.Contains(msg.Content, "session appears idle") {
-			t.Fatalf("expected idle nudge message, got %q", msg.Content)
-		}
-	case <-time.After(300 * time.Millisecond):
-		t.Fatal("expected idle nudge to be delivered")
-	}
-
-	deadline := time.Now().Add(300 * time.Millisecond)
-	found := false
-	for time.Now().Before(deadline) {
-		events, err := d.store.QueryEvents(created.ID)
-		if err != nil {
-			t.Fatalf("QueryEvents: %v", err)
-		}
-		for _, event := range events {
-			if event.Type == "agent_idle_nudged" && strings.Contains(event.Data, "api") {
-				found = true
-				break
-			}
-		}
-		if found {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !found {
-		events, err := d.store.QueryEvents(created.ID)
-		if err != nil {
-			t.Fatalf("QueryEvents: %v", err)
-		}
-		t.Fatalf("expected agent_idle_nudged event, got %#v", events)
-	}
-}
-
-func TestWatchAgentIdleDoesNotNudgeWhenPaneKeepsChanging(t *testing.T) {
-	d := testDaemon(t)
-	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "idle-active-test"}))
-	d.runner = &paneSequenceRunner{panes: []string{"thinking 1", "thinking 2", "thinking 3", "thinking 4", "thinking 5", "thinking 6", "thinking 7", "thinking 8"}}
-	d.idlePollInterval = 10 * time.Millisecond
-	d.idleTimeout = 25 * time.Millisecond
-	d.idleNudgeCooldown = time.Hour
-
-	delivered := make(chan broker.Message, 1)
-	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
-		delivered <- msg
-		return nil
-	}
-
-	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "api", Role: "api", Profile: "default", Workdir: t.TempDir(), TmuxSession: "idle-active", Status: "running", Transport: "tmux"})
-	if err != nil {
-		t.Fatalf("CreateAgentRun: %v", err)
-	}
-	run, err := d.store.GetAgentRun(created.ID, "api")
-	if err != nil {
-		t.Fatalf("GetAgentRun: %v", err)
-	}
-
-	d.watchAgentIdle(run)
-	time.Sleep(80 * time.Millisecond)
-	_ = d.store.UpdateAgentRunStatus(created.ID, "api", "complete")
-
-	select {
-	case msg := <-delivered:
-		t.Fatalf("did not expect idle nudge, got %#v", msg)
-	default:
-	}
-}
-
-func TestDefaultLaunchAgentInjectsBelayerCommunicationSkill(t *testing.T) {
-	d := testDaemon(t)
-	runner := &commandCaptureRunner{}
-	d.runner = runner
-	d.config.SocketPath = "/tmp/test-belayer.sock"
-
-	_, err := d.defaultLaunchAgent(agentSpawnRequest{
-		SessionID: "sess-123",
-		Name:      "planner",
-		Role:      "planner",
-		Profile:   "default",
-		Workdir:   t.TempDir(),
-	})
-	if err != nil {
-		t.Fatalf("defaultLaunchAgent: %v", err)
-	}
-	if !strings.Contains(runner.lastCmd, "--skills 'belayer-communication'") {
-		t.Fatalf("expected belayer-communication skill in launch command, got:\n%s", runner.lastCmd)
-	}
-}
-
-func TestWatchAgentIdleIgnoresHermesStatusLineChanges(t *testing.T) {
-	d := testDaemon(t)
-	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "idle-hermes-status-test"}))
-	d.runner = &hermesStatusRunner{}
-	d.idlePollInterval = 10 * time.Millisecond
-	d.idleTimeout = 20 * time.Millisecond
-	d.idleNudgeCooldown = time.Hour
-
-	delivered := make(chan broker.Message, 1)
-	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
-		delivered <- msg
-		_ = d.store.UpdateAgentRunStatus(created.ID, "planner", "complete")
-		return nil
-	}
-
-	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "planner", Role: "planner", Profile: "default", Workdir: t.TempDir(), TmuxSession: "idle-hermes-status", Status: "running", Transport: "tmux"})
-	if err != nil {
-		t.Fatalf("CreateAgentRun: %v", err)
-	}
-	run, err := d.store.GetAgentRun(created.ID, "planner")
-	if err != nil {
-		t.Fatalf("GetAgentRun: %v", err)
-	}
-
-	d.watchAgentIdle(run)
-
-	select {
-	case msg := <-delivered:
-		if !strings.Contains(msg.Content, "session appears idle") {
-			t.Fatalf("expected idle nudge message, got %q", msg.Content)
-		}
-	case <-time.After(300 * time.Millisecond):
-		t.Fatal("expected idle nudge despite Hermes status line changes")
 	}
 }
 
@@ -740,6 +488,109 @@ func TestSearchEventsMissingQuery(t *testing.T) {
 	rr := doRequest(t, d, "GET", "/search", nil)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+// --- Pull-based message delivery (pending messages) ---
+
+func TestListMessagesPendingReturnsPendingMessages(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "pending-msgs"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
+
+	// Send two messages to the worker agent.
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "first task", Type: "instruction", From: "planner"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "second task", Type: "instruction", From: "planner"})
+
+	rr := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker&pending=true", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	msgs := decodeJSON[[]store.Message](t, rr)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 pending messages, got %d", len(msgs))
+	}
+	if msgs[0].Content != "first task" || msgs[1].Content != "second task" {
+		t.Fatalf("unexpected message contents: %#v", msgs)
+	}
+}
+
+func TestListMessagesPendingMarksDelivered(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "mark-delivered"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
+
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "do the thing", Type: "instruction", From: "planner"})
+
+	// First fetch with pending=true — should return the message and mark it delivered.
+	rr1 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker&pending=true", nil)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first fetch: expected 200, got %d: %s", rr1.Code, rr1.Body.String())
+	}
+	msgs1 := decodeJSON[[]store.Message](t, rr1)
+	if len(msgs1) != 1 {
+		t.Fatalf("expected 1 message on first fetch, got %d", len(msgs1))
+	}
+
+	// Second fetch — message was marked delivered, should now return empty.
+	rr2 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker&pending=true", nil)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second fetch: expected 200, got %d: %s", rr2.Code, rr2.Body.String())
+	}
+	msgs2 := decodeJSON[[]store.Message](t, rr2)
+	if len(msgs2) != 0 {
+		t.Fatalf("expected 0 messages on second fetch (all delivered), got %d", len(msgs2))
+	}
+}
+
+func TestListMessagesPendingFalseDoesNotMarkDelivered(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "peek-msgs"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
+
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "peek task", Type: "instruction", From: "planner"})
+
+	// Fetch without pending=true — should return the message but NOT mark it delivered.
+	rr1 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker", nil)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("peek fetch: expected 200, got %d: %s", rr1.Code, rr1.Body.String())
+	}
+	msgs1 := decodeJSON[[]store.Message](t, rr1)
+	if len(msgs1) != 1 {
+		t.Fatalf("expected 1 message on peek fetch, got %d", len(msgs1))
+	}
+
+	// Fetch again — message should still be pending since we did not mark delivered.
+	rr2 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker", nil)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second peek: expected 200, got %d", rr2.Code)
+	}
+	msgs2 := decodeJSON[[]store.Message](t, rr2)
+	if len(msgs2) != 1 {
+		t.Fatalf("expected 1 message still pending, got %d", len(msgs2))
+	}
+}
+
+func TestListMessagesWithoutForReturnsEventLog(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "event-log-msgs"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
+
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "hello", Type: "instruction", From: "planner"})
+
+	// Without ?for= the original event-log behavior should be used.
+	rr := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	events := decodeJSON[[]store.SessionEvent](t, rr)
+	if len(events) == 0 {
+		t.Fatal("expected at least one message_ event in event log")
+	}
+	for _, e := range events {
+		if !strings.HasPrefix(e.Type, "message_") {
+			t.Errorf("unexpected non-message event type %q in message list", e.Type)
+		}
 	}
 }
 

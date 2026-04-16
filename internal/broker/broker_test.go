@@ -223,7 +223,7 @@ func TestUrgentMessageBypassesDebounce(t *testing.T) {
 	}
 }
 
-func TestInterruptSendsCtrlCThenMessage(t *testing.T) {
+func TestInterruptDeliversMessageDirectly(t *testing.T) {
 	b := newTestBroker()
 	col := &collector{}
 
@@ -233,7 +233,7 @@ func TestInterruptSendsCtrlCThenMessage(t *testing.T) {
 		SessionID: "sess1",
 		SenderID:  "s",
 		Type:      MessageInstruction,
-		Content:   "after interrupt",
+		Content:   "interrupt message",
 	}
 	if err := b.Interrupt("sess1", "agent1", msg); err != nil {
 		t.Fatalf("Interrupt: %v", err)
@@ -242,14 +242,11 @@ func TestInterruptSendsCtrlCThenMessage(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	msgs := col.all()
-	if len(msgs) < 2 {
-		t.Fatalf("expected at least 2 messages from Interrupt, got %d", len(msgs))
+	if len(msgs) != 1 {
+		t.Fatalf("expected exactly 1 message from Interrupt, got %d", len(msgs))
 	}
-	if msgs[0].Content != "\x03" {
-		t.Errorf("expected first message to be Ctrl+C (\\x03), got %q", msgs[0].Content)
-	}
-	if msgs[1].Content != "after interrupt" {
-		t.Errorf("expected second message content %q, got %q", "after interrupt", msgs[1].Content)
+	if msgs[0].Content != "interrupt message" {
+		t.Errorf("expected message content %q, got %q", "interrupt message", msgs[0].Content)
 	}
 }
 

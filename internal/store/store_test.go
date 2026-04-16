@@ -369,3 +369,192 @@ func TestCreateSession_Template(t *testing.T) {
 		t.Errorf("Template mismatch: got %q, want %q", got.Template, "gstack")
 	}
 }
+
+// TestMigrate_Idempotent verifies that calling Migrate twice does not error
+// (covers the hermes_session_id column addition being idempotent).
+func TestMigrate_Idempotent(t *testing.T) {
+	s := openMemory(t)
+	// Migrate was already called by Open. Call it again directly.
+	if err := Migrate(s.db); err != nil {
+		t.Fatalf("second Migrate call failed: %v", err)
+	}
+}
+
+// TestUpdateAgentRunHermesSessionID verifies that hermes_session_id is persisted
+// and round-trips correctly via GetAgentRun.
+func TestUpdateAgentRunHermesSessionID(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "hermes-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := s.CreateAgentRun(AgentRun{
+		SessionID: sessID,
+		Name:      "planner",
+	}); err != nil {
+		t.Fatalf("CreateAgentRun: %v", err)
+	}
+
+	const wantHermesID = "hermes-abc-123"
+	if err := s.UpdateAgentRunHermesSessionID(sessID, "planner", wantHermesID); err != nil {
+		t.Fatalf("UpdateAgentRunHermesSessionID: %v", err)
+	}
+
+	run, err := s.GetAgentRun(sessID, "planner")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.HermesSessionID != wantHermesID {
+		t.Errorf("HermesSessionID: got %q, want %q", run.HermesSessionID, wantHermesID)
+	}
+}
+
+// TestCreateMessage_PendingMessages verifies that CreateMessage + PendingMessages
+// returns only undelivered messages for the correct recipient.
+func TestCreateMessage_PendingMessages(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "msg-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	base := time.Now().UTC()
+
+	// Message for agent-a.
+	id1, err := s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "planner",
+		RecipientID: "agent-a",
+		Type:        "instruction",
+		Content:     "do task 1",
+		CreatedAt:   base,
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage 1: %v", err)
+	}
+	_ = id1
+
+	// Message for agent-b (should not appear in agent-a's pending list).
+	_, err = s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "planner",
+		RecipientID: "agent-b",
+		Type:        "instruction",
+		Content:     "do task 2",
+		CreatedAt:   base.Add(time.Millisecond),
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage 2: %v", err)
+	}
+
+	pending, err := s.PendingMessages(sessID, "agent-a", "")
+	if err != nil {
+		t.Fatalf("PendingMessages: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending message for agent-a, got %d", len(pending))
+	}
+	if pending[0].Content != "do task 1" {
+		t.Errorf("unexpected content: %q", pending[0].Content)
+	}
+	if pending[0].Delivered {
+		t.Errorf("expected Delivered=false")
+	}
+}
+
+// TestMarkDelivered_ExcludesFromPending verifies that MarkDelivered causes a
+// message to no longer appear in PendingMessages.
+func TestMarkDelivered_ExcludesFromPending(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, _ := s.CreateSession(Session{Name: "deliver-test"})
+
+	msgID, err := s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "planner",
+		RecipientID: "agent-a",
+		Content:     "deliver me",
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage: %v", err)
+	}
+
+	// Confirm it's pending.
+	pending, err := s.PendingMessages(sessID, "agent-a", "")
+	if err != nil {
+		t.Fatalf("PendingMessages before mark: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending message, got %d", len(pending))
+	}
+
+	if err := s.MarkDelivered(msgID); err != nil {
+		t.Fatalf("MarkDelivered: %v", err)
+	}
+
+	// Confirm it's gone from pending.
+	pending, err = s.PendingMessages(sessID, "agent-a", "")
+	if err != nil {
+		t.Fatalf("PendingMessages after mark: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected 0 pending messages after delivery, got %d", len(pending))
+	}
+}
+
+// TestPendingMessages_AfterID verifies that the afterID parameter filters out
+// messages created at or before the reference message's created_at.
+func TestPendingMessages_AfterID(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, _ := s.CreateSession(Session{Name: "after-id-test"})
+
+	base := time.Now().UTC()
+	id1, err := s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "planner",
+		RecipientID: "agent-a",
+		Content:     "first",
+		CreatedAt:   base,
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage 1: %v", err)
+	}
+	_, err = s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "planner",
+		RecipientID: "agent-a",
+		Content:     "second",
+		CreatedAt:   base.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage 2: %v", err)
+	}
+	_, err = s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "planner",
+		RecipientID: "agent-a",
+		Content:     "third",
+		CreatedAt:   base.Add(2 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage 3: %v", err)
+	}
+
+	// Ask for messages after the first one.
+	pending, err := s.PendingMessages(sessID, "agent-a", id1)
+	if err != nil {
+		t.Fatalf("PendingMessages(afterID): %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("expected 2 messages after id1, got %d", len(pending))
+	}
+	if pending[0].Content != "second" {
+		t.Errorf("pending[0]: got %q, want %q", pending[0].Content, "second")
+	}
+	if pending[1].Content != "third" {
+		t.Errorf("pending[1]: got %q, want %q", pending[1].Content, "third")
+	}
+}
