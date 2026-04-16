@@ -100,6 +100,9 @@ func TestCommandUpTimesOutIfHealthNeverPasses(t *testing.T) {
 	if !strings.Contains(err.Error(), "100ms") {
 		t.Fatalf("error message does not mention timeout: %v", err)
 	}
+	if !errors.Is(err, ErrHealthTimeout) {
+		t.Errorf("error = %v, want wrap of ErrHealthTimeout", err)
+	}
 }
 
 func TestCommandUpRespectsContextCancellation(t *testing.T) {

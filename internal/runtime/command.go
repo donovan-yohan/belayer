@@ -3,6 +3,7 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -12,6 +13,11 @@ const (
 	defaultHealthTimeout  = 30 * time.Second
 	defaultHealthInterval = 500 * time.Millisecond
 )
+
+// ErrHealthTimeout is returned (wrapped) by Up when the health check does not
+// succeed within the configured health timeout. Callers can match on it with
+// errors.Is to distinguish timeout from cancellation or other failures.
+var ErrHealthTimeout = errors.New("runtime: health check timed out")
 
 // Command is a Provider that shells out to user-defined Up/Health/Down commands
 // from a Config. Empty commands are treated as no-ops.
@@ -72,7 +78,7 @@ func (c *Command) Up(ctx context.Context) ([]Endpoint, error) {
 		}
 
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("runtime: health check did not succeed within %s", c.healthTimeout)
+			return nil, fmt.Errorf("%w after %s", ErrHealthTimeout, c.healthTimeout)
 		}
 
 		select {
