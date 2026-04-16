@@ -296,6 +296,7 @@ Daemon-internal events (not from bridge):
 | `agent_exited_without_finish` | Exit watcher | Marks agent `blocked` |
 | `agent_escalated` | Status event handler | Agent reported `incomplete`, logged for monitoring |
 | `artifact_created` | Artifact handler | Registry update |
+| `run_initiated` | CLI `run start` | Records initial task prompt and supervisor profile |
 | `session_created` | Session handler | — |
 | `session_completed` | Completion approved handler | Session status → complete |
 | `session_stalled` | Bridge finished/failed handler | All agents exited without completion → session status → stalled |

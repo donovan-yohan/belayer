@@ -45,7 +45,7 @@ flowchart TB
 
 ---
 
-## Two-Daemon Topology
+## Topology
 
 A multi-agent coding system needs **two control planes** at different scopes:
 
@@ -77,64 +77,100 @@ flowchart LR
     DB -.->|"export: logs,\nartifacts, memory"| Queue
 ```
 
-Workers run in parallel. Each handles one request at a time. Each hosts an inner daemon for the active run.
+### How the six interfaces map to the architecture
+
+Each box in the architecture implements one of the six runtime interfaces. The diagram below is color-coded: boxes with the same color implement the same interface.
 
 ```mermaid
 flowchart TB
-    OD["Outer daemon\n(always on)"] --> W1["Worker 1\none active request"]
-    OD --> W2["Worker 2\none active request"]
-    OD --> W3["Worker 3\none active request"]
+    subgraph legend [" "]
+        direction LR
+        L1["SESSION"]:::session
+        L2["ORCHESTRATION"]:::orch
+        L3["COMMUNICATION"]:::comm
+        L4["SANDBOX"]:::sandbox
+        L5["MEMORY"]:::memory
+        L6["TOOLS"]:::tools
+    end
 
-    subgraph R1["Run A"]
-        ID1["Inner daemon"]
-        P1["supervisor"]
-        A1["specialist"]
-        Q1["reviewer"]
-        SB1["sandbox"]
-        DB1[("run-local DB")]
-        ID1 --> P1
-        ID1 --> A1
-        ID1 --> Q1
-        P1 --> SB1
-        A1 --> SB1
-        Q1 --> SB1
+    OD["Outer daemon\n(always-on)"]
+    MEM[("Durable memory\nlogs, learnings")]:::memory
+
+    OD --> S1
+    OD --> S2
+    OD --> S3
+
+    subgraph S1["Session A (Worker 1)"]
+        ID1["Session bus / inner daemon\nmessages, events, artifacts"]:::comm
+        SUP1["Supervisor agent\ndecomposes, delegates, decides"]:::orch
+        SP1["Specialist agents\n(frontend, backend, QA, ...)"]:::orch
+        H1["Harness + tool catalog\nexecution routing"]:::tools
+        SB1["Sandbox\nisolation boundary"]:::sandbox
+        DB1[("Run-local DB\ntelemetry, events")]:::session
+
+        ID1 <--> SUP1
+        ID1 <--> SP1
+        SUP1 --> H1
+        SP1 --> H1
+        H1 --> SB1
         ID1 --> DB1
     end
 
-    subgraph R2["Run B"]
-        ID2["Inner daemon"]
-        P2["supervisor"]
-        A2["specialists"]
-        SB2["sandbox"]
-        DB2[("run-local DB")]
-        ID2 --> P2
-        ID2 --> A2
-        P2 --> SB2
-        A2 --> SB2
+    subgraph S2["Session B (Worker 2)"]
+        ID2["Session bus"]:::comm
+        SUP2["Supervisor"]:::orch
+        SP2["Specialists"]:::orch
+        H2["Harness + tools"]:::tools
+        SB2["Sandbox"]:::sandbox
+        DB2[("Run-local DB")]:::session
+
+        ID2 <--> SUP2
+        ID2 <--> SP2
+        SUP2 --> H2
+        SP2 --> H2
+        H2 --> SB2
         ID2 --> DB2
     end
 
-    subgraph R3["Run C"]
-        ID3["Inner daemon"]
-        P3["supervisor"]
-        A3["specialists"]
-        SB3["sandbox"]
-        DB3[("run-local DB")]
-        ID3 --> P3
-        ID3 --> A3
-        P3 --> SB3
-        A3 --> SB3
+    subgraph S3["Session C (Worker 3)"]
+        ID3["Session bus"]:::comm
+        SUP3["Supervisor"]:::orch
+        SP3["Specialists"]:::orch
+        H3["Harness + tools"]:::tools
+        SB3["Sandbox"]:::sandbox
+        DB3[("Run-local DB")]:::session
+
+        ID3 <--> SUP3
+        ID3 <--> SP3
+        SUP3 --> H3
+        SP3 --> H3
+        H3 --> SB3
         ID3 --> DB3
     end
 
-    W1 --> R1
-    W2 --> R2
-    W3 --> R3
+    MEM -.->|"inject context\nat session start"| ID1
+    MEM -.->|"inject"| ID2
+    MEM -.->|"inject"| ID3
+    DB1 -.->|"export logs,\nartifacts, learnings"| MEM
+    DB2 -.->|"export"| MEM
+    DB3 -.->|"export"| MEM
 
-    DB1 -.->|"export"| OD
-    DB2 -.->|"export"| OD
-    DB3 -.->|"export"| OD
+    classDef session fill:#4A90D9,stroke:#2E5C8A,color:#fff
+    classDef orch fill:#E8A838,stroke:#B07A1A,color:#fff
+    classDef comm fill:#50B86C,stroke:#2D8A45,color:#fff
+    classDef sandbox fill:#E05555,stroke:#A83232,color:#fff
+    classDef memory fill:#9B6FCF,stroke:#6B3FA0,color:#fff
+    classDef tools fill:#3ABAB4,stroke:#1F8A85,color:#fff
 ```
+
+| Interface | Color | What it maps to | Key property |
+|---|---|---|---|
+| **Session** | Blue | Each worker run + its run-local DB | Ephemeral — dies with the worker |
+| **Orchestration** | Amber | Supervisor + specialist agents (LLMs) | Judgment, not code — adapts to roster |
+| **Communication** | Green | Inner daemon / session bus | Routes messages, events, artifacts between agents |
+| **Sandbox** | Red | Isolation boundary around each worker | Deny-by-default, agents cannot self-impose |
+| **Memory** | Purple | Durable storage on outer daemon | Injected at start, exported at end — outlives sessions |
+| **Tools** | Teal | Harness driver + registered tool catalog | Execution routing into sandboxed environments |
 
 The key invariant: **run-local state is disposable, outer state is durable.** The inner daemon optimizes for low-latency coordination between agents during the run. The outer daemon optimizes for persistence — logs for debugging, artifacts for delivery, memory for future runs. The export path between them is what makes ephemeral runs useful beyond their lifetime.
 

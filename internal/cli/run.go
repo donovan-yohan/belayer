@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,6 +79,12 @@ func newRunStartCmd() *cobra.Command {
 			if _, err := c.SendMessage(sess.ID, "supervisor", task, "instruction", true); err != nil {
 				return fmt.Errorf("deliver initial task: %w", err)
 			}
+			// Log the initial prompt as telemetry so post-mortems can see what started the run.
+			initData, _ := json.Marshal(map[string]string{
+				"task":               task,
+				"supervisor_profile": supervisorProfile,
+			})
+			_ = c.LogEvent(sess.ID, "run_initiated", string(initData))
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Run started: %s (%s)\n", sess.ID, sess.Name)
 			fmt.Fprintln(cmd.OutOrStdout(), "Supervisor: supervisor")
