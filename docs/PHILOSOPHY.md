@@ -45,6 +45,101 @@ flowchart TB
 
 ---
 
+## Two-Daemon Topology
+
+A multi-agent coding system needs **two control planes** at different scopes:
+
+1. **Outer daemon** — always-on, manages a pool of workers, queues requests, persists long-lived data (logs, memory, artifacts) that outlive any individual run.
+2. **Inner daemon** — ephemeral, lives inside one worker for one run, coordinates agent-to-agent communication, records telemetry and artifacts to a run-local database.
+
+The inner daemon and everything it manages are **ephemeral** — when the worker dies, the run-local state dies with it. Anything that matters beyond the run (logs, learned knowledge, output artifacts) must be exported to the outer daemon before the worker is reclaimed.
+
+```mermaid
+flowchart LR
+    User["User / ticket / spec"] --> OD["Outer daemon\n(always-on)"]
+    OD --> Queue[("Request queue\nlong-lived storage")]
+    OD --> W1["Worker 1"]
+    OD --> W2["Worker 2"]
+    OD --> W3["Worker 3"]
+
+    subgraph WorkerRun["One run on one worker (ephemeral)"]
+        ID["Inner daemon\n(agent control plane)"]
+        H["Harness driver"]
+        SB["Sandbox / workspace"]
+        DB[("Run-local DB\nevents, telemetry, artifacts")]
+
+        ID --> H
+        H --> SB
+        ID --> DB
+    end
+
+    W1 --> WorkerRun
+    DB -.->|"export: logs,\nartifacts, memory"| Queue
+```
+
+Workers run in parallel. Each handles one request at a time. Each hosts an inner daemon for the active run.
+
+```mermaid
+flowchart TB
+    OD["Outer daemon\n(always on)"] --> W1["Worker 1\none active request"]
+    OD --> W2["Worker 2\none active request"]
+    OD --> W3["Worker 3\none active request"]
+
+    subgraph R1["Run A"]
+        ID1["Inner daemon"]
+        P1["supervisor"]
+        A1["specialist"]
+        Q1["reviewer"]
+        SB1["sandbox"]
+        DB1[("run-local DB")]
+        ID1 --> P1
+        ID1 --> A1
+        ID1 --> Q1
+        P1 --> SB1
+        A1 --> SB1
+        Q1 --> SB1
+        ID1 --> DB1
+    end
+
+    subgraph R2["Run B"]
+        ID2["Inner daemon"]
+        P2["supervisor"]
+        A2["specialists"]
+        SB2["sandbox"]
+        DB2[("run-local DB")]
+        ID2 --> P2
+        ID2 --> A2
+        P2 --> SB2
+        A2 --> SB2
+        ID2 --> DB2
+    end
+
+    subgraph R3["Run C"]
+        ID3["Inner daemon"]
+        P3["supervisor"]
+        A3["specialists"]
+        SB3["sandbox"]
+        DB3[("run-local DB")]
+        ID3 --> P3
+        ID3 --> A3
+        P3 --> SB3
+        A3 --> SB3
+        ID3 --> DB3
+    end
+
+    W1 --> R1
+    W2 --> R2
+    W3 --> R3
+
+    DB1 -.->|"export"| OD
+    DB2 -.->|"export"| OD
+    DB3 -.->|"export"| OD
+```
+
+The key invariant: **run-local state is disposable, outer state is durable.** The inner daemon optimizes for low-latency coordination between agents during the run. The outer daemon optimizes for persistence — logs for debugging, artifacts for delivery, memory for future runs. The export path between them is what makes ephemeral runs useful beyond their lifetime.
+
+---
+
 ## The Six Interfaces
 
 ### 1. Session
