@@ -98,6 +98,10 @@ When working on Belayer now, use these docs as the current truth:
 - `docs/design-docs/2026-04-15-nightshift-v1-deployment-topology.md`
 - `docs/design-docs/2026-04-15-belayer-run-model-for-nightshift-v1.md`
 - `docs/design-docs/2026-04-15-nightshift-extend-first-implementation-delta.md`
+- `docs/AGENT_ARCHITECTURE.md` (how agents communicate, coordinate, and resume)
+- `docs/design-docs/2026-04-15-crag-daemon.md` (forward-looking: always-on worker control plane)
+- `docs/design-docs/2026-04-15-git-backed-agent-identity.md` (forward-looking: soul + capabilities)
+- `docs/design-docs/2026-04-16-product-manager-agent.md` (forward-looking: spec-vs-reality completion gate)
 
 ## Development guidance
 

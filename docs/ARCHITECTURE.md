@@ -18,10 +18,10 @@ This document is the high-level architecture reference. For detailed current thi
 
 Nightshift v1 has **two control planes**:
 
-1. **Worker control plane** — always-on Nightshift service that queues requests and assigns a worker
-2. **Agent control plane** — Belayer, inside one worker run, coordinating planner + specialists
+1. **Worker control plane (Crag)** — always-on daemon that queues requests, manages targets, and spawns Belayer runs. See [Crag design doc](design-docs/2026-04-15-crag-daemon.md).
+2. **Agent control plane (Belayer)** — inside one run, coordinating planner + specialists
 
-Belayer owns the second one.
+Belayer owns the second one. Crag owns the first.
 
 For v1:
 
@@ -38,7 +38,7 @@ For v1:
 
 ```mermaid
 flowchart LR
-    User["User / Jira / reviewed spec"] --> NCP["Nightshift daemon\n(worker control plane)"]
+    User["User / Jira / reviewed spec"] --> NCP["Crag daemon\n(worker control plane)"]
     NCP --> Queue[("Request queue / run DB")]
     NCP --> W1["Worker 1"]
     NCP --> W2["Worker 2"]
@@ -68,7 +68,7 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    NCP["Nightshift daemon\n(always on)"] --> W1["Worker 1\none active request"]
+    NCP["Crag daemon\n(always on)"] --> W1["Worker 1\none active request"]
     NCP --> W2["Worker 2\none active request"]
     NCP --> W3["Worker 3\none active request"]
 
@@ -321,17 +321,34 @@ That gives us parallelism at the **worker** level while keeping the run model si
 
 The following are part of the intended architecture but not fully implemented yet:
 
-### 1. Better specialist identities
-The current slice uses existing Hermes profiles plus project-local skills/plugins. The longer-term direction is a more explicit identity model with role-specific profiles and portable skills/memory.
+### 1. Git-backed agent identity (soul + capabilities)
+
+See [Git-Backed Agent Identity](design-docs/2026-04-15-git-backed-agent-identity.md) for the full design.
+
+Each agent type is defined by two co-authored halves in a git repo:
+
+- **Soul** — who the agent is, how it thinks, what it cares about. Injected as the system prompt. Carries behavioral dispositions (e.g., "don't trust frontend work until you've seen it in a browser"), not task checklists.
+- **Capabilities** — what infrastructure the agent needs. MCP servers, runtimes (headless Chrome for QA), auth tokens, Hermes plugins/skills. Read by the worker control plane to provision the environment before the run starts.
+
+The current `AgentSpec.SystemPrompt` is proto-soul. `AgentSpec.MCPConfig`, `Settings`, and `Env` are proto-capabilities. The migration path starts by extracting the current inline system prompts into `identities/*/soul.md` files, then adding `capabilities.yaml` parsing.
 
 ### 2. Extend-first workbench integration
 Belayer should treat `xt` as the primary Extend workbench interface, not generic compose-first workbench provisioning.
 
-### 3. Worker control plane integration
-Belayer should remain the run-local control plane, while a higher-level Nightshift service handles queueing, worker assignment, and run lifecycle across machines.
+### 3. Crag: the always-on worker control plane
 
-### 4. Centralized identity materialization
-Longer term, profiles/skills/memory may be materialized from a git-backed canonical identity source rather than relying on purely local profile state.
+See [Crag design doc](design-docs/2026-04-15-crag-daemon.md).
+
+Crag is the always-on daemon that spawns and manages Belayer runs. It owns the request queue, target management, run provisioning, and the web UI.
+
+For local dev: Crag registers directories as targets and spawns Belayer daemons against them. One target = one concurrent run. Multiple targets = parallel runs.
+
+For production: targets become remote machines or containers. Same Crag API, heavier provisioning (clone repo, install deps, stage credentials, start MCP servers from capabilities.yaml).
+
+The web UI lives in Crag, not in Belayer. Crag aggregates run state across all active Belayer sessions for the dashboard, run detail views, and artifact browsing.
+
+### 4. Remote agent bootstrapping
+When agents run on remote workers, nothing is pre-installed. Crag reads each agent's `capabilities.yaml` from the identity repo and provisions the required infrastructure before spawning Belayer. Credential mediation likely flows through Clamshell.
 
 ---
 
@@ -339,14 +356,15 @@ Longer term, profiles/skills/memory may be materialized from a git-backed canoni
 
 Belayer should not be trying to be:
 
-- the worker scheduler
-- the cluster manager
+- the worker scheduler (that's Crag)
+- the cluster manager (that's Crag)
 - the hypervisor
 - the universal hosted identity service
+- the web UI host (that's Crag)
 - the only place where all memory and orchestration logic lives
 
 For the current direction, Belayer is specifically:
 
 > the session bus and run-local control plane for a planner-led Nightshift run.
 
-That narrower role is a strength.
+Crag is everything outside the run. Belayer is everything inside the run. That split is the architecture.

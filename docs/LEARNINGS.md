@@ -146,3 +146,13 @@ Sequential IDs (`L-001`, `L-002`) and markdown tables cause merge conflicts when
 When changing document formats (IDs, index structure, scaffold templates), make the pruner detect legacy formats as a new staleness check and auto-fix them via `--fix`. Init should always use the latest format for new repos. This avoids needing a separate migration command or version tracking infrastructure — prune already audits doc health, and legacy format is just another kind of staleness. Inspired by gstack's pattern of detection + upgrade rather than separate migration tooling.
 
 ---
+
+### L-20260415-resolve-deps-at-plan-time: Planner must resolve dependency versions from registries, never from model knowledge
+- status: active
+- category: workflow
+- source: mermaidflow deploy 2026-04-15
+- branch: master
+
+When a plan includes dependency selection or project scaffolding, the planner must instruct agents to look up current versions from package registries (`npm info <pkg> version`, `pip index versions <pkg>`, etc.) rather than relying on training-data versions. Training data is months stale by definition. MermaidFlow shipped with Next.js 15.5.0 (training-era current) when 16.2.4 was available, triggering a Vercel vulnerability warning and requiring post-deploy cleanup. The cost is seconds per dependency; the cost of skipping it is a guaranteed cleanup pass. This applies to every ecosystem and every agent role that touches dependency files.
+
+---

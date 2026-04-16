@@ -36,10 +36,10 @@ This is a deliberate scope correction, not a retreat.
 
 ### Two control planes
 
-- **Worker control plane** — outer Nightshift layer that assigns a worker
-- **Agent control plane** — Belayer inside the worker run
+- **Worker control plane (Crag)** — always-on daemon that queues requests, manages targets, spawns Belayer runs, hosts the web UI. See [Crag design doc](design-docs/2026-04-15-crag-daemon.md).
+- **Agent control plane (Belayer)** — inside one run, coordinating planner + specialists
 
-Belayer only owns the second one.
+Belayer only owns the second one. Crag owns the first.
 
 ### Three Belayer layers
 
@@ -91,11 +91,11 @@ These are the real foundations of Nightshift v1.
 
 Still planned / not complete yet:
 
-- richer planner profile / specialist profiles
+- git-backed agent identity: soul + capabilities per agent type ([design doc](design-docs/2026-04-15-git-backed-agent-identity.md))
+- Crag daemon: always-on worker control plane, target management, web UI ([design doc](design-docs/2026-04-15-crag-daemon.md))
 - stronger artifact conventions and artifact viewing
 - Extend-localenv-first workbench flows
-- outer worker control-plane integration
-- canonical identity materialization beyond local profiles
+- remote agent bootstrapping: Crag provisions capabilities before Belayer spawns agents
 
 ---
 
