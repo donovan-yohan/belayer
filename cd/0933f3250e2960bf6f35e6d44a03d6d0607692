@@ -1,0 +1,40 @@
+docs/PHILOSOPHY.md
+  1952714a6f942533 48,80-82,86-115,119-131,135-147,151-163,166-173
+internal/cli/run.go
+  1952714a6f942533 4,82-87
+docs/AGENT_ARCHITECTURE.md
+  1952714a6f942533 299
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "cd0933f3250e2960bf6f35e6d44a03d6d0607692",
+  "prompts": {
+    "0c1fc59b3505dc91": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21c65eec-df38-4e78-8216-92cdec2d7b16",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 525,
+      "overriden_lines": 0
+    },
+    "1952714a6f942533": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86523080-c1dc-4b91-9fc6-8e650ead6bdd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 173,
+      "total_deletions": 93,
+      "accepted_lines": 224,
+      "overriden_lines": 0
+    }
+  }
+}
