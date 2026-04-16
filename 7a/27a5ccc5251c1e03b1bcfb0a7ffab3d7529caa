@@ -1,0 +1,23 @@
+docs/design-docs/2026-04-16-sandbox-runtime-and-crag-proof.md
+  41e7332b8c6d464d 483-490,499-500,504
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "7a27a5ccc5251c1e03b1bcfb0a7ffab3d7529caa",
+  "prompts": {
+    "41e7332b8c6d464d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4e0490b5-6af4-4278-a612-45e369627d93",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
