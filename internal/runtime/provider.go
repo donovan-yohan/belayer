@@ -18,7 +18,7 @@ type Provider interface {
 
 // Endpoint describes a runtime service available to agents.
 type Endpoint struct {
-	Name string
-	Host string
-	Port int
+	Name string `yaml:"name"`
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
 }
