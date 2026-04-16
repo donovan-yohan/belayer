@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
@@ -22,9 +23,9 @@ var ErrHealthTimeout = errors.New("runtime: health check timed out")
 // Command is a Provider that shells out to user-defined Up/Health/Down commands
 // from a Config. Empty commands are treated as no-ops.
 type Command struct {
-	cfg             Config
-	healthTimeout   time.Duration
-	healthInterval  time.Duration
+	cfg            Config
+	healthTimeout  time.Duration
+	healthInterval time.Duration
 }
 
 // NewCommand builds a command-based runtime provider from a Config.
@@ -39,15 +40,22 @@ func NewCommand(cfg Config) *Command {
 	}
 }
 
-// WithHealthTimeout sets the total time Up will spend waiting for Health to succeed.
+// WithHealthTimeout sets the total time Up will spend waiting for Health to
+// succeed. Non-positive values are ignored so callers can't accidentally
+// disable health polling by passing 0.
 func (c *Command) WithHealthTimeout(d time.Duration) *Command {
-	c.healthTimeout = d
+	if d > 0 {
+		c.healthTimeout = d
+	}
 	return c
 }
 
 // WithHealthInterval sets the delay between Health probes during Up.
+// Non-positive values are ignored to prevent a tight retry loop.
 func (c *Command) WithHealthInterval(d time.Duration) *Command {
-	c.healthInterval = d
+	if d > 0 {
+		c.healthInterval = d
+	}
 	return c
 }
 
@@ -67,9 +75,15 @@ func (c *Command) Up(ctx context.Context) ([]Endpoint, error) {
 	pollCtx, cancel := context.WithTimeout(ctx, c.healthTimeout)
 	defer cancel()
 
+	ticker := time.NewTicker(c.healthInterval)
+	defer ticker.Stop()
+
+	var lastHealthErr error
 	for {
 		if err := c.Health(pollCtx); err == nil {
 			return c.cfg.Endpoints, nil
+		} else {
+			lastHealthErr = err
 		}
 
 		// Parent cancel wins over our derived timeout.
@@ -77,13 +91,16 @@ func (c *Command) Up(ctx context.Context) ([]Endpoint, error) {
 			return nil, fmt.Errorf("runtime: up: %w", ctx.Err())
 		}
 		if pollCtx.Err() != nil {
+			if lastHealthErr != nil {
+				return nil, fmt.Errorf("%w after %s (last health error: %v)", ErrHealthTimeout, c.healthTimeout, lastHealthErr)
+			}
 			return nil, fmt.Errorf("%w after %s", ErrHealthTimeout, c.healthTimeout)
 		}
 
 		select {
 		case <-pollCtx.Done():
 			// Loop; the checks above classify parent-cancel vs timeout.
-		case <-time.After(c.healthInterval):
+		case <-ticker.C:
 		}
 	}
 }
@@ -108,11 +125,24 @@ func (c *Command) Down(ctx context.Context) error {
 	return nil
 }
 
-// runShell executes cmd via "sh -c <cmd>", capturing stderr for error messages.
+// runShell executes cmd via "sh -c <cmd>" in its own process group so that
+// context cancellation kills not just the shell but every child it spawned
+// (pipelines, background jobs, docker-compose, etc.). WaitDelay bounds how
+// long we'll wait after signaling before forcing stdio pipes closed.
 func runShell(ctx context.Context, cmd string) error {
 	var stderr bytes.Buffer
 	c := exec.CommandContext(ctx, "sh", "-c", cmd)
 	c.Stderr = &stderr
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error {
+		if c.Process == nil {
+			return nil
+		}
+		// Negative pid targets the process group; this kills every child
+		// the shell spawned, not just the shell itself.
+		return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+	}
+	c.WaitDelay = 5 * time.Second
 	if err := c.Run(); err != nil {
 		if stderr.Len() > 0 {
 			return fmt.Errorf("%w: %s", err, stderr.String())
