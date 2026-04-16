@@ -19,6 +19,22 @@ type Config struct {
 	Endpoints []Endpoint `yaml:"endpoints"`
 }
 
+// Empty reports whether the Config has no runtime behavior configured.
+// Callers use this to decide whether to fall back to the Noop provider.
+func (c Config) Empty() bool {
+	return c.Up == "" && c.Health == "" && c.Down == "" && len(c.Endpoints) == 0
+}
+
+// NewFromConfig picks a Provider to match the given Config. An Empty config
+// yields a Noop provider; any other config yields a Command provider wrapping
+// cfg. This is the single construction point the daemon CLI uses.
+func NewFromConfig(cfg Config) Provider {
+	if cfg.Empty() {
+		return &Noop{}
+	}
+	return NewCommand(cfg)
+}
+
 // file is the top-level shape of .belayer/config.yaml.
 // Unknown sections are ignored by yaml.v3's default behavior.
 type file struct {

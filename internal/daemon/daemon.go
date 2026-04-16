@@ -59,6 +59,12 @@ type Daemon struct {
 	sandbox sandbox.Driver
 	runtime runtime.Provider
 
+	// runtimeEndpoints is the set of endpoints reported by runtime.Up at daemon
+	// startup. Written once from Start before the HTTP server begins serving,
+	// then read from sandbox-creating goroutines. The happens-before relationship
+	// established by server.Serve makes the write visible without an explicit lock.
+	runtimeEndpoints []runtime.Endpoint
+
 	// Context from Start, used as the parent for sandbox/runtime lifecycle
 	// calls so they observe daemon shutdown. Initialized to context.Background
 	// in New so tests that skip Start still work.
@@ -155,10 +161,13 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	// Provision the runtime before serving. For the noop provider this is a
 	// no-op; the hook exists so future providers (command, clamshell, ...)
-	// can fail fast if the dev stack can't come up.
-	if _, err := d.runtime.Up(ctx); err != nil {
+	// can fail fast if the dev stack can't come up. Captured endpoints flow
+	// into each session's sandbox via ensureSandboxHandle.
+	endpoints, err := d.runtime.Up(ctx)
+	if err != nil {
 		return fmt.Errorf("daemon: runtime up: %w", err)
 	}
+	d.runtimeEndpoints = endpoints
 
 	// Shut down gracefully when ctx is cancelled.
 	go func() {
@@ -214,6 +223,7 @@ func (d *Daemon) ensureSandboxHandle(ctx context.Context, sess store.Session) (s
 	h, err := d.sandbox.Create(ctx, sandbox.Config{
 		Name:      sess.ID,
 		Workspace: sess.WorkspaceDir,
+		Endpoints: runtimeEndpointsToSandbox(d.runtimeEndpoints),
 	})
 	if err != nil {
 		return sandbox.Handle{}, err
@@ -667,4 +677,19 @@ func mustJSON(v any) string {
 // bridgeKey returns the map key for a bridge process given session and agent name.
 func bridgeKey(sessionID, agentName string) string {
 	return sessionID + "/" + agentName
+}
+
+// runtimeEndpointsToSandbox converts provider endpoints into the sandbox's
+// TCPEndpoint type. The shapes are identical today but the packages are
+// deliberately decoupled so a future runtime protocol field doesn't force a
+// matching change in sandbox policy.
+func runtimeEndpointsToSandbox(eps []runtime.Endpoint) []sandbox.TCPEndpoint {
+	if len(eps) == 0 {
+		return nil
+	}
+	out := make([]sandbox.TCPEndpoint, len(eps))
+	for i, e := range eps {
+		out[i] = sandbox.TCPEndpoint{Name: e.Name, Host: e.Host, Port: e.Port}
+	}
+	return out
 }

@@ -7,6 +7,42 @@ import (
 	"testing"
 )
 
+func TestConfigEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want bool
+	}{
+		{"zero value", Config{}, true},
+		{"only up set", Config{Up: "make dev"}, false},
+		{"only health set", Config{Health: "curl -sf /health"}, false},
+		{"only down set", Config{Down: "pkill"}, false},
+		{"only endpoints set", Config{Endpoints: []Endpoint{{Name: "api", Host: "localhost", Port: 8080}}}, false},
+		{"all fields set", Config{Up: "u", Health: "h", Down: "d", Endpoints: []Endpoint{{Port: 1}}}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.Empty(); got != tc.want {
+				t.Errorf("Empty() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewFromConfigEmptyReturnsNoop(t *testing.T) {
+	p := NewFromConfig(Config{})
+	if _, ok := p.(*Noop); !ok {
+		t.Fatalf("NewFromConfig(empty) = %T, want *Noop", p)
+	}
+}
+
+func TestNewFromConfigPopulatedReturnsCommand(t *testing.T) {
+	p := NewFromConfig(Config{Up: "true"})
+	if _, ok := p.(*Command); !ok {
+		t.Fatalf("NewFromConfig(populated) = %T, want *Command", p)
+	}
+}
+
 func writeConfig(t *testing.T, dir, content string) {
 	t.Helper()
 	belayerDir := filepath.Join(dir, ".belayer")
