@@ -15,12 +15,28 @@ Thumbs.db
 # Test
 coverage.out
 
-# Lead state (runtime artifacts)
-.lead/
-
-.worktrees/
+# Runtime state
 .belayer/
-channel/node_modules/
-.mcp.json
+state/
+.tmp/
+
+# Python
+__pycache__/
+*.pyc
+
+# Tool config (local)
+.claude/
+.claude-plugin/
+.codex/
+.hermes/
 .gstack/
-.omx/
+.mcp.json
+.omc/
+.worktrees/
+
+# Third-party skill/plugin state
+docs/superpowers/
+
+# Legacy (removed in v7, still in git history)
+channel/
+artifacts/
