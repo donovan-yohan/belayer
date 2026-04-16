@@ -6,3 +6,4 @@
 - [Crag daemon](2026-04-15-crag-daemon.md) — Forward-looking: always-on worker control plane (outer layer)
 - [Git-backed agent identity](2026-04-15-git-backed-agent-identity.md) — Forward-looking: soul + capabilities materialization
 - [Product manager agent](2026-04-16-product-manager-agent.md) — PM completion gate: adversarial spec-vs-reality verification
+- [Tool catalog and identity](2026-04-16-tool-catalog-and-identity.md) — Co-locate belayer tools with agent templates, role-based tool gating
