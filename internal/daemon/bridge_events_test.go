@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -262,5 +263,266 @@ func TestBridgeClarificationNeededSendsMessageToPlanner(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected input-needed message from worker to supervisor, got %#v", msgs)
+	}
+}
+
+// --- Tests for checkSessionStalled ---
+
+// TestCheckSessionStalledTransitionsWhenAllAgentsDone verifies that when all
+// agents are in a terminal state, the session transitions to "stalled".
+func TestCheckSessionStalledTransitionsWhenAllAgentsDone(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor", "worker")
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
+
+	// Mark both agents as complete.
+	_ = d.store.UpdateAgentRunStatus(sessionID, "supervisor", "complete")
+	_ = d.store.UpdateAgentRunStatus(sessionID, "worker", "complete")
+
+	d.checkSessionStalled(sessionID)
+
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status != "stalled" {
+		t.Fatalf("expected session status=stalled, got %q", sess.Status)
+	}
+
+	// Verify session_stalled event was logged.
+	events, _ := d.store.QueryEvents(sessionID)
+	found := false
+	for _, e := range events {
+		if e.Type == "session_stalled" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected session_stalled event to be logged")
+	}
+}
+
+// TestCheckSessionStalledDoesNotTransitionWhenAgentRunning verifies that the
+// session stays "running" when at least one agent is still active.
+func TestCheckSessionStalledDoesNotTransitionWhenAgentRunning(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor", "worker")
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
+
+	// Only one agent is complete; supervisor still running.
+	_ = d.store.UpdateAgentRunStatus(sessionID, "worker", "complete")
+
+	d.checkSessionStalled(sessionID)
+
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status != "running" {
+		t.Fatalf("expected session status=running (agent still active), got %q", sess.Status)
+	}
+}
+
+// TestCheckSessionStalledSkipsNonRunningSession verifies that sessions already
+// in a terminal state are not re-transitioned.
+func TestCheckSessionStalledSkipsNonRunningSession(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor")
+	_ = d.store.UpdateSessionStatus(sessionID, "complete")
+	_ = d.store.UpdateAgentRunStatus(sessionID, "supervisor", "complete")
+
+	d.checkSessionStalled(sessionID)
+
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status != "complete" {
+		t.Fatalf("expected session to remain complete, got %q", sess.Status)
+	}
+}
+
+// TestCheckSessionStalledRespectsPendingVerification verifies that agents in
+// "pending_verification" are treated as active (session should not stall).
+func TestCheckSessionStalledRespectsPendingVerification(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor", "pm")
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
+
+	_ = d.store.UpdateAgentRunStatus(sessionID, "supervisor", "pending_verification")
+	_ = d.store.UpdateAgentRunStatus(sessionID, "pm", "complete")
+
+	d.checkSessionStalled(sessionID)
+
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status != "running" {
+		t.Fatalf("expected session to remain running (supervisor pending_verification), got %q", sess.Status)
+	}
+}
+
+// --- Tests for checkSupervisorExitedEarly ---
+
+// TestCheckSupervisorExitedEarlyWarnsWhenSpecialistRunning verifies that a
+// warning event is logged when the supervisor exits while a specialist is still
+// running.
+func TestCheckSupervisorExitedEarlyWarnsWhenSpecialistRunning(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor", "worker")
+
+	// Worker is still running when supervisor exits.
+	d.checkSupervisorExitedEarly(sessionID)
+
+	events, _ := d.store.QueryEvents(sessionID)
+	found := false
+	for _, e := range events {
+		if e.Type == "warning:supervisor_exited_early" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected warning:supervisor_exited_early event")
+	}
+}
+
+// TestCheckSupervisorExitedEarlyNoWarningWhenAllDone verifies that no warning
+// is logged when all specialists have already completed.
+func TestCheckSupervisorExitedEarlyNoWarningWhenAllDone(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor", "worker")
+	_ = d.store.UpdateAgentRunStatus(sessionID, "worker", "complete")
+
+	d.checkSupervisorExitedEarly(sessionID)
+
+	events, _ := d.store.QueryEvents(sessionID)
+	for _, e := range events {
+		if e.Type == "warning:supervisor_exited_early" {
+			t.Fatal("did not expect warning:supervisor_exited_early when all specialists are done")
+		}
+	}
+}
+
+// --- Tests for processAgentStatusEvent ---
+
+// TestProcessAgentStatusIncompleteUpdatesAgent verifies that an
+// agent_status:incomplete event updates the agent's status and logs an
+// agent_escalated event.
+func TestProcessAgentStatusIncompleteUpdatesAgent(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "worker",
+		"status": "incomplete",
+		"detail": "stuck in loop",
+	})
+	d.processAgentStatusEvent(sessionID, "agent_status:incomplete", string(data))
+
+	run, err := d.store.GetAgentRun(sessionID, "worker")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.Status != "incomplete" {
+		t.Fatalf("expected agent status=incomplete, got %q", run.Status)
+	}
+
+	events, _ := d.store.QueryEvents(sessionID)
+	found := false
+	for _, e := range events {
+		if e.Type == "agent_escalated" && strings.Contains(e.Data, "worker") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected agent_escalated event for worker")
+	}
+}
+
+// TestProcessAgentStatusIncompleteSupervisorEscalatesSession verifies that when
+// the supervisor reports incomplete, the session transitions to needs_human_review.
+func TestProcessAgentStatusIncompleteSupervisorEscalatesSession(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor")
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "supervisor",
+		"status": "incomplete",
+		"detail": "idle timeout",
+	})
+	d.processAgentStatusEvent(sessionID, "agent_status:incomplete", string(data))
+
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status != "needs_human_review" {
+		t.Fatalf("expected session status=needs_human_review, got %q", sess.Status)
+	}
+}
+
+// TestProcessAgentStatusMalformedJSONDoesNotPanic verifies that malformed event
+// data does not panic and is handled gracefully.
+func TestProcessAgentStatusMalformedJSONDoesNotPanic(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "worker")
+
+	// Should not panic — malformed JSON is logged and returned early.
+	d.processAgentStatusEvent(sessionID, "agent_status:incomplete", "{invalid json")
+}
+
+// TestProcessAgentStatusMissingAgentFieldDoesNotPanic verifies that an event
+// without the agent field is handled gracefully.
+func TestProcessAgentStatusMissingAgentFieldDoesNotPanic(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "worker")
+
+	d.processAgentStatusEvent(sessionID, "agent_status:incomplete", `{"detail":"no agent"}`)
+}
+
+// --- Tests for handleBridgeFinished status overwrite guard ---
+
+// TestBridgeFinishedDoesNotOverwriteIncomplete verifies that when an agent
+// has already been marked incomplete, bridge:finished does not overwrite
+// the status to "complete".
+func TestBridgeFinishedDoesNotOverwriteIncomplete(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor")
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
+
+	// Simulate the idle timeout sequence: agent_status:incomplete then bridge:finished.
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "supervisor",
+		"status": "incomplete",
+		"detail": "idle timeout",
+	})
+	rr := doRequest(t, d, "POST", "/sessions/"+sessionID+"/events", logEventRequest{
+		Type: "agent_status:incomplete",
+		Data: string(data),
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("agent_status:incomplete: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Now post bridge:finished — should NOT overwrite incomplete.
+	rr = postBridgeEvent(t, d, sessionID, "bridge:finished", map[string]any{
+		"agent":  "supervisor",
+		"reason": "idle_timeout",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("bridge:finished: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	run, err := d.store.GetAgentRun(sessionID, "supervisor")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.Status != "incomplete" {
+		t.Fatalf("expected agent status=incomplete (not overwritten by bridge:finished), got %q", run.Status)
 	}
 }

@@ -77,6 +77,8 @@ Agents never communicate by writing to shared files or reading each other's term
 
 The daemon is a Go process running on a Unix socket. It owns the session state and routes all inter-agent communication.
 
+Every run has two mandatory agents — the **supervisor** and the **PM** — plus zero or more specialist agents spawned by the supervisor at runtime. The supervisor orchestrates work; the PM gates completion. Everything else is dynamic.
+
 ```mermaid
 flowchart TB
     subgraph daemon["Belayer Daemon (Go, Unix socket)"]
@@ -89,23 +91,25 @@ flowchart TB
 
     subgraph supervisor_box["Supervisor (non-ephemeral, always-on)"]
         supervisor_hermes["Hermes + Bridge"]
-        supervisor_tools["Base tools + Belayer coordination + spawn + completion"]
+        supervisor_tools["Base tools + Belayer coordination\n+ spawn + request_completion"]
     end
 
-    subgraph spec_a["Specialist A (ephemeral)"]
-        spec_a_hermes["Hermes + Bridge"]
-        spec_a_tools["Base tools + Belayer baseline"]
+    subgraph pm_box["PM (ephemeral, auto-spawned by daemon)"]
+        pm_hermes["Hermes + Bridge"]
+        pm_tools["Base tools + Belayer baseline\n+ approve/reject_completion"]
     end
 
-    subgraph spec_b["Specialist B (ephemeral)"]
-        spec_b_hermes["Hermes + Bridge"]
-        spec_b_tools["Base tools + Belayer baseline"]
+    subgraph specialists["Specialist 1..N (ephemeral, spawned by supervisor)"]
+        spec_hermes["Hermes + Bridge"]
+        spec_tools["Base tools + Belayer baseline"]
     end
 
     supervisor_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
-    spec_a_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
-    spec_b_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
+    pm_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
+    spec_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
 ```
+
+The supervisor is always the first agent spawned. It reads the spec, decomposes work, and spawns specialists (frontend, backend, qa, reviewer, etc.) as needed. The PM is never spawned by the supervisor — the daemon auto-spawns it when the supervisor calls `belayer_request_completion`, creating an adversarial verification step that the supervisor cannot skip.
 
 ### What the daemon owns
 
@@ -179,15 +183,18 @@ stateDiagram-v2
     Starting --> Running: bridge:started
     Running --> Idle: Task done, waiting for specialists
     Idle --> Running: Specialist reports in (message or interrupt)
-    Idle --> Complete: Idle timeout (5 min) or explicit finish
-    Running --> Complete: belayer finish
+    Idle --> Incomplete: Idle timeout (5 min), no response
+    Running --> Complete: belayer finish → PM approval
     Running --> Blocked: Unrecoverable error
+    Running --> Incomplete: Agent decides it cannot finish
     Idle --> Complete: Stop command
 ```
 
-When the supervisor completes a task, it enters an **idle loop**: polling every 5 seconds for new messages, listening on stdin for interrupts. If a specialist sends a message, the supervisor wakes up and continues. If nothing happens for 5 minutes, it exits cleanly.
+When the supervisor completes a task, it enters an **idle loop**: polling every 5 seconds for new messages, listening on stdin for interrupts. If a specialist sends a message, the supervisor wakes up and continues. If nothing happens for 5 minutes, the supervisor exits as **incomplete** — this is not a successful completion, it means no specialist reported back.
 
-This means the supervisor doesn't burn tokens while waiting. It's not running inference. It's a Python process sleeping in a poll loop, ready to resume the Hermes conversation the moment work arrives.
+The **incomplete** state is distinct from both **complete** (work finished) and **blocked** (unrecoverable error). It means the agent made progress but could not finish — either due to idle timeout, getting stuck in a loop, or making a deliberate decision to escalate. When the supervisor reports incomplete, the daemon transitions the session to `needs_human_review`. Any agent can report incomplete via `belayer_report_status(status="incomplete")`.
+
+The supervisor doesn't burn tokens while idling. It's not running inference. It's a Python process sleeping in a poll loop, ready to resume the Hermes conversation the moment work arrives.
 
 ### Specialists (ephemeral, spawn-and-complete)
 
@@ -199,9 +206,10 @@ stateDiagram-v2
     Starting --> Running: bridge:started
     Running --> Complete: Task done (bridge:finished)
     Running --> Blocked: Error or exit without finish
+    Running --> Incomplete: Cannot finish, escalates to human
 ```
 
-Specialists are ephemeral by default (`ephemeral=true`). When their task is done, the bridge posts `bridge:finished` and the process exits.
+Specialists are ephemeral by default (`ephemeral=true`). When their task is done, the bridge posts `bridge:finished` and the process exits. If a specialist gets stuck, it can report `incomplete` to escalate — the daemon logs an `agent_escalated` event and the supervisor is notified.
 
 But their **names persist**. The `agent_runs` table keeps the row. If the supervisor needs to assign more work to the same role, it spawns with the same name. The daemon detects the prior run, carries over the `HermesSessionID`, and the specialist resumes with its full conversation history.
 
@@ -286,9 +294,13 @@ Daemon-internal events (not from bridge):
 | `agent_spawned` | Spawn handler | Roster update |
 | `agent_finished` | Finish handler | Status update |
 | `agent_exited_without_finish` | Exit watcher | Marks agent `blocked` |
+| `agent_escalated` | Status event handler | Agent reported `incomplete`, logged for monitoring |
 | `artifact_created` | Artifact handler | Registry update |
+| `run_initiated` | CLI `run start` | Records initial task prompt and supervisor profile |
 | `session_created` | Session handler | — |
 | `session_completed` | Completion approved handler | Session status → complete |
+| `session_stalled` | Bridge finished/failed handler | All agents exited without completion → session status → stalled |
+| `warning:supervisor_exited_early` | Bridge finished handler | Supervisor exited while specialists still running |
 | `completion_rejected` | Completion rejected handler | Tracks cycle count |
 | `completion_escalated` | Rejection limit handler | Session status → needs_human_review |
 | `pm_spawn_failed` | PM spawn error | Notifies supervisor to retry |

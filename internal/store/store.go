@@ -193,6 +193,25 @@ func (s *Store) UpdateSessionStatus(id, status string) error {
 	return nil
 }
 
+// UpdateSessionStatusIf conditionally updates the session status only if
+// the current status matches expectedStatus. Returns true if the row was
+// updated (i.e., the expected status matched). This prevents race conditions
+// where concurrent callers overwrite each other's transitions.
+func (s *Store) UpdateSessionStatusIf(id, expectedStatus, newStatus string) (bool, error) {
+	result, err := s.db.Exec(
+		`UPDATE sessions SET status = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		newStatus, time.Now().UTC(), id, expectedStatus,
+	)
+	if err != nil {
+		return false, fmt.Errorf("store: conditional update session status: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: rows affected: %w", err)
+	}
+	return rows > 0, nil
+}
+
 // UpdateSessionWorkspaceDir updates the workspace_dir and updated_at of a session.
 func (s *Store) UpdateSessionWorkspaceDir(id, workspaceDir string) error {
 	_, err := s.db.Exec(

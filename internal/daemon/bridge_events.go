@@ -55,17 +55,161 @@ func (d *Daemon) handleBridgeStarted(sessionID, agentName string, data map[strin
 }
 
 func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[string]any) {
-	_ = d.store.UpdateAgentRunStatus(sessionID, agentName, "complete")
+	// Don't overwrite "incomplete" — the agent already reported it couldn't finish.
+	current, err := d.store.GetAgentRun(sessionID, agentName)
+	if err != nil || current.Status != "incomplete" {
+		if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "complete"); err != nil {
+			log.Printf("ERROR: handleBridgeFinished: failed to update agent %s status in session %s: %v", agentName, sessionID, err)
+		}
+	}
 
 	// No auto-generated message to the supervisor here. The specialist should
 	// have sent its own report via belayer_send_message before exiting.
 	// If the bridge crashes without a clean exit, watchBridgeExit handles
 	// the notification. Auto-generating a state_change here causes duplicate
 	// messages that the supervisor dismisses as noise.
+
+	// Check for supervisor exiting while specialists are still running.
+	if agentName == "supervisor" {
+		d.checkSupervisorExitedEarly(sessionID)
+	}
+
+	// Check if the session is now stalled (all agents done, no completion approval).
+	d.checkSessionStalled(sessionID)
+}
+
+// checkSupervisorExitedEarly emits a warning if the supervisor exits while
+// any specialist agents are still running or starting.
+func (d *Daemon) checkSupervisorExitedEarly(sessionID string) {
+	agents, err := d.store.ListAgentRuns(sessionID)
+	if err != nil {
+		log.Printf("WARNING: checkSupervisorExitedEarly: ListAgentRuns failed for session %s: %v", sessionID, err)
+		return
+	}
+	for _, a := range agents {
+		if a.Name == "supervisor" {
+			continue
+		}
+		if a.Status == "running" || a.Status == "starting" {
+			log.Printf("WARNING: supervisor exited while %s is still %s in session %s", a.Name, a.Status, sessionID)
+			_ = d.store.LogEvent(store.SessionEvent{
+				SessionID: sessionID,
+				Type:      "warning:supervisor_exited_early",
+				Data: mustJSON(map[string]string{
+					"active_agent": a.Name,
+					"agent_status": a.Status,
+				}),
+			})
+			return // one warning is enough
+		}
+	}
+}
+
+// checkSessionStalled detects when all agents have exited but the session
+// was never completed via the PM gate. Transitions session to "stalled".
+func (d *Daemon) checkSessionStalled(sessionID string) {
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
+		log.Printf("WARNING: checkSessionStalled: GetSession failed for session %s: %v", sessionID, err)
+		return
+	}
+	// Only check sessions that are still "running".
+	if sess.Status != "running" {
+		return
+	}
+
+	agents, err := d.store.ListAgentRuns(sessionID)
+	if err != nil {
+		log.Printf("WARNING: checkSessionStalled: ListAgentRuns failed for session %s: %v", sessionID, err)
+		return
+	}
+	if len(agents) == 0 {
+		return
+	}
+
+	// If any agent is still active, session is not stalled.
+	for _, a := range agents {
+		if a.Status == "running" || a.Status == "starting" || a.Status == "pending_verification" {
+			return
+		}
+	}
+
+	// All agents are done/blocked/complete but session is still "running".
+	// Use conditional update to avoid race when multiple agents finish concurrently.
+	updated, err := d.store.UpdateSessionStatusIf(sessionID, "running", "stalled")
+	if err != nil {
+		log.Printf("ERROR: checkSessionStalled: failed to mark session %s as stalled: %v", sessionID, err)
+		return
+	}
+	if !updated {
+		return // another goroutine already transitioned this session
+	}
+	if err := d.store.LogEvent(store.SessionEvent{
+		SessionID: sessionID,
+		Type:      "session_stalled",
+		Data: mustJSON(map[string]string{
+			"reason": "all_agents_exited_without_completion",
+		}),
+	}); err != nil {
+		log.Printf("WARNING: checkSessionStalled: session %s marked stalled but event log failed: %v", sessionID, err)
+	}
+	log.Printf("Session %s marked stalled: all agents exited without completion approval", sessionID)
+}
+
+// processAgentStatusEvent handles side effects for agent_status:* events
+// posted by agents via belayer_report_status.
+func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
+	var eventData map[string]any
+	if data != "" {
+		if err := json.Unmarshal([]byte(data), &eventData); err != nil {
+			log.Printf("WARNING: malformed agent_status event data in session %s (type=%s): %v", sessionID, eventType, err)
+			return
+		}
+	}
+	agentName, _ := eventData["agent"].(string)
+	if agentName == "" {
+		log.Printf("WARNING: agent_status event missing agent field in session %s (type=%s)", sessionID, eventType)
+		return
+	}
+
+	switch eventType {
+	case "agent_status:incomplete":
+		detail, _ := eventData["detail"].(string)
+		if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "incomplete"); err != nil {
+			log.Printf("ERROR: processAgentStatusEvent: failed to update agent %s to incomplete in session %s: %v", agentName, sessionID, err)
+		}
+
+		if err := d.store.LogEvent(store.SessionEvent{
+			SessionID: sessionID,
+			Type:      "agent_escalated",
+			Data: mustJSON(map[string]string{
+				"agent":  agentName,
+				"reason": "incomplete",
+				"detail": detail,
+			}),
+		}); err != nil {
+			log.Printf("WARNING: processAgentStatusEvent: failed to log agent_escalated event in session %s: %v", sessionID, err)
+		}
+
+		// If the supervisor reports incomplete, escalate the session.
+		if agentName == "supervisor" {
+			if err := d.store.UpdateSessionStatus(sessionID, "needs_human_review"); err != nil {
+				log.Printf("ERROR: processAgentStatusEvent: failed to escalate session %s to needs_human_review: %v", sessionID, err)
+			} else {
+				log.Printf("Session %s escalated to human review: supervisor reported incomplete", sessionID)
+			}
+		}
+
+	default:
+		log.Printf("DEBUG: unhandled agent_status event %s for agent %s in session %s (log-only)", eventType, agentName, sessionID)
+	}
 }
 
 func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string]any) {
 	_ = d.store.UpdateAgentRunStatus(sessionID, agentName, "blocked")
+
+	// Check if this was the last active agent.
+	d.checkSessionStalled(sessionID)
 
 	if agentName == "supervisor" {
 		return

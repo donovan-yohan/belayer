@@ -26,13 +26,19 @@ def post_event(socket_path: str, session_id: str, agent_id: str, event_type: str
         data = {}
     data["agent"] = agent_id
 
+    # State-changing events drive session lifecycle; log failures at WARNING.
+    _STATE_EVENTS = ("agent_status:", "bridge:finished", "bridge:failed")
+
     status, body = unix_post(
         socket_path,
         f"/sessions/{session_id}/events",
         {"type": event_type, "data": json.dumps(data)},
     )
     if status not in (200, 201):
-        log.debug("post_event %s -> %d %s", event_type, status, body[:120])
+        if any(event_type.startswith(prefix) for prefix in _STATE_EVENTS):
+            log.warning("post_event %s -> %d %s", event_type, status, body[:120])
+        else:
+            log.debug("post_event %s -> %d %s", event_type, status, body[:120])
 
 
 def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
@@ -53,28 +59,47 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
             state["last_heartbeat"] = now
             post_event(socket_path, session_id, agent_id, "bridge:heartbeat", {})
 
+    # Tools that accept a file path via dict-style 'path' or 'file_path' kwarg.
+    _FILE_TOOLS = frozenset({"read_file", "write_file", "edit_file", "create_file"})
+
+    def _extract_path(tool_name: str, tool_args) -> str | None:
+        """Extract file path from tool args for file operation events."""
+        if tool_name not in _FILE_TOOLS:
+            return None
+        if isinstance(tool_args, dict):
+            return tool_args.get("path") or tool_args.get("file_path")
+        return None
+
     def tool_start_callback(tool_call_id, tool_name, tool_args, **kwargs):
         state["tool_starts"][tool_call_id] = time.monotonic()
+        event_data = {
+            "tool": tool_name,
+            "input_preview": str(tool_args)[:200],
+        }
+        path = _extract_path(tool_name, tool_args)
+        if path:
+            event_data["path"] = path
         post_event(
             socket_path, session_id, agent_id,
             "bridge:tool_started",
-            {
-                "tool": tool_name,
-                "input_preview": str(tool_args)[:200],
-            },
+            event_data,
         )
 
     def tool_complete_callback(tool_call_id, tool_name, tool_args, tool_result, **kwargs):
         started = state["tool_starts"].pop(tool_call_id, None)
         duration_ms = int((time.monotonic() - started) * 1000) if started else 0
+        event_data = {
+            "tool": tool_name,
+            "duration_ms": duration_ms,
+            "result_preview": str(tool_result)[:200],
+        }
+        path = _extract_path(tool_name, tool_args)
+        if path:
+            event_data["path"] = path
         post_event(
             socket_path, session_id, agent_id,
             "bridge:tool_completed",
-            {
-                "tool": tool_name,
-                "duration_ms": duration_ms,
-                "result_preview": str(tool_result)[:200],
-            },
+            event_data,
         )
 
     def step_callback(messages=None, **kwargs):
