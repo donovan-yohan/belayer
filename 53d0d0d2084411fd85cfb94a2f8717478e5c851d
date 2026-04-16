@@ -1,0 +1,36 @@
+hermes_bridge/tools.py
+  a12e7b72326dea5d 33,40,139-148,189-190,369
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "53d0d0d2084411fd85cfb94a2f8717478e5c851d",
+  "prompts": {
+    "a12e7b72326dea5d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c8c01528-c8bd-4597-a050-baa263126c2b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 9,
+      "accepted_lines": 1203,
+      "overriden_lines": 0
+    },
+    "beecb793b04ae5d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60427526-396c-4ef4-ba78-847e76f541ec",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 247,
+      "overriden_lines": 0
+    }
+  }
+}
