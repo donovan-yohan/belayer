@@ -64,8 +64,8 @@ func TestLoadTemplate_Deliver(t *testing.T) {
 	if tmpl.Phase != PhaseDeliver {
 		t.Errorf("Phase: got %q, want %q", tmpl.Phase, PhaseDeliver)
 	}
-	if len(tmpl.Agents) != 2 {
-		t.Errorf("Agents: got %d, want 2", len(tmpl.Agents))
+	if len(tmpl.Agents) != 3 {
+		t.Errorf("Agents: got %d, want 3", len(tmpl.Agents))
 	}
 }
 
