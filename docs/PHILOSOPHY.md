@@ -89,15 +89,15 @@ flowchart LR
     W1 --> WorkerRun
     DB -.->|"export: logs,\nartifacts, memory"| Queue
 
-    class WorkerRun session
-    class Sandbox sandbox
+    class WorkerRun sessionContainer
+    class Sandbox sandboxContainer
 
-    classDef session fill:#4A90D9,stroke:#2E5C8A,color:#fff
     classDef orch fill:#E8A838,stroke:#B07A1A,color:#fff
     classDef comm fill:#50B86C,stroke:#2D8A45,color:#fff
-    classDef sandbox fill:#E05555,stroke:#A83232,color:#fff
     classDef memory fill:#9B6FCF,stroke:#6B3FA0,color:#fff
     classDef tools fill:#3ABAB4,stroke:#1F8A85,color:#fff
+    classDef sessionContainer fill:#1E3A5F,stroke:#4A90D9,stroke-width:3px,color:#fff
+    classDef sandboxContainer fill:#4A1E1E,stroke:#E05555,stroke-width:3px,color:#fff
 ```
 
 > Colors map to the six interfaces: blue = Session, amber = Orchestration, green = Communication, red = Sandbox, purple = Memory, teal = Tools. The sandbox wraps the agents and their tool-execution surface — everything the agents actively drive. Communication (inner daemon) and the run-local DB sit inside the session but outside the sandbox: they're trusted infrastructure the agents talk through, not run inside.
