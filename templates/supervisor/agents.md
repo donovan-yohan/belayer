@@ -1,4 +1,4 @@
-# Pilot Operating Instructions
+# Supervisor Operating Instructions
 
 ## Your Team
 

@@ -6,3 +6,4 @@ max_turns: 20
 max_duration: "30m"
 ephemeral: true
 workspace: none
+belayer_tools: []
