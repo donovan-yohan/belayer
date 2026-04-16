@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -23,6 +24,7 @@ func TestLoadConfig(t *testing.T) {
 		setup       func(t *testing.T, dir string) // nil = no file
 		wantCfg     Config
 		wantErr     bool
+		wantErrHas  string // substring the error must contain when wantErr is true
 	}{
 		{
 			name: "happy path: full runtime section",
@@ -72,7 +74,24 @@ runtime:
   up: [unclosed bracket
 `)
 			},
-			wantErr: true,
+			wantErr:    true,
+			wantErrHas: "runtime: parse config",
+		},
+		{
+			name: "unreadable file: returns non-nil error",
+			setup: func(t *testing.T, dir string) {
+				if os.Getuid() == 0 {
+					t.Skip("chmod 000 does not block root")
+				}
+				writeConfig(t, dir, `runtime:`)
+				p := filepath.Join(dir, ".belayer", "config.yaml")
+				if err := os.Chmod(p, 0o000); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(p, 0o644) })
+			},
+			wantErr:    true,
+			wantErrHas: "runtime: read config",
 		},
 		{
 			name: "partial config: only up set",
@@ -138,6 +157,9 @@ runtime:
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("LoadConfig() returned nil error, want non-nil")
+				}
+				if tc.wantErrHas != "" && !strings.Contains(err.Error(), tc.wantErrHas) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tc.wantErrHas)
 				}
 				return
 			}
