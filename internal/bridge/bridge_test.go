@@ -110,7 +110,7 @@ func TestInterruptSendsCorrectJSON(t *testing.T) {
 	cfg := testConfig(t)
 	p := spawnCat(t, cfg)
 
-	if err := p.Interrupt("planner", "please stop what you're doing"); err != nil {
+	if err := p.Interrupt("supervisor", "please stop what you're doing"); err != nil {
 		t.Fatalf("Interrupt: %v", err)
 	}
 	p.stdin.Close()
@@ -128,8 +128,8 @@ func TestInterruptSendsCorrectJSON(t *testing.T) {
 	if decoded["type"] != "interrupt" {
 		t.Fatalf("expected type=interrupt, got %q", decoded["type"])
 	}
-	if decoded["from"] != "planner" {
-		t.Fatalf("expected from=planner, got %q", decoded["from"])
+	if decoded["from"] != "supervisor" {
+		t.Fatalf("expected from=supervisor, got %q", decoded["from"])
 	}
 	if decoded["content"] != "please stop what you're doing" {
 		t.Fatalf("unexpected content: %q", decoded["content"])
@@ -254,8 +254,8 @@ func TestEnvVarsInjected(t *testing.T) {
 	cfg := Config{
 		SessionID:       "sess-abc",
 		AgentID:         "agent-xyz",
-		Role:            "planner",
-		Profile:         "nightshift-planner",
+		Role:            "supervisor",
+		Profile:         "nightshift-supervisor",
 		Workdir:         t.TempDir(),
 		SocketPath:      "/tmp/test.sock",
 		RunDir:          t.TempDir(),
@@ -280,8 +280,8 @@ func TestEnvVarsInjected(t *testing.T) {
 	checks := map[string]string{
 		"BELAYER_SESSION_ID":        "sess-abc",
 		"BELAYER_AGENT_ID":          "agent-xyz",
-		"BELAYER_ROLE":              "planner",
-		"BELAYER_PROFILE":           "nightshift-planner",
+		"BELAYER_ROLE":              "supervisor",
+		"BELAYER_PROFILE":           "nightshift-supervisor",
 		"BELAYER_SOCKET":            "/tmp/test.sock",
 		"BELAYER_MODEL":             "claude-opus-4",
 		"BELAYER_MESSAGE":           "do the thing",

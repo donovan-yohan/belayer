@@ -57,17 +57,17 @@ func (d *Daemon) handleBridgeStarted(sessionID, agentName string, data map[strin
 func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[string]any) {
 	_ = d.store.UpdateAgentRunStatus(sessionID, agentName, "complete")
 
-	// No auto-generated message to the planner here. The specialist should
+	// No auto-generated message to the supervisor here. The specialist should
 	// have sent its own report via belayer_send_message before exiting.
 	// If the bridge crashes without a clean exit, watchBridgeExit handles
 	// the notification. Auto-generating a state_change here causes duplicate
-	// messages that the planner dismisses as noise.
+	// messages that the supervisor dismisses as noise.
 }
 
 func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string]any) {
 	_ = d.store.UpdateAgentRunStatus(sessionID, agentName, "blocked")
 
-	if agentName == "planner" {
+	if agentName == "supervisor" {
 		return
 	}
 
@@ -82,31 +82,31 @@ func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string
 		ID:          msgID,
 		SessionID:   sessionID,
 		SenderID:    agentName,
-		RecipientID: "planner",
+		RecipientID: "supervisor",
 		Type:        broker.MessageStateChange,
 		Content:     content,
 		Urgent:      true,
 		Timestamp:   time.Now().UTC(),
 	}
 
-	// Persist to messages table so bridge-based planners can pull it.
+	// Persist to messages table so bridge-based supervisors can pull it.
 	_, _ = d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
 		SenderID:    agentName,
-		RecipientID: "planner",
+		RecipientID: "supervisor",
 		Type:        string(broker.MessageStateChange),
 		Content:     content,
 		Urgent:      true,
 	})
 
-	// Urgent: planner should know about failures immediately.
-	_ = d.broker.Interrupt(sessionID, "planner", msg)
+	// Urgent: supervisor should know about failures immediately.
+	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 }
 
 func (d *Daemon) handleBridgeClarification(sessionID, agentName string, data map[string]any) {
-	if agentName == "planner" {
-		return // planner doesn't clarify to itself
+	if agentName == "supervisor" {
+		return // supervisor doesn't clarify to itself
 	}
 
 	question, _ := data["question"].(string)
@@ -120,23 +120,23 @@ func (d *Daemon) handleBridgeClarification(sessionID, agentName string, data map
 		ID:          msgID,
 		SessionID:   sessionID,
 		SenderID:    agentName,
-		RecipientID: "planner",
+		RecipientID: "supervisor",
 		Type:        broker.MessageInputNeeded,
 		Content:     content,
 		Timestamp:   time.Now().UTC(),
 	}
 
-	// Persist to messages table so bridge-based planners can pull it.
+	// Persist to messages table so bridge-based supervisors can pull it.
 	_, _ = d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
 		SenderID:    agentName,
-		RecipientID: "planner",
+		RecipientID: "supervisor",
 		Type:        string(broker.MessageInputNeeded),
 		Content:     content,
 	})
 
-	_ = d.broker.Send(sessionID, "planner", msg)
+	_ = d.broker.Send(sessionID, "supervisor", msg)
 }
 
 func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, data map[string]any) {
@@ -177,9 +177,9 @@ func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, da
 
 	// Build PM initial message with full context.
 	pmMessage := fmt.Sprintf(
-		`[System] The planner has signaled that all implementation work is complete. Your job is to verify.
+		`[System] The supervisor has signaled that all implementation work is complete. Your job is to verify.
 
-Planner's summary:
+Supervisor's summary:
 %s
 
 Spec artifact: %s
@@ -215,12 +215,12 @@ If gaps exist: call belayer_reject_completion with the specific gaps so the plan
 				Type:      "pm_spawn_failed",
 				Data:      mustJSON(map[string]string{"error": err.Error()}),
 			})
-			// Notify planner that PM spawn failed.
+			// Notify supervisor that PM spawn failed.
 			msg := broker.Message{
 				ID:          uuid.New().String(),
 				SessionID:   sessionID,
 				SenderID:    "system",
-				RecipientID: "planner",
+				RecipientID: "supervisor",
 				Type:        broker.MessageStateChange,
 				Content:     "PM agent failed to spawn for completion verification. You may call belayer_request_completion again to retry.",
 				Urgent:      true,
@@ -230,12 +230,12 @@ If gaps exist: call belayer_reject_completion with the specific gaps so the plan
 				ID:          msg.ID,
 				SessionID:   sessionID,
 				SenderID:    "system",
-				RecipientID: "planner",
+				RecipientID: "supervisor",
 				Type:        string(broker.MessageStateChange),
 				Content:     msg.Content,
 				Urgent:      true,
 			})
-			_ = d.broker.Interrupt(sessionID, "planner", msg)
+			_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 		} else {
 			log.Printf("Auto-spawned PM agent for completion review in session %s", sessionID)
 		}
@@ -310,12 +310,12 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 				"rejections": fmt.Sprintf("%d", rejectionCount),
 			}),
 		})
-		// Notify planner of escalation.
+		// Notify supervisor of escalation.
 		msg := broker.Message{
 			ID:          uuid.New().String(),
 			SessionID:   sessionID,
 			SenderID:    "system",
-			RecipientID: "planner",
+			RecipientID: "supervisor",
 			Type:        broker.MessageStateChange,
 			Content: fmt.Sprintf(
 				"PM has rejected completion %d times (limit: %d). Run escalated to human review. "+
@@ -327,14 +327,14 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		}
 		_, _ = d.store.CreateMessage(store.Message{
 			ID: msg.ID, SessionID: sessionID, SenderID: "system",
-			RecipientID: "planner", Type: string(broker.MessageStateChange),
+			RecipientID: "supervisor", Type: string(broker.MessageStateChange),
 			Content: msg.Content, Urgent: true,
 		})
-		_ = d.broker.Interrupt(sessionID, "planner", msg)
+		_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 		return
 	}
 
-	// Send gap list to planner for remediation.
+	// Send gap list to supervisor for remediation.
 	content := fmt.Sprintf(
 		"PM rejected completion (cycle %d/%d). Gaps found:\n\n%s\n\nAddress these gaps and call belayer_request_completion again when ready.",
 		rejectionCount, maxRejectionCycles, gapList,
@@ -344,7 +344,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		ID:          msgID,
 		SessionID:   sessionID,
 		SenderID:    agentName,
-		RecipientID: "planner",
+		RecipientID: "supervisor",
 		Type:        broker.MessageStateChange,
 		Content:     content,
 		Urgent:      true,
@@ -352,11 +352,11 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 	}
 	_, _ = d.store.CreateMessage(store.Message{
 		ID: msgID, SessionID: sessionID, SenderID: agentName,
-		RecipientID: "planner", Type: string(broker.MessageStateChange),
+		RecipientID: "supervisor", Type: string(broker.MessageStateChange),
 		Content: content, Urgent: true,
 	})
-	_ = d.broker.Interrupt(sessionID, "planner", msg)
+	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 
-	log.Printf("PM rejected completion for session %s (cycle %d/%d), gap list sent to planner",
+	log.Printf("PM rejected completion for session %s (cycle %d/%d), gap list sent to supervisor",
 		sessionID, rejectionCount, maxRejectionCycles)
 }

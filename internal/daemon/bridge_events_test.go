@@ -51,7 +51,7 @@ func postBridgeEvent(t *testing.T, d *Daemon, sessionID, eventType string, data 
 // bridge:finished event marks the agent run as complete in the store.
 func TestBridgeFinishedUpdatesAgentStatusToComplete(t *testing.T) {
 	d := testDaemon(t)
-	sessionID := setupSessionWithAgents(t, d, "worker", "planner")
+	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
 
 	rr := postBridgeEvent(t, d, sessionID, "bridge:finished", map[string]any{
 		"agent":          "worker",
@@ -74,7 +74,7 @@ func TestBridgeFinishedUpdatesAgentStatusToComplete(t *testing.T) {
 // bridge:failed event marks the agent run as blocked in the store.
 func TestBridgeFailedUpdatesAgentStatusToBlocked(t *testing.T) {
 	d := testDaemon(t)
-	sessionID := setupSessionWithAgents(t, d, "worker", "planner")
+	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
 
 	rr := postBridgeEvent(t, d, sessionID, "bridge:failed", map[string]any{
 		"agent": "worker",
@@ -99,7 +99,7 @@ func TestBridgeFailedUpdatesAgentStatusToBlocked(t *testing.T) {
 // The specialist is expected to send its own report via belayer_send_message.
 func TestBridgeFinishedForNonPlannerUpdatesStatusOnly(t *testing.T) {
 	d := testDaemon(t)
-	sessionID := setupSessionWithAgents(t, d, "worker", "planner")
+	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
 
 	postBridgeEvent(t, d, sessionID, "bridge:finished", map[string]any{
 		"agent":          "worker",
@@ -116,7 +116,7 @@ func TestBridgeFinishedForNonPlannerUpdatesStatusOnly(t *testing.T) {
 	}
 
 	// No auto-generated message to the planner (avoids duplicate noise).
-	msgs, err := d.store.PendingMessages(sessionID, "planner", "")
+	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
 	if err != nil {
 		t.Fatalf("PendingMessages: %v", err)
 	}
@@ -130,14 +130,14 @@ func TestBridgeFinishedForNonPlannerUpdatesStatusOnly(t *testing.T) {
 // persisted to the messages table addressed to the planner.
 func TestBridgeFailedForNonPlannerSendsUrgentMessageToPlanner(t *testing.T) {
 	d := testDaemon(t)
-	sessionID := setupSessionWithAgents(t, d, "worker", "planner")
+	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
 
 	postBridgeEvent(t, d, sessionID, "bridge:failed", map[string]any{
 		"agent": "worker",
 		"error": "fatal error",
 	})
 
-	msgs, err := d.store.PendingMessages(sessionID, "planner", "")
+	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
 	if err != nil {
 		t.Fatalf("PendingMessages: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestBridgeFailedForNonPlannerSendsUrgentMessageToPlanner(t *testing.T) {
 	}
 	found := false
 	for _, m := range msgs {
-		if m.SenderID == "worker" && m.RecipientID == "planner" && m.Urgent {
+		if m.SenderID == "worker" && m.RecipientID == "supervisor" && m.Urgent {
 			found = true
 			break
 		}
@@ -160,14 +160,14 @@ func TestBridgeFailedForNonPlannerSendsUrgentMessageToPlanner(t *testing.T) {
 // itself posts bridge:finished, no message is sent to the planner.
 func TestBridgeFinishedForPlannerDoesNotSendMessage(t *testing.T) {
 	d := testDaemon(t)
-	sessionID := setupSessionWithAgents(t, d, "planner")
+	sessionID := setupSessionWithAgents(t, d, "supervisor")
 
 	postBridgeEvent(t, d, sessionID, "bridge:finished", map[string]any{
-		"agent":          "planner",
+		"agent":          "supervisor",
 		"final_response": "session complete",
 	})
 
-	msgs, err := d.store.PendingMessages(sessionID, "planner", "")
+	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
 	if err != nil {
 		t.Fatalf("PendingMessages: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestBridgeFinishedForPlannerDoesNotSendMessage(t *testing.T) {
 	}
 
 	// Status should still be updated.
-	run, err := d.store.GetAgentRun(sessionID, "planner")
+	run, err := d.store.GetAgentRun(sessionID, "supervisor")
 	if err != nil {
 		t.Fatalf("GetAgentRun: %v", err)
 	}
@@ -239,14 +239,14 @@ func TestBridgeEventWithoutAgentFieldDoesNotPanic(t *testing.T) {
 // messages table for the planner.
 func TestBridgeClarificationNeededSendsMessageToPlanner(t *testing.T) {
 	d := testDaemon(t)
-	sessionID := setupSessionWithAgents(t, d, "worker", "planner")
+	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
 
 	postBridgeEvent(t, d, sessionID, "bridge:clarification_needed", map[string]any{
 		"agent":    "worker",
 		"question": "which endpoint should I use?",
 	})
 
-	msgs, err := d.store.PendingMessages(sessionID, "planner", "")
+	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
 	if err != nil {
 		t.Fatalf("PendingMessages: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestBridgeClarificationNeededSendsMessageToPlanner(t *testing.T) {
 	}
 	found := false
 	for _, m := range msgs {
-		if m.SenderID == "worker" && m.RecipientID == "planner" && m.Type == "input-needed" {
+		if m.SenderID == "worker" && m.RecipientID == "supervisor" && m.Type == "input-needed" {
 			found = true
 			break
 		}

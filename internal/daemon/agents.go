@@ -27,7 +27,7 @@ type agentSpawnRequest struct {
 	Workdir         string `json:"workdir,omitempty"`
 	Branch          string `json:"branch,omitempty"`          // if set, agent works in a git worktree on this branch
 	HermesSessionID string `json:"hermes_session_id,omitempty"`
-	Ephemeral       *bool  `json:"ephemeral,omitempty"` // nil = default (true for specialists, false for planner)
+	Ephemeral       *bool  `json:"ephemeral,omitempty"` // nil = default (true for specialists, false for supervisor)
 }
 
 type finishAgentRequest struct {
@@ -192,9 +192,9 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// When the planner calls finish (and isn't blocked), trigger PM verification
+	// When the supervisor calls finish (and isn't blocked), trigger PM verification
 	// instead of marking the session complete immediately.
-	if name == "planner" && !req.Blocked {
+	if name == "supervisor" && !req.Blocked {
 		_ = d.store.LogEvent(store.SessionEvent{
 			SessionID: sessionID,
 			Type:      "agent_finished",
@@ -237,13 +237,13 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 			"summary": req.Summary,
 		}),
 	})
-	if name != "planner" {
+	if name != "supervisor" {
 		content := fmt.Sprintf("%s marked work as %s. Summary: %s", name, status, req.Summary)
-		msg := broker.Message{SessionID: sessionID, SenderID: name, RecipientID: "planner", Type: broker.MessageStateChange, Content: content, Timestamp: time.Now().UTC(), Urgent: req.Blocked}
+		msg := broker.Message{SessionID: sessionID, SenderID: name, RecipientID: "supervisor", Type: broker.MessageStateChange, Content: content, Timestamp: time.Now().UTC(), Urgent: req.Blocked}
 		if req.Blocked {
-			_ = d.broker.Interrupt(sessionID, "planner", msg)
+			_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 		} else {
-			_ = d.broker.Send(sessionID, "planner", msg)
+			_ = d.broker.Send(sessionID, "supervisor", msg)
 		}
 	}
 	writeJSON(w, http.StatusOK, run)
@@ -279,16 +279,16 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	}
 
 	// Resolve ephemeral flag: explicit request > role-based default.
-	// Planners stay alive by default; all other roles exit on task completion.
+	// Supervisors stay alive by default; all other roles exit on task completion.
 	ephemeral := true
 	if req.Ephemeral != nil {
 		ephemeral = *req.Ephemeral
-	} else if req.Role == "planner" {
+	} else if req.Role == "supervisor" {
 		ephemeral = false
 	}
 
 	// Load system prompt from templates/<name>/system-prompt.md if it exists.
-	// The template is keyed by agent name (e.g. "pm", "pilot", "reviewer").
+	// The template is keyed by agent name (e.g. "pm", "supervisor", "reviewer").
 	// Check the workspace first, then fall back to belayer root.
 	var systemPrompt string
 	for _, base := range []string{workdir, d.config.BelayerRoot} {
@@ -390,18 +390,18 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 			}),
 		})
 
-		// Notify planner.
-		if run.Name != "planner" {
+		// Notify supervisor.
+		if run.Name != "supervisor" {
 			msg := broker.Message{
 				SessionID:   run.SessionID,
 				SenderID:    run.Name,
-				RecipientID: "planner",
+				RecipientID: "supervisor",
 				Type:        broker.MessageStateChange,
 				Content:     run.Name + " bridge process exited unexpectedly and was marked blocked",
 				Urgent:      true,
 				Timestamp:   time.Now().UTC(),
 			}
-			_ = d.broker.Interrupt(run.SessionID, "planner", msg)
+			_ = d.broker.Interrupt(run.SessionID, "supervisor", msg)
 		}
 
 		// Clean up process reference.

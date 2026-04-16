@@ -83,13 +83,13 @@ func spawnMockBridge(t *testing.T, sessionID, agentID, role string) *bridge.Proc
 // message flow between two bridge agents through the session bus.
 //
 //  1. Start daemon, create session.
-//  2. Spawn "planner" and "api" bridge agents (mock-idle subprocesses).
-//  3. Planner sends a message to api via POST /sessions/{id}/messages.
+//  2. Spawn "supervisor" and "api" bridge agents (mock-idle subprocesses).
+//  3. Supervisor sends a message to api via POST /sessions/{id}/messages.
 //  4. Api polls for pending messages.
-//  5. Api sends a reply back to planner.
-//  6. Planner polls and receives the reply.
-//  7. Api posts bridge:finished → daemon notifies planner.
-//  8. Verify planner gets the completion notification.
+//  5. Api sends a reply back to supervisor.
+//  6. Supervisor polls and receives the reply.
+//  7. Api posts bridge:finished → daemon notifies supervisor.
+//  8. Verify supervisor gets the completion notification.
 //  9. Verify agent status is updated to "complete".
 func TestBridgeIntegration_MultiAgentMessageFlow(t *testing.T) {
 	d := testDaemon(t)
@@ -108,19 +108,19 @@ func TestBridgeIntegration_MultiAgentMessageFlow(t *testing.T) {
 		return proc, nil
 	}
 
-	// Spawn planner.
-	plannerRR := doRequest(t, d, "POST", "/sessions/"+sessionID+"/agents", agentSpawnRequest{
-		Name:    "planner",
-		Role:    "planner",
+	// Spawn supervisor.
+	supervisorRR := doRequest(t, d, "POST", "/sessions/"+sessionID+"/agents", agentSpawnRequest{
+		Name:    "supervisor",
+		Role:    "supervisor",
 		Profile: "mock",
 		Workdir: t.TempDir(),
 	})
-	if plannerRR.Code != http.StatusCreated {
-		t.Fatalf("spawn planner: expected 201, got %d: %s", plannerRR.Code, plannerRR.Body.String())
+	if supervisorRR.Code != http.StatusCreated {
+		t.Fatalf("spawn supervisor: expected 201, got %d: %s", supervisorRR.Code, supervisorRR.Body.String())
 	}
-	plannerRun := decodeJSON[store.AgentRun](t, plannerRR)
-	if plannerRun.Status != "running" {
-		t.Fatalf("planner: expected status=running, got %q", plannerRun.Status)
+	supervisorRun := decodeJSON[store.AgentRun](t, supervisorRR)
+	if supervisorRun.Status != "running" {
+		t.Fatalf("supervisor: expected status=running, got %q", supervisorRun.Status)
 	}
 
 	// Spawn api.
@@ -138,15 +138,15 @@ func TestBridgeIntegration_MultiAgentMessageFlow(t *testing.T) {
 		t.Fatalf("api: expected status=running, got %q", apiRun.Status)
 	}
 
-	// Step 3: Planner sends a message to api.
+	// Step 3: Supervisor sends a message to api.
 	sendRR := doRequest(t, d, "POST", "/sessions/"+sessionID+"/messages", sendMessageRequest{
-		From:    "planner",
+		From:    "supervisor",
 		To:      "api",
 		Content: "implement the endpoint",
 		Type:    "instruction",
 	})
 	if sendRR.Code != http.StatusCreated {
-		t.Fatalf("send message planner->api: expected 201, got %d: %s", sendRR.Code, sendRR.Body.String())
+		t.Fatalf("send message supervisor->api: expected 201, got %d: %s", sendRR.Code, sendRR.Body.String())
 	}
 
 	// Step 4: Api polls for pending messages.
@@ -160,13 +160,13 @@ func TestBridgeIntegration_MultiAgentMessageFlow(t *testing.T) {
 	}
 	found := false
 	for _, m := range apiMsgs {
-		if m.Content == "implement the endpoint" && m.SenderID == "planner" && m.RecipientID == "api" {
+		if m.Content == "implement the endpoint" && m.SenderID == "supervisor" && m.RecipientID == "api" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("api poll: expected message from planner with 'implement the endpoint', got %#v", apiMsgs)
+		t.Fatalf("api poll: expected message from supervisor with 'implement the endpoint', got %#v", apiMsgs)
 	}
 
 	// Step 4b: Verify the message was marked delivered (second poll returns nothing).
@@ -176,35 +176,35 @@ func TestBridgeIntegration_MultiAgentMessageFlow(t *testing.T) {
 		t.Fatalf("api poll 2: expected 0 pending after delivery, got %d", len(apiMsgs2))
 	}
 
-	// Step 5: Api sends a reply back to planner.
+	// Step 5: Api sends a reply back to supervisor.
 	replyRR := doRequest(t, d, "POST", "/sessions/"+sessionID+"/messages", sendMessageRequest{
 		From:    "api",
-		To:      "planner",
+		To:      "supervisor",
 		Content: "endpoint implemented",
 		Type:    "result",
 	})
 	if replyRR.Code != http.StatusCreated {
-		t.Fatalf("send reply api->planner: expected 201, got %d: %s", replyRR.Code, replyRR.Body.String())
+		t.Fatalf("send reply api->supervisor: expected 201, got %d: %s", replyRR.Code, replyRR.Body.String())
 	}
 
-	// Step 6: Planner polls and receives the reply.
-	plannerPollRR := doRequest(t, d, "GET", "/sessions/"+sessionID+"/messages?for=planner&pending=true", nil)
-	if plannerPollRR.Code != http.StatusOK {
-		t.Fatalf("planner poll: expected 200, got %d: %s", plannerPollRR.Code, plannerPollRR.Body.String())
+	// Step 6: Supervisor polls and receives the reply.
+	supervisorPollRR := doRequest(t, d, "GET", "/sessions/"+sessionID+"/messages?for=supervisor&pending=true", nil)
+	if supervisorPollRR.Code != http.StatusOK {
+		t.Fatalf("supervisor poll: expected 200, got %d: %s", supervisorPollRR.Code, supervisorPollRR.Body.String())
 	}
-	plannerMsgs := decodeJSON[[]store.Message](t, plannerPollRR)
-	if len(plannerMsgs) == 0 {
-		t.Fatal("planner poll: expected at least one pending message")
+	supervisorMsgs := decodeJSON[[]store.Message](t, supervisorPollRR)
+	if len(supervisorMsgs) == 0 {
+		t.Fatal("supervisor poll: expected at least one pending message")
 	}
 	foundReply := false
-	for _, m := range plannerMsgs {
-		if m.Content == "endpoint implemented" && m.SenderID == "api" && m.RecipientID == "planner" {
+	for _, m := range supervisorMsgs {
+		if m.Content == "endpoint implemented" && m.SenderID == "api" && m.RecipientID == "supervisor" {
 			foundReply = true
 			break
 		}
 	}
 	if !foundReply {
-		t.Fatalf("planner poll: expected reply from api, got %#v", plannerMsgs)
+		t.Fatalf("supervisor poll: expected reply from api, got %#v", supervisorMsgs)
 	}
 
 	// Step 7: Api reports completion via bridge:finished event.
@@ -220,10 +220,10 @@ func TestBridgeIntegration_MultiAgentMessageFlow(t *testing.T) {
 		t.Fatalf("bridge:finished: expected 201, got %d: %s", bridgeFinishedRR.Code, bridgeFinishedRR.Body.String())
 	}
 
-	// Step 8: Verify NO auto-generated completion message to planner.
+	// Step 8: Verify NO auto-generated completion message to supervisor.
 	// The specialist sends its own report via belayer_send_message; the daemon
 	// should not duplicate it with an auto-generated state_change.
-	completionMsgsRR := doRequest(t, d, "GET", "/sessions/"+sessionID+"/messages?for=planner&pending=true", nil)
+	completionMsgsRR := doRequest(t, d, "GET", "/sessions/"+sessionID+"/messages?for=supervisor&pending=true", nil)
 	completionMsgs := decodeJSON[[]store.Message](t, completionMsgsRR)
 	for _, m := range completionMsgs {
 		if m.SenderID == "api" && strings.Contains(m.Content, "has completed its work") {
@@ -282,7 +282,7 @@ func TestBridgeIntegration_InterruptDelivery(t *testing.T) {
 
 	// Send an urgent/interrupt message to api.
 	interruptRR := doRequest(t, d, "POST", "/sessions/"+sessionID+"/messages", sendMessageRequest{
-		From:      "planner",
+		From:      "supervisor",
 		To:        "api",
 		Content:   "stop what you are doing",
 		Type:      "interrupt",
@@ -321,18 +321,18 @@ func TestBridgeIntegration_BridgeProcessExitDetection(t *testing.T) {
 	sess := decodeJSON[sessionAPIResponse](t, sessRR)
 	sessionID := sess.ID
 
-	// Also spawn a planner so watchBridgeExit can try to notify it (avoids
-	// the no-op "planner" branch).
+	// Also spawn a supervisor so watchBridgeExit can try to notify it (avoids
+	// the no-op "supervisor" branch).
 	_, err := d.store.CreateAgentRun(store.AgentRun{
 		SessionID: sessionID,
-		Name:      "planner",
-		Role:      "planner",
+		Name:      "supervisor",
+		Role:      "supervisor",
 		Profile:   "mock",
 		Status:    "running",
 		Transport: "bridge",
 	})
 	if err != nil {
-		t.Fatalf("create planner run: %v", err)
+		t.Fatalf("create supervisor run: %v", err)
 	}
 
 	// Spawn an api agent that exits immediately.
@@ -412,7 +412,7 @@ func TestBridgeIntegration_RosterReflectsSpawnedAgents(t *testing.T) {
 		return proc, nil
 	}
 
-	for _, name := range []string{"planner", "api"} {
+	for _, name := range []string{"supervisor", "api"} {
 		rr := doRequest(t, d, "POST", "/sessions/"+sessionID+"/agents", agentSpawnRequest{
 			Name:    name,
 			Role:    name,
@@ -439,7 +439,7 @@ func TestBridgeIntegration_RosterReflectsSpawnedAgents(t *testing.T) {
 			t.Errorf("agent %q: expected transport=bridge, got %q", r.Name, r.Transport)
 		}
 	}
-	if !names["planner"] || !names["api"] {
-		t.Fatalf("expected planner and api in roster, got %v", names)
+	if !names["supervisor"] || !names["api"] {
+		t.Fatalf("expected supervisor and api in roster, got %v", names)
 	}
 }

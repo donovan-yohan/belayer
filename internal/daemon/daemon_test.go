@@ -194,16 +194,16 @@ func TestSpawnAgentAndListRoster(t *testing.T) {
 	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "spawn-test"}))
 
 	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{
-		Name:    "planner",
-		Role:    "planner",
-		Profile: "nightshift-planner",
+		Name:    "supervisor",
+		Role:    "supervisor",
+		Profile: "nightshift-supervisor",
 		Workdir: "/tmp/workdir",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 	run := decodeJSON[store.AgentRun](t, rr)
-	if run.Name != "planner" || run.Profile != "nightshift-planner" {
+	if run.Name != "supervisor" || run.Profile != "nightshift-supervisor" {
 		t.Fatalf("unexpected agent run: %#v", run)
 	}
 	if run.Status != "running" {
@@ -215,7 +215,7 @@ func TestSpawnAgentAndListRoster(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rosterRR.Code)
 	}
 	roster := decodeJSON[[]store.AgentRun](t, rosterRR)
-	if len(roster) != 1 || roster[0].Name != "planner" {
+	if len(roster) != 1 || roster[0].Name != "supervisor" {
 		t.Fatalf("unexpected roster: %#v", roster)
 	}
 }
@@ -225,7 +225,7 @@ func TestSendMessageDeliversToSpawnedAgent(t *testing.T) {
 	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "msg-test"}))
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "api", Role: "api", Profile: "nightshift-api"})
 
-	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "api", Content: "hello api", Type: "instruction", From: "planner", Interrupt: true})
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "api", Content: "hello api", Type: "instruction", From: "supervisor", Interrupt: true})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
@@ -499,8 +499,8 @@ func TestListMessagesPendingReturnsPendingMessages(t *testing.T) {
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
 
 	// Send two messages to the worker agent.
-	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "first task", Type: "instruction", From: "planner"})
-	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "second task", Type: "instruction", From: "planner"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "first task", Type: "instruction", From: "supervisor"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "second task", Type: "instruction", From: "supervisor"})
 
 	rr := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker&pending=true", nil)
 	if rr.Code != http.StatusOK {
@@ -520,7 +520,7 @@ func TestListMessagesPendingMarksDelivered(t *testing.T) {
 	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "mark-delivered"}))
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
 
-	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "do the thing", Type: "instruction", From: "planner"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "do the thing", Type: "instruction", From: "supervisor"})
 
 	// First fetch with pending=true — should return the message and mark it delivered.
 	rr1 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker&pending=true", nil)
@@ -548,7 +548,7 @@ func TestListMessagesPendingFalseDoesNotMarkDelivered(t *testing.T) {
 	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "peek-msgs"}))
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
 
-	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "peek task", Type: "instruction", From: "planner"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "peek task", Type: "instruction", From: "supervisor"})
 
 	// Fetch without pending=true — should return the message but NOT mark it delivered.
 	rr1 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker", nil)
@@ -576,7 +576,7 @@ func TestListMessagesWithoutForReturnsEventLog(t *testing.T) {
 	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "event-log-msgs"}))
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
 
-	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "hello", Type: "instruction", From: "planner"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "hello", Type: "instruction", From: "supervisor"})
 
 	// Without ?for= the original event-log behavior should be used.
 	rr := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages", nil)
