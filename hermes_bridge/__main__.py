@@ -209,8 +209,10 @@ def main() -> None:
         sys.exit(1)
 
     # --- Register Belayer tools --------------------------------------------
+    allowed_tools_env = os.environ.get("BELAYER_TOOLS", "")
+    allowed_tools = [t.strip() for t in allowed_tools_env.split(",") if t.strip()] if allowed_tools_env else None
     try:
-        register_belayer_tools(agent, agent_id, session_id, socket_path)
+        register_belayer_tools(agent, agent_id, session_id, socket_path, allowed_tools=allowed_tools)
     except Exception as exc:
         log.error("Failed to register Belayer tools: %s", exc)
         post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})

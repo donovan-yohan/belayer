@@ -1,13 +1,15 @@
 """Belayer coordination tools for Hermes agents.
 
-Seven tools are registered:
+Baseline tools (always registered on every agent):
   - belayer_send_message        — agent-to-agent messaging via session bus
+  - belayer_report_status       — publish agent status events (working/blocked/done)
   - belayer_create_artifact     — register a durable output with the artifact registry
-  - belayer_report_status       — publish agent status events (working/blocked/done/needs-review)
-  - belayer_spawn_agent         — dynamically spawn a specialist agent into this session
-  - belayer_request_completion  — planner signals "work is done, verify before closing"
+
+Role-specific tools (only registered when declared in agent.yaml):
+  - belayer_spawn_agent         — supervisor spawns specialists into the session
+  - belayer_request_completion  — supervisor signals "work is done, verify before closing"
   - belayer_approve_completion  — PM approves the run after spec verification
-  - belayer_reject_completion   — PM rejects the run with a gap list for the planner
+  - belayer_reject_completion   — PM rejects the run with a gap list for remediation
 
 Tool schemas follow the OpenAI function-calling format used by Hermes.
 Handlers receive kwargs matching schema property names (Hermes calling convention).
@@ -197,12 +199,6 @@ REJECT_COMPLETION_SCHEMA = {
     },
 }
 
-_ALL_SCHEMAS = [
-    SEND_MESSAGE_SCHEMA, CREATE_ARTIFACT_SCHEMA, REPORT_STATUS_SCHEMA,
-    SPAWN_AGENT_SCHEMA, REQUEST_COMPLETION_SCHEMA, APPROVE_COMPLETION_SCHEMA,
-    REJECT_COMPLETION_SCHEMA,
-]
-
 # ---------------------------------------------------------------------------
 # Handler factories
 # ---------------------------------------------------------------------------
@@ -375,36 +371,46 @@ def make_reject_completion_handler(agent_id: str, session_id: str, socket_path: 
 # Registration
 # ---------------------------------------------------------------------------
 
-_HANDLER_FACTORIES = [
-    (SEND_MESSAGE_SCHEMA, make_send_message_handler),
-    (CREATE_ARTIFACT_SCHEMA, make_create_artifact_handler),
-    (REPORT_STATUS_SCHEMA, make_report_status_handler),
-    (SPAWN_AGENT_SCHEMA, make_spawn_agent_handler),
-    (REQUEST_COMPLETION_SCHEMA, make_request_completion_handler),
-    (APPROVE_COMPLETION_SCHEMA, make_approve_completion_handler),
-    (REJECT_COMPLETION_SCHEMA, make_reject_completion_handler),
-]
+BASELINE_TOOLS = {
+    "belayer_send_message",
+    "belayer_report_status",
+    "belayer_create_artifact",
+}
+
+_HANDLER_FACTORIES = {
+    "belayer_send_message": (SEND_MESSAGE_SCHEMA, make_send_message_handler),
+    "belayer_report_status": (REPORT_STATUS_SCHEMA, make_report_status_handler),
+    "belayer_create_artifact": (CREATE_ARTIFACT_SCHEMA, make_create_artifact_handler),
+    "belayer_spawn_agent": (SPAWN_AGENT_SCHEMA, make_spawn_agent_handler),
+    "belayer_request_completion": (REQUEST_COMPLETION_SCHEMA, make_request_completion_handler),
+    "belayer_approve_completion": (APPROVE_COMPLETION_SCHEMA, make_approve_completion_handler),
+    "belayer_reject_completion": (REJECT_COMPLETION_SCHEMA, make_reject_completion_handler),
+}
 
 
-def register_belayer_tools(agent, agent_id: str, session_id: str, socket_path: str) -> None:
-    """Register all Belayer coordination tools on an AIAgent instance.
+def register_belayer_tools(agent, agent_id: str, session_id: str, socket_path: str, allowed_tools: list[str] | None = None) -> None:
+    """Register Belayer coordination tools on an AIAgent instance.
 
-    Two things happen:
-    1. Each handler is inserted into Hermes's process-global tool registry so
-       the dispatch loop can invoke it by name.
-    2. The tool schema is appended to agent.tools and its name added to
-       agent.valid_tool_names so the model's next turn sees the tools.
-       (AIAgent snapshots tools at construction time — we patch post-hoc.)
+    Baseline tools (send_message, report_status, create_artifact) are always
+    registered. Additional tools are only registered if they appear in
+    allowed_tools (read from BELAYER_TOOLS env var, set by the daemon from
+    the agent template's agent.yaml).
     """
     try:
-        # Hermes process-global registry (from the hermes-agent package)
         from tools.registry import registry  # type: ignore[import]
     except ImportError as exc:
         raise RuntimeError(
             "Hermes 'tools' package not found. Ensure hermes-agent is installed."
         ) from exc
 
-    for schema, make_handler in _HANDLER_FACTORIES:
+    tools_to_register = set(BASELINE_TOOLS)
+    if allowed_tools:
+        tools_to_register |= set(allowed_tools)
+
+    registered = 0
+    for tool_name, (schema, make_handler) in _HANDLER_FACTORIES.items():
+        if tool_name not in tools_to_register:
+            continue
         handler = make_handler(agent_id, session_id, socket_path)
         registry.register(
             name=schema["name"],
@@ -412,8 +418,6 @@ def register_belayer_tools(agent, agent_id: str, session_id: str, socket_path: s
             schema=schema,
             handler=handler,
         )
-
-        # Patch the agent's live tool list so the model discovers our tools.
         tool_def = {
             "type": "function",
             "function": {
@@ -424,10 +428,13 @@ def register_belayer_tools(agent, agent_id: str, session_id: str, socket_path: s
         }
         agent.tools.append(tool_def)
         agent.valid_tool_names.add(schema["name"])
+        registered += 1
 
     log.info(
-        "Registered %d Belayer tools for agent=%s session=%s",
+        "Registered %d/%d Belayer tools for agent=%s session=%s (allowed: %s)",
+        registered,
         len(_HANDLER_FACTORIES),
         agent_id,
         session_id,
+        tools_to_register,
     )
