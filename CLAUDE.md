@@ -6,7 +6,7 @@ Belayer v7 — run-local agent control plane for Nightshift.
 
 > The **agent control plane** inside a single Nightshift worker run.
 
-One worker, one request, one Belayer session. Belayer coordinates planner + specialists via the Hermes bridge.
+One worker, one request, one Belayer session. Belayer coordinates supervisor + specialist agents via the Hermes bridge.
 
 ## What Belayer is not
 
@@ -32,9 +32,9 @@ Agents coordinate through the daemon:
 
 ```
 belayer daemon              # start the daemon
-belayer run start           # create session, spawn planner via bridge
+belayer run start           # create session, spawn supervisor via bridge
 belayer spawn               # spawn an agent mid-session
-belayer finish              # signal work complete (triggers PM gate for planner)
+belayer finish              # signal work complete (triggers PM gate for supervisor)
 belayer roster              # list active agents
 belayer message send/broadcast/list
 belayer request-completion  # explicit PM gate trigger
@@ -53,7 +53,7 @@ System prompts are loaded by the daemon at spawn time and injected via Hermes `e
 
 ## PM completion gate
 
-When the planner calls `belayer finish`, the daemon intercepts and auto-spawns a PM agent for adversarial spec-vs-reality verification. The PM approves or rejects (up to 3 cycles). See `docs/AGENT_ARCHITECTURE.md` for full details.
+When the supervisor calls `belayer finish`, the daemon intercepts and auto-spawns a PM agent for adversarial spec-vs-reality verification. The PM approves or rejects (up to 3 cycles). See `docs/AGENT_ARCHITECTURE.md` for full details.
 
 ## Docs
 

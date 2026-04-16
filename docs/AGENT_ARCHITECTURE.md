@@ -60,14 +60,14 @@ flowchart TB
 | `belayer_send_message` | `to` (agent name), `content` (string) | Direct message to another agent via the session bus |
 | `belayer_create_artifact` | `kind`, `path`, `summary?` | Register a durable output (contract, report, task-graph, etc.) |
 | `belayer_report_status` | `status` (working/blocked/done/needs-review), `detail?` | Publish lifecycle state to the session bus |
-| `belayer_spawn_agent` | `name`, `profile`, `message`, `branch?` | Dynamically spawn a specialist agent (planner only) |
-| `belayer_request_completion` | `summary`, `spec_artifact?` | Signal work is done, trigger PM verification (planner only) |
+| `belayer_spawn_agent` | `name`, `profile`, `message`, `branch?` | Dynamically spawn a specialist agent (supervisor only) |
+| `belayer_request_completion` | `summary`, `spec_artifact?` | Signal work is done, trigger PM verification (supervisor only) |
 | `belayer_approve_completion` | `verification_report` | Approve the run after spec verification (PM only) |
-| `belayer_reject_completion` | `verification_report`, `gap_list` | Reject the run with gaps for planner to fix (PM only) |
+| `belayer_reject_completion` | `verification_report`, `gap_list` | Reject the run with gaps for supervisor to fix (PM only) |
 
 The base Hermes tools let an agent do work (read files, write code, run commands). The Belayer coordination tools let an agent coordinate (send messages, register outputs, report status, spawn teammates). The completion gate tools enforce spec verification before a run can close.
 
-All seven Belayer tools are registered on every agent. Which tools an agent actually uses is governed by its soul, not tool gating. The planner's soul says to use `belayer_request_completion` instead of finishing directly. The PM's soul says to use `belayer_approve_completion` or `belayer_reject_completion` after verification.
+Each agent template declares which belayer tools it receives via the `belayer_tools` field in `agent.yaml`. Three baseline tools (send_message, report_status, create_artifact) are always registered. Role-specific tools are only available to agents whose templates declare them. The supervisor can spawn agents and request completion. Only the PM can approve or reject a run. This is enforced at registration time — agents never see tools they aren't authorized to use.
 
 Agents never communicate by writing to shared files or reading each other's terminal output. All coordination flows through Belayer's session bus.
 
@@ -87,22 +87,22 @@ flowchart TB
         roster["Agent Roster\n(name, status, transport)"]
     end
 
-    subgraph planner_box["Planner (non-ephemeral, always-on)"]
-        planner_hermes["Hermes + Bridge"]
-        planner_tools["Base tools + Belayer tools"]
+    subgraph supervisor_box["Supervisor (non-ephemeral, always-on)"]
+        supervisor_hermes["Hermes + Bridge"]
+        supervisor_tools["Base tools + Belayer coordination + spawn + completion"]
     end
 
     subgraph spec_a["Specialist A (ephemeral)"]
         spec_a_hermes["Hermes + Bridge"]
-        spec_a_tools["Base tools + Belayer tools"]
+        spec_a_tools["Base tools + Belayer baseline"]
     end
 
     subgraph spec_b["Specialist B (ephemeral)"]
         spec_b_hermes["Hermes + Bridge"]
-        spec_b_tools["Base tools + Belayer tools"]
+        spec_b_tools["Base tools + Belayer baseline"]
     end
 
-    planner_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
+    supervisor_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
     spec_a_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
     spec_b_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
 ```
@@ -131,31 +131,31 @@ Most messages. The agent picks them up between conversation turns.
 sequenceDiagram
     participant A as Specialist A
     participant D as Daemon
-    participant P as Planner
+    participant P as Supervisor
 
-    A->>D: POST /messages {to: "planner", content: "done"}
+    A->>D: POST /messages {to: "supervisor", content: "done"}
     Note over D: Store in messages table,<br/>log message_sent event
     Note over P: ...finishes current turn...
-    P->>D: GET /messages?for=planner&pending=true
+    P->>D: GET /messages?for=supervisor&pending=true
     D->>P: [{from: "A", content: "done"}]
     Note over D: Mark as delivered
     Note over P: Inject as next user turn
 ```
 
-The broker debounces non-urgent messages with a 2-second window. If a specialist fires three messages in quick succession, the planner sees them coalesced into one delivery. Reduces interruption noise during fast agent turns.
+The broker debounces non-urgent messages with a 2-second window. If a specialist fires three messages in quick succession, the supervisor sees them coalesced into one delivery. Reduces interruption noise during fast agent turns.
 
 ### Urgent (push via stdin)
 
-For when an agent is blocked or the planner needs to redirect a specialist mid-turn.
+For when an agent is blocked or the supervisor needs to redirect a specialist mid-turn.
 
 ```mermaid
 sequenceDiagram
-    participant P as Planner
+    participant P as Supervisor
     participant D as Daemon
     participant A as Specialist A
 
     P->>D: POST /messages {to: "A", content: "stop, wrong branch", interrupt: true}
-    D->>A: stdin: {"type": "interrupt", "from": "planner", "content": "stop, wrong branch"}
+    D->>A: stdin: {"type": "interrupt", "from": "supervisor", "content": "stop, wrong branch"}
     Note over A: Bridge calls agent.interrupt()<br/>Current LLM turn halts
     Note over A: Message injected as<br/>next user turn
     A->>D: POST /events {type: "bridge:status_change"}
@@ -165,13 +165,13 @@ The daemon writes directly to the bridge subprocess's stdin pipe. The bridge's `
 
 ---
 
-## Agent lifecycle: planner vs. specialists
+## Agent lifecycle: supervisor vs. specialists
 
 Two distinct lifecycle models exist inside a single run:
 
-### The planner (non-ephemeral, always-on)
+### The supervisor (non-ephemeral, always-on)
 
-The planner stays alive for the entire run. It is the only agent that can spawn other agents. When a specialist finishes and reports back, the planner is already there, waiting.
+The supervisor stays alive for the entire run. It is the only agent that can spawn other agents. When a specialist finishes and reports back, the supervisor is already there, waiting.
 
 ```mermaid
 stateDiagram-v2
@@ -185,17 +185,17 @@ stateDiagram-v2
     Idle --> Complete: Stop command
 ```
 
-When the planner completes a task, it enters an **idle loop**: polling every 5 seconds for new messages, listening on stdin for interrupts. If a specialist sends a message, the planner wakes up and continues. If nothing happens for 5 minutes, it exits cleanly.
+When the supervisor completes a task, it enters an **idle loop**: polling every 5 seconds for new messages, listening on stdin for interrupts. If a specialist sends a message, the supervisor wakes up and continues. If nothing happens for 5 minutes, it exits cleanly.
 
-This means the planner doesn't burn tokens while waiting. It's not running inference. It's a Python process sleeping in a poll loop, ready to resume the Hermes conversation the moment work arrives.
+This means the supervisor doesn't burn tokens while waiting. It's not running inference. It's a Python process sleeping in a poll loop, ready to resume the Hermes conversation the moment work arrives.
 
 ### Specialists (ephemeral, spawn-and-complete)
 
-Specialists are spawned by the planner for a specific task. They do the work, report back, and exit.
+Specialists are spawned by the supervisor for a specific task. They do the work, report back, and exit.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Starting: planner calls belayer_spawn_agent
+    [*] --> Starting: supervisor calls belayer_spawn_agent
     Starting --> Running: bridge:started
     Running --> Complete: Task done (bridge:finished)
     Running --> Blocked: Error or exit without finish
@@ -203,14 +203,14 @@ stateDiagram-v2
 
 Specialists are ephemeral by default (`ephemeral=true`). When their task is done, the bridge posts `bridge:finished` and the process exits.
 
-But their **names persist**. The `agent_runs` table keeps the row. If the planner needs to assign more work to the same role, it spawns with the same name. The daemon detects the prior run, carries over the `HermesSessionID`, and the specialist resumes with its full conversation history.
+But their **names persist**. The `agent_runs` table keeps the row. If the supervisor needs to assign more work to the same role, it spawns with the same name. The daemon detects the prior run, carries over the `HermesSessionID`, and the specialist resumes with its full conversation history.
 
 ```
-First spawn:   planner → belayer_spawn_agent(name="api", message="implement POST /items")
+First spawn:   supervisor → belayer_spawn_agent(name="api", message="implement POST /items")
                          → agent_runs row created, HermesSessionID saved on bridge:started
                          → specialist works, finishes, process exits
 
-Second spawn:  planner → belayer_spawn_agent(name="api", message="now add validation")
+Second spawn:  supervisor → belayer_spawn_agent(name="api", message="now add validation")
                          → daemon finds prior row for "api", carries over HermesSessionID
                          → specialist resumes with full context from first assignment
 ```
@@ -242,7 +242,7 @@ flowchart LR
     subgraph consumers["Consumers"]
         crag["Crag Web UI\n(dashboard, run detail)"]
         cli["belayer events\n(CLI tail)"]
-        planner_obs["Planner\n(reads via messages)"]
+        supervisor_obs["Supervisor\n(reads via messages)"]
     end
 
     callbacks --> events_api
@@ -252,7 +252,7 @@ flowchart LR
     events_api --> side_effects
     event_store --> crag
     event_store --> cli
-    side_effects --> planner_obs
+    side_effects --> supervisor_obs
 ```
 
 ### Event types
@@ -263,19 +263,19 @@ Hermes callbacks are wired onto the agent instance at construction time. They fi
 |-------|--------|---------|-------------|
 | `bridge:started` | Bridge main | `{agent, hermes_session_id, role, profile}` | Saves HermesSessionID for resume |
 | `bridge:finished` | Bridge main | `{agent, reason?, final_response?}` | Sets agent status to `complete` |
-| `bridge:failed` | Bridge main | `{agent, error}` | Sets agent to `blocked`, urgent message to planner |
-| `bridge:idle` | Bridge main | `{agent, final_response?}` | Informational (planner entering idle loop) |
+| `bridge:failed` | Bridge main | `{agent, error}` | Sets agent to `blocked`, urgent message to supervisor |
+| `bridge:idle` | Bridge main | `{agent, final_response?}` | Informational (supervisor entering idle loop) |
 | `bridge:heartbeat` | Heartbeat thread | `{agent}` | Liveness signal (every 30s) |
 | `bridge:step_completed` | Step callback | `{agent, step}` | Tracks conversation turn count |
 | `bridge:tool_started` | Tool start callback | `{agent, tool, input_preview}` | Audit: what tool, what input |
 | `bridge:tool_completed` | Tool complete callback | `{agent, tool, duration_ms, result_preview}` | Audit: how long, what result |
 | `bridge:status_change` | Status callback | `{agent, status_type}` | Informational |
-| `bridge:clarification_needed` | Clarify callback | `{agent, question}` | Routes question to planner |
+| `bridge:clarification_needed` | Clarify callback | `{agent, question}` | Routes question to supervisor |
 | `bridge:turn_usage` | Bridge main (after each turn) | `{agent, input_tokens, output_tokens, cache_read_tokens, estimated_cost_usd, cost_status}` | Per-turn token/cost tracking |
 | `bridge:session_usage` | Bridge main (on exit) | `{agent, session_total_tokens, session_estimated_cost_usd, session_api_calls}` | Cumulative session totals |
 | `bridge:completion_requested` | Request completion tool | `{agent, summary, spec_artifact?}` | Auto-spawns PM agent for verification |
 | `bridge:completion_approved` | Approve completion tool | `{agent, verification_report}` | Marks session complete, registers report artifact |
-| `bridge:completion_rejected` | Reject completion tool | `{agent, verification_report, gap_list}` | Sends gap list to planner, tracks rejection cycle |
+| `bridge:completion_rejected` | Reject completion tool | `{agent, verification_report, gap_list}` | Sends gap list to supervisor, tracks rejection cycle |
 
 Daemon-internal events (not from bridge):
 
@@ -291,13 +291,13 @@ Daemon-internal events (not from bridge):
 | `session_completed` | Completion approved handler | Session status → complete |
 | `completion_rejected` | Completion rejected handler | Tracks cycle count |
 | `completion_escalated` | Rejection limit handler | Session status → needs_human_review |
-| `pm_spawn_failed` | PM spawn error | Notifies planner to retry |
+| `pm_spawn_failed` | PM spawn error | Notifies supervisor to retry |
 
 ### How telemetry enables resume
 
 The `bridge:started` event is the key. When a bridge process starts, it posts its `hermes_session_id` to the daemon. The daemon persists this in `agent_runs.hermes_session_id`.
 
-When the planner re-spawns a specialist with the same name:
+When the supervisor re-spawns a specialist with the same name:
 
 1. Daemon looks up prior `AgentRun` for that name
 2. Finds `HermesSessionID` from the last `bridge:started` event
@@ -309,8 +309,8 @@ This also enables crash recovery. If a bridge process dies unexpectedly:
 
 1. Exit watcher detects process death without `bridge:finished` event
 2. Marks agent `blocked`
-3. Sends urgent message to planner: "agent X exited without finishing"
-4. Planner can re-spawn with same name, daemon carries over `HermesSessionID`
+3. Sends urgent message to supervisor: "agent X exited without finishing"
+4. Supervisor can re-spawn with same name, daemon carries over `HermesSessionID`
 5. Agent resumes from where it crashed
 
 The heartbeat thread provides the liveness signal. If heartbeats stop arriving for an agent that's supposedly `running`, something has gone wrong. This is the daemon's dead-man switch.
@@ -319,11 +319,11 @@ The heartbeat thread provides the liveness signal. If heartbeats stop arriving f
 
 ## Spawn flow: end to end
 
-A complete picture of what happens when the planner spawns a specialist:
+A complete picture of what happens when the supervisor spawns a specialist:
 
 ```mermaid
 sequenceDiagram
-    participant P as Planner (Hermes)
+    participant P as Supervisor (Hermes)
     participant D as Daemon (Go)
     participant B as Bridge (Python)
     participant S as Specialist (Hermes)
@@ -352,14 +352,14 @@ sequenceDiagram
         B->>D: bridge:heartbeat
     end
 
-    S->>D: belayer_send_message(to="planner", content="done, PR #42 ready")
+    S->>D: belayer_send_message(to="supervisor", content="done, PR #42 ready")
     Note over D: Store message, log event
 
     S->>D: bridge:finished {final_response: "..."}
     Note over D: Set agent status → complete
 
     Note over P: ...idle, polling...
-    P->>D: GET /messages?for=planner&pending=true
+    P->>D: GET /messages?for=supervisor&pending=true
     D->>P: [{from: "api", content: "done, PR #42 ready"}]
     Note over P: Resume conversation,<br/>process specialist report
 ```
@@ -413,7 +413,7 @@ The stdin pipe is push (daemon writes when it needs to interrupt). The HTTP chan
 
 ## Worktree isolation
 
-When the planner spawns a specialist with a `branch` parameter, the daemon creates a git worktree:
+When the supervisor spawns a specialist with a `branch` parameter, the daemon creates a git worktree:
 
 ```
 repo/
@@ -421,15 +421,15 @@ repo/
 │   └── worktrees/
 │       ├── api/          ← specialist A's isolated checkout
 │       └── frontend/     ← specialist B's isolated checkout
-├── src/                  ← planner works on main branch
+├── src/                  ← supervisor works on main branch
 └── ...
 ```
 
-Each specialist gets its own filesystem checkout on its own branch. They can make commits without conflicting with each other or the planner. The planner can later merge branches or create PRs from them.
+Each specialist gets its own filesystem checkout on its own branch. They can make commits without conflicting with each other or the supervisor. The supervisor can later merge branches or create PRs from them.
 
 Worktree path: `<repoRoot>/.belayer/worktrees/<agentName>`
 
-If no branch is specified, the specialist works in the same directory as the planner (shared workdir). This is simpler but means only one agent should be writing code at a time.
+If no branch is specified, the specialist works in the same directory as the supervisor (shared workdir). This is simpler but means only one agent should be writing code at a time.
 
 ---
 
@@ -449,15 +449,15 @@ Crag (always-on daemon, owns queue + targets + web UI)
     │   ├── Message broker (debounce, fan-out, urgent interrupt)
     │   └── Bridge process manager (spawn, monitor, stdin pipes)
     │
-    ├── Planner (non-ephemeral)
-    │   ├── Hermes agent (Opus, profile: nightshift-planner)
+    ├── Supervisor (non-ephemeral)
+    │   ├── Hermes agent (Opus, profile: nightshift-supervisor)
     │   ├── Base tools (Read, Write, Edit, Bash, Grep, Glob, ...)
     │   ├── Belayer tools (send_message, create_artifact, report_status, spawn_agent)
     │   ├── Completion tool: belayer_request_completion (signals "work done, verify")
     │   ├── Callbacks → daemon event log
     │   └── Lifecycle: running → idle (waiting) → running → ... → request completion
     │
-    ├── Specialist "api" (ephemeral, spawned by planner)
+    ├── Specialist "api" (ephemeral, spawned by supervisor)
     │   ├── Hermes agent (Sonnet, profile: nightshift-api)
     │   ├── Git worktree: .belayer/worktrees/api/ (branch: feat/api-items)
     │   ├── Base tools + Belayer tools (no spawn_agent)
@@ -469,18 +469,18 @@ Crag (always-on daemon, owns queue + targets + web UI)
     │   ├── Hermes agent (Sonnet, profile: default)
     │   ├── Completion tools: belayer_approve_completion, belayer_reject_completion
     │   ├── Reads spec artifact, git diff, artifact registry
-    │   ├── Lifecycle: spawned → verify → approve (session complete) or reject (gaps to planner)
+    │   ├── Lifecycle: spawned → verify → approve (session complete) or reject (gaps to supervisor)
     │   └── Bounded: max 3 rejection cycles before escalating to human
     │
-    └── Specialist "qa" (ephemeral, spawned by planner)
+    └── Specialist "qa" (ephemeral, spawned by supervisor)
         ├── Hermes agent (Sonnet, profile: nightshift-qa)
-        ├── Same workdir as planner (no worktree, reads but doesn't write code)
+        ├── Same workdir as supervisor (no worktree, reads but doesn't write code)
         ├── Base tools + Belayer tools (no spawn_agent)
         ├── Callbacks → daemon event log
         └── Lifecycle: running → complete
 ```
 
-The planner orchestrates. Specialists execute. The PM verifies. The daemon routes. Events record everything. Names persist across spawns. Sessions resume from where they left off.
+The supervisor orchestrates. Specialists execute. The PM verifies. The daemon routes. Events record everything. Names persist across spawns. Sessions resume from where they left off.
 
 ---
 
@@ -538,7 +538,7 @@ flowchart LR
 
 ### What this enables
 
-- **Per-agent cost breakdown**: see that the planner used $0.80 (Opus, orchestration overhead) while the implementer used $2.10 (Sonnet, heavy code generation)
+- **Per-agent cost breakdown**: see that the supervisor used $0.80 (Opus, orchestration overhead) while the implementer used $2.10 (Sonnet, heavy code generation)
 - **Per-run total cost**: sum across all agents for one Nightshift run
 - **Cost trending**: Crag can show cost-per-run over time, catch cost regressions
 - **Budget enforcement**: future feature, Crag could set cost limits per run and pause/escalate when approaching them
@@ -553,49 +553,49 @@ Wired in `hermes_bridge/__main__.py`. After each `run_conversation()` call, the 
 
 See [PM Agent design doc](design-docs/2026-04-16-product-manager-agent.md) for the full design rationale.
 
-The planner and specialists have a structural bias toward reporting "done." Nobody in the roster has the incentive to say "wait, you skipped half the spec." The PM agent fixes this.
+The supervisor and specialists have a structural bias toward reporting "done." Nobody in the roster has the incentive to say "wait, you skipped half the spec." The PM agent fixes this.
 
 ### How it works (implemented)
 
 ```mermaid
 flowchart LR
-    planner["Planner:\ncalls belayer finish"]
+    supervisor["Supervisor:\ncalls belayer finish"]
     daemon["Daemon:\nintercepts finish,\ntriggers PM gate"]
     pm["PM Agent:\nreads spec, reads diff,\nverifies line by line"]
     approve["belayer_approve_completion\n→ session marked complete"]
-    reject["belayer_reject_completion\n→ gap list to planner"]
+    reject["belayer_reject_completion\n→ gap list to supervisor"]
 
-    planner --> daemon
+    supervisor --> daemon
     daemon -->|"auto-spawns PM"| pm
     pm -->|"APPROVE"| approve
     pm -->|"REJECT"| reject
-    reject -->|"fix gaps, try again"| planner
+    reject -->|"fix gaps, try again"| supervisor
 
     style pm fill:#1a2a3a,stroke:#58a6ff,color:#c9d1d9
 ```
 
 ### The flow
 
-1. **Planner signals completion**: calls `belayer finish "summary"` (CLI) or `belayer_request_completion(summary="...")` (bridge tool). Both paths converge in the daemon, which intercepts the finish and triggers the PM gate instead of marking the session complete.
+1. **Supervisor signals completion**: calls `belayer finish "summary"` (CLI) or `belayer_request_completion(summary="...")` (bridge tool). Both paths converge in the daemon, which intercepts the finish and triggers the PM gate instead of marking the session complete.
 
-2. **Daemon auto-spawns PM**: the event handler in `bridge_events.go` looks up the spec artifact (by kind: `spec` or `design-doc`), gathers the artifact registry, and spawns the PM via the bridge with a message containing full context. The PM's system prompt is loaded from `.belayer/templates/pm/system-prompt.md` and injected as `ephemeral_system_prompt`.
+2. **Daemon auto-spawns PM**: the event handler in `bridge_events.go` looks up the spec artifact (by kind: `spec` or `design-doc`), gathers the artifact registry, and spawns the PM via the bridge with a message containing full context. The PM's system prompt is loaded from `templates/pm/system-prompt.md` and injected as `ephemeral_system_prompt`.
 
 3. **PM verifies**: reads the spec, reads the git diff, walks through the spec line by line. Produces a structured verification report (Passed / Failed / Deferred).
 
 4. **PM decides**:
    - **APPROVE**: calls `belayer_approve_completion(verification_report="...")`. Daemon registers the report as an artifact, marks the session status as `complete`, and logs `session_completed`.
-   - **REJECT**: calls `belayer_reject_completion(verification_report="...", gap_list="...")`. Daemon sends the gap list to the planner as an urgent message. Planner addresses gaps and calls `belayer finish` again.
+   - **REJECT**: calls `belayer_reject_completion(verification_report="...", gap_list="...")`. Daemon sends the gap list to the supervisor as an urgent message. Supervisor addresses gaps and calls `belayer finish` again.
 
-5. **Bounded cycles**: after 3 rejections, the daemon marks the session as `needs_human_review` and sends an escalation message to the planner. No more automated retries.
+5. **Bounded cycles**: after 3 rejections, the daemon marks the session as `needs_human_review` and sends an escalation message to the supervisor. No more automated retries.
 
 ### Key design decisions
 
-- **The PM controls run completion, not the planner.** The planner calls `belayer finish`, but the daemon intercepts it and spawns the PM for verification. The PM calls `belayer_approve_completion` to actually close the session. There is no way for the planner to directly complete the run.
-- **The daemon enforces the gate.** The PM is auto-spawned by the daemon when the planner finishes. The planner can't skip or forget the gate.
-- **The spec is the source of truth, not the planner's summary.** The PM reads the original spec artifact directly. It receives the planner's summary for context but verifies against the spec.
-- **All tools are registered on all agents.** Tool use is governed by the agent's soul, not by access control. The PM's soul tells it to approve or reject.
+- **The PM controls run completion, not the supervisor.** The supervisor calls `belayer finish`, but the daemon intercepts it and spawns the PM for verification. The PM calls `belayer_approve_completion` to actually close the session. There is no way for the supervisor to directly complete the run.
+- **The daemon enforces the gate.** The PM is auto-spawned by the daemon when the supervisor finishes. The supervisor can't skip or forget the gate.
+- **The spec is the source of truth, not the supervisor's summary.** The PM reads the original spec artifact directly. It receives the supervisor's summary for context but verifies against the spec.
+- **Tool access is declared in agent templates.** Each template's `agent.yaml` declares which belayer tools that role receives. The supervisor gets spawn and request_completion. The PM gets approve and reject. Specialists get baseline only. This is enforced at bridge registration time.
 - **PM is ephemeral.** It spawns, verifies, decides, and exits. If rejected, a new PM process spawns on the next `belayer finish` call.
-- **PM identity lives in `.belayer/templates/pm/`.** The system prompt is injected via Hermes's `ephemeral_system_prompt` at spawn time. The Hermes profile stays `default` for now.
+- **PM identity lives in `templates/pm/`.** The system prompt is injected via Hermes's `ephemeral_system_prompt` at spawn time. The Hermes profile stays `default` for now.
 
 > **TODO: Hermes profile bootstrap.** Currently all bridge agents use the `default` Hermes profile, with identity injected via `ephemeral_system_prompt` and model overridden via `BELAYER_MODEL`. This works for local testing because every agent shares the machine's auth context. But a Hermes profile controls more than the soul: provider selection, API keys, OAuth token state, model routing, skills, plugins, and MCP server configs. When agents need different providers (e.g. PM on Anthropic sonnet, implementer on OpenAI codex) or deploy to Crag where there's no interactive `hermes auth`, the default profile can't cover it. Belayer needs a way to construct or materialize per-agent Hermes profiles at spawn time, either from `.belayer/templates/` declarations or from daemon-held credential sets.
 
@@ -603,9 +603,9 @@ flowchart LR
 
 | File | What it does |
 |------|--------------|
-| `.belayer/templates/pm/` | PM identity: `agent.yaml`, `system-prompt.md`, `agents.md` |
+| `templates/pm/` | PM identity: `agent.yaml`, `system-prompt.md`, `agents.md` |
 | `hermes_bridge/tools.py` | Tool schemas and handlers for `request_completion`, `approve_completion`, `reject_completion` |
 | `hermes_bridge/__main__.py` | Reads `BELAYER_SYSTEM_PROMPT` and injects as `ephemeral_system_prompt` |
 | `internal/daemon/bridge_events.go` | Event handlers: `handleBridgeCompletionRequested`, `handleBridgeCompletionApproved`, `handleBridgeCompletionRejected` |
-| `internal/daemon/agents.go` | `spawnAgentInternal` for auto-spawning PM; `handleFinishAgent` intercepts planner finish to trigger PM gate; template system prompt resolution from `.belayer/templates/<name>/system-prompt.md` |
+| `internal/daemon/agents.go` | `spawnAgentInternal` for auto-spawning PM; `handleFinishAgent` intercepts supervisor finish to trigger PM gate; template system prompt resolution from `.belayer/templates/<name>/system-prompt.md` |
 | `internal/bridge/bridge.go` | `Config.SystemPrompt` field, passed as `BELAYER_SYSTEM_PROMPT` env var |
