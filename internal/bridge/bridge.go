@@ -53,29 +53,28 @@ type Config struct {
 // Process wraps a running bridge subprocess.
 type Process struct {
 	cmd     *exec.Cmd
+	proc    *os.Process // set by NewProcess; used for kill when cmd is nil
 	stdin   io.WriteCloser
 	done    chan struct{} // closed when process exits
 	exitErr error        // set before done is closed
 	mu      sync.Mutex
 }
 
-// Spawn starts a hermes-bridge subprocess with the given config.
-// Stdout and stderr from the subprocess are tee'd to log files in RunDir.
-// Returns a Process handle for monitoring and communication.
-func Spawn(cfg Config) (*Process, error) {
-	if err := os.MkdirAll(cfg.RunDir, 0o700); err != nil {
-		return nil, fmt.Errorf("bridge: create run dir: %w", err)
+// BuildCmd returns the argv slice to use when launching the bridge subprocess.
+// If cfg.Cmd is non-empty it is returned as-is; otherwise the default python
+// command (Hermes venv python3 -m hermes_bridge) is returned.
+func BuildCmd(cfg Config) []string {
+	if len(cfg.Cmd) > 0 {
+		return cfg.Cmd
 	}
+	return defaultPythonCmd()
+}
 
-	argv := cfg.Cmd
-	if len(argv) == 0 {
-		argv = defaultPythonCmd()
-	}
-
-	//nolint:gosec // argv is controlled by internal callers, not user input
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = cfg.Workdir
-
+// BuildEnv builds the complete environment variable slice for the bridge
+// subprocess. It inherits the parent process environment, then layers
+// PYTHONPATH (hermes-agent path + BelayerRoot + existing PYTHONPATH) and all
+// BELAYER_* variables derived from cfg.
+func BuildEnv(cfg Config) []string {
 	// Build environment: inherit parent env, then layer bridge-specific vars.
 	env := os.Environ()
 
@@ -118,7 +117,47 @@ func Spawn(cfg Config) (*Process, error) {
 	if len(cfg.BelayerTools) > 0 {
 		env = appendEnv(env, "BELAYER_TOOLS", strings.Join(cfg.BelayerTools, ","))
 	}
-	cmd.Env = env
+	return env
+}
+
+// NewProcess creates a Process that wraps an already-started os.Process.
+// This is used when process execution is handled by an external sandbox driver
+// rather than by Spawn().
+func NewProcess(proc *os.Process, stdin io.WriteCloser) *Process {
+	p := &Process{
+		proc:  proc,
+		stdin: stdin,
+		done:  make(chan struct{}),
+	}
+	go func() {
+		state, err := proc.Wait()
+		p.mu.Lock()
+		if err != nil {
+			p.exitErr = err
+		} else if state != nil && !state.Success() {
+			p.exitErr = &exec.ExitError{ProcessState: state}
+		}
+		p.mu.Unlock()
+		close(p.done)
+	}()
+	return p
+}
+
+// Spawn starts a hermes-bridge subprocess with the given config.
+// Stdout and stderr from the subprocess are tee'd to log files in RunDir.
+// Returns a Process handle for monitoring and communication.
+func Spawn(cfg Config) (*Process, error) {
+	if err := os.MkdirAll(cfg.RunDir, 0o700); err != nil {
+		return nil, fmt.Errorf("bridge: create run dir: %w", err)
+	}
+
+	argv := BuildCmd(cfg)
+
+	//nolint:gosec // argv is controlled by internal callers, not user input
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Dir = cfg.Workdir
+
+	cmd.Env = BuildEnv(cfg)
 
 	// Pipe stdin so the daemon can send interrupt/stop commands.
 	stdinPipe, err := cmd.StdinPipe()
@@ -215,7 +254,13 @@ func (p *Process) Stop(timeout time.Duration) error {
 		return err
 	case <-ctx.Done():
 		// Graceful wait timed out — force kill.
-		if killErr := p.cmd.Process.Kill(); killErr != nil {
+		var proc *os.Process
+		if p.cmd != nil {
+			proc = p.cmd.Process
+		} else {
+			proc = p.proc
+		}
+		if killErr := proc.Kill(); killErr != nil {
 			return fmt.Errorf("bridge: kill after stop timeout: %w", killErr)
 		}
 		<-p.done

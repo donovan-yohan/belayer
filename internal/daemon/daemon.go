@@ -18,6 +18,8 @@ import (
 	"github.com/donovan-yohan/belayer/internal/agent"
 	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
+	"github.com/donovan-yohan/belayer/internal/runtime"
+	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -45,6 +47,9 @@ type Daemon struct {
 	server   *http.Server
 	config   Config
 	broker   broker.Broker
+
+	sandbox sandbox.Driver
+	runtime runtime.Provider
 
 	spawnBridgeAgent func(req agentSpawnRequest) (*bridge.Process, error)
 
@@ -74,6 +79,8 @@ func New(cfg Config) (*Daemon, error) {
 		tools:       make(map[string][]agent.ToolSpec),
 		bridgeProcs: make(map[string]*bridge.Process),
 	}
+	d.sandbox = &sandbox.Noop{}
+	d.runtime = &runtime.Noop{}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = d.bridgeLaunchAgent
 	mux := http.NewServeMux()

@@ -1,8 +1,10 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
+	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -367,10 +370,61 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	}
 	_ = worktreePath // stored in DB; cleanup handled separately
 
-	proc, err := bridge.Spawn(cfg)
+	// Build command and environment using bridge pure functions.
+	argv := bridge.BuildCmd(cfg)
+	env := bridge.BuildEnv(cfg)
+
+	// Set up stdin pipe for daemon→agent communication.
+	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("bridge spawn: %w", err)
+		return nil, fmt.Errorf("create stdin pipe: %w", err)
 	}
+
+	// Set up stdout/stderr log files.
+	stdoutLog, err := os.OpenFile(filepath.Join(runDir, "bridge-stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		stdinR.Close()
+		stdinW.Close()
+		return nil, fmt.Errorf("open stdout log: %w", err)
+	}
+	stderrLog, err := os.OpenFile(filepath.Join(runDir, "bridge-stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		stdinR.Close()
+		stdinW.Close()
+		stdoutLog.Close()
+		return nil, fmt.Errorf("open stderr log: %w", err)
+	}
+
+	// Get or create sandbox handle for the session.
+	handle := sandbox.Handle{ID: req.SessionID}
+
+	osProc, err := d.sandbox.Exec(context.Background(), handle, argv, sandbox.ExecOpts{
+		Env:    env,
+		Dir:    workdir,
+		Stdin:  stdinR,
+		Stdout: io.MultiWriter(os.Stdout, stdoutLog),
+		Stderr: io.MultiWriter(os.Stderr, stderrLog),
+	})
+	if err != nil {
+		stdinR.Close()
+		stdinW.Close()
+		stdoutLog.Close()
+		stderrLog.Close()
+		return nil, fmt.Errorf("sandbox exec: %w", err)
+	}
+
+	// Close read end — it's been inherited by the child process.
+	stdinR.Close()
+
+	proc := bridge.NewProcess(osProc, stdinW)
+
+	// Close log files when process exits.
+	go func() {
+		<-proc.Done()
+		stdoutLog.Close()
+		stderrLog.Close()
+	}()
+
 	return proc, nil
 }
 
