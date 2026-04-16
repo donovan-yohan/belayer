@@ -64,26 +64,25 @@ func (c *Command) Up(ctx context.Context) ([]Endpoint, error) {
 		}
 	}
 
-	deadline := time.Now().Add(c.healthTimeout)
+	pollCtx, cancel := context.WithTimeout(ctx, c.healthTimeout)
+	defer cancel()
+
 	for {
-		err := c.Health(ctx)
-		if err == nil {
+		if err := c.Health(pollCtx); err == nil {
 			return c.cfg.Endpoints, nil
 		}
 
-		select {
-		case <-ctx.Done():
+		// Parent cancel wins over our derived timeout.
+		if ctx.Err() != nil {
 			return nil, fmt.Errorf("runtime: up: %w", ctx.Err())
-		default:
 		}
-
-		if time.Now().After(deadline) {
+		if pollCtx.Err() != nil {
 			return nil, fmt.Errorf("%w after %s", ErrHealthTimeout, c.healthTimeout)
 		}
 
 		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("runtime: up: %w", ctx.Err())
+		case <-pollCtx.Done():
+			// Loop; the checks above classify parent-cancel vs timeout.
 		case <-time.After(c.healthInterval):
 		}
 	}

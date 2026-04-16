@@ -105,6 +105,27 @@ func TestCommandUpTimesOutIfHealthNeverPasses(t *testing.T) {
 	}
 }
 
+func TestCommandUpHardBoundsHangingHealth(t *testing.T) {
+	c := NewCommand(Config{
+		Up:     "true",
+		Health: "sleep 10",
+	}).WithHealthInterval(20 * time.Millisecond).WithHealthTimeout(100 * time.Millisecond)
+
+	start := time.Now()
+	_, err := c.Up(context.Background())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Up() expected non-nil error, got nil")
+	}
+	if !errors.Is(err, ErrHealthTimeout) {
+		t.Errorf("error = %v, want wrap of ErrHealthTimeout", err)
+	}
+	if elapsed >= time.Second {
+		t.Errorf("Up() took %s, want < 1s (hanging Health should be killed at timeout)", elapsed)
+	}
+}
+
 func TestCommandUpRespectsContextCancellation(t *testing.T) {
 	c := NewCommand(Config{
 		Up:     "true",
