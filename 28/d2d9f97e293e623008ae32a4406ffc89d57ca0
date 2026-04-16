@@ -1,0 +1,53 @@
+docs/design-docs/index.md
+  ab9482a0ad287560 10-11
+docs/design-docs/2026-04-16-sandbox-runtime-and-crag-proof.md
+  ab9482a0ad287560 1-517
+docs/design-docs/2026-04-16-vm-sandbox-and-template-bootstrap.md
+  ab9482a0ad287560 1-821
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "28d2d9f97e293e623008ae32a4406ffc89d57ca0",
+  "prompts": {
+    "1952714a6f942533": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86523080-c1dc-4b91-9fc6-8e650ead6bdd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 786,
+      "overriden_lines": 0
+    },
+    "ab9482a0ad287560": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "61f0f909-c9ac-473a-b0cd-19efdce7fd79",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 245,
+      "total_deletions": 20,
+      "accepted_lines": 1585,
+      "overriden_lines": 0
+    },
+    "eebcd696579f15ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "75241181-1ae5-4ee2-8d48-a09ac39f3eb8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
