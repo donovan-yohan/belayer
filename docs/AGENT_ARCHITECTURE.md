@@ -77,6 +77,8 @@ Agents never communicate by writing to shared files or reading each other's term
 
 The daemon is a Go process running on a Unix socket. It owns the session state and routes all inter-agent communication.
 
+Every run has two mandatory agents — the **supervisor** and the **PM** — plus zero or more specialist agents spawned by the supervisor at runtime. The supervisor orchestrates work; the PM gates completion. Everything else is dynamic.
+
 ```mermaid
 flowchart TB
     subgraph daemon["Belayer Daemon (Go, Unix socket)"]
@@ -89,23 +91,25 @@ flowchart TB
 
     subgraph supervisor_box["Supervisor (non-ephemeral, always-on)"]
         supervisor_hermes["Hermes + Bridge"]
-        supervisor_tools["Base tools + Belayer coordination + spawn + completion"]
+        supervisor_tools["Base tools + Belayer coordination\n+ spawn + request_completion"]
     end
 
-    subgraph spec_a["Specialist A (ephemeral)"]
-        spec_a_hermes["Hermes + Bridge"]
-        spec_a_tools["Base tools + Belayer baseline"]
+    subgraph pm_box["PM (ephemeral, auto-spawned by daemon)"]
+        pm_hermes["Hermes + Bridge"]
+        pm_tools["Base tools + Belayer baseline\n+ approve/reject_completion"]
     end
 
-    subgraph spec_b["Specialist B (ephemeral)"]
-        spec_b_hermes["Hermes + Bridge"]
-        spec_b_tools["Base tools + Belayer baseline"]
+    subgraph specialists["Specialist 1..N (ephemeral, spawned by supervisor)"]
+        spec_hermes["Hermes + Bridge"]
+        spec_tools["Base tools + Belayer baseline"]
     end
 
     supervisor_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
-    spec_a_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
-    spec_b_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
+    pm_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
+    spec_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
 ```
+
+The supervisor is always the first agent spawned. It reads the spec, decomposes work, and spawns specialists (frontend, backend, qa, reviewer, etc.) as needed. The PM is never spawned by the supervisor — the daemon auto-spawns it when the supervisor calls `belayer_request_completion`, creating an adversarial verification step that the supervisor cannot skip.
 
 ### What the daemon owns
 
