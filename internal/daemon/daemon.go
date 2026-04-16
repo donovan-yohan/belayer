@@ -353,6 +353,11 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 		d.processBridgeEvent(id, req.Type, req.Data)
 	}
 
+	// Process agent_status events for side effects (incomplete → escalation).
+	if strings.HasPrefix(req.Type, "agent_status:") {
+		d.processAgentStatusEvent(id, req.Type, req.Data)
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "logged"})
 }
 

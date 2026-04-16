@@ -78,15 +78,19 @@ REPORT_STATUS_SCHEMA = {
     "name": "belayer_report_status",
     "description": (
         "Report your current status to the Belayer session bus. "
-        "Use this for progress updates, marking yourself blocked, or signaling completion."
+        "Use this for progress updates, marking yourself blocked, signaling completion, "
+        "or escalating to a human when you've made progress but cannot finish."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "status": {
                 "type": "string",
-                "enum": ["working", "blocked", "done", "needs-review"],
-                "description": "Your current status",
+                "enum": ["working", "blocked", "done", "needs-review", "incomplete"],
+                "description": (
+                    "Your current status. Use 'incomplete' when you've made progress "
+                    "but are stuck in a loop or cannot finish — this escalates to a human."
+                ),
             },
             "detail": {
                 "type": "string",

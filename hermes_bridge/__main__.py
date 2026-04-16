@@ -29,7 +29,7 @@ except ImportError:
     sys.exit(1)
 
 from hermes_bridge.tools import register_belayer_tools
-from hermes_bridge.callbacks import make_callbacks, post_event
+from hermes_bridge.callbacks import make_callbacks, post_event, start_heartbeat_thread
 from hermes_bridge.stdin_reader import StdinReader
 from hermes_bridge.http_client import unix_get
 
@@ -125,8 +125,8 @@ def main() -> None:
     ephemeral = os.environ.get("BELAYER_EPHEMERAL", "true").lower() != "false"
 
     log.info(
-        "Starting bridge agent=%s session=%s role=%s profile=%s",
-        agent_id, session_id, role, profile or "(none)",
+        "Starting bridge agent=%s session=%s role=%s profile=%s ephemeral=%s",
+        agent_id, session_id, role, profile or "(none)", ephemeral,
     )
 
     # --- Construct AIAgent -------------------------------------------------
@@ -227,6 +227,9 @@ def main() -> None:
     stdin_queue: queue.Queue = queue.Queue()
     stdin_reader = StdinReader(agent, stdin_queue)
     stdin_reader.start()
+
+    # --- Start heartbeat thread -------------------------------------------
+    heartbeat_stop = start_heartbeat_thread(socket_path, session_id, agent_id)
 
     # --- Resume from prior Hermes session if provided ----------------------
     conversation_history: list[dict] | None = None
@@ -398,6 +401,7 @@ def main() -> None:
     if session_usage:
         post_event(socket_path, session_id, agent_id, "bridge:session_usage", session_usage)
 
+    heartbeat_stop.set()
     stdin_reader.stop()
     log.info("Bridge exiting for agent=%s session=%s", agent_id, session_id)
 
