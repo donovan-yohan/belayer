@@ -1,0 +1,36 @@
+internal/bridge/bridge_test.go
+  a12e7b72326dea5d 351-415
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "2249749a036419f07d95509cb289aeb453bbc43c",
+  "prompts": {
+    "a12e7b72326dea5d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c8c01528-c8bd-4597-a050-baa263126c2b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 65,
+      "total_deletions": 0,
+      "accepted_lines": 1253,
+      "overriden_lines": 0
+    },
+    "beecb793b04ae5d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60427526-396c-4ef4-ba78-847e76f541ec",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 248,
+      "overriden_lines": 0
+    }
+  }
+}
