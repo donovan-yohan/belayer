@@ -1,0 +1,36 @@
+internal/runtime/command.go
+  6ea66a8f7b3aa96a 9,26-28,43-45,47-49,54,56-58,78-81,85-86,94-96,103,128-131,136-145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "72437cb041d968e6e023d151c840534a07de2e00",
+  "prompts": {
+    "6ea66a8f7b3aa96a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6db8302f-30d8-46df-abbd-c9cca6313e79",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 8,
+      "accepted_lines": 39,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
