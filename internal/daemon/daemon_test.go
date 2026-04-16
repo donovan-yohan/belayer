@@ -3,37 +3,38 @@ package daemon
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
+	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
-	"github.com/donovan-yohan/belayer/internal/docker"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
 // testDaemon creates a Daemon backed by an in-memory store for use in tests.
 func testDaemon(t *testing.T) *Daemon {
 	t.Helper()
-	st, err := store.Open(":memory:")
+	st, err := store.Open(filepath.Join(t.TempDir(), "belayer.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
 
-	d := &Daemon{store: st, config: Config{}, tools: make(map[string][]agent.ToolSpec)}
+	d := &Daemon{
+		store:       st,
+		config:      Config{},
+		tools:       make(map[string][]agent.ToolSpec),
+		bridgeProcs: make(map[string]*bridge.Process),
+	}
 	d.broker = broker.NewMemoryBroker(st)
-	d.launchAgent = func(req agentSpawnRequest) (string, error) { return req.Name + "-tmux", nil }
-	d.deliverMessage = func(_ store.AgentRun, _ broker.Message) error { return nil }
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", d.handleHealth)
 	mux.HandleFunc("POST /sessions", d.handleCreateSession)
@@ -52,9 +53,6 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
 	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
 	mux.HandleFunc("GET /search", d.handleSearch)
-	mux.HandleFunc("POST /sessions/{id}/workbench", d.handleCreateWorkbench)
-	mux.HandleFunc("GET /sessions/{id}/workbench", d.handleGetWorkbench)
-	mux.HandleFunc("DELETE /sessions/{id}/workbench", d.handleDeleteWorkbench)
 	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
 	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
@@ -75,15 +73,6 @@ func doRequest(t *testing.T, d *Daemon, method, path string, body any) *httptest
 	return rr
 }
 
-type immediateRunner struct{}
-
-func (immediateRunner) CreateSession(name, cmd string) error { return nil }
-func (immediateRunner) SendKeys(session, keys string, bracketed bool) error { return nil }
-func (immediateRunner) SendEnter(session string) error { return nil }
-func (immediateRunner) CapturePane(session string) (string, error) { return "", nil }
-func (immediateRunner) KillSession(session string) error { return nil }
-func (immediateRunner) WaitForSession(session string, timeout time.Duration) error { return nil }
-func (immediateRunner) ListSessions() ([]string, error) { return nil, nil }
 
 func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder) T {
 	t.Helper()
@@ -117,7 +106,7 @@ func TestCreateSession(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
-	sess := decodeJSON[store.Session](t, rr)
+	sess := decodeJSON[sessionAPIResponse](t, rr)
 	if sess.Name != "test-session" {
 		t.Fatalf("expected name=test-session, got %s", sess.Name)
 	}
@@ -152,7 +141,7 @@ func TestListSessions(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	sessions := decodeJSON[[]store.Session](t, rr)
+	sessions := decodeJSON[[]sessionAPIResponse](t, rr)
 	if len(sessions) != 2 {
 		t.Fatalf("expected 2 sessions, got %d", len(sessions))
 	}
@@ -163,14 +152,14 @@ func TestGetSession(t *testing.T) {
 
 	// Create a session.
 	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "lookup"})
-	created := decodeJSON[store.Session](t, createRR)
+	created := decodeJSON[sessionAPIResponse](t, createRR)
 
 	// Retrieve it.
 	rr := doRequest(t, d, "GET", "/sessions/"+created.ID, nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	sess := decodeJSON[store.Session](t, rr)
+	sess := decodeJSON[sessionAPIResponse](t, rr)
 	if sess.Name != "lookup" {
 		t.Fatalf("expected name=lookup, got %s", sess.Name)
 	}
@@ -188,13 +177,13 @@ func TestUpdateSessionStatus(t *testing.T) {
 	d := testDaemon(t)
 
 	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "update-me"})
-	created := decodeJSON[store.Session](t, createRR)
+	created := decodeJSON[sessionAPIResponse](t, createRR)
 
 	rr := doRequest(t, d, "PATCH", "/sessions/"+created.ID, updateSessionRequest{Status: "active"})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	sess := decodeJSON[store.Session](t, rr)
+	sess := decodeJSON[sessionAPIResponse](t, rr)
 	if sess.Status != "active" {
 		t.Fatalf("expected status=active, got %s", sess.Status)
 	}
@@ -202,19 +191,19 @@ func TestUpdateSessionStatus(t *testing.T) {
 
 func TestSpawnAgentAndListRoster(t *testing.T) {
 	d := testDaemon(t)
-	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "spawn-test"}))
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "spawn-test"}))
 
 	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{
-		Name:    "planner",
-		Role:    "planner",
-		Profile: "nightshift-planner",
+		Name:    "supervisor",
+		Role:    "supervisor",
+		Profile: "nightshift-supervisor",
 		Workdir: "/tmp/workdir",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 	run := decodeJSON[store.AgentRun](t, rr)
-	if run.Name != "planner" || run.Profile != "nightshift-planner" {
+	if run.Name != "supervisor" || run.Profile != "nightshift-supervisor" {
 		t.Fatalf("unexpected agent run: %#v", run)
 	}
 	if run.Status != "running" {
@@ -226,33 +215,36 @@ func TestSpawnAgentAndListRoster(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rosterRR.Code)
 	}
 	roster := decodeJSON[[]store.AgentRun](t, rosterRR)
-	if len(roster) != 1 || roster[0].Name != "planner" {
+	if len(roster) != 1 || roster[0].Name != "supervisor" {
 		t.Fatalf("unexpected roster: %#v", roster)
 	}
 }
 
 func TestSendMessageDeliversToSpawnedAgent(t *testing.T) {
 	d := testDaemon(t)
-	var delivered []string
-	d.deliverMessage = func(_ store.AgentRun, msg broker.Message) error {
-		delivered = append(delivered, msg.Content)
-		return nil
-	}
-	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "msg-test"}))
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "msg-test"}))
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "api", Role: "api", Profile: "nightshift-api"})
 
-	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "api", Content: "hello api", Type: "instruction", From: "planner", Interrupt: true})
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "api", Content: "hello api", Type: "instruction", From: "supervisor", Interrupt: true})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if len(delivered) == 0 || delivered[len(delivered)-1] != "hello api" {
-		t.Fatalf("expected delivered message, got %#v", delivered)
+
+	// Bridge agents use pull-based delivery: messages are persisted in the store
+	// and pulled via GET /sessions/{id}/messages?for=api&pending=true.
+	msgsRR := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=api", nil)
+	if msgsRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 listing messages, got %d: %s", msgsRR.Code, msgsRR.Body.String())
+	}
+	msgs := decodeJSON[[]store.Message](t, msgsRR)
+	if len(msgs) == 0 || msgs[len(msgs)-1].Content != "hello api" {
+		t.Fatalf("expected persisted message, got %#v", msgs)
 	}
 }
 
 func TestFinishAgentMarksComplete(t *testing.T) {
 	d := testDaemon(t)
-	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "finish-test"}))
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "finish-test"}))
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "api", Role: "api", Profile: "nightshift-api"})
 
 	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents/api/finish", finishAgentRequest{Summary: "done"})
@@ -267,7 +259,7 @@ func TestFinishAgentMarksComplete(t *testing.T) {
 
 func TestCreateAndListArtifacts(t *testing.T) {
 	d := testDaemon(t)
-	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "artifact-test"}))
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "artifact-test"}))
 
 	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/artifacts", artifactCreateRequest{
 		Kind:     "shared-contract",
@@ -293,42 +285,12 @@ func TestCreateAndListArtifacts(t *testing.T) {
 	}
 }
 
-func TestWatchAgentExitMarksBlockedWithoutFinish(t *testing.T) {
-	d := testDaemon(t)
-	created := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "exit-watch-test"}))
-	d.runner = immediateRunner{}
-	_, err := d.store.CreateAgentRun(store.AgentRun{SessionID: created.ID, Name: "api", Role: "api", Profile: "default", Workdir: t.TempDir(), TmuxSession: "exit-watch", Status: "running", Transport: "tmux"})
-	if err != nil {
-		t.Fatalf("CreateAgentRun: %v", err)
-	}
-	run, err := d.store.GetAgentRun(created.ID, "api")
-	if err != nil {
-		t.Fatalf("GetAgentRun: %v", err)
-	}
-	d.watchAgentExit(run)
-	deadline := time.After(2 * time.Second)
-	for {
-		updated, err := d.store.GetAgentRun(created.ID, "api")
-		if err != nil {
-			t.Fatalf("GetAgentRun updated: %v", err)
-		}
-		if updated.Status == "blocked" {
-			return
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("timed out waiting for blocked status, got %q", updated.Status)
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-}
-
 func TestGetEvents(t *testing.T) {
 	d := testDaemon(t)
 
 	// Create session — this also logs a session_created event.
 	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "events-test"})
-	created := decodeJSON[store.Session](t, createRR)
+	created := decodeJSON[sessionAPIResponse](t, createRR)
 
 	rr := doRequest(t, d, "GET", "/sessions/"+created.ID+"/events", nil)
 	if rr.Code != http.StatusOK {
@@ -347,7 +309,7 @@ func TestGetEventsAfter(t *testing.T) {
 	d := testDaemon(t)
 
 	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "events-after"})
-	created := decodeJSON[store.Session](t, createRR)
+	created := decodeJSON[sessionAPIResponse](t, createRR)
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/events", logEventRequest{Type: "first"})
 
 	allEventsRR := doRequest(t, d, "GET", "/sessions/"+created.ID+"/events", nil)
@@ -374,7 +336,7 @@ func TestGetEventsWait_LongPollsUntilEventArrives(t *testing.T) {
 	d := testDaemon(t)
 
 	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "events-wait"})
-	created := decodeJSON[store.Session](t, createRR)
+	created := decodeJSON[sessionAPIResponse](t, createRR)
 	initialEventsRR := doRequest(t, d, "GET", "/sessions/"+created.ID+"/events", nil)
 	initialEvents := decodeJSON[[]store.SessionEvent](t, initialEventsRR)
 	lastID := initialEvents[len(initialEvents)-1].ID
@@ -402,8 +364,8 @@ func TestStreamEventsSSE_EmitsMultiplexedEvents(t *testing.T) {
 	server := httptest.NewServer(d.server.Handler)
 	defer server.Close()
 
-	sess1 := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "watch-1"}))
-	sess2 := decodeJSON[store.Session](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "watch-2"}))
+	sess1 := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "watch-1"}))
+	sess2 := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "watch-2"}))
 	initial1 := decodeJSON[[]store.SessionEvent](t, doRequest(t, d, "GET", "/sessions/"+sess1.ID+"/events", nil))
 	initial2 := decodeJSON[[]store.SessionEvent](t, doRequest(t, d, "GET", "/sessions/"+sess2.ID+"/events", nil))
 	afterID := initial1[len(initial1)-1].ID
@@ -456,7 +418,7 @@ func TestLogEvent(t *testing.T) {
 	d := testDaemon(t)
 
 	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "log-test"})
-	created := decodeJSON[store.Session](t, createRR)
+	created := decodeJSON[sessionAPIResponse](t, createRR)
 
 	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/events", logEventRequest{
 		Type: "custom_event",
@@ -495,7 +457,7 @@ func TestSearchEvents(t *testing.T) {
 
 	// Create a session and log searchable events.
 	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "search-test"})
-	created := decodeJSON[store.Session](t, createRR)
+	created := decodeJSON[sessionAPIResponse](t, createRR)
 
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/events", logEventRequest{
 		Type: "node_started",
@@ -529,140 +491,106 @@ func TestSearchEventsMissingQuery(t *testing.T) {
 	}
 }
 
-func installFakeDocker(t *testing.T, statusesJSON string) {
-	t.Helper()
-	dir := t.TempDir()
-	script := filepath.Join(dir, "docker")
-	body := fmt.Sprintf(`#!/bin/sh
-set -eu
-printf "%%s\n" "$@" >> "%s"
-if [ "$1" = "compose" ] && [ "$4" = "up" ]; then
-  exit 0
-fi
-if [ "$1" = "compose" ] && [ "$4" = "ps" ]; then
-  printf '%%s' '%s'
-  exit 0
-fi
-if [ "$1" = "compose" ] && [ "$4" = "down" ]; then
-  exit 0
-fi
-exit 0
-`, filepath.Join(dir, "docker.log"), statusesJSON)
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatalf("write fake docker: %v", err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-}
+// --- Pull-based message delivery (pending messages) ---
 
-func TestCreateWorkbench_ProvisionsAndWaitsForHealthy(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	installFakeDocker(t, `[{"name":"extend-api","state":"running","health":"healthy"}]`)
-
+func TestListMessagesPendingReturnsPendingMessages(t *testing.T) {
 	d := testDaemon(t)
-	sessID := createTestSession(t, d)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "pending-msgs"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
 
-	sandboxPath, err := sandboxDir(sessID)
-	if err != nil {
-		t.Fatalf("sandboxDir: %v", err)
-	}
-	if err := os.MkdirAll(sandboxPath, 0o700); err != nil {
-		t.Fatalf("mkdir sandbox: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sandboxPath, "docker-compose.yml"), []byte("version: '3.9'"), 0o600); err != nil {
-		t.Fatalf("write sandbox compose: %v", err)
-	}
-	err = docker.WriteRuntimeMetadata(sandboxPath, docker.RuntimeMetadata{
-		SessionID: sessID,
-		Workbench: &docker.WorkbenchConfigSpec{
-			Timeout: "1s",
-			Services: []docker.ServiceDecl{
-				{Name: "extend-api", Image: "example/api:latest", Ports: []string{"8080"}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("WriteRuntimeMetadata: %v", err)
-	}
+	// Send two messages to the worker agent.
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "first task", Type: "instruction", From: "supervisor"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "second task", Type: "instruction", From: "supervisor"})
 
-	rr := doRequest(t, d, "POST", "/sessions/"+sessID+"/workbench", createWorkbenchRequest{})
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
-	}
-	wb := decodeJSON[workbenchResponse](t, rr)
-	if wb.Status != "ready" {
-		t.Fatalf("expected ready status, got %q", wb.Status)
-	}
-	if got := wb.Endpoints["extend-api"]; got != "http://extend-api:8080" {
-		t.Fatalf("unexpected endpoints: %#v", wb.Endpoints)
-	}
-	if len(wb.Services) != 1 {
-		t.Fatalf("expected one service status, got %#v", wb.Services)
-	}
-	if wb.Services[0].Name != "extend-api" || wb.Services[0].State != "running" || wb.Services[0].Health != "healthy" {
-		t.Fatalf("unexpected service status: %#v", wb.Services[0])
-	}
-}
-
-func TestGetWorkbench_ReturnsStructuredStatusAndServices(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	installFakeDocker(t, `[{"name":"extend-api","state":"running","health":"healthy"}]`)
-
-	d := testDaemon(t)
-	sessID := createTestSession(t, d)
-	if _, err := d.store.CreateWorkbench(store.WorkbenchState{
-		SessionID: sessID,
-		Status:    "ready",
-		Spec:      `{"services":[{"name":"extend-api","image":"example/api:latest","ports":["8080"]}]}`,
-		Endpoints: `{"extend-api":{"service":"extend-api","url":"http://extend-api:8080"}}`,
-	}); err != nil {
-		t.Fatalf("CreateWorkbench: %v", err)
-	}
-
-	rr := doRequest(t, d, "GET", "/sessions/"+sessID+"/workbench", nil)
+	rr := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker&pending=true", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	wb := decodeJSON[workbenchResponse](t, rr)
-	if got := wb.Endpoints["extend-api"]; got != "http://extend-api:8080" {
-		t.Fatalf("unexpected endpoints: %#v", wb.Endpoints)
+	msgs := decodeJSON[[]store.Message](t, rr)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 pending messages, got %d", len(msgs))
 	}
-	if len(wb.Services) != 1 || wb.Services[0].Health != "healthy" {
-		t.Fatalf("unexpected services: %#v", wb.Services)
+	if msgs[0].Content != "first task" || msgs[1].Content != "second task" {
+		t.Fatalf("unexpected message contents: %#v", msgs)
 	}
 }
 
-func TestDeleteWorkbench_TearsDownComposeArtifacts(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	installFakeDocker(t, `[]`)
-
+func TestListMessagesPendingMarksDelivered(t *testing.T) {
 	d := testDaemon(t)
-	sessID := createTestSession(t, d)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "mark-delivered"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
 
-	workbenchDir := filepath.Join(home, ".belayer", "workbenches", sessID)
-	if err := os.MkdirAll(workbenchDir, 0o700); err != nil {
-		t.Fatalf("mkdir workbench dir: %v", err)
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "do the thing", Type: "instruction", From: "supervisor"})
+
+	// First fetch with pending=true — should return the message and mark it delivered.
+	rr1 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker&pending=true", nil)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first fetch: expected 200, got %d: %s", rr1.Code, rr1.Body.String())
 	}
-	if err := os.WriteFile(filepath.Join(workbenchDir, "docker-compose.yml"), []byte("version: '3.9'"), 0o600); err != nil {
-		t.Fatalf("write compose: %v", err)
-	}
-	if _, err := d.store.CreateWorkbench(store.WorkbenchState{
-		SessionID: sessID,
-		Status:    "ready",
-		Spec:      "{}",
-		Endpoints: "{}",
-	}); err != nil {
-		t.Fatalf("CreateWorkbench: %v", err)
+	msgs1 := decodeJSON[[]store.Message](t, rr1)
+	if len(msgs1) != 1 {
+		t.Fatalf("expected 1 message on first fetch, got %d", len(msgs1))
 	}
 
-	rr := doRequest(t, d, "DELETE", "/sessions/"+sessID+"/workbench", nil)
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("expected 204, got %d", rr.Code)
+	// Second fetch — message was marked delivered, should now return empty.
+	rr2 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker&pending=true", nil)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second fetch: expected 200, got %d: %s", rr2.Code, rr2.Body.String())
 	}
-	if _, err := os.Stat(workbenchDir); !os.IsNotExist(err) {
-		t.Fatalf("expected workbench dir to be removed, stat err=%v", err)
-	}
-	if _, err := d.store.GetWorkbenchBySession(sessID); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("expected workbench row to be deleted, got err=%v", err)
+	msgs2 := decodeJSON[[]store.Message](t, rr2)
+	if len(msgs2) != 0 {
+		t.Fatalf("expected 0 messages on second fetch (all delivered), got %d", len(msgs2))
 	}
 }
+
+func TestListMessagesPendingFalseDoesNotMarkDelivered(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "peek-msgs"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
+
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "peek task", Type: "instruction", From: "supervisor"})
+
+	// Fetch without pending=true — should return the message but NOT mark it delivered.
+	rr1 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker", nil)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("peek fetch: expected 200, got %d: %s", rr1.Code, rr1.Body.String())
+	}
+	msgs1 := decodeJSON[[]store.Message](t, rr1)
+	if len(msgs1) != 1 {
+		t.Fatalf("expected 1 message on peek fetch, got %d", len(msgs1))
+	}
+
+	// Fetch again — message should still be pending since we did not mark delivered.
+	rr2 := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=worker", nil)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second peek: expected 200, got %d", rr2.Code)
+	}
+	msgs2 := decodeJSON[[]store.Message](t, rr2)
+	if len(msgs2) != 1 {
+		t.Fatalf("expected 1 message still pending, got %d", len(msgs2))
+	}
+}
+
+func TestListMessagesWithoutForReturnsEventLog(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "event-log-msgs"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "worker", Role: "worker", Profile: "default"})
+
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{To: "worker", Content: "hello", Type: "instruction", From: "supervisor"})
+
+	// Without ?for= the original event-log behavior should be used.
+	rr := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	events := decodeJSON[[]store.SessionEvent](t, rr)
+	if len(events) == 0 {
+		t.Fatal("expected at least one message_ event in event log")
+	}
+	for _, e := range events {
+		if !strings.HasPrefix(e.Type, "message_") {
+			t.Errorf("unexpected non-message event type %q in message list", e.Type)
+		}
+	}
+}
+

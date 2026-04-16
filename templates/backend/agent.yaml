@@ -1,0 +1,9 @@
+schema_version: "1"
+description: "Backend implementer — writes code in the backend/API server"
+vendor: opencode
+model: kimi-2.5
+max_turns: 100
+max_duration: "2h"
+ephemeral: false
+workspace: inherit
+belayer_tools: []

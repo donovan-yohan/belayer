@@ -1,0 +1,9 @@
+schema_version: "1"
+description: "Sprite — ephemeral worker for a single focused subtask"
+vendor: claude
+model: haiku
+max_turns: 10
+max_duration: "10m"
+ephemeral: true
+workspace: inherit
+belayer_tools: []

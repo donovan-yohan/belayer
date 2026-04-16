@@ -161,8 +161,9 @@ func (b *MemoryBroker) Broadcast(sessionID string, msg Message) error {
 	return nil
 }
 
-// Interrupt flushes any pending debounced content, sends a Ctrl+C signal message,
-// then delivers msg immediately — bypassing debounce entirely.
+// Interrupt flushes any pending debounced content, then delivers msg immediately —
+// bypassing debounce entirely. The Ctrl+C convention was tmux-specific and is not
+// used for bridge agents, which receive interrupts via stdin directly.
 func (b *MemoryBroker) Interrupt(sessionID, agentID string, msg Message) error {
 	if msg.ID == "" {
 		msg.ID = uuid.New().String()
@@ -185,21 +186,7 @@ func (b *MemoryBroker) Interrupt(sessionID, agentID string, msg Message) error {
 		d.flushNow()
 	}
 
-	// Send Ctrl+C signal.
-	interruptMsg := Message{
-		ID:          uuid.New().String(),
-		SessionID:   sessionID,
-		SenderID:    msg.SenderID,
-		RecipientID: agentID,
-		Type:        msg.Type,
-		Content:     "\x03", // Ctrl+C
-		Urgent:      true,
-		Timestamp:   time.Now().UTC(),
-	}
-	handler(interruptMsg)
-	b.logEvent(interruptMsg)
-
-	// Send the actual message.
+	// Deliver the message directly.
 	msg.RecipientID = agentID
 	handler(msg)
 	b.logEvent(msg)

@@ -173,3 +173,38 @@ func (c *Client) FinishAgent(sessionID, agentID string, req finishAgentRequest) 
 	}
 	return run, nil
 }
+
+func newRequestCompletionCmd() *cobra.Command {
+	var session, socket, agent, specArtifact string
+	cmd := &cobra.Command{
+		Use:   "request-completion \"summary\"",
+		Short: "Signal that all work is complete and request PM verification",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessID, err := resolveSessionID(session)
+			if err != nil {
+				return err
+			}
+			agentID, err := resolveAgentID(agent)
+			if err != nil {
+				return err
+			}
+			c := NewClient(resolveSocket(socket))
+			eventData := mustJSON(map[string]string{
+				"agent":         agentID,
+				"summary":       args[0],
+				"spec_artifact": specArtifact,
+			})
+			if err := c.LogEvent(sessID, "bridge:completion_requested", eventData); err != nil {
+				return fmt.Errorf("request completion: %w", err)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "Completion review requested. PM agent will be spawned to verify.")
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&session, "session", "", "Session ID (required if BELAYER_SESSION_ID not set)")
+	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	cmd.Flags().StringVar(&agent, "agent", "", "Agent ID (required if BELAYER_AGENT_ID not set)")
+	cmd.Flags().StringVar(&specArtifact, "spec", "", "Path to spec artifact for PM to verify against")
+	return cmd
+}

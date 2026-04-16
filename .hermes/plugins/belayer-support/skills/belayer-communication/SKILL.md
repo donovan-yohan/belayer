@@ -13,7 +13,7 @@ metadata:
 
 You are operating inside a **Belayer-managed Nightshift run**.
 
-Multiple specialist agents are working on the same ticket. You are one of them. A planner coordinates the work. Belayer is the session bus that connects everyone.
+Multiple specialist agents are working on the same ticket. You are one of them. A supervisor coordinates the work. Belayer is the session bus that connects everyone.
 
 ## The rules
 
@@ -25,7 +25,7 @@ Multiple specialist agents are working on the same ticket. You are one of them. 
 
 ### Messaging
 ```bash
-belayer message send --to planner "Blocked on API auth contract"
+belayer message send --to supervisor "Blocked on API auth contract"
 belayer message broadcast "Shared contract updated in artifacts/shared-contract.md"
 ```
 
@@ -69,4 +69,4 @@ Use `belayer spawn` whenever you decide a new specialist is needed.
 - Use **artifacts** for durable outputs others should read later
 - Use **finish** to explicitly signal completion or blockage
 
-Do not assume the planner can infer your state from silence.
+Do not assume the supervisor can infer your state from silence.

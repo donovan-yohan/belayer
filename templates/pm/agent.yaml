@@ -1,0 +1,11 @@
+schema_version: "1"
+description: "PM — adversarial spec-vs-reality verification before run completion"
+vendor: claude
+model: sonnet
+max_turns: 30
+max_duration: "30m"
+ephemeral: true
+workspace: inherit
+belayer_tools:
+  - belayer_approve_completion
+  - belayer_reject_completion

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -42,6 +43,16 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject messages to agents that have exited the session.
+	if target, err := d.store.GetAgentRun(id, req.To); err == nil {
+		if target.Status == "complete" || target.Status == "blocked" {
+			writeJSON(w, http.StatusGone, map[string]string{
+				"error": "agent '" + req.To + "' has exited (status: " + target.Status + "). Use belayer_spawn_agent to re-spawn with conversation history.",
+			})
+			return
+		}
+	}
+
 	msgID := uuid.New().String()
 	from := req.From
 	if from == "" {
@@ -58,15 +69,39 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		Timestamp:   time.Now().UTC(),
 	}
 
-	var err error
-	if req.Interrupt {
-		err = d.broker.Interrupt(id, req.To, msg)
-	} else {
-		err = d.broker.Send(id, req.To, msg)
-	}
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	// Persist to messages table for pull-based delivery (bridge agents poll this).
+	if _, err := d.store.CreateMessage(store.Message{
+		ID:          msgID,
+		SessionID:   id,
+		SenderID:    from,
+		RecipientID: req.To,
+		Type:        req.Type,
+		Content:     req.Content,
+		Urgent:      req.Interrupt,
+	}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("persist message: %v", err)})
 		return
+	}
+
+	if req.Interrupt {
+		// Check if target is a bridge agent; if so, write to stdin directly.
+		targetRun, runErr := d.store.GetAgentRun(id, req.To)
+		if runErr == nil && targetRun.Transport == "bridge" {
+			if bridgeErr := d.interruptBridgeAgent(id, req.To, from, req.Content); bridgeErr != nil {
+				// Bridge proc not tracked (e.g. already exited) — fall back to broker
+				// so the message is still delivered if anything is still subscribed.
+				_ = d.broker.Interrupt(id, req.To, msg)
+			}
+		} else {
+			// Fallback to broker for agents without a tracked bridge proc or unknown transport.
+			if err := d.broker.Interrupt(id, req.To, msg); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+	} else {
+		// Non-urgent: bridge agents pull via HTTP; broker is a no-op fallback.
+		_ = d.broker.Send(id, req.To, msg)
 	}
 
 	data := mustJSON(map[string]any{
@@ -114,6 +149,9 @@ func (d *Daemon) handleBroadcastMessage(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// TODO(v1): persist broadcast to messages table with one row per subscribed
+	// agent so bridge agents can pull via PendingMessages. For now, broadcasts
+	// are delivered only through the broker (push-based).
 
 	data := mustJSON(map[string]any{
 		"from":    from,
@@ -131,6 +169,30 @@ func (d *Daemon) handleBroadcastMessage(w http.ResponseWriter, r *http.Request) 
 func (d *Daemon) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
+	forAgent := r.URL.Query().Get("for")
+	if forAgent != "" {
+		// Pull-based delivery for bridge agents.
+		afterID := r.URL.Query().Get("after")
+		pending := r.URL.Query().Get("pending") == "true"
+
+		messages, err := d.store.PendingMessages(id, forAgent, afterID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+
+		// Mark as delivered so they are not returned on the next poll.
+		if pending {
+			for _, msg := range messages {
+				_ = d.store.MarkDelivered(msg.ID)
+			}
+		}
+
+		writeJSON(w, http.StatusOK, messages)
+		return
+	}
+
+	// Original behavior: list all message_ events from the event log.
 	events, err := d.store.QueryEvents(id)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

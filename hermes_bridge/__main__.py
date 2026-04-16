@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""Hermes bridge subprocess — one per agent.
+
+Launched by the Belayer Go daemon via `python -m hermes_bridge`.
+Reads config from env vars, constructs an AIAgent, registers Belayer
+coordination tools, wires callbacks, then runs the outer conversation loop.
+
+Exit codes:
+    0 — completed or clean stop
+    1 — fatal startup error (missing env, hermes not installed, etc.)
+"""
+
+import os
+import sys
+import json
+import logging
+import queue
+import time
+
+# Hermes imports — conditional so package structure validates without hermes installed.
+try:
+    from run_agent import AIAgent  # type: ignore[import]
+    from hermes_state import SessionDB  # type: ignore[import]
+except ImportError:
+    print(
+        "ERROR: hermes-agent package not found. Install hermes-agent first.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+from hermes_bridge.tools import register_belayer_tools
+from hermes_bridge.callbacks import make_callbacks, post_event
+from hermes_bridge.stdin_reader import StdinReader
+from hermes_bridge.http_client import unix_get
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [bridge:%(name)s] %(message)s",
+)
+log = logging.getLogger("main")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _require_env(name: str) -> str:
+    val = os.environ.get(name, "")
+    if not val:
+        log.error("Required env var %s is not set", name)
+        sys.exit(1)
+    return val
+
+
+def fetch_pending_messages(socket_path: str, session_id: str, agent_id: str) -> list[dict]:
+    """Pull pending messages addressed to this agent from the daemon."""
+    status, body = unix_get(
+        socket_path,
+        f"/sessions/{session_id}/messages?for={agent_id}&pending=true",
+    )
+    if status == 200:
+        try:
+            data = json.loads(body)
+            return data if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
+def format_messages(messages: list[dict]) -> str:
+    """Format a list of pending message dicts into a single user-turn string."""
+    parts = []
+    for msg in messages:
+        sender = msg.get("sender_id", "unknown")
+        content = msg.get("content", "")
+        parts.append(f"[Message from {sender}]: {content}")
+    return "\n\n".join(parts)
+
+
+def extract_turn_usage(result: dict) -> dict:
+    """Extract token usage fields from a run_conversation() result dict."""
+    fields = (
+        "input_tokens", "output_tokens", "cache_read_tokens",
+        "cache_write_tokens", "reasoning_tokens", "total_tokens",
+        "api_calls", "estimated_cost_usd", "cost_status",
+    )
+    return {k: result[k] for k in fields if k in result}
+
+
+def extract_session_usage(agent: object) -> dict:
+    """Extract cumulative session usage from the AIAgent instance."""
+    attrs = (
+        "session_total_tokens", "session_input_tokens", "session_output_tokens",
+        "session_cache_read_tokens", "session_cache_write_tokens",
+        "session_reasoning_tokens", "session_api_calls",
+        "session_estimated_cost_usd", "session_cost_status",
+    )
+    usage = {}
+    for attr in attrs:
+        val = getattr(agent, attr, None)
+        if val is not None:
+            usage[attr] = val
+    return usage
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+def main() -> None:
+    # --- Config from environment -------------------------------------------
+    session_id = _require_env("BELAYER_SESSION_ID")
+    agent_id = _require_env("BELAYER_AGENT_ID")
+    socket_path = _require_env("BELAYER_SOCKET")
+
+    run_dir = os.environ.get("BELAYER_RUN_DIR", "")
+    role = os.environ.get("BELAYER_ROLE", "specialist")
+    profile = os.environ.get("BELAYER_PROFILE", "")
+    model = os.environ.get("BELAYER_MODEL", "")
+    initial_message = os.environ.get("BELAYER_MESSAGE", "")
+    system_prompt = os.environ.get("BELAYER_SYSTEM_PROMPT", "")
+    hermes_session_id = os.environ.get("BELAYER_HERMES_SESSION_ID", "")
+    ephemeral = os.environ.get("BELAYER_EPHEMERAL", "true").lower() != "false"
+
+    log.info(
+        "Starting bridge agent=%s session=%s role=%s profile=%s",
+        agent_id, session_id, role, profile or "(none)",
+    )
+
+    # --- Construct AIAgent -------------------------------------------------
+    # Hermes profiles work by setting HERMES_HOME to ~/.hermes/profiles/{name}.
+    # AIAgent doesn't accept a "profile" kwarg — it reads HERMES_HOME at construction.
+    if profile and profile != "default":
+        profile_home = os.path.expanduser(f"~/.hermes/profiles/{profile}")
+        if os.path.isdir(profile_home):
+            os.environ["HERMES_HOME"] = profile_home
+            log.info("Set HERMES_HOME=%s for profile %s", profile_home, profile)
+        else:
+            log.warning("Profile dir %s not found, using default", profile_home)
+
+    # --- Resolve runtime credentials (token refresh, etc.) ------------------
+    # The TUI does this via resolve_runtime_provider() before constructing
+    # AIAgent. Without it, OAuth tokens (e.g. Codex) may be stale/expired
+    # and the headless AIAgent path does not refresh them on its own.
+    runtime_api_key = None
+    runtime_base_url = None
+    runtime_provider = None
+    runtime_api_mode = None
+    try:
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+        runtime = resolve_runtime_provider()
+        runtime_api_key = runtime.get("api_key")
+        runtime_base_url = runtime.get("base_url")
+        runtime_provider = runtime.get("provider")
+        runtime_api_mode = runtime.get("api_mode")
+        log.info(
+            "Resolved runtime provider=%s base_url=%s api_mode=%s",
+            runtime_provider, runtime_base_url, runtime_api_mode,
+        )
+    except Exception as exc:
+        log.warning("Could not resolve runtime provider: %s (falling back to AIAgent defaults)", exc)
+
+    # --- Resolve model from Hermes config if not explicitly set --------------
+    if not model:
+        try:
+            from hermes_cli.config import load_config
+            cfg = load_config()
+            model_cfg = cfg.get("model", {})
+            if isinstance(model_cfg, dict):
+                model = model_cfg.get("default", "")
+            elif isinstance(model_cfg, str):
+                model = model_cfg
+        except Exception as exc:
+            log.warning("Could not load model from Hermes config: %s", exc)
+
+    # --- Shared SessionDB for persistence and resume -------------------------
+    # Use the root ~/.hermes/state.db regardless of HERMES_HOME so all bridge
+    # sessions are visible in `hermes sessions list` alongside CLI sessions.
+    from pathlib import Path
+    session_db = SessionDB(db_path=Path.home() / ".hermes" / "state.db")
+
+    agent_kwargs: dict = {
+        "quiet_mode": True,
+        "persist_session": True,
+        "session_db": session_db,
+    }
+    if system_prompt:
+        agent_kwargs["ephemeral_system_prompt"] = system_prompt
+    if runtime_api_key:
+        agent_kwargs["api_key"] = runtime_api_key
+    if runtime_base_url:
+        agent_kwargs["base_url"] = runtime_base_url
+    if runtime_provider:
+        agent_kwargs["provider"] = runtime_provider
+    if runtime_api_mode:
+        agent_kwargs["api_mode"] = runtime_api_mode
+    if model:
+        agent_kwargs["model"] = model
+    if hermes_session_id:
+        agent_kwargs["session_id"] = hermes_session_id
+
+    try:
+        agent = AIAgent(**agent_kwargs)
+    except Exception as exc:
+        log.error("Failed to construct AIAgent: %s", exc)
+        post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
+        sys.exit(1)
+
+    # --- Register Belayer tools --------------------------------------------
+    allowed_tools_env = os.environ.get("BELAYER_TOOLS", "")
+    allowed_tools = [t.strip() for t in allowed_tools_env.split(",") if t.strip()] if allowed_tools_env else None
+    try:
+        register_belayer_tools(agent, agent_id, session_id, socket_path, allowed_tools=allowed_tools)
+    except Exception as exc:
+        log.error("Failed to register Belayer tools: %s", exc)
+        post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
+        sys.exit(1)
+
+    # --- Wire callbacks ----------------------------------------------------
+    callbacks = make_callbacks(agent_id, session_id, socket_path)
+    for attr, fn in callbacks.items():
+        setattr(agent, attr, fn)
+
+    # --- Start stdin reader ------------------------------------------------
+    stdin_queue: queue.Queue = queue.Queue()
+    stdin_reader = StdinReader(agent, stdin_queue)
+    stdin_reader.start()
+
+    # --- Resume from prior Hermes session if provided ----------------------
+    conversation_history: list[dict] | None = None
+    if hermes_session_id:
+        try:
+            history = session_db.get_messages_as_conversation(hermes_session_id)
+            conversation_history = [m for m in history if m.get("role") != "session_meta"]
+            if conversation_history:
+                log.info(
+                    "Resumed hermes session %s with %d messages",
+                    hermes_session_id,
+                    len(conversation_history),
+                )
+            else:
+                log.warning("Hermes session %s found but has no messages", hermes_session_id)
+                conversation_history = None
+        except Exception as exc:
+            log.warning("Could not resume hermes session %s: %s", hermes_session_id, exc)
+
+    # --- Signal readiness (include hermes_session_id for daemon to store) --
+    post_event(
+        socket_path, session_id, agent_id,
+        "bridge:started",
+        {
+            "role": role,
+            "profile": profile,
+            "hermes_session_id": agent.session_id,
+        },
+    )
+
+    # --- Outer conversation loop -------------------------------------------
+    user_message = initial_message or f"You are the {role} agent. Begin your work."
+
+    # Check for messages that were queued before this agent was spawned.
+    pending = fetch_pending_messages(socket_path, session_id, agent_id)
+    if pending:
+        queued = format_messages(pending)
+        user_message = f"{user_message}\n\n{queued}"
+        log.info("Prepended %d pre-queued message(s) to initial turn", len(pending))
+
+    while True:
+        try:
+            result = agent.run_conversation(
+                user_message=user_message,
+                conversation_history=conversation_history,
+            )
+        except Exception as exc:
+            log.error("run_conversation crashed: %s", exc)
+            post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
+            break
+
+        # Carry history forward for subsequent turns.
+        conversation_history = result.get("messages", [])
+
+        # Report per-turn token usage.
+        turn_usage = extract_turn_usage(result)
+        if turn_usage:
+            post_event(socket_path, session_id, agent_id, "bridge:turn_usage", turn_usage)
+
+        # --- Interrupted turn: check for urgent message from stdin ---------
+        if result.get("interrupted"):
+            try:
+                interrupt_msg = stdin_queue.get_nowait()
+                sender = interrupt_msg.get("from", "system")
+                content = interrupt_msg.get("content", "")
+                user_message = f"[Urgent from {sender}]: {content}"
+                log.info("Continuing after interrupt from %s", sender)
+                continue
+            except queue.Empty:
+                # Interrupted but no pending stdin command — treat as stop.
+                log.info("Interrupted with no queued message; treating as stop")
+                post_event(
+                    socket_path, session_id, agent_id,
+                    "bridge:finished",
+                    {"reason": "interrupted"},
+                )
+                break
+
+        # --- Check for non-urgent messages from other agents ---------------
+        pending = fetch_pending_messages(socket_path, session_id, agent_id)
+        if pending:
+            user_message = format_messages(pending)
+            log.info("Continuing with %d pending message(s)", len(pending))
+            continue
+
+        # --- Terminal states -----------------------------------------------
+        if result.get("failed"):
+            post_event(
+                socket_path, session_id, agent_id,
+                "bridge:failed",
+                {"final_response": str(result.get("final_response", ""))[:500]},
+            )
+            break
+
+        if result.get("completed"):
+            if ephemeral:
+                post_event(
+                    socket_path, session_id, agent_id,
+                    "bridge:finished",
+                    {"final_response": str(result.get("final_response", ""))[:500]},
+                )
+                break
+
+            # Non-ephemeral agent: stay alive and wait for more work.
+            post_event(
+                socket_path, session_id, agent_id,
+                "bridge:idle",
+                {"final_response": str(result.get("final_response", ""))[:500]},
+            )
+            log.info("Non-ephemeral agent idle, polling for messages...")
+            idle_poll_interval = 5  # seconds
+            idle_timeout = 300  # 5 minutes max idle
+            waited = 0
+            while waited < idle_timeout:
+                time.sleep(idle_poll_interval)
+                waited += idle_poll_interval
+
+                # Check stdin for interrupt/stop commands first.
+                try:
+                    interrupt_msg = stdin_queue.get_nowait()
+                    if interrupt_msg.get("type") == "stop":
+                        log.info("Received stop command while idle")
+                        post_event(
+                            socket_path, session_id, agent_id,
+                            "bridge:finished",
+                            {"reason": "stopped"},
+                        )
+                        break
+                    sender = interrupt_msg.get("from", "system")
+                    content = interrupt_msg.get("content", "")
+                    user_message = (
+                        "[System] You have been idle. An urgent message arrived. "
+                        "Process it and continue coordinating.\n\n"
+                        f"[Message from {sender}]: {content}"
+                    )
+                    log.info("Resuming from idle with message from %s", sender)
+                    break
+                except queue.Empty:
+                    pass
+
+                # Poll for pending messages.
+                pending = fetch_pending_messages(socket_path, session_id, agent_id)
+                if pending:
+                    user_message = (
+                        "[System] You have been idle waiting for specialist agents. "
+                        "One or more have reported in. Process their updates and continue "
+                        "coordinating the session (verify work, merge branches, spawn next agents, create PRs, etc.).\n\n"
+                        + format_messages(pending)
+                    )
+                    log.info("Resuming from idle with %d pending message(s)", len(pending))
+                    break
+            else:
+                # Idle timeout reached — exit cleanly.
+                log.info("Idle timeout reached (%ds), exiting", idle_timeout)
+                post_event(
+                    socket_path, session_id, agent_id,
+                    "bridge:finished",
+                    {"reason": "idle_timeout"},
+                )
+                break
+            continue
+
+        # --- Unknown/partial return: nudge agent to continue ---------------
+        log.debug("run_conversation returned without terminal state; nudging agent")
+        user_message = "[System] Your previous turn ended without completion. Continue your work."
+
+    # Report cumulative session usage before exiting.
+    session_usage = extract_session_usage(agent)
+    if session_usage:
+        post_event(socket_path, session_id, agent_id, "bridge:session_usage", session_usage)
+
+    stdin_reader.stop()
+    log.info("Bridge exiting for agent=%s session=%s", agent_id, session_id)
+
+
+if __name__ == "__main__":
+    main()

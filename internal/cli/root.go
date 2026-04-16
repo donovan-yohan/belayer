@@ -11,45 +11,30 @@ var version = "dev"
 func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "belayer",
-		Short:        "Orchestrate autonomous coding agents through sessions",
+		Short:        "Belayer — agent control plane for Nightshift",
 		SilenceUsage: true,
-		Long: `Belayer v6 — session runtime for autonomous coding agents.
+		Long: `Belayer v7 — run-local agent control plane for Nightshift.
 
-Commands:
-  implement   Launch an implementation session (pilot + implementer + reviewer)
-  daemon      Start the belayer daemon (long-running supervisor)
-  session     Create, list, and stop agent sessions
-  attach      Attach to a session's agent tmux panes
-  setup       Bootstrap a .belayer/ workspace
-  status      Show running sessions
-  logs        Show session events
-  watch       Stream events from one or more sessions
-  recall      Search events via FTS5`,
+Coordinates supervisor + specialist agents via the Hermes bridge within a single
+worker run. Daemon manages sessions, agent roster, messages, events, and artifacts
+over SQLite.`,
 	}
 
 	cmd.Version = version
 	cmd.AddCommand(
 		newVersionCmd(),
 		newDaemonCmd(),
-		newRunCmd(),
 		newSessionCmd(),
-		newAttachCmd(),
 		newLogsCmd(),
-		newWatchCmd(),
 		newStatusCmd(),
-		newDebugCmd(),
 		newRecallCmd(),
-		newMessageCmd(),
-		newArtifactCmd(),
-		newRosterCmd(),
 		newSpawnCmd(),
 		newFinishCmd(),
-		newContextCmd(),
-		newNoteCmd(),
-		newSetupCmd(),
-		newWorkbenchCmd(),
-		newToolCmd(),
-		newScaffoldCmd("submit", "Reserved v6 submission surface", "Restore submit after the new runtime decides how tasks enter the system."),
+		newRosterCmd(),
+		newMessageCmd(),
+		newRequestCompletionCmd(),
+		newRunCmd(),
+		newArtifactCmd(),
 	)
 	return cmd
 }

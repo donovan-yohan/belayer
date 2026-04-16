@@ -12,12 +12,14 @@ import (
 
 // Session represents a belayer session row.
 type Session struct {
-	ID        string
-	Name      string
-	Status    string
-	Template  string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           string
+	Name         string
+	Status       string
+	Template     string
+	Repos        string // JSON map: {"frontend": "/abs/path", "backend": "/abs/path"}
+	WorkspaceDir string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // SessionEvent represents a single event row associated with a session.
@@ -29,31 +31,36 @@ type SessionEvent struct {
 	Data      string
 }
 
-// WorkbenchState represents a workbench instance associated with a session.
-type WorkbenchState struct {
-	ID        string
-	SessionID string
-	Status    string
-	Endpoints string
-	Spec      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
 // AgentRun represents a launched agent/harness instance within a session.
 type AgentRun struct {
+	ID              string
+	SessionID       string
+	Name            string
+	Role            string
+	Profile         string
+	RepoScope       string
+	Workdir         string
+	Branch          string // git branch the agent works on (empty = no worktree)
+	WorktreePath    string // filesystem path of the git worktree (empty = shared workdir)
+	Transport       string
+	TmuxSession     string
+	HermesSessionID string
+	Status          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+// Message represents a persistent message stored for pull-based delivery.
+type Message struct {
 	ID          string
 	SessionID   string
-	Name        string
-	Role        string
-	Profile     string
-	RepoScope   string
-	Workdir     string
-	Transport   string
-	TmuxSession string
-	Status      string
+	SenderID    string
+	RecipientID string
+	Type        string
+	Content     string
+	Urgent      bool
+	Delivered   bool
 	CreatedAt   time.Time
-	UpdatedAt   time.Time
 }
 
 // Artifact represents a durable output produced by an agent during a run.
@@ -115,11 +122,15 @@ func (s *Store) CreateSession(session Session) (string, error) {
 	if session.Status == "" {
 		session.Status = "pending"
 	}
+	if session.Repos == "" {
+		session.Repos = "{}"
+	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, name, status, template, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (id, name, status, template, repos, workspace_dir, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.Name, session.Status, nullableString(session.Template),
+		session.Repos, session.WorkspaceDir,
 		session.CreatedAt, session.UpdatedAt,
 	)
 	if err != nil {
@@ -131,12 +142,12 @@ func (s *Store) CreateSession(session Session) (string, error) {
 // GetSession retrieves a session by ID. Returns a wrapped sql.ErrNoRows if not found.
 func (s *Store) GetSession(id string) (Session, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, status, COALESCE(template,''), created_at, updated_at
+		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), created_at, updated_at
 		 FROM sessions WHERE id = ?`, id,
 	)
 	var sess Session
 	var createdAt, updatedAt string
-	err := row.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &createdAt, &updatedAt)
+	err := row.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &createdAt, &updatedAt)
 	if err != nil {
 		return Session{}, fmt.Errorf("store: get session: %w", err)
 	}
@@ -148,7 +159,7 @@ func (s *Store) GetSession(id string) (Session, error) {
 // ListSessions returns all sessions ordered by created_at DESC.
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, status, COALESCE(template,''), created_at, updated_at
+		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), created_at, updated_at
 		 FROM sessions ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -160,7 +171,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 	for rows.Next() {
 		var sess Session
 		var createdAt, updatedAt string
-		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: list sessions scan: %w", err)
 		}
 		sess.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
@@ -182,96 +193,14 @@ func (s *Store) UpdateSessionStatus(id, status string) error {
 	return nil
 }
 
-// CreateWorkbench inserts a new workbench. If wb.ID is empty a UUID is
-// generated. Returns the ID of the created workbench.
-func (s *Store) CreateWorkbench(wb WorkbenchState) (string, error) {
-	if wb.ID == "" {
-		wb.ID = uuid.New().String()
-	}
-	now := time.Now().UTC()
-	if wb.CreatedAt.IsZero() {
-		wb.CreatedAt = now
-	}
-	if wb.UpdatedAt.IsZero() {
-		wb.UpdatedAt = now
-	}
-	if wb.Status == "" {
-		wb.Status = "pending"
-	}
-	if wb.Endpoints == "" {
-		wb.Endpoints = "{}"
-	}
-	if wb.Spec == "" {
-		wb.Spec = "{}"
-	}
-
+// UpdateSessionWorkspaceDir updates the workspace_dir and updated_at of a session.
+func (s *Store) UpdateSessionWorkspaceDir(id, workspaceDir string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO workbenches (id, session_id, status, endpoints, spec, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		wb.ID, wb.SessionID, wb.Status, wb.Endpoints, wb.Spec,
-		wb.CreatedAt, wb.UpdatedAt,
+		`UPDATE sessions SET workspace_dir = ?, updated_at = ? WHERE id = ?`,
+		workspaceDir, time.Now().UTC(), id,
 	)
 	if err != nil {
-		return "", fmt.Errorf("store: create workbench: %w", err)
-	}
-	return wb.ID, nil
-}
-
-// GetWorkbenchBySession retrieves a workbench by session ID. Returns a wrapped sql.ErrNoRows if not found.
-func (s *Store) GetWorkbenchBySession(sessionID string) (WorkbenchState, error) {
-	row := s.db.QueryRow(
-		`SELECT id, session_id, status, COALESCE(endpoints,'{}'), COALESCE(spec,'{}'), created_at, updated_at
-		 FROM workbenches WHERE session_id = ?`, sessionID,
-	)
-	var wb WorkbenchState
-	var createdAt, updatedAt string
-	err := row.Scan(&wb.ID, &wb.SessionID, &wb.Status, &wb.Endpoints, &wb.Spec, &createdAt, &updatedAt)
-	if err != nil {
-		return WorkbenchState{}, fmt.Errorf("store: get workbench: %w", err)
-	}
-	wb.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-	wb.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
-	return wb, nil
-}
-
-// UpdateWorkbenchStatus updates the status and updated_at of a workbench.
-func (s *Store) UpdateWorkbenchStatus(id, status string) error {
-	_, err := s.db.Exec(
-		`UPDATE workbenches SET status = ?, updated_at = ? WHERE id = ?`,
-		status, time.Now().UTC(), id,
-	)
-	if err != nil {
-		return fmt.Errorf("store: update workbench status: %w", err)
-	}
-	return nil
-}
-
-// UpdateWorkbenchEndpoints updates the endpoints JSON and updated_at of a workbench.
-func (s *Store) UpdateWorkbenchEndpoints(id, endpoints string) error {
-	_, err := s.db.Exec(
-		`UPDATE workbenches SET endpoints = ?, updated_at = ? WHERE id = ?`,
-		endpoints, time.Now().UTC(), id,
-	)
-	if err != nil {
-		return fmt.Errorf("store: update workbench endpoints: %w", err)
-	}
-	return nil
-}
-
-// DeleteWorkbench deletes a workbench by ID.
-func (s *Store) DeleteWorkbench(id string) error {
-	_, err := s.db.Exec(`DELETE FROM workbenches WHERE id = ?`, id)
-	if err != nil {
-		return fmt.Errorf("store: delete workbench: %w", err)
-	}
-	return nil
-}
-
-// DeleteWorkbenchBySession deletes all workbenches for a session.
-func (s *Store) DeleteWorkbenchBySession(sessionID string) error {
-	_, err := s.db.Exec(`DELETE FROM workbenches WHERE session_id = ?`, sessionID)
-	if err != nil {
-		return fmt.Errorf("store: delete workbench by session: %w", err)
+		return fmt.Errorf("store: update session workspace dir: %w", err)
 	}
 	return nil
 }
@@ -292,13 +221,13 @@ func (s *Store) CreateAgentRun(run AgentRun) (string, error) {
 		run.Status = "starting"
 	}
 	if run.Transport == "" {
-		run.Transport = "tmux"
+		run.Transport = "bridge"
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO agent_runs (id, session_id, name, role, profile, repo_scope, workdir, transport, tmux_session, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.SessionID, run.Name, run.Role, run.Profile, run.RepoScope, run.Workdir, run.Transport, run.TmuxSession, run.Status, run.CreatedAt, run.UpdatedAt,
+		`INSERT INTO agent_runs (id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.SessionID, run.Name, run.Role, run.Profile, run.RepoScope, run.Workdir, run.Branch, run.WorktreePath, run.Transport, run.TmuxSession, run.HermesSessionID, run.Status, run.CreatedAt, run.UpdatedAt,
 	)
 	if err != nil {
 		return "", fmt.Errorf("store: create agent run: %w", err)
@@ -309,12 +238,12 @@ func (s *Store) CreateAgentRun(run AgentRun) (string, error) {
 // GetAgentRun retrieves a single agent run by session + name.
 func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
 	row := s.db.QueryRow(
-		`SELECT id, session_id, name, role, profile, repo_scope, workdir, transport, tmux_session, status, created_at, updated_at
+		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at
 		 FROM agent_runs WHERE session_id = ? AND name = ?`, sessionID, name,
 	)
 	var run AgentRun
 	var createdAt, updatedAt string
-	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Transport, &run.TmuxSession, &run.Status, &createdAt, &updatedAt)
+	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &createdAt, &updatedAt)
 	if err != nil {
 		return AgentRun{}, fmt.Errorf("store: get agent run: %w", err)
 	}
@@ -326,7 +255,7 @@ func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
 // ListAgentRuns returns all agent runs for a session ordered by created_at.
 func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, name, role, profile, repo_scope, workdir, transport, tmux_session, status, created_at, updated_at
+		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at
 		 FROM agent_runs WHERE session_id = ? ORDER BY created_at ASC`, sessionID,
 	)
 	if err != nil {
@@ -338,7 +267,7 @@ func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
 	for rows.Next() {
 		var run AgentRun
 		var createdAt, updatedAt string
-		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Transport, &run.TmuxSession, &run.Status, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: list agent runs scan: %w", err)
 		}
 		run.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
@@ -380,6 +309,122 @@ func (s *Store) UpdateAgentRunTmuxSession(sessionID, name, tmuxSession string) e
 	)
 	if err != nil {
 		return fmt.Errorf("store: update agent run tmux session: %w", err)
+	}
+	return nil
+}
+
+// UpdateAgentRunWorktree updates the branch and worktree_path for an agent run.
+func (s *Store) UpdateAgentRunWorktree(sessionID, name, branch, worktreePath string) error {
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET branch = ?, worktree_path = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		branch, worktreePath, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run worktree: %w", err)
+	}
+	return nil
+}
+
+// UpdateAgentRunHermesSessionID updates the hermes_session_id for an agent run.
+func (s *Store) UpdateAgentRunHermesSessionID(sessionID, name, hermesSessionID string) error {
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET hermes_session_id = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		hermesSessionID, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run hermes session id: %w", err)
+	}
+	return nil
+}
+
+// CreateMessage inserts a new message. If msg.ID is empty a UUID is generated.
+// Returns the ID of the created message.
+func (s *Store) CreateMessage(msg Message) (string, error) {
+	if msg.ID == "" {
+		msg.ID = uuid.New().String()
+	}
+	if msg.CreatedAt.IsZero() {
+		msg.CreatedAt = time.Now().UTC()
+	}
+	if msg.Type == "" {
+		msg.Type = "instruction"
+	}
+	urgent := 0
+	if msg.Urgent {
+		urgent = 1
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO messages (id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		msg.ID, msg.SessionID, msg.SenderID, msg.RecipientID, msg.Type, msg.Content, urgent, msg.CreatedAt,
+	)
+	if err != nil {
+		return "", fmt.Errorf("store: create message: %w", err)
+	}
+	return msg.ID, nil
+}
+
+// PendingMessages returns undelivered messages for a specific agent in a session,
+// ordered by created_at ASC. If afterID is non-empty, only messages created after
+// the message with that ID are returned.
+func (s *Store) PendingMessages(sessionID, recipientID string, afterID string) ([]Message, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if afterID == "" {
+		rows, err = s.db.Query(
+			`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at
+			 FROM messages
+			 WHERE session_id = ? AND recipient_id = ? AND delivered = 0
+			 ORDER BY created_at ASC`,
+			sessionID, recipientID,
+		)
+	} else {
+		rows, err = s.db.Query(
+			`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at
+			 FROM messages
+			 WHERE session_id = ? AND recipient_id = ? AND delivered = 0
+			   AND created_at > (SELECT created_at FROM messages WHERE id = ?)
+			 ORDER BY created_at ASC`,
+			sessionID, recipientID, afterID,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: pending messages: %w", err)
+	}
+	defer rows.Close()
+
+	var msgs []Message
+	for rows.Next() {
+		var m Message
+		var createdAt string
+		var urgent, delivered int
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.SenderID, &m.RecipientID, &m.Type, &m.Content, &urgent, &delivered, &createdAt); err != nil {
+			return nil, fmt.Errorf("store: pending messages scan: %w", err)
+		}
+		m.Urgent = urgent != 0
+		m.Delivered = delivered != 0
+		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if msgs == nil {
+		msgs = []Message{}
+	}
+	return msgs, nil
+}
+
+// MarkDelivered marks a message as delivered so it is excluded from future
+// PendingMessages results.
+func (s *Store) MarkDelivered(id string) error {
+	_, err := s.db.Exec(
+		`UPDATE messages SET delivered = 1 WHERE id = ?`, id,
+	)
+	if err != nil {
+		return fmt.Errorf("store: mark delivered: %w", err)
 	}
 	return nil
 }
