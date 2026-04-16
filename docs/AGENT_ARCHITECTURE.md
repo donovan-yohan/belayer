@@ -559,8 +559,8 @@ The planner and specialists have a structural bias toward reporting "done." Nobo
 
 ```mermaid
 flowchart LR
-    planner["Planner:\ncalls belayer_request_completion"]
-    daemon["Daemon:\nbridge:completion_requested"]
+    planner["Planner:\ncalls belayer finish"]
+    daemon["Daemon:\nintercepts finish,\ntriggers PM gate"]
     pm["PM Agent:\nreads spec, reads diff,\nverifies line by line"]
     approve["belayer_approve_completion\n→ session marked complete"]
     reject["belayer_reject_completion\n→ gap list to planner"]
@@ -576,31 +576,36 @@ flowchart LR
 
 ### The flow
 
-1. **Planner signals completion**: calls `belayer_request_completion(summary="...", spec_artifact="...")`. This posts a `bridge:completion_requested` event.
+1. **Planner signals completion**: calls `belayer finish "summary"` (CLI) or `belayer_request_completion(summary="...")` (bridge tool). Both paths converge in the daemon, which intercepts the finish and triggers the PM gate instead of marking the session complete.
 
-2. **Daemon auto-spawns PM**: the event handler in `bridge_events.go` looks up the spec artifact (by kind: `spec` or `design-doc`), gathers the artifact registry, and spawns the PM with a message containing full context.
+2. **Daemon auto-spawns PM**: the event handler in `bridge_events.go` looks up the spec artifact (by kind: `spec` or `design-doc`), gathers the artifact registry, and spawns the PM via the bridge with a message containing full context. The PM's system prompt is loaded from `.belayer/templates/pm/system-prompt.md` and injected as `ephemeral_system_prompt`.
 
 3. **PM verifies**: reads the spec, reads the git diff, walks through the spec line by line. Produces a structured verification report (Passed / Failed / Deferred).
 
 4. **PM decides**:
    - **APPROVE**: calls `belayer_approve_completion(verification_report="...")`. Daemon registers the report as an artifact, marks the session status as `complete`, and logs `session_completed`.
-   - **REJECT**: calls `belayer_reject_completion(verification_report="...", gap_list="...")`. Daemon sends the gap list to the planner as an urgent message. Planner addresses gaps and calls `belayer_request_completion` again.
+   - **REJECT**: calls `belayer_reject_completion(verification_report="...", gap_list="...")`. Daemon sends the gap list to the planner as an urgent message. Planner addresses gaps and calls `belayer finish` again.
 
 5. **Bounded cycles**: after 3 rejections, the daemon marks the session as `needs_human_review` and sends an escalation message to the planner. No more automated retries.
 
 ### Key design decisions
 
-- **The PM controls run completion, not the planner.** The planner can only signal "work complete" via `belayer_request_completion`. The PM calls `belayer_approve_completion` to actually close the session. There is no way for the planner to directly finish the run.
-- **The daemon enforces the gate.** The PM is auto-spawned by the daemon when it sees `bridge:completion_requested`. The planner can't skip or forget the gate.
+- **The PM controls run completion, not the planner.** The planner calls `belayer finish`, but the daemon intercepts it and spawns the PM for verification. The PM calls `belayer_approve_completion` to actually close the session. There is no way for the planner to directly complete the run.
+- **The daemon enforces the gate.** The PM is auto-spawned by the daemon when the planner finishes. The planner can't skip or forget the gate.
 - **The spec is the source of truth, not the planner's summary.** The PM reads the original spec artifact directly. It receives the planner's summary for context but verifies against the spec.
-- **All tools are registered on all agents.** Tool use is governed by the agent's soul, not by access control. The PM's soul tells it to approve or reject. The planner's soul tells it to request completion instead of finishing directly.
-- **PM is ephemeral.** It spawns, verifies, decides, and exits. If rejected, a new PM process spawns on the next `belayer_request_completion` call.
+- **All tools are registered on all agents.** Tool use is governed by the agent's soul, not by access control. The PM's soul tells it to approve or reject.
+- **PM is ephemeral.** It spawns, verifies, decides, and exits. If rejected, a new PM process spawns on the next `belayer finish` call.
+- **PM identity lives in `.belayer/templates/pm/`.** The system prompt is injected via Hermes's `ephemeral_system_prompt` at spawn time. The Hermes profile stays `default` for now.
+
+> **TODO: Hermes profile bootstrap.** Currently all bridge agents use the `default` Hermes profile, with identity injected via `ephemeral_system_prompt` and model overridden via `BELAYER_MODEL`. This works for local testing because every agent shares the machine's auth context. But a Hermes profile controls more than the soul: provider selection, API keys, OAuth token state, model routing, skills, plugins, and MCP server configs. When agents need different providers (e.g. PM on Anthropic sonnet, implementer on OpenAI codex) or deploy to Crag where there's no interactive `hermes auth`, the default profile can't cover it. Belayer needs a way to construct or materialize per-agent Hermes profiles at spawn time, either from `.belayer/templates/` declarations or from daemon-held credential sets.
 
 ### Implementation files
 
 | File | What it does |
 |------|--------------|
+| `.belayer/templates/pm/` | PM identity: `agent.yaml`, `system-prompt.md`, `agents.md` |
 | `hermes_bridge/tools.py` | Tool schemas and handlers for `request_completion`, `approve_completion`, `reject_completion` |
+| `hermes_bridge/__main__.py` | Reads `BELAYER_SYSTEM_PROMPT` and injects as `ephemeral_system_prompt` |
 | `internal/daemon/bridge_events.go` | Event handlers: `handleBridgeCompletionRequested`, `handleBridgeCompletionApproved`, `handleBridgeCompletionRejected` |
-| `internal/daemon/agents.go` | `spawnAgentInternal` method used by event handler to auto-spawn PM |
-| `internal/session/template.go` | PM agent spec in the `deliver` template with soul prompt |
+| `internal/daemon/agents.go` | `spawnAgentInternal` for auto-spawning PM; `handleFinishAgent` intercepts planner finish to trigger PM gate; template system prompt resolution from `.belayer/templates/<name>/system-prompt.md` |
+| `internal/bridge/bridge.go` | `Config.SystemPrompt` field, passed as `BELAYER_SYSTEM_PROMPT` env var |

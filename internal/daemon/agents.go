@@ -191,6 +191,30 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
+
+	// When the planner calls finish (and isn't blocked), trigger PM verification
+	// instead of marking the session complete immediately.
+	if name == "planner" && !req.Blocked {
+		_ = d.store.LogEvent(store.SessionEvent{
+			SessionID: sessionID,
+			Type:      "agent_finished",
+			Data: mustJSON(map[string]string{
+				"agent":   name,
+				"status":  "pending_verification",
+				"summary": req.Summary,
+			}),
+		})
+		d.handleBridgeCompletionRequested(sessionID, name, map[string]any{
+			"agent":   name,
+			"summary": req.Summary,
+		})
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status":  "pending_verification",
+			"message": "PM agent spawned for spec verification",
+		})
+		return
+	}
+
 	status := "complete"
 	if req.Blocked {
 		status = "blocked"
@@ -263,6 +287,22 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		ephemeral = false
 	}
 
+	// Load system prompt from templates/<name>/system-prompt.md if it exists.
+	// The template is keyed by agent name (e.g. "pm", "pilot", "reviewer").
+	// Check the workspace first, then fall back to belayer root.
+	var systemPrompt string
+	for _, base := range []string{workdir, d.config.BelayerRoot} {
+		if base == "" {
+			continue
+		}
+		promptPath := filepath.Join(base, "templates", req.Name, "system-prompt.md")
+		if data, err := os.ReadFile(promptPath); err == nil {
+			systemPrompt = string(data)
+			log.Printf("Loaded system prompt from %s for agent %s", promptPath, req.Name)
+			break
+		}
+	}
+
 	cfg := bridge.Config{
 		SessionID:       req.SessionID,
 		AgentID:         req.Name,
@@ -270,6 +310,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		Profile:         req.Profile,
 		Model:           req.Model,
 		Message:         req.Message,
+		SystemPrompt:    systemPrompt,
 		HermesSessionID: req.HermesSessionID,
 		Ephemeral:       ephemeral,
 		Workdir:         workdir,

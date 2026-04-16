@@ -120,6 +120,7 @@ def main() -> None:
     profile = os.environ.get("BELAYER_PROFILE", "")
     model = os.environ.get("BELAYER_MODEL", "")
     initial_message = os.environ.get("BELAYER_MESSAGE", "")
+    system_prompt = os.environ.get("BELAYER_SYSTEM_PROMPT", "")
     hermes_session_id = os.environ.get("BELAYER_HERMES_SESSION_ID", "")
     ephemeral = os.environ.get("BELAYER_EPHEMERAL", "true").lower() != "false"
 
@@ -185,6 +186,8 @@ def main() -> None:
         "persist_session": True,
         "session_db": session_db,
     }
+    if system_prompt:
+        agent_kwargs["ephemeral_system_prompt"] = system_prompt
     if runtime_api_key:
         agent_kwargs["api_key"] = runtime_api_key
     if runtime_base_url:

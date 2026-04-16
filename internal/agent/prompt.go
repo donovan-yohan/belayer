@@ -100,6 +100,10 @@ func CompilePrompt(ctx PromptContext) string {
 	b.WriteString("- `belayer context` — see session info and other agents\n")
 	b.WriteString("- `belayer recall \"query\"` — search archival memory\n")
 	b.WriteString("- `belayer note \"observation\"` — log an observation for reflection\n")
+	b.WriteString("- `belayer request-completion \"summary\"` — signal work is done and trigger PM verification\n")
+	b.WriteString("- `belayer finish \"summary\"` — mark your own work as complete (or --blocked)\n")
+	b.WriteString("- `belayer roster` — list active agents in this session\n")
+	b.WriteString("- `belayer spawn --name <name> --profile <profile>` — spawn a new agent\n")
 
 	// Restart Context — omit section if empty
 	if ctx.RestartCtx != "" {

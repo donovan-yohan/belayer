@@ -38,6 +38,7 @@ type Config struct {
 	RunDir          string // e.g. /workspace/.belayer/runs/{session}/{agent}
 	Model           string // optional model override
 	Message         string // initial message/instructions for the agent
+	SystemPrompt    string // optional system prompt injected via ephemeral_system_prompt
 	HermesSessionID string // for crash recovery resume
 	BelayerRoot     string // directory containing hermes_bridge/ package (for PYTHONPATH)
 	Ephemeral       bool   // true = exit on task completion, false = stay alive for more work
@@ -102,6 +103,9 @@ func Spawn(cfg Config) (*Process, error) {
 	}
 	if cfg.Message != "" {
 		env = appendEnv(env, "BELAYER_MESSAGE", cfg.Message)
+	}
+	if cfg.SystemPrompt != "" {
+		env = appendEnv(env, "BELAYER_SYSTEM_PROMPT", cfg.SystemPrompt)
 	}
 	if cfg.HermesSessionID != "" {
 		env = appendEnv(env, "BELAYER_HERMES_SESSION_ID", cfg.HermesSessionID)
