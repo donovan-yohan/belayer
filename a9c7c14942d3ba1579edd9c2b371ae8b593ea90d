@@ -1,0 +1,123 @@
+templates/sprite/agent.yaml
+  beecb793b04ae5d6 1-8
+templates/app-implementer/system-prompt.md
+  beecb793b04ae5d6 1-7
+templates/reviewer/agents.md
+  beecb793b04ae5d6 1-27
+templates/app-implementer/agent.yaml
+  beecb793b04ae5d6 1-8
+internal/daemon/agents.go
+  beecb793b04ae5d6 194-217,290-305,313
+hermes_bridge/__main__.py
+  beecb793b04ae5d6 123,189-190
+templates/api-implementer/agents.md
+  beecb793b04ae5d6 1-43
+templates/app-implementer/agents.md
+  beecb793b04ae5d6 1-42
+templates/pm/agent.yaml
+  beecb793b04ae5d6 1-8
+templates/sprite/agents.md
+  beecb793b04ae5d6 1-20
+templates/pilot/system-prompt.md
+  beecb793b04ae5d6 1-7
+templates/pm/agents.md
+  beecb793b04ae5d6 1-41
+templates/reviewer/system-prompt.md
+  beecb793b04ae5d6 1-9
+internal/cli/nightshift.go
+  beecb793b04ae5d6 173-207
+templates/reviewer/agent.yaml
+  beecb793b04ae5d6 1-8
+templates/api-implementer/agent.yaml
+  beecb793b04ae5d6 1-8
+templates/api-implementer/system-prompt.md
+  beecb793b04ae5d6 1-7
+templates/pilot/agent.yaml
+  beecb793b04ae5d6 1-8
+internal/cli/root.go
+  beecb793b04ae5d6 39-44
+templates/pm/system-prompt.md
+  beecb793b04ae5d6 1-13
+templates/sprite/system-prompt.md
+  beecb793b04ae5d6 1-3
+internal/bridge/bridge.go
+  beecb793b04ae5d6 41,107-109
+templates/pilot/agents.md
+  beecb793b04ae5d6 1-73
+internal/agent/prompt.go
+  beecb793b04ae5d6 103-106
+docs/AGENT_ARCHITECTURE.md
+  beecb793b04ae5d6 562-563,579,581,587,593-594,596-600,606,608,610-611
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "a9c7c14942d3ba1579edd9c2b371ae8b593ea90d",
+  "prompts": {
+    "8a11691161759031": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a27b5ff1-487e-47a5-987b-4e05f5a88741",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 44,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "beecb793b04ae5d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60427526-396c-4ef4-ba78-847e76f541ec",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 9030,
+      "total_deletions": 33,
+      "accepted_lines": 9726,
+      "overriden_lines": 2
+    },
+    "d856d8042ea64a99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d70c5-1b1e-7700-a4be-e750d5cd24de",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "fda605a95c703c40": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca9969ac-5f62-418b-b31a-9a19d96fdb2b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 2,
+      "overriden_lines": 0
+    }
+  }
+}
