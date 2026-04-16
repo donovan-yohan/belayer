@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -116,6 +117,9 @@ func TestCommandUpRespectsContextCancellation(t *testing.T) {
 	_, err := c.Up(ctx)
 	if err == nil {
 		t.Fatal("Up() expected non-nil error after cancellation, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want wrap of context.Canceled", err)
 	}
 }
 
