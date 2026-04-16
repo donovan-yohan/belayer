@@ -306,13 +306,20 @@ func TestWatchAgentExitMarksBlockedWithoutFinish(t *testing.T) {
 		t.Fatalf("GetAgentRun: %v", err)
 	}
 	d.watchAgentExit(run)
-	time.Sleep(100 * time.Millisecond)
-	updated, err := d.store.GetAgentRun(created.ID, "api")
-	if err != nil {
-		t.Fatalf("GetAgentRun updated: %v", err)
-	}
-	if updated.Status != "blocked" {
-		t.Fatalf("expected blocked status, got %q", updated.Status)
+	deadline := time.After(2 * time.Second)
+	for {
+		updated, err := d.store.GetAgentRun(created.ID, "api")
+		if err != nil {
+			t.Fatalf("GetAgentRun updated: %v", err)
+		}
+		if updated.Status == "blocked" {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for blocked status, got %q", updated.Status)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 

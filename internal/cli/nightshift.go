@@ -11,11 +11,11 @@ import (
 )
 
 func resolveAgentID(flagVal string) (string, error) {
-	if id := os.Getenv("BELAYER_AGENT_ID"); id != "" {
-		return id, nil
-	}
 	if flagVal != "" {
 		return flagVal, nil
+	}
+	if id := os.Getenv("BELAYER_AGENT_ID"); id != "" {
+		return id, nil
 	}
 	return "", fmt.Errorf("BELAYER_AGENT_ID is not set and --agent flag is required")
 }
@@ -148,6 +148,9 @@ func (c *Client) ListAgents(sessionID string) ([]store.AgentRun, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
 	var runs []store.AgentRun
 	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
 		return nil, fmt.Errorf("decode agent runs: %w", err)

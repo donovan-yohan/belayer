@@ -78,7 +78,10 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		"interrupt": req.Interrupt,
 		"sent_at":   msg.Timestamp.Format(time.RFC3339Nano),
 	})
-	_ = d.store.LogEvent(store.SessionEvent{SessionID: id, Type: "message_sent", Data: data})
+	if err := d.store.LogEvent(store.SessionEvent{SessionID: id, Type: "message_sent", Data: data}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": msgID})
 }
 
@@ -118,8 +121,10 @@ func (d *Daemon) handleBroadcastMessage(w http.ResponseWriter, r *http.Request) 
 		"type":    req.Type,
 		"sent_at": msg.Timestamp.Format(time.RFC3339Nano),
 	})
-	_ = d.store.LogEvent(store.SessionEvent{SessionID: id, Type: "message_broadcast", Data: data})
-
+	if err := d.store.LogEvent(store.SessionEvent{SessionID: id, Type: "message_broadcast", Data: data}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "broadcast"})
 }
 

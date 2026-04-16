@@ -49,7 +49,8 @@ func newRunStartCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "Run started: %s (%s)\n", sess.ID, sess.Name)
 			fmt.Fprintln(cmd.OutOrStdout(), "Planner: planner")
 			fmt.Fprintln(cmd.OutOrStdout(), "Monitor with:")
-			fmt.Fprintf(cmd.OutOrStdout(), "  BELAYER_SESSION_ID=%s belayer roster\n", sess.ID)
+			sockPath := resolveSocket(socket)
+			fmt.Fprintf(cmd.OutOrStdout(), "  BELAYER_SESSION_ID=%s BELAYER_SOCKET=%s belayer roster\n", sess.ID, sockPath)
 			fmt.Fprintf(cmd.OutOrStdout(), "  belayer logs %s\n", sess.ID)
 			return nil
 		},

@@ -28,6 +28,18 @@ func BuildLaunchCmd(cfg LaunchConfig) (string, error) {
 	if strings.TrimSpace(cfg.Workdir) == "" {
 		return "", fmt.Errorf("hermes: workdir is required")
 	}
+	if strings.TrimSpace(cfg.RunDir) == "" {
+		return "", fmt.Errorf("hermes: run dir is required")
+	}
+	if strings.TrimSpace(cfg.SessionID) == "" {
+		return "", fmt.Errorf("hermes: session ID is required")
+	}
+	if strings.TrimSpace(cfg.AgentID) == "" {
+		return "", fmt.Errorf("hermes: agent ID is required")
+	}
+	if strings.TrimSpace(cfg.SocketPath) == "" {
+		return "", fmt.Errorf("hermes: socket path is required")
+	}
 
 	parts := []string{fmt.Sprintf("cd %s", shell.Quote(cfg.Workdir))}
 	env := map[string]string{
@@ -53,8 +65,12 @@ func BuildLaunchCmd(cfg LaunchConfig) (string, error) {
 	marker := shell.Quote(filepath.Join(cfg.RunDir, ".belayer-finished"))
 	parts = append(parts, fmt.Sprintf("rm -f %s", marker))
 	parts = append(parts, cmd)
-	parts = append(parts, "status=$?")
-	parts = append(parts, fmt.Sprintf("if [ ! -f %s ]; then belayer finish --blocked %s >/dev/null 2>&1; fi", marker, shell.Quote("hook: Hermes process exited without explicit belayer finish")))
-	parts = append(parts, "exit $status")
-	return strings.Join(parts, " && "), nil
+
+	// Post-hermes parts use ";" so they run regardless of hermes exit code.
+	postParts := []string{
+		"status=$?",
+		fmt.Sprintf("if [ ! -f %s ]; then belayer finish --blocked %s >/dev/null 2>&1; fi", marker, shell.Quote("hook: Hermes process exited without explicit belayer finish")),
+		"exit $status",
+	}
+	return strings.Join(parts, " && ") + "; " + strings.Join(postParts, "; "), nil
 }

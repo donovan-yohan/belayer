@@ -30,16 +30,16 @@ func (d *Daemon) handleCreateArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	artifact := store.Artifact{SessionID: sessionID, Kind: req.Kind, Path: req.Path, Producer: req.Producer, Summary: req.Summary}
-	if _, err := d.store.CreateArtifact(artifact); err != nil {
+	id, err := d.store.CreateArtifact(artifact)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	artifacts, err := d.store.ListArtifacts(sessionID)
-	if err != nil || len(artifacts) == 0 {
+	created, err := d.store.GetArtifact(id)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to reload artifact"})
 		return
 	}
-	created := artifacts[len(artifacts)-1]
 	_ = d.store.LogEvent(store.SessionEvent{SessionID: sessionID, Type: "artifact_created", Data: mustJSON(map[string]string{"kind": req.Kind, "path": req.Path, "producer": req.Producer})})
 	writeJSON(w, http.StatusCreated, created)
 }

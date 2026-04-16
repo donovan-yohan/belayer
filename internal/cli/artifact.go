@@ -107,6 +107,9 @@ func (c *Client) ListArtifacts(sessionID string) ([]store.Artifact, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
 	var artifacts []store.Artifact
 	if err := json.NewDecoder(resp.Body).Decode(&artifacts); err != nil {
 		return nil, fmt.Errorf("decode artifacts: %w", err)

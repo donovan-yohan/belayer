@@ -360,6 +360,18 @@ func (s *Store) UpdateAgentRunStatus(sessionID, name, status string) error {
 	return nil
 }
 
+// UpdateAgentRunWorkdir updates the workdir for an agent run.
+func (s *Store) UpdateAgentRunWorkdir(sessionID, name, workdir string) error {
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET workdir = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		workdir, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run workdir: %w", err)
+	}
+	return nil
+}
+
 // UpdateAgentRunTmuxSession updates the tmux session name for an agent run.
 func (s *Store) UpdateAgentRunTmuxSession(sessionID, name, tmuxSession string) error {
 	_, err := s.db.Exec(
@@ -393,6 +405,23 @@ func (s *Store) CreateArtifact(a Artifact) (string, error) {
 		return "", fmt.Errorf("store: create artifact: %w", err)
 	}
 	return a.ID, nil
+}
+
+// GetArtifact retrieves a single artifact by ID.
+func (s *Store) GetArtifact(id string) (Artifact, error) {
+	row := s.db.QueryRow(
+		`SELECT id, session_id, kind, path, producer, summary, created_at, updated_at
+		 FROM artifacts WHERE id = ?`, id,
+	)
+	var a Artifact
+	var createdAt, updatedAt string
+	err := row.Scan(&a.ID, &a.SessionID, &a.Kind, &a.Path, &a.Producer, &a.Summary, &createdAt, &updatedAt)
+	if err != nil {
+		return Artifact{}, fmt.Errorf("store: get artifact: %w", err)
+	}
+	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	a.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+	return a, nil
 }
 
 // ListArtifacts returns artifacts for a session ordered by created_at.

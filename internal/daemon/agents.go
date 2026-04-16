@@ -110,6 +110,10 @@ func (d *Daemon) handleListAgents(w http.ResponseWriter, r *http.Request) {
 func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	name := r.PathValue("name")
+	if _, err := d.store.GetAgentRun(sessionID, name); err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+		return
+	}
 	var req finishAgentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -157,6 +161,10 @@ func (d *Daemon) defaultLaunchAgent(req agentSpawnRequest) (string, error) {
 			return "", fmt.Errorf("determine workdir: %w", err)
 		}
 		workdir = cwd
+	}
+	// Persist the resolved workdir so watchAgentExit can locate the finish marker.
+	if req.Workdir == "" {
+		_ = d.store.UpdateAgentRunWorkdir(req.SessionID, req.Name, workdir)
 	}
 	runDir := filepath.Join(workdir, ".belayer", "runs", req.SessionID, req.Name)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
