@@ -299,7 +299,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		}),
 	})
 
-	if rejectionCount >= maxRejectionCycles {
+	if rejectionCount > maxRejectionCycles {
 		log.Printf("Session %s hit max rejection cycles (%d), escalating to operator", sessionID, maxRejectionCycles)
 		_ = d.store.UpdateSessionStatus(sessionID, "needs_human_review")
 		_ = d.store.LogEvent(store.SessionEvent{

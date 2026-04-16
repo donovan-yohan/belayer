@@ -31,8 +31,9 @@ type agentSpawnRequest struct {
 }
 
 type finishAgentRequest struct {
-	Summary string `json:"summary"`
-	Blocked bool   `json:"blocked"`
+	Summary      string `json:"summary"`
+	Blocked      bool   `json:"blocked"`
+	SpecArtifact string `json:"spec_artifact,omitempty"`
 }
 
 func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +196,10 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 	// When the supervisor calls finish (and isn't blocked), trigger PM verification
 	// instead of marking the session complete immediately.
 	if name == "supervisor" && !req.Blocked {
+		if err := d.store.UpdateAgentRunStatus(sessionID, name, "pending_verification"); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 		_ = d.store.LogEvent(store.SessionEvent{
 			SessionID: sessionID,
 			Type:      "agent_finished",
@@ -205,8 +210,9 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 			}),
 		})
 		d.handleBridgeCompletionRequested(sessionID, name, map[string]any{
-			"agent":   name,
-			"summary": req.Summary,
+			"agent":        name,
+			"summary":      req.Summary,
+			"spec_artifact": req.SpecArtifact,
 		})
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "pending_verification",
@@ -525,10 +531,11 @@ func repoNames(repos map[string]string) []string {
 }
 
 // ensureWorktree creates (or reuses) a git worktree for an agent.
-// The worktree is placed at <repoRoot>/.belayer/worktrees/<agentName>.
+// The worktree is placed at <repoRoot>/.belayer/worktrees/<sessionID>/<agentName>
+// to avoid collisions across concurrent sessions.
 // Returns the absolute path to the worktree directory.
 func ensureWorktree(repoRoot, sessionID, agentName, branch string) (string, error) {
-	wtDir := filepath.Join(repoRoot, ".belayer", "worktrees", agentName)
+	wtDir := filepath.Join(repoRoot, ".belayer", "worktrees", sessionID, agentName)
 
 	// If worktree already exists (re-spawn), reuse it.
 	if info, err := os.Stat(wtDir); err == nil && info.IsDir() {

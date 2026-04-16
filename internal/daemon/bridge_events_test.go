@@ -94,8 +94,8 @@ func TestBridgeFailedUpdatesAgentStatusToBlocked(t *testing.T) {
 }
 
 // TestBridgeFinishedForNonPlannerUpdatesStatusOnly verifies that a
-// bridge:finished event from a non-planner agent updates its status to
-// "complete" but does NOT auto-generate a message to the planner.
+// bridge:finished event from a non-supervisor agent updates its status to
+// "complete" but does NOT auto-generate a message to the supervisor.
 // The specialist is expected to send its own report via belayer_send_message.
 func TestBridgeFinishedForNonPlannerUpdatesStatusOnly(t *testing.T) {
 	d := testDaemon(t)
@@ -115,19 +115,19 @@ func TestBridgeFinishedForNonPlannerUpdatesStatusOnly(t *testing.T) {
 		t.Fatalf("expected status=complete, got %q", run.Status)
 	}
 
-	// No auto-generated message to the planner (avoids duplicate noise).
+	// No auto-generated message to the supervisor (avoids duplicate noise).
 	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
 	if err != nil {
 		t.Fatalf("PendingMessages: %v", err)
 	}
 	if len(msgs) != 0 {
-		t.Fatalf("expected no auto-generated messages for planner, got %d: %#v", len(msgs), msgs)
+		t.Fatalf("expected no auto-generated messages for supervisor, got %d: %#v", len(msgs), msgs)
 	}
 }
 
 // TestBridgeFailedForNonPlannerSendsUrgentMessageToPlanner verifies that a
-// bridge:failed event from a non-planner agent results in an urgent message
-// persisted to the messages table addressed to the planner.
+// bridge:failed event from a non-supervisor agent results in an urgent message
+// persisted to the messages table addressed to the supervisor.
 func TestBridgeFailedForNonPlannerSendsUrgentMessageToPlanner(t *testing.T) {
 	d := testDaemon(t)
 	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
@@ -142,7 +142,7 @@ func TestBridgeFailedForNonPlannerSendsUrgentMessageToPlanner(t *testing.T) {
 		t.Fatalf("PendingMessages: %v", err)
 	}
 	if len(msgs) == 0 {
-		t.Fatal("expected at least one pending message for planner after bridge:failed")
+		t.Fatal("expected at least one pending message for supervisor after bridge:failed")
 	}
 	found := false
 	for _, m := range msgs {
@@ -152,12 +152,12 @@ func TestBridgeFailedForNonPlannerSendsUrgentMessageToPlanner(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected urgent message from worker to planner, got %#v", msgs)
+		t.Fatalf("expected urgent message from worker to supervisor, got %#v", msgs)
 	}
 }
 
-// TestBridgeFinishedForPlannerDoesNotSendMessage verifies that when the planner
-// itself posts bridge:finished, no message is sent to the planner.
+// TestBridgeFinishedForPlannerDoesNotSendMessage verifies that when the supervisor
+// itself posts bridge:finished, no message is sent to the supervisor.
 func TestBridgeFinishedForPlannerDoesNotSendMessage(t *testing.T) {
 	d := testDaemon(t)
 	sessionID := setupSessionWithAgents(t, d, "supervisor")
@@ -172,7 +172,7 @@ func TestBridgeFinishedForPlannerDoesNotSendMessage(t *testing.T) {
 		t.Fatalf("PendingMessages: %v", err)
 	}
 	if len(msgs) != 0 {
-		t.Fatalf("expected no pending messages for planner when planner itself finishes, got %d", len(msgs))
+		t.Fatalf("expected no pending messages for supervisor when supervisor itself finishes, got %d", len(msgs))
 	}
 
 	// Status should still be updated.
@@ -236,7 +236,7 @@ func TestBridgeEventWithoutAgentFieldDoesNotPanic(t *testing.T) {
 
 // TestBridgeClarificationNeededSendsMessageToPlanner verifies that a
 // bridge:clarification_needed event results in a message persisted to the
-// messages table for the planner.
+// messages table for the supervisor.
 func TestBridgeClarificationNeededSendsMessageToPlanner(t *testing.T) {
 	d := testDaemon(t)
 	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
@@ -251,7 +251,7 @@ func TestBridgeClarificationNeededSendsMessageToPlanner(t *testing.T) {
 		t.Fatalf("PendingMessages: %v", err)
 	}
 	if len(msgs) == 0 {
-		t.Fatal("expected at least one pending message for planner after bridge:clarification_needed")
+		t.Fatal("expected at least one pending message for supervisor after bridge:clarification_needed")
 	}
 	found := false
 	for _, m := range msgs {
@@ -261,6 +261,6 @@ func TestBridgeClarificationNeededSendsMessageToPlanner(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected input-needed message from worker to planner, got %#v", msgs)
+		t.Fatalf("expected input-needed message from worker to supervisor, got %#v", msgs)
 	}
 }

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -69,7 +70,7 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persist to messages table for pull-based delivery (bridge agents poll this).
-	_, _ = d.store.CreateMessage(store.Message{
+	if _, err := d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   id,
 		SenderID:    from,
@@ -77,7 +78,10 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		Type:        req.Type,
 		Content:     req.Content,
 		Urgent:      req.Interrupt,
-	})
+	}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("persist message: %v", err)})
+		return
+	}
 
 	if req.Interrupt {
 		// Check if target is a bridge agent; if so, write to stdin directly.

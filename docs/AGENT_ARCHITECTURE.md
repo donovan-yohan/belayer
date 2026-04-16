@@ -597,7 +597,7 @@ flowchart LR
 - **PM is ephemeral.** It spawns, verifies, decides, and exits. If rejected, a new PM process spawns on the next `belayer finish` call.
 - **PM identity lives in `templates/pm/`.** The system prompt is injected via Hermes's `ephemeral_system_prompt` at spawn time. The Hermes profile stays `default` for now.
 
-> **TODO: Hermes profile bootstrap.** Currently all bridge agents use the `default` Hermes profile, with identity injected via `ephemeral_system_prompt` and model overridden via `BELAYER_MODEL`. This works for local testing because every agent shares the machine's auth context. But a Hermes profile controls more than the soul: provider selection, API keys, OAuth token state, model routing, skills, plugins, and MCP server configs. When agents need different providers (e.g. PM on Anthropic sonnet, implementer on OpenAI codex) or deploy to Crag where there's no interactive `hermes auth`, the default profile can't cover it. Belayer needs a way to construct or materialize per-agent Hermes profiles at spawn time, either from `.belayer/templates/` declarations or from daemon-held credential sets.
+> **TODO: Hermes profile bootstrap.** Currently all bridge agents use the `default` Hermes profile, with identity injected via `ephemeral_system_prompt` and model overridden via `BELAYER_MODEL`. This works for local testing because every agent shares the machine's auth context. But a Hermes profile controls more than the soul: provider selection, API keys, OAuth token state, model routing, skills, plugins, and MCP server configs. When agents need different providers (e.g. PM on Anthropic sonnet, implementer on OpenAI codex) or deploy to Crag where there's no interactive `hermes auth`, the default profile can't cover it. Belayer needs a way to construct or materialize per-agent Hermes profiles at spawn time, either from `templates/` declarations or from daemon-held credential sets.
 
 ### Implementation files
 
@@ -607,5 +607,5 @@ flowchart LR
 | `hermes_bridge/tools.py` | Tool schemas and handlers for `request_completion`, `approve_completion`, `reject_completion` |
 | `hermes_bridge/__main__.py` | Reads `BELAYER_SYSTEM_PROMPT` and injects as `ephemeral_system_prompt` |
 | `internal/daemon/bridge_events.go` | Event handlers: `handleBridgeCompletionRequested`, `handleBridgeCompletionApproved`, `handleBridgeCompletionRejected` |
-| `internal/daemon/agents.go` | `spawnAgentInternal` for auto-spawning PM; `handleFinishAgent` intercepts supervisor finish to trigger PM gate; template system prompt resolution from `.belayer/templates/<name>/system-prompt.md` |
+| `internal/daemon/agents.go` | `spawnAgentInternal` for auto-spawning PM; `handleFinishAgent` intercepts supervisor finish to trigger PM gate; template system prompt resolution from `templates/<name>/system-prompt.md` |
 | `internal/bridge/bridge.go` | `Config.SystemPrompt` field, passed as `BELAYER_SYSTEM_PROMPT` env var |

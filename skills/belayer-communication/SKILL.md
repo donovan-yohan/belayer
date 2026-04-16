@@ -13,7 +13,7 @@ metadata:
 
 You are operating inside a **Belayer-managed Nightshift run**.
 
-Multiple specialist agents are working on the same ticket. You are one of them. A planner coordinates the work. Belayer is the session bus that connects everyone.
+Multiple specialist agents are working on the same ticket. You are one of them. A supervisor coordinates the work. Belayer is the session bus that connects everyone.
 
 ## The rules
 
@@ -28,7 +28,7 @@ Multiple specialist agents are working on the same ticket. You are one of them. 
 Every Nightshift agent receives these environment variables:
 
 - `BELAYER_SESSION_ID` — the current run session
-- `BELAYER_AGENT_ID` — your role identity (e.g. `planner`, `api`, `app`, `reviewer`, `qa`)
+- `BELAYER_AGENT_ID` — your role identity (e.g. `supervisor`, `api`, `app`, `reviewer`, `qa`)
 - `BELAYER_SOCKET` — daemon socket (usually auto-resolved)
 - `BELAYER_RUN_DIR` — root directory for this run's artifacts and state
 
@@ -43,7 +43,7 @@ You do not need to pass `--session` or `--agent` to most commands — they are i
 Send a message to a specific agent:
 
 ```bash
-belayer message send --to planner "I'm blocked on the auth token shape — need the shared contract updated"
+belayer message send --to supervisor "I'm blocked on the auth token shape — need the shared contract updated"
 ```
 
 Broadcast to all agents in the session:
@@ -86,23 +86,23 @@ belayer artifact list
 When your assigned work is complete, you **must** call:
 
 ```bash
-belayer finish "Summary of what I did and what the planner should know"
+belayer finish "Summary of what I did and what the supervisor should know"
 ```
 
 This:
 - marks your agent run as complete in the session
 - logs your summary to the event stream
-- notifies the planner that you are done
+- notifies the supervisor that you are done
 
 **Do not** just stop producing output and wait. **Do not** say "I'm done" in your terminal without calling `belayer finish`. The system cannot detect completion unless you explicitly mark it.
 
 If you are blocked and cannot continue, use:
 
 ```bash
-belayer finish --blocked "Cannot proceed — need clarification on X from the planner"
+belayer finish --blocked "Cannot proceed — need clarification on X from the supervisor"
 ```
 
-This marks you as blocked rather than complete, so the planner knows to intervene.
+This marks you as blocked rather than complete, so the supervisor knows to intervene.
 
 ---
 
@@ -111,8 +111,8 @@ This marks you as blocked rather than complete, so the planner knows to interven
 | You want to... | Use |
 |---|---|
 | Ask another agent a question | `belayer message send --to <agent>` |
-| Tell the planner you're done | `belayer finish "..."` |
-| Tell the planner you're blocked | `belayer finish --blocked "..."` |
+| Tell the supervisor you're done | `belayer finish "..."` |
+| Tell the supervisor you're blocked | `belayer finish --blocked "..."` |
 | Log something you discovered | `belayer note "..."` |
 | Broadcast a change everyone should know | `belayer message broadcast "..."` |
 | Publish a durable output | `belayer artifact create ...` |
@@ -122,7 +122,7 @@ This marks you as blocked rather than complete, so the planner knows to interven
 
 ## Planner-only commands
 
-If your role is **planner**, you have additional capabilities.
+If your role is **supervisor**, you have additional capabilities.
 
 ### Spawning specialists
 
@@ -148,7 +148,7 @@ belayer roster
 
 ### Coordination patterns
 
-As planner, your job is to:
+As supervisor, your job is to:
 
 1. Read the ticket/spec
 2. Decide which repos and specialists are needed
@@ -191,13 +191,13 @@ This is a safety net, not the primary mechanism. You should call `belayer finish
 - Use `belayer note` frequently to leave a trail
 - Publish artifacts as soon as they are meaningful
 - Call `belayer finish` as soon as your work is complete or you are blocked
-- Respond to planner messages promptly
+- Respond to supervisor messages promptly
 
 ### Don't
 - Send vague messages like "I'm working on it"
 - Forget to call `belayer finish` — it is the most important coordination signal
 - Try to read another agent's terminal output directly
-- Assume the planner can see your terminal — communicate through Belayer
+- Assume the supervisor can see your terminal — communicate through Belayer
 - Wait silently if you are blocked — always surface blockers explicitly
 
 ---
