@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/broker"
@@ -29,7 +30,8 @@ type finishAgentRequest struct {
 
 func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
-	if _, err := d.store.GetSession(sessionID); err != nil {
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
 		return
 	}
@@ -43,6 +45,26 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.SessionID = sessionID
+
+	// Resolve workdir from session repos when repo scope is set but workdir is not.
+	if req.Workdir == "" && req.Repo != "" {
+		var repos map[string]string
+		if err := json.Unmarshal([]byte(sess.Repos), &repos); err == nil {
+			if path, ok := repos[req.Repo]; ok {
+				req.Workdir = path
+			} else {
+				writeJSON(w, http.StatusBadRequest, map[string]string{
+					"error": fmt.Sprintf("repo %q not found in session repos (available: %v)", req.Repo, repoNames(repos)),
+				})
+				return
+			}
+		}
+	}
+
+	// Fall back to session workspace dir if workdir still empty.
+	if req.Workdir == "" && sess.WorkspaceDir != "" {
+		req.Workdir = sess.WorkspaceDir
+	}
 	run := store.AgentRun{
 		SessionID: sessionID,
 		Name:      req.Name,
@@ -80,6 +102,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		_ = d.deliverMessage(stored, msg)
 	})
 	d.watchAgentExit(stored)
+	d.watchAgentIdle(stored)
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
 		Type:      "agent_spawned",
@@ -178,7 +201,7 @@ func (d *Daemon) defaultLaunchAgent(req agentSpawnRequest) (string, error) {
 		SessionID:  req.SessionID,
 		AgentID:    req.Name,
 		RunDir:     runDir,
-		Skills:     []string{"belayer-support:belayer-communication"},
+		Skills:     []string{"belayer-communication"},
 	})
 	if err != nil {
 		return "", err
@@ -227,4 +250,101 @@ func (d *Daemon) watchAgentExit(run store.AgentRun) {
 			_ = d.broker.Interrupt(run.SessionID, "planner", msg)
 		}
 	}()
+}
+
+func (d *Daemon) watchAgentIdle(run store.AgentRun) {
+	if d.runner == nil || run.TmuxSession == "" || d.idlePollInterval <= 0 || d.idleTimeout <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(d.idlePollInterval)
+		defer ticker.Stop()
+
+		var lastPane string
+		hasLastPane := false
+		lastActivity := d.now().UTC()
+		lastNudge := time.Time{}
+		captureFails := 0
+
+		for range ticker.C {
+			current, err := d.store.GetAgentRun(run.SessionID, run.Name)
+			if err != nil {
+				return
+			}
+			if current.Status != "running" {
+				return
+			}
+
+			pane, err := d.runner.CapturePane(current.TmuxSession)
+			if err != nil {
+				captureFails++
+				if captureFails > 10 {
+					return
+				}
+				continue
+			}
+			captureFails = 0
+			normalizedPane := normalizePaneForIdle(pane)
+			now := d.now().UTC()
+			if !hasLastPane || normalizedPane != lastPane {
+				lastPane = normalizedPane
+				hasLastPane = true
+				lastActivity = now
+				continue
+			}
+			if now.Sub(lastActivity) < d.idleTimeout {
+				continue
+			}
+			if !lastNudge.IsZero() && now.Sub(lastNudge) < d.idleNudgeCooldown {
+				continue
+			}
+
+			msg := broker.Message{
+				SessionID:   current.SessionID,
+				SenderID:    "belayer",
+				RecipientID: current.Name,
+				Type:        broker.MessageInstruction,
+				Content:     "Your session appears idle. Is your work complete? If so, please run `belayer finish \"summary\"` to mark completion. If you are blocked, run `belayer finish --blocked \"reason\"`. If you are still working, continue.",
+				Urgent:      true,
+				Timestamp:   now,
+			}
+			if err := d.deliverMessage(current, msg); err != nil {
+				continue
+			}
+			_ = d.store.LogEvent(store.SessionEvent{
+				SessionID: current.SessionID,
+				Type:      "agent_idle_nudged",
+				Data: mustJSON(map[string]string{
+					"agent":        current.Name,
+					"tmux_session": current.TmuxSession,
+					"idle_for":     now.Sub(lastActivity).String(),
+				}),
+			})
+			lastNudge = now
+		}
+	}()
+}
+
+func repoNames(repos map[string]string) []string {
+	names := make([]string, 0, len(repos))
+	for name := range repos {
+		names = append(names, name)
+	}
+	return names
+}
+
+func normalizePaneForIdle(pane string) string {
+	lines := strings.Split(strings.ReplaceAll(pane, "\r", ""), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "⚕ ") && strings.Contains(trimmed, "ctx") && strings.Contains(trimmed, "[") {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	return strings.Join(kept, "\n")
 }

@@ -12,12 +12,14 @@ import (
 
 // Session represents a belayer session row.
 type Session struct {
-	ID        string
-	Name      string
-	Status    string
-	Template  string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           string
+	Name         string
+	Status       string
+	Template     string
+	Repos        string // JSON map: {"frontend": "/abs/path", "backend": "/abs/path"}
+	WorkspaceDir string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // SessionEvent represents a single event row associated with a session.
@@ -27,17 +29,6 @@ type SessionEvent struct {
 	Timestamp time.Time
 	Type      string
 	Data      string
-}
-
-// WorkbenchState represents a workbench instance associated with a session.
-type WorkbenchState struct {
-	ID        string
-	SessionID string
-	Status    string
-	Endpoints string
-	Spec      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }
 
 // AgentRun represents a launched agent/harness instance within a session.
@@ -115,11 +106,15 @@ func (s *Store) CreateSession(session Session) (string, error) {
 	if session.Status == "" {
 		session.Status = "pending"
 	}
+	if session.Repos == "" {
+		session.Repos = "{}"
+	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, name, status, template, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (id, name, status, template, repos, workspace_dir, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.Name, session.Status, nullableString(session.Template),
+		session.Repos, session.WorkspaceDir,
 		session.CreatedAt, session.UpdatedAt,
 	)
 	if err != nil {
@@ -131,12 +126,12 @@ func (s *Store) CreateSession(session Session) (string, error) {
 // GetSession retrieves a session by ID. Returns a wrapped sql.ErrNoRows if not found.
 func (s *Store) GetSession(id string) (Session, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, status, COALESCE(template,''), created_at, updated_at
+		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), created_at, updated_at
 		 FROM sessions WHERE id = ?`, id,
 	)
 	var sess Session
 	var createdAt, updatedAt string
-	err := row.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &createdAt, &updatedAt)
+	err := row.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &createdAt, &updatedAt)
 	if err != nil {
 		return Session{}, fmt.Errorf("store: get session: %w", err)
 	}
@@ -148,7 +143,7 @@ func (s *Store) GetSession(id string) (Session, error) {
 // ListSessions returns all sessions ordered by created_at DESC.
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, status, COALESCE(template,''), created_at, updated_at
+		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), created_at, updated_at
 		 FROM sessions ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -160,7 +155,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 	for rows.Next() {
 		var sess Session
 		var createdAt, updatedAt string
-		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: list sessions scan: %w", err)
 		}
 		sess.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
@@ -182,96 +177,14 @@ func (s *Store) UpdateSessionStatus(id, status string) error {
 	return nil
 }
 
-// CreateWorkbench inserts a new workbench. If wb.ID is empty a UUID is
-// generated. Returns the ID of the created workbench.
-func (s *Store) CreateWorkbench(wb WorkbenchState) (string, error) {
-	if wb.ID == "" {
-		wb.ID = uuid.New().String()
-	}
-	now := time.Now().UTC()
-	if wb.CreatedAt.IsZero() {
-		wb.CreatedAt = now
-	}
-	if wb.UpdatedAt.IsZero() {
-		wb.UpdatedAt = now
-	}
-	if wb.Status == "" {
-		wb.Status = "pending"
-	}
-	if wb.Endpoints == "" {
-		wb.Endpoints = "{}"
-	}
-	if wb.Spec == "" {
-		wb.Spec = "{}"
-	}
-
+// UpdateSessionWorkspaceDir updates the workspace_dir and updated_at of a session.
+func (s *Store) UpdateSessionWorkspaceDir(id, workspaceDir string) error {
 	_, err := s.db.Exec(
-		`INSERT INTO workbenches (id, session_id, status, endpoints, spec, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		wb.ID, wb.SessionID, wb.Status, wb.Endpoints, wb.Spec,
-		wb.CreatedAt, wb.UpdatedAt,
+		`UPDATE sessions SET workspace_dir = ?, updated_at = ? WHERE id = ?`,
+		workspaceDir, time.Now().UTC(), id,
 	)
 	if err != nil {
-		return "", fmt.Errorf("store: create workbench: %w", err)
-	}
-	return wb.ID, nil
-}
-
-// GetWorkbenchBySession retrieves a workbench by session ID. Returns a wrapped sql.ErrNoRows if not found.
-func (s *Store) GetWorkbenchBySession(sessionID string) (WorkbenchState, error) {
-	row := s.db.QueryRow(
-		`SELECT id, session_id, status, COALESCE(endpoints,'{}'), COALESCE(spec,'{}'), created_at, updated_at
-		 FROM workbenches WHERE session_id = ?`, sessionID,
-	)
-	var wb WorkbenchState
-	var createdAt, updatedAt string
-	err := row.Scan(&wb.ID, &wb.SessionID, &wb.Status, &wb.Endpoints, &wb.Spec, &createdAt, &updatedAt)
-	if err != nil {
-		return WorkbenchState{}, fmt.Errorf("store: get workbench: %w", err)
-	}
-	wb.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-	wb.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
-	return wb, nil
-}
-
-// UpdateWorkbenchStatus updates the status and updated_at of a workbench.
-func (s *Store) UpdateWorkbenchStatus(id, status string) error {
-	_, err := s.db.Exec(
-		`UPDATE workbenches SET status = ?, updated_at = ? WHERE id = ?`,
-		status, time.Now().UTC(), id,
-	)
-	if err != nil {
-		return fmt.Errorf("store: update workbench status: %w", err)
-	}
-	return nil
-}
-
-// UpdateWorkbenchEndpoints updates the endpoints JSON and updated_at of a workbench.
-func (s *Store) UpdateWorkbenchEndpoints(id, endpoints string) error {
-	_, err := s.db.Exec(
-		`UPDATE workbenches SET endpoints = ?, updated_at = ? WHERE id = ?`,
-		endpoints, time.Now().UTC(), id,
-	)
-	if err != nil {
-		return fmt.Errorf("store: update workbench endpoints: %w", err)
-	}
-	return nil
-}
-
-// DeleteWorkbench deletes a workbench by ID.
-func (s *Store) DeleteWorkbench(id string) error {
-	_, err := s.db.Exec(`DELETE FROM workbenches WHERE id = ?`, id)
-	if err != nil {
-		return fmt.Errorf("store: delete workbench: %w", err)
-	}
-	return nil
-}
-
-// DeleteWorkbenchBySession deletes all workbenches for a session.
-func (s *Store) DeleteWorkbenchBySession(sessionID string) error {
-	_, err := s.db.Exec(`DELETE FROM workbenches WHERE session_id = ?`, sessionID)
-	if err != nil {
-		return fmt.Errorf("store: delete workbench by session: %w", err)
+		return fmt.Errorf("store: update session workspace dir: %w", err)
 	}
 	return nil
 }

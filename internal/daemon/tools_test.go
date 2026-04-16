@@ -19,7 +19,7 @@ func createTestSession(t *testing.T, d *Daemon) string {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create session: got %d, body=%s", rr.Code, rr.Body.String())
 	}
-	sess := decodeJSON[store.Session](t, rr)
+	sess := decodeJSON[sessionAPIResponse](t, rr)
 	return sess.ID
 }
 
