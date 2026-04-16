@@ -260,9 +260,11 @@ func (d *Daemon) watchAgentIdle(run store.AgentRun) {
 		ticker := time.NewTicker(d.idlePollInterval)
 		defer ticker.Stop()
 
-		lastPane := ""
+		var lastPane string
+		hasLastPane := false
 		lastActivity := d.now().UTC()
 		lastNudge := time.Time{}
+		captureFails := 0
 
 		for range ticker.C {
 			current, err := d.store.GetAgentRun(run.SessionID, run.Name)
@@ -275,12 +277,18 @@ func (d *Daemon) watchAgentIdle(run store.AgentRun) {
 
 			pane, err := d.runner.CapturePane(current.TmuxSession)
 			if err != nil {
+				captureFails++
+				if captureFails > 10 {
+					return
+				}
 				continue
 			}
+			captureFails = 0
 			normalizedPane := normalizePaneForIdle(pane)
 			now := d.now().UTC()
-			if lastPane == "" || normalizedPane != lastPane {
+			if !hasLastPane || normalizedPane != lastPane {
 				lastPane = normalizedPane
+				hasLastPane = true
 				lastActivity = now
 				continue
 			}

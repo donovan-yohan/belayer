@@ -174,7 +174,10 @@ func (c *Client) UpdateSessionWorkspaceDir(id, workspaceDir string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
 	return nil
 }
 

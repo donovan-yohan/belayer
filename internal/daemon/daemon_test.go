@@ -18,7 +18,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
-// testDaemon creates a Daemon backed by an in-memory store for use in tests.
+// testDaemon creates a Daemon backed by a temp-dir SQLite store for use in tests.
 func testDaemon(t *testing.T) *Daemon {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "belayer.db"))
