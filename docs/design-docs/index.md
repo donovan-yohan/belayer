@@ -7,3 +7,5 @@
 - [Git-backed agent identity](2026-04-15-git-backed-agent-identity.md) — Forward-looking: soul + capabilities materialization
 - [Product manager agent](2026-04-16-product-manager-agent.md) — PM completion gate: adversarial spec-vs-reality verification
 - [Tool catalog and identity](2026-04-16-tool-catalog-and-identity.md) — Co-locate belayer tools with agent templates, role-based tool gating
+- ~~[VM sandbox and template bootstrap](2026-04-16-vm-sandbox-and-template-bootstrap.md)~~ — Superseded by sandbox-runtime-and-crag-proof
+- [Sandbox, runtime, and crag proof](2026-04-16-sandbox-runtime-and-crag-proof.md) — SandboxDriver + RuntimeProvider interfaces, lightweight crag, arielcharts E2E proof

@@ -382,6 +382,125 @@ func TestBelayerToolsEnvVarInjected(t *testing.T) {
 	}
 }
 
+// TestBuildCmdDefault verifies that BuildCmd with an empty Cmd field returns a
+// python3 command.
+func TestBuildCmdDefault(t *testing.T) {
+	cfg := Config{} // Cmd is nil/empty
+	argv := BuildCmd(cfg)
+	if len(argv) == 0 {
+		t.Fatal("BuildCmd returned empty slice")
+	}
+	// The first element must be a python3 binary (either full venv path or system).
+	if !strings.Contains(argv[0], "python3") {
+		t.Errorf("expected argv[0] to contain 'python3', got %q", argv[0])
+	}
+	if len(argv) < 3 || argv[1] != "-m" || argv[2] != "hermes_bridge" {
+		t.Errorf("expected argv to end with '-m hermes_bridge', got %v", argv)
+	}
+}
+
+// TestBuildCmdOverride verifies that BuildCmd returns cfg.Cmd when it is set.
+func TestBuildCmdOverride(t *testing.T) {
+	want := []string{"my-custom-python", "--flag", "value"}
+	cfg := Config{Cmd: want}
+	got := BuildCmd(cfg)
+	if len(got) != len(want) {
+		t.Fatalf("BuildCmd returned %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("argv[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestBuildEnvContainsBelayerVars verifies that BuildEnv sets all expected
+// BELAYER_* environment variables.
+func TestBuildEnvContainsBelayerVars(t *testing.T) {
+	cfg := Config{
+		SessionID:       "sess-build",
+		AgentID:         "agent-build",
+		Role:            "supervisor",
+		Profile:         "nightshift-supervisor",
+		SocketPath:      "/tmp/build.sock",
+		RunDir:          t.TempDir(),
+		Model:           "claude-opus-4",
+		Message:         "build message",
+		SystemPrompt:    "you are helpful",
+		HermesSessionID: "hermes-build-789",
+		BelayerTools:    []string{"tool_a", "tool_b"},
+	}
+
+	env := BuildEnv(cfg)
+	envMap := make(map[string]string, len(env))
+	for _, e := range env {
+		if idx := strings.IndexByte(e, '='); idx >= 0 {
+			envMap[e[:idx]] = e[idx+1:]
+		}
+	}
+
+	checks := map[string]string{
+		"BELAYER_SESSION_ID":        "sess-build",
+		"BELAYER_AGENT_ID":          "agent-build",
+		"BELAYER_ROLE":              "supervisor",
+		"BELAYER_PROFILE":           "nightshift-supervisor",
+		"BELAYER_SOCKET":            "/tmp/build.sock",
+		"BELAYER_RUN_DIR":           cfg.RunDir,
+		"BELAYER_MODEL":             "claude-opus-4",
+		"BELAYER_MESSAGE":           "build message",
+		"BELAYER_SYSTEM_PROMPT":     "you are helpful",
+		"BELAYER_HERMES_SESSION_ID": "hermes-build-789",
+		"BELAYER_TOOLS":             "tool_a,tool_b",
+	}
+	for key, want := range checks {
+		if got, ok := envMap[key]; !ok {
+			t.Errorf("expected %s to be set in env", key)
+		} else if got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+
+	// PYTHONPATH must be present.
+	if _, ok := envMap["PYTHONPATH"]; !ok {
+		t.Error("expected PYTHONPATH to be set in env")
+	}
+}
+
+// TestBuildEnvOmitsOptionalVars verifies that empty optional fields (Model,
+// Message, SystemPrompt, HermesSessionID, BelayerTools) are not added to the
+// environment.
+func TestBuildEnvOmitsOptionalVars(t *testing.T) {
+	cfg := Config{
+		SessionID:  "sess-omit",
+		AgentID:    "agent-omit",
+		Role:       "implementer",
+		Profile:    "nightshift",
+		SocketPath: "/tmp/omit.sock",
+		RunDir:     t.TempDir(),
+		// Model, Message, SystemPrompt, HermesSessionID, BelayerTools all zero-value
+	}
+
+	env := BuildEnv(cfg)
+	envMap := make(map[string]string, len(env))
+	for _, e := range env {
+		if idx := strings.IndexByte(e, '='); idx >= 0 {
+			envMap[e[:idx]] = e[idx+1:]
+		}
+	}
+
+	for _, key := range []string{
+		"BELAYER_MODEL",
+		"BELAYER_MESSAGE",
+		"BELAYER_SYSTEM_PROMPT",
+		"BELAYER_HERMES_SESSION_ID",
+		"BELAYER_TOOLS",
+	} {
+		if _, ok := envMap[key]; ok {
+			t.Errorf("expected %s to be absent from env, but it was set", key)
+		}
+	}
+}
+
 // TestBelayerToolsEnvVarOmittedWhenEmpty verifies that BELAYER_TOOLS is not
 // set when the tool list is empty (baseline-only agents).
 func TestBelayerToolsEnvVarOmittedWhenEmpty(t *testing.T) {

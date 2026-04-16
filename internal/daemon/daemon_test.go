@@ -15,6 +15,8 @@ import (
 	"github.com/donovan-yohan/belayer/internal/agent"
 	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
+	"github.com/donovan-yohan/belayer/internal/runtime"
+	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -28,10 +30,14 @@ func testDaemon(t *testing.T) *Daemon {
 	t.Cleanup(func() { st.Close() })
 
 	d := &Daemon{
-		store:       st,
-		config:      Config{},
-		tools:       make(map[string][]agent.ToolSpec),
-		bridgeProcs: make(map[string]*bridge.Process),
+		store:          st,
+		config:         Config{},
+		tools:          make(map[string][]agent.ToolSpec),
+		bridgeProcs:    make(map[string]*bridge.Process),
+		sandboxHandles: make(map[string]sandbox.Handle),
+		sandbox:        &sandbox.Noop{},
+		runtime:        &runtime.Noop{},
+		startCtx:       context.Background(),
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +19,8 @@ import (
 	"github.com/donovan-yohan/belayer/internal/agent"
 	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
+	"github.com/donovan-yohan/belayer/internal/runtime"
+	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -26,6 +29,13 @@ type Config struct {
 	SocketPath  string
 	DBPath      string
 	BelayerRoot string // directory containing hermes_bridge/ (for PYTHONPATH)
+
+	// Sandbox overrides the driver used for agent execution.
+	// Nil falls back to &sandbox.Noop{}.
+	Sandbox sandbox.Driver
+	// Runtime overrides the dev-stack provider.
+	// Nil falls back to &runtime.Noop{}.
+	Runtime runtime.Provider
 }
 
 // DefaultConfig returns config using ~/.belayer/ paths.
@@ -45,6 +55,19 @@ type Daemon struct {
 	server   *http.Server
 	config   Config
 	broker   broker.Broker
+
+	sandbox sandbox.Driver
+	runtime runtime.Provider
+
+	// Context from Start, used as the parent for sandbox/runtime lifecycle
+	// calls so they observe daemon shutdown. Initialized to context.Background
+	// in New so tests that skip Start still work.
+	startCtx context.Context
+
+	// Per-session sandbox handles. Populated lazily on first agent spawn,
+	// cleared on terminal session transitions and during Shutdown.
+	sandboxMu      sync.Mutex
+	sandboxHandles map[string]sandbox.Handle
 
 	spawnBridgeAgent func(req agentSpawnRequest) (*bridge.Process, error)
 
@@ -69,10 +92,22 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		store:       st,
-		config:      cfg,
-		tools:       make(map[string][]agent.ToolSpec),
-		bridgeProcs: make(map[string]*bridge.Process),
+		store:          st,
+		config:         cfg,
+		tools:          make(map[string][]agent.ToolSpec),
+		bridgeProcs:    make(map[string]*bridge.Process),
+		sandboxHandles: make(map[string]sandbox.Handle),
+		startCtx:       context.Background(),
+	}
+	if cfg.Sandbox != nil {
+		d.sandbox = cfg.Sandbox
+	} else {
+		d.sandbox = &sandbox.Noop{}
+	}
+	if cfg.Runtime != nil {
+		d.runtime = cfg.Runtime
+	} else {
+		d.runtime = &runtime.Noop{}
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = d.bridgeLaunchAgent
@@ -116,6 +151,14 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 	os.Chmod(d.config.SocketPath, 0o600)
 	d.listener = ln
+	d.startCtx = ctx
+
+	// Provision the runtime before serving. For the noop provider this is a
+	// no-op; the hook exists so future providers (command, clamshell, ...)
+	// can fail fast if the dev stack can't come up.
+	if _, err := d.runtime.Up(ctx); err != nil {
+		return fmt.Errorf("daemon: runtime up: %w", err)
+	}
 
 	// Shut down gracefully when ctx is cancelled.
 	go func() {
@@ -135,9 +178,85 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 	defer cancel()
 
 	err := d.server.Shutdown(shutCtx)
+
+	// Tear down any outstanding sandbox handles.
+	d.sandboxMu.Lock()
+	handles := d.sandboxHandles
+	d.sandboxHandles = make(map[string]sandbox.Handle)
+	d.sandboxMu.Unlock()
+	for sessID, h := range handles {
+		if stopErr := d.sandbox.Stop(shutCtx, h); stopErr != nil {
+			log.Printf("daemon: sandbox stop %s: %v", sessID, stopErr)
+		}
+	}
+
+	if downErr := d.runtime.Down(shutCtx); downErr != nil {
+		log.Printf("daemon: runtime down: %v", downErr)
+	}
+
 	d.store.Close()
 	os.Remove(d.config.SocketPath)
 	return err
+}
+
+// ensureSandboxHandle returns the session's sandbox handle, creating one on
+// first use. Safe to call from multiple goroutines; the handle is cached per
+// session in d.sandboxHandles.
+func (d *Daemon) ensureSandboxHandle(ctx context.Context, sess store.Session) (sandbox.Handle, error) {
+	d.sandboxMu.Lock()
+	if h, ok := d.sandboxHandles[sess.ID]; ok {
+		d.sandboxMu.Unlock()
+		return h, nil
+	}
+	d.sandboxMu.Unlock()
+
+	// Create outside the lock — Create may block (container pull, VM boot).
+	h, err := d.sandbox.Create(ctx, sandbox.Config{
+		Name:      sess.ID,
+		Workspace: sess.WorkspaceDir,
+	})
+	if err != nil {
+		return sandbox.Handle{}, err
+	}
+
+	d.sandboxMu.Lock()
+	defer d.sandboxMu.Unlock()
+	// Another goroutine may have raced us; keep whichever is stored first
+	// so callers never see two different handles for one session.
+	if existing, ok := d.sandboxHandles[sess.ID]; ok {
+		go func() {
+			_ = d.sandbox.Stop(ctx, h)
+		}()
+		return existing, nil
+	}
+	d.sandboxHandles[sess.ID] = h
+	return h, nil
+}
+
+// terminateSandbox stops and forgets the sandbox handle for sessionID, if any.
+// Safe to call for sessions that never had a handle.
+func (d *Daemon) terminateSandbox(ctx context.Context, sessionID string) {
+	d.sandboxMu.Lock()
+	h, ok := d.sandboxHandles[sessionID]
+	if !ok {
+		d.sandboxMu.Unlock()
+		return
+	}
+	delete(d.sandboxHandles, sessionID)
+	d.sandboxMu.Unlock()
+	if err := d.sandbox.Stop(ctx, h); err != nil {
+		log.Printf("daemon: sandbox stop %s: %v", sessionID, err)
+	}
+}
+
+// isTerminalSessionStatus reports whether a session status means the session
+// is finished and its sandbox can be torn down.
+func isTerminalSessionStatus(status string) bool {
+	switch status {
+	case "complete", "blocked", "failed", "cancelled", "needs_human_review":
+		return true
+	}
+	return false
 }
 
 // --- HTTP handlers ---
@@ -288,6 +407,9 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 			Type:      "session_status_changed",
 			Data:      mustJSON(map[string]string{"status": req.Status}),
 		})
+		if isTerminalSessionStatus(req.Status) {
+			d.terminateSandbox(r.Context(), id)
+		}
 	}
 
 	if req.WorkspaceDir != "" {
