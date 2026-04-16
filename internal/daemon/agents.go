@@ -303,6 +303,42 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		}
 	}
 
+	// Load belayer_tools from templates/<name>/agent.yaml if it exists.
+	var belayerTools []string
+	for _, base := range []string{workdir, d.config.BelayerRoot} {
+		if base == "" {
+			continue
+		}
+		yamlPath := filepath.Join(base, "templates", req.Name, "agent.yaml")
+		data, err := os.ReadFile(yamlPath)
+		if err != nil {
+			continue
+		}
+		// Simple line-based parse — avoid YAML library dependency.
+		// Looks for "belayer_tools:" then collects "  - tool_name" lines.
+		inTools := false
+		for _, line := range splitLines(string(data)) {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "belayer_tools:" || trimmed == "belayer_tools: []" {
+				inTools = true
+				if trimmed == "belayer_tools: []" {
+					break // explicit empty list
+				}
+				continue
+			}
+			if inTools {
+				if strings.HasPrefix(trimmed, "- ") {
+					tool := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+					belayerTools = append(belayerTools, tool)
+				} else {
+					break // end of list
+				}
+			}
+		}
+		log.Printf("Loaded belayer_tools from %s for agent %s: %v", yamlPath, req.Name, belayerTools)
+		break
+	}
+
 	cfg := bridge.Config{
 		SessionID:       req.SessionID,
 		AgentID:         req.Name,
@@ -317,6 +353,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		SocketPath:      d.config.SocketPath,
 		RunDir:          runDir,
 		BelayerRoot:     d.config.BelayerRoot,
+		BelayerTools:    belayerTools,
 	}
 	_ = worktreePath // stored in DB; cleanup handled separately
 
