@@ -348,3 +348,68 @@ func TestWriteStdinConcurrentSafe(t *testing.T) {
 	p.stdin.Close()
 	<-p.Done()
 }
+
+// TestBelayerToolsEnvVarInjected verifies that BelayerTools are passed as
+// a comma-separated BELAYER_TOOLS env var.
+func TestBelayerToolsEnvVarInjected(t *testing.T) {
+	cfg := Config{
+		SessionID:    "sess-abc",
+		AgentID:      "supervisor",
+		Role:         "supervisor",
+		Profile:      "default",
+		Workdir:      t.TempDir(),
+		SocketPath:   "/tmp/test.sock",
+		RunDir:       t.TempDir(),
+		BelayerTools: []string{"belayer_spawn_agent", "belayer_request_completion"},
+		Cmd:          []string{"env"},
+	}
+
+	p, err := Spawn(cfg)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	<-p.Done()
+
+	logData, err := os.ReadFile(cfg.RunDir + "/bridge-stdout.log")
+	if err != nil {
+		t.Fatalf("read stdout log: %v", err)
+	}
+	output := string(logData)
+
+	expected := "BELAYER_TOOLS=belayer_spawn_agent,belayer_request_completion"
+	if !strings.Contains(output, expected) {
+		t.Errorf("expected %q in env output\ngot:\n%s", expected, output)
+	}
+}
+
+// TestBelayerToolsEnvVarOmittedWhenEmpty verifies that BELAYER_TOOLS is not
+// set when the tool list is empty (baseline-only agents).
+func TestBelayerToolsEnvVarOmittedWhenEmpty(t *testing.T) {
+	cfg := Config{
+		SessionID:    "sess-abc",
+		AgentID:      "worker",
+		Role:         "implementer",
+		Profile:      "default",
+		Workdir:      t.TempDir(),
+		SocketPath:   "/tmp/test.sock",
+		RunDir:       t.TempDir(),
+		BelayerTools: nil,
+		Cmd:          []string{"env"},
+	}
+
+	p, err := Spawn(cfg)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	<-p.Done()
+
+	logData, err := os.ReadFile(cfg.RunDir + "/bridge-stdout.log")
+	if err != nil {
+		t.Fatalf("read stdout log: %v", err)
+	}
+	output := string(logData)
+
+	if strings.Contains(output, "BELAYER_TOOLS=") {
+		t.Errorf("expected BELAYER_TOOLS to be absent from env, but found it in output")
+	}
+}
