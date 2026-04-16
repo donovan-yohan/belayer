@@ -183,15 +183,18 @@ stateDiagram-v2
     Starting --> Running: bridge:started
     Running --> Idle: Task done, waiting for specialists
     Idle --> Running: Specialist reports in (message or interrupt)
-    Idle --> Complete: Idle timeout (5 min) or explicit finish
-    Running --> Complete: belayer finish
+    Idle --> Incomplete: Idle timeout (5 min), no response
+    Running --> Complete: belayer finish → PM approval
     Running --> Blocked: Unrecoverable error
+    Running --> Incomplete: Agent decides it cannot finish
     Idle --> Complete: Stop command
 ```
 
-When the supervisor completes a task, it enters an **idle loop**: polling every 5 seconds for new messages, listening on stdin for interrupts. If a specialist sends a message, the supervisor wakes up and continues. If nothing happens for 5 minutes, it exits cleanly.
+When the supervisor completes a task, it enters an **idle loop**: polling every 5 seconds for new messages, listening on stdin for interrupts. If a specialist sends a message, the supervisor wakes up and continues. If nothing happens for 5 minutes, the supervisor exits as **incomplete** — this is not a successful completion, it means no specialist reported back.
 
-This means the supervisor doesn't burn tokens while waiting. It's not running inference. It's a Python process sleeping in a poll loop, ready to resume the Hermes conversation the moment work arrives.
+The **incomplete** state is distinct from both **complete** (work finished) and **blocked** (unrecoverable error). It means the agent made progress but could not finish — either due to idle timeout, getting stuck in a loop, or making a deliberate decision to escalate. When the supervisor reports incomplete, the daemon transitions the session to `needs_human_review`. Any agent can report incomplete via `belayer_report_status(status="incomplete")`.
+
+The supervisor doesn't burn tokens while idling. It's not running inference. It's a Python process sleeping in a poll loop, ready to resume the Hermes conversation the moment work arrives.
 
 ### Specialists (ephemeral, spawn-and-complete)
 
@@ -203,9 +206,10 @@ stateDiagram-v2
     Starting --> Running: bridge:started
     Running --> Complete: Task done (bridge:finished)
     Running --> Blocked: Error or exit without finish
+    Running --> Incomplete: Cannot finish, escalates to human
 ```
 
-Specialists are ephemeral by default (`ephemeral=true`). When their task is done, the bridge posts `bridge:finished` and the process exits.
+Specialists are ephemeral by default (`ephemeral=true`). When their task is done, the bridge posts `bridge:finished` and the process exits. If a specialist gets stuck, it can report `incomplete` to escalate — the daemon logs an `agent_escalated` event and the supervisor is notified.
 
 But their **names persist**. The `agent_runs` table keeps the row. If the supervisor needs to assign more work to the same role, it spawns with the same name. The daemon detects the prior run, carries over the `HermesSessionID`, and the specialist resumes with its full conversation history.
 
@@ -290,11 +294,15 @@ Daemon-internal events (not from bridge):
 | `agent_spawned` | Spawn handler | Roster update |
 | `agent_finished` | Finish handler | Status update |
 | `agent_exited_without_finish` | Exit watcher | Marks agent `blocked` |
+| `agent_escalated` | Status event handler | Agent reported `incomplete`, logged for monitoring |
 | `artifact_created` | Artifact handler | Registry update |
 | `session_created` | Session handler | — |
 | `session_completed` | Completion approved handler | Session status → complete |
+| `session_stalled` | Bridge finished/failed handler | All agents exited without completion → session status → stalled |
+| `warning:supervisor_exited_early` | Bridge finished handler | Supervisor exited while specialists still running |
 | `completion_rejected` | Completion rejected handler | Tracks cycle count |
 | `completion_escalated` | Rejection limit handler | Session status → needs_human_review |
+| `pm_spawn_failed` | PM spawn error | Notifies supervisor to retry |
 | `pm_spawn_failed` | PM spawn error | Notifies supervisor to retry |
 
 ### How telemetry enables resume

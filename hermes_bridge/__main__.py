@@ -382,8 +382,15 @@ def main() -> None:
                     log.info("Resuming from idle with %d pending message(s)", len(pending))
                     break
             else:
-                # Idle timeout reached — exit cleanly.
-                log.info("Idle timeout reached (%ds), exiting", idle_timeout)
+                # Idle timeout reached — no specialists reported back.
+                # This is not a successful completion; mark as incomplete
+                # so the session transitions to stalled/needs_human_review.
+                log.info("Idle timeout reached (%ds), marking incomplete", idle_timeout)
+                post_event(
+                    socket_path, session_id, agent_id,
+                    f"agent_status:incomplete",
+                    {"status": "incomplete", "detail": f"Idle timeout after {idle_timeout}s with no specialist response"},
+                )
                 post_event(
                     socket_path, session_id, agent_id,
                     "bridge:finished",
