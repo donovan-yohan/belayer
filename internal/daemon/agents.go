@@ -414,6 +414,9 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 			_ = d.broker.Interrupt(run.SessionID, "supervisor", msg)
 		}
 
+		// Check if this was the last active agent (session may be stalled).
+		d.checkSessionStalled(run.SessionID)
+
 		// Clean up process reference.
 		d.bridgeMu.Lock()
 		delete(d.bridgeProcs, bridgeKey(run.SessionID, run.Name))

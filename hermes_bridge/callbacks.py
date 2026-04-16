@@ -26,13 +26,19 @@ def post_event(socket_path: str, session_id: str, agent_id: str, event_type: str
         data = {}
     data["agent"] = agent_id
 
+    # State-changing events drive session lifecycle; log failures at WARNING.
+    _STATE_EVENTS = ("agent_status:", "bridge:finished", "bridge:failed")
+
     status, body = unix_post(
         socket_path,
         f"/sessions/{session_id}/events",
         {"type": event_type, "data": json.dumps(data)},
     )
     if status not in (200, 201):
-        log.debug("post_event %s -> %d %s", event_type, status, body[:120])
+        if any(event_type.startswith(prefix) for prefix in _STATE_EVENTS):
+            log.warning("post_event %s -> %d %s", event_type, status, body[:120])
+        else:
+            log.debug("post_event %s -> %d %s", event_type, status, body[:120])
 
 
 def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
@@ -53,7 +59,7 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
             state["last_heartbeat"] = now
             post_event(socket_path, session_id, agent_id, "bridge:heartbeat", {})
 
-    # Tools whose first positional arg or 'path' kwarg is a file path.
+    # Tools that accept a file path via dict-style 'path' or 'file_path' kwarg.
     _FILE_TOOLS = frozenset({"read_file", "write_file", "edit_file", "create_file"})
 
     def _extract_path(tool_name: str, tool_args) -> str | None:

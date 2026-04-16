@@ -45,7 +45,7 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Reject messages to agents that have exited the session.
 	if target, err := d.store.GetAgentRun(id, req.To); err == nil {
-		if target.Status == "complete" || target.Status == "blocked" {
+		if target.Status == "complete" || target.Status == "blocked" || target.Status == "incomplete" {
 			writeJSON(w, http.StatusGone, map[string]string{
 				"error": "agent '" + req.To + "' has exited (status: " + target.Status + "). Use belayer_spawn_agent to re-spawn with conversation history.",
 			})

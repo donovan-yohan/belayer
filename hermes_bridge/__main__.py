@@ -388,7 +388,7 @@ def main() -> None:
                 log.info("Idle timeout reached (%ds), marking incomplete", idle_timeout)
                 post_event(
                     socket_path, session_id, agent_id,
-                    f"agent_status:incomplete",
+                    "agent_status:incomplete",
                     {"status": "incomplete", "detail": f"Idle timeout after {idle_timeout}s with no specialist response"},
                 )
                 post_event(

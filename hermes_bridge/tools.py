@@ -78,8 +78,9 @@ REPORT_STATUS_SCHEMA = {
     "name": "belayer_report_status",
     "description": (
         "Report your current status to the Belayer session bus. "
-        "Use this for progress updates, marking yourself blocked, signaling completion, "
-        "or escalating to a human when you've made progress but cannot finish."
+        "Use 'incomplete' to escalate to a human when you've made progress but cannot finish. "
+        "Use 'working', 'blocked', 'done', or 'needs-review' for log-only status updates "
+        "(these are recorded in the event log but do not trigger daemon-side state transitions)."
     ),
     "parameters": {
         "type": "object",
@@ -88,8 +89,9 @@ REPORT_STATUS_SCHEMA = {
                 "type": "string",
                 "enum": ["working", "blocked", "done", "needs-review", "incomplete"],
                 "description": (
-                    "Your current status. Use 'incomplete' when you've made progress "
-                    "but are stuck in a loop or cannot finish — this escalates to a human."
+                    "Your current status. 'incomplete' triggers escalation to a human — "
+                    "use when stuck in a loop or unable to finish. Other values are logged "
+                    "for observability but do not change session state."
                 ),
             },
             "detail": {
