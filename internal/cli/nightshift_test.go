@@ -8,7 +8,7 @@ import (
 func TestRootCmdRegistersNightshiftCommands(t *testing.T) {
 	cmd := NewRootCmd()
 
-	want := []string{"run", "spawn", "roster", "finish"}
+	want := []string{"run", "spawn", "roster", "finish", "request-completion", "message"}
 	seen := map[string]bool{}
 	for _, child := range cmd.Commands() {
 		seen[child.Name()] = true

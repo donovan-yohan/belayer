@@ -32,7 +32,6 @@ Use this branch as the base for all v6 implementation work.`,
 		newVersionCmd(),
 		newDaemonCmd(),
 		newSessionCmd(),
-		newAttachCmd(),
 		newLogsCmd(),
 		newStatusCmd(),
 		newRecallCmd(),
@@ -42,9 +41,7 @@ Use this branch as the base for all v6 implementation work.`,
 		newMessageCmd(),
 		newRequestCompletionCmd(),
 		newRunCmd(),
-		newScaffoldCmd("climb", "Reserved v6 task/session entrypoint", "Implement the v6 session runtime before restoring climb behavior."),
-		newScaffoldCmd("setup", "Reserved v6 bootstrap command", "Replace framework installation with session-runtime bootstrap once the new design lands."),
-		newScaffoldCmd("submit", "Reserved v6 submission surface", "Restore submit after the new runtime decides how tasks enter the system."),
+		newArtifactCmd(),
 	)
 	return cmd
 }

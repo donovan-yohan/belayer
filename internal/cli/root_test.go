@@ -2,10 +2,14 @@ package cli
 
 import "testing"
 
-func TestRootCmdRegistersV6ScaffoldCommands(t *testing.T) {
+func TestRootCmdRegistersBridgeCommands(t *testing.T) {
 	cmd := NewRootCmd()
 
-	want := []string{"attach", "climb", "daemon", "logs", "recall", "session", "setup", "status", "submit"}
+	want := []string{
+		"daemon", "session", "logs", "status", "recall",
+		"run", "spawn", "finish", "roster", "message",
+		"request-completion", "artifact", "version",
+	}
 	seen := map[string]bool{}
 	for _, child := range cmd.Commands() {
 		seen[child.Name()] = true
@@ -13,7 +17,7 @@ func TestRootCmdRegistersV6ScaffoldCommands(t *testing.T) {
 
 	for _, name := range want {
 		if !seen[name] {
-			t.Fatalf("missing scaffold command %q", name)
+			t.Fatalf("missing command %q", name)
 		}
 	}
 }

@@ -1,112 +1,69 @@
 # CLAUDE.md
 
-Belayer — Nightshift v1 / Extend-first redesign.
+Belayer v7 — run-local agent control plane for Nightshift.
 
-## Current architectural stance
+## What Belayer is
 
-Belayer is no longer best thought of as a generic global orchestration platform.
+> The **agent control plane** inside a single Nightshift worker run.
 
-For the current direction, Belayer is:
+One worker, one request, one Belayer session. Belayer coordinates planner + specialists via the Hermes bridge.
 
-> the **run-local agent control plane** inside a single Nightshift worker run.
+## What Belayer is not
 
-Nightshift has two control planes:
+Not a cluster scheduler, autoscaler, hypervisor, or hosted identity service. It manages one run.
 
-1. **Worker control plane** — outer service that queues requests and assigns workers
-2. **Agent control plane** — Belayer, inside one worker run, coordinating planner + specialists
+## Architecture
 
-Belayer owns the second one.
+Three layers:
 
-## Working assumptions right now
-
-- one worker handles one request at a time
-- one Belayer session exists inside that worker
-- Hermes is the default harness
-- tmux is the default transport adapter
-- Belayer is the session bus for messages, events, artifacts, and roster state
-- Extend-localenv (`xt`) is the preferred Extend workbench interface
-- Clamshell remains the preferred sandbox boundary for production deployment
-
-## Current implemented slice
-
-Implemented in the repo now:
-
-- `belayer run start`
-- `belayer spawn`
-- `belayer roster`
-- `belayer finish`
-- `belayer artifact create`
-- `belayer artifact list`
-- daemon-backed `agent_runs`
-- daemon-backed artifact registry
-- Hermes launch wrapper with Belayer env injection
-- project-local Hermes plugin + Belayer communication skill
-- exit-without-finish detection that marks runs blocked
-
-## Key design rule
-
-Belayer should not be trying to be:
-
-- the cluster scheduler
-- the worker autoscaler
-- the hypervisor
-- the universal hosted identity service
-
-It should be trying to be excellent at:
-
-- run-local session management
-- planner/specialist coordination
-- messages / events / artifacts
-- observable progress and completion state
+1. **Session bus** — Go daemon + SQLite. Sessions, agent roster, messages, events, artifacts.
+2. **Hermes driver** — Bridge subprocess (`python -m hermes_bridge`) wraps Hermes AIAgent. Identity injected via `ephemeral_system_prompt`, tools registered at spawn time.
+3. **Bridge transport** — Python subprocess managed by Go. Heartbeats, exit detection, event streaming over stdout.
 
 ## Coordination model
 
-Inside one run, agents coordinate through Belayer using:
+Agents coordinate through the daemon:
 
-- **messages** — direct communication
-- **events** — orchestration state transitions
-- **artifacts** — durable outputs
+- **messages** — direct agent-to-agent via session bus
+- **events** — machine-readable state transitions
+- **artifacts** — durable outputs registered in the session
 
-Agents should never rely on raw tmux for communication. tmux is only the transport adapter under Belayer.
+## CLI surface
 
-## Hermes-specific guidance
+```
+belayer daemon              # start the daemon
+belayer run start           # create session, spawn planner via bridge
+belayer spawn               # spawn an agent mid-session
+belayer finish              # signal work complete (triggers PM gate for planner)
+belayer roster              # list active agents
+belayer message send/broadcast/list
+belayer request-completion  # explicit PM gate trigger
+belayer logs                # session event stream
+belayer status              # running sessions overview
+```
 
-Hermes is the preferred harness because:
+## Agent identity
 
-- profiles give us controlled behavior loading
-- skills/plugins/hooks are versionable and owned by us
-- the stack is git-traceable
-- we can iterate on behavior without depending on opaque upstream prompt changes
+Identity templates live in `templates/<name>/`:
+- `agent.yaml` — vendor, model, ephemeral flag, tier
+- `system-prompt.md` — the agent's soul
+- `agents.md` — operating instructions, tools, workflows
 
-Current MVP identity injection uses:
+System prompts are loaded by the daemon at spawn time and injected via Hermes `ephemeral_system_prompt`. All agents use the `default` Hermes profile for now (see profile bootstrap TODO in AGENT_ARCHITECTURE.md).
 
-- Hermes profile selection
-- Belayer env vars (`BELAYER_SESSION_ID`, `BELAYER_AGENT_ID`, `BELAYER_SOCKET`, `BELAYER_RUN_DIR`)
-- project-local Hermes plugin enablement
-- Belayer communication skill preload
-- workdir binding
+## PM completion gate
 
-This is enough for the MVP; canonical git-backed identity materialization is still a later layer.
+When the planner calls `belayer finish`, the daemon intercepts and auto-spawns a PM agent for adversarial spec-vs-reality verification. The PM approves or rejects (up to 3 cycles). See `docs/AGENT_ARCHITECTURE.md` for full details.
 
-## Relevant design docs
+## Docs
 
-When working on Belayer now, use these docs as the current truth:
+- `docs/PHILOSOPHY.md` — the six runtime interfaces (conceptual, not implementation-specific)
+- `docs/AGENT_ARCHITECTURE.md` — how agents communicate, coordinate, and resume
+- `docs/design-docs/` — detailed design documents (see index.md)
 
-- `docs/PHILOSOPHY.md`
-- `docs/ARCHITECTURE.md`
-- `docs/DESIGN.md`
-- `docs/design-docs/2026-04-15-nightshift-v1-deployment-topology.md`
-- `docs/design-docs/2026-04-15-belayer-run-model-for-nightshift-v1.md`
-- `docs/design-docs/2026-04-15-nightshift-extend-first-implementation-delta.md`
-- `docs/AGENT_ARCHITECTURE.md` (how agents communicate, coordinate, and resume)
-- `docs/design-docs/2026-04-15-crag-daemon.md` (forward-looking: always-on worker control plane)
-- `docs/design-docs/2026-04-15-git-backed-agent-identity.md` (forward-looking: soul + capabilities)
-- `docs/design-docs/2026-04-16-product-manager-agent.md` (forward-looking: spec-vs-reality completion gate)
+## Development
 
-## Development guidance
-
-- Prefer deleting old generic code if it gets in the way of the new run-local model.
-- Backwards compatibility is not the priority right now.
-- New work should align with planner + api first, then expand.
-- Keep the system inspectable by humans; avoid magical hidden orchestration.
-- tmux is a pragmatic transport layer, not the architecture.
+```bash
+go build ./cmd/belayer
+go test ./...
+```
