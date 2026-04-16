@@ -1,0 +1,53 @@
+internal/sandbox/noop_test.go
+  ab9482a0ad287560 1-134
+internal/sandbox/driver.go
+  ab9482a0ad287560 1-62
+internal/sandbox/noop.go
+  ab9482a0ad287560 1-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "a082f846aea419f8f22110962c36fb21a062416b",
+  "prompts": {
+    "1952714a6f942533": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "86523080-c1dc-4b91-9fc6-8e650ead6bdd",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 786,
+      "overriden_lines": 0
+    },
+    "ab9482a0ad287560": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "61f0f909-c9ac-473a-b0cd-19efdce7fd79",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 766,
+      "total_deletions": 6,
+      "accepted_lines": 1582,
+      "overriden_lines": 0
+    },
+    "eebcd696579f15ef": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "75241181-1ae5-4ee2-8d48-a09ac39f3eb8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
