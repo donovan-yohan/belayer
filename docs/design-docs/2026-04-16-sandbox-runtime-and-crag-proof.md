@@ -480,9 +480,14 @@ sandbox:
 - Iterate on policy by watching deny events
 
 **Phase 3: Command runtime provider**
-- Implement command runtime provider
-- Test with arielcharts: `pnpm dev`, health check, endpoint discovery
-- Verify shared filesystem: agent edits visible to runtime
+- Implement `runtime.Config` loader that reads the `runtime:` section of `.belayer/config.yaml`
+- Implement the command runtime provider (`internal/runtime/command.go`) satisfying `runtime.Provider`
+- Unit tests covering Up/Health/Down with shell-command fixtures (no real dev stack required)
+- **Out of scope for this phase** (deferred to Phase 5):
+  - Wiring `runtime.Up`/`Down` into the daemon session lifecycle
+  - Selecting noop vs command provider based on config at daemon startup
+  - Live testing against arielcharts (`pnpm dev`, health check, endpoint discovery)
+  - Verifying shared filesystem round-trip from agent edits to runtime hot-reload
 
 **Phase 4: Lightweight crag**
 - Minimal Go binary with workspace definitions and request queue
@@ -491,9 +496,12 @@ sandbox:
 - Poll belayer status
 
 **Phase 5: End-to-end**
+- Wire `runtime.Up`/`Down` into daemon `startSession` (per "Integration: Session Start Flow" above)
+- Select the configured runtime provider (noop vs command) at daemon startup based on `.belayer/config.yaml`
 - `crag submit --workspace arielcharts --task "Add dark mode toggle"`
 - Full flow: dispatch → runtime → sandbox → agents → PM gate → complete
 - Verify: network locked down, code changes hot-reload, session completes
+- Live test with arielcharts: confirm endpoint discovery and filesystem round-trip
 
 ## Open Questions
 
