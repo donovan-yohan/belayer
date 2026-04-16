@@ -1,0 +1,78 @@
+docs/design-docs/2026-04-16-sandbox-runtime-and-crag-proof.md
+  6ea66a8f7b3aa96a 518-521
+internal/sandbox/noop_test.go
+  6ea66a8f7b3aa96a 44,65,88,92-93
+internal/bridge/bridge.go
+  6ea66a8f7b3aa96a 53-61,65,68,132,134-136,138-140,143,145,262-269,271
+internal/daemon/bridge_events.go
+  6ea66a8f7b3aa96a 200,412,459
+internal/daemon/agents.go
+  6ea66a8f7b3aa96a 398-413,415,435-437,440
+internal/sandbox/driver.go
+  6ea66a8f7b3aa96a 18-20,26-37
+internal/sandbox/noop.go
+  6ea66a8f7b3aa96a 20-23,39,46-70
+internal/daemon/daemon_test.go
+  6ea66a8f7b3aa96a 18-19,33-40
+internal/daemon/daemon.go
+  6ea66a8f7b3aa96a 9,32-38,62-71,95-110,154-161,181-196,202-261,410-412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "e7aaea2d045e3a2b9f5c849b7e0e22250925b634",
+  "prompts": {
+    "6ea66a8f7b3aa96a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6db8302f-30d8-46df-abbd-c9cca6313e79",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 555,
+      "total_deletions": 389,
+      "accepted_lines": 249,
+      "overriden_lines": 0
+    },
+    "d856d8042ea64a99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d70c5-1b1e-7700-a4be-e750d5cd24de",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "fda605a95c703c40": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca9969ac-5f62-418b-b31a-9a19d96fdb2b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3500,
+      "overriden_lines": 4
+    }
+  }
+}
