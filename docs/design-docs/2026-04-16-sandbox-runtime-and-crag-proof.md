@@ -86,7 +86,7 @@ For multi-repo setups, `.belayer/config.yaml` can't live in any single repo beca
 For local dev without crag, pass a workspace config explicitly:
 
 ```bash
-belayer run start --workspace ~/.belayer/workspaces/extend-fullstack.yaml --task "..."
+belayer run start --workspace ~/.belayer/workspaces/extend-fullstack.yaml --spec "..."
 ```
 
 Resolution:
@@ -533,7 +533,7 @@ worker:
    limactl shell devbox -- bash -c '
      cd ~/Documents/Programs/personal/arielcharts
      belayer daemon &
-     belayer run start --task "Add dark mode"
+     belayer run start --spec "Add dark mode"
    '
 4. crag polls: limactl shell devbox -- belayer status
 5. On completion, crag records result

@@ -20,13 +20,13 @@ func newRunCmd() *cobra.Command {
 }
 
 func newRunStartCmd() *cobra.Command {
-	var socket, name, task, supervisorProfile, workdir, reposFlag string
+	var socket, name, spec, supervisorProfile, workdir, reposFlag string
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Create a run, spawn supervisor, and deliver the initial task",
+		Short: "Create a run, spawn supervisor, and deliver the initial spec",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if strings.TrimSpace(task) == "" {
-				return fmt.Errorf("--task is required")
+			if strings.TrimSpace(spec) == "" {
+				return fmt.Errorf("--spec is required")
 			}
 			if strings.TrimSpace(supervisorProfile) == "" {
 				return fmt.Errorf("--supervisor-profile is required")
@@ -80,21 +80,32 @@ func newRunStartCmd() *cobra.Command {
 			if _, err := c.UpdateSession(sess.ID, "running"); err != nil {
 				return fmt.Errorf("mark session running: %w", err)
 			}
+
+			// Persist the operator's spec to disk + register it as an artifact so
+			// every agent (and the PM gate) reads the same source of truth instead
+			// of mining `belayer message list` for the supervisor's instruction.
+			specRel, err := writeSpecArtifact(c, baseDir, sess.ID, spec)
+			if err != nil {
+				return fmt.Errorf("persist spec: %w", err)
+			}
+
 			if _, err := c.SpawnAgent(sess.ID, spawnAgentRequest{Name: "supervisor", Role: "supervisor", Profile: supervisorProfile, Workdir: supervisorWorkdir}); err != nil {
 				return fmt.Errorf("spawn supervisor: %w", err)
 			}
-			if _, err := c.SendMessage(sess.ID, "supervisor", task, "instruction", true); err != nil {
-				return fmt.Errorf("deliver initial task: %w", err)
+			if _, err := c.SendMessage(sess.ID, "supervisor", spec, "instruction", true); err != nil {
+				return fmt.Errorf("deliver initial spec: %w", err)
 			}
 			// Log the initial prompt as telemetry so post-mortems can see what started the run.
 			initData, _ := json.Marshal(map[string]string{
-				"task":               task,
+				"spec":               spec,
+				"spec_path":          specRel,
 				"supervisor_profile": supervisorProfile,
 			})
 			_ = c.LogEvent(sess.ID, "run_initiated", string(initData))
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Run started: %s (%s)\n", sess.ID, sess.Name)
 			fmt.Fprintln(cmd.OutOrStdout(), "Supervisor: supervisor")
+			fmt.Fprintf(cmd.OutOrStdout(), "Spec: %s\n", specRel)
 			if len(repos) > 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "Repos:")
 				for repoName, repoPath := range repos {
@@ -111,7 +122,7 @@ func newRunStartCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	cmd.Flags().StringVar(&name, "name", "", "Run/session name")
-	cmd.Flags().StringVar(&task, "task", "", "Initial task text for the supervisor")
+	cmd.Flags().StringVar(&spec, "spec", "", "Initial spec text — written to .belayer/runs/<id>/SPEC.md and registered as the operator artifact")
 	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", "", "Hermes profile for the supervisor")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
@@ -180,4 +191,29 @@ func provisionWorkspace(baseDir, sessionID string, repos map[string]string) (str
 	}
 
 	return workspaceDir, nil
+}
+
+// writeSpecArtifact persists the operator's --spec text to
+// .belayer/runs/<sessionID>/SPEC.md and registers it as an artifact with
+// kind=spec, producer=operator. This is the canonical operator-input artifact:
+// every agent (and the PM gate) reads SPEC.md instead of mining the message log
+// for the supervisor's first instruction. Returns the absolute path written.
+func writeSpecArtifact(c *Client, baseDir, sessionID, spec string) (string, error) {
+	runDir := filepath.Join(baseDir, ".belayer", "runs", sessionID)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		return "", fmt.Errorf("create run dir: %w", err)
+	}
+	specPath := filepath.Join(runDir, "SPEC.md")
+	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+		return "", fmt.Errorf("write SPEC.md: %w", err)
+	}
+	if _, err := c.CreateArtifact(sessionID, artifactCreateCLIRequest{
+		Kind:     "spec",
+		Path:     specPath,
+		Producer: "operator",
+		Summary:  "Initial run spec from operator (--spec text passed to belayer run start).",
+	}); err != nil {
+		return "", fmt.Errorf("register spec artifact: %w", err)
+	}
+	return specPath, nil
 }

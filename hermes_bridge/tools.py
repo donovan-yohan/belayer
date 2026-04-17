@@ -103,7 +103,11 @@ CREATE_ARTIFACT_SCHEMA = {
         "For revisions, write to a new path (e.g. add a version suffix or bump the kind) and "
         "register that.\n"
         "- 'kind' is a free-form tag but downstream consumers (PM, reflection) match on it — "
-        "stick to consistent kinds across a project (e.g. 'spec', 'design-doc', 'review-report')."
+        "stick to consistent kinds across a project (e.g. 'spec', 'design-doc', 'review-report').\n"
+        "- The pair (kind='spec', producer='operator') is RESERVED for the run-level SPEC.md the "
+        "daemon writes at `belayer run start`. Don't register your own artifact under that pair; "
+        "use a more specific kind (e.g. 'design-spec', 'feature-spec') or set producer to your "
+        "own agent name."
     ),
     "parameters": {
         "type": "object",
@@ -324,11 +328,12 @@ REQUEST_COMPLETION_SCHEMA = {
             "spec_artifact": {
                 "type": "string",
                 "description": (
-                    "Optional path to the spec or design-doc artifact (e.g. "
-                    "'artifacts/checkout-flow.spec.md'). If omitted, the PM searches the "
-                    "artifact registry for kinds 'spec' or 'design-doc'. Provide it "
-                    "explicitly when there are multiple specs in play and you want the PM to "
-                    "verify against a specific one."
+                    "Optional path to the spec or design-doc artifact. If omitted, the PM "
+                    "defaults to the operator-written SPEC.md (registered as kind='spec', "
+                    "producer='operator' at run start) and falls back to other 'spec' / "
+                    "'design-doc' artifacts in the registry. Provide it explicitly when "
+                    "the supervisor expanded the operator spec into a more detailed design "
+                    "doc and wants the PM to verify against that instead."
                 ),
             },
         },

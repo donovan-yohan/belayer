@@ -13,7 +13,7 @@ go build ./cmd/belayer
 belayer daemon
 
 # Launch a run (creates session, spawns planner via Hermes bridge)
-belayer run start --task "Add rate limiting to /api/v1/cards" --workdir /path/to/repo
+belayer run start --spec "Add rate limiting to /api/v1/cards" --workdir /path/to/repo
 
 # Monitor
 belayer status
