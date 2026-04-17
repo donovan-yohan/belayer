@@ -37,19 +37,20 @@ func testDaemon(t *testing.T) *Daemon {
 	reg := &sandbox.Registry{}
 	reg.Register(sandbox.DefaultMode, &sandbox.Noop{})
 	d := &Daemon{
-		store:               st,
-		config:              Config{},
-		daemonInstanceID:    "test-daemon-instance",
-		tools:               make(map[string][]agent.ToolSpec),
-		bridgeProcs:         make(map[string]*bridge.Process),
-		sessionSandboxes:    make(map[string]sessionSandbox),
-		sseSubscribers:      make(map[*sseSubscriber]struct{}),
-		sandboxDrivers:      reg,
-		runtime:             &runtime.Noop{},
-		startCtx:            context.Background(),
-		archiver:            newArchiveManager(st, "test-instance"),
-		archiveDrainTimeout: 30 * time.Second,
-		shutdownHTTPTimeout: 5 * time.Second,
+		store:                st,
+		config:               Config{},
+		daemonInstanceID:     "test-daemon-instance",
+		tools:                make(map[string][]agent.ToolSpec),
+		bridgeProcs:          make(map[string]*bridge.Process),
+		sessionSandboxes:     make(map[string]sessionSandbox),
+		sseSubscribers:       make(map[*sseSubscriber]struct{}),
+		sandboxDrivers:       reg,
+		runtime:              &runtime.Noop{},
+		startCtx:             context.Background(),
+		archiver:             newArchiveManager(st, "test-instance"),
+		archiveDrainTimeout:  30 * time.Second,
+		shutdownHTTPTimeout:  5 * time.Second,
+		sseKeepaliveInterval: 15 * time.Second,
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }
@@ -1372,6 +1373,13 @@ func TestSSE_DaemonDrainingEmittedOnShutdown(t *testing.T) {
 	d := testDaemon(t)
 	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-draining"}))
 
+	// Snapshot the current max ID so we can pass ?after= and get stream-from-now
+	// behaviour (no backlog). This is the correct consumer pattern per LOG_FORMAT.md §4.
+	afterID, err := d.store.MaxEventID()
+	if err != nil {
+		t.Fatalf("MaxEventID: %v", err)
+	}
+
 	server := httptest.NewServer(d.server.Handler)
 	defer server.Close()
 
@@ -1379,7 +1387,7 @@ func TestSSE_DaemonDrainingEmittedOnShutdown(t *testing.T) {
 	defer cancel()
 
 	req, _ := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("%s/events/stream?sessions=%s", server.URL, sess.ID), nil)
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=%d", server.URL, sess.ID, afterID), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("GET /events/stream: %v", err)
@@ -1545,8 +1553,10 @@ func TestSSE_ControlFramesNeverCarryIDLine(t *testing.T) {
 		_ = d.Shutdown(context.Background())
 	}()
 
-	// Collect daemon_hello + at least one session_event + daemon_draining = 3 frames.
-	frames := readSSEFrames(t, resp.Body, 3, 4*time.Second)
+	// Collect daemon_hello + session_created + before_drain + daemon_draining = 4 frames.
+	// With afterID=0, both the session_created (from CreateSession) and before_drain
+	// events are included in the backlog, so we need 4 frames total.
+	frames := readSSEFrames(t, resp.Body, 4, 4*time.Second)
 	if len(frames) < 3 {
 		t.Fatalf("expected at least 3 frames (hello + domain + draining), got %d: %+v", len(frames), frames)
 	}

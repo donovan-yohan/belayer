@@ -63,6 +63,12 @@ type Config struct {
 	BridgeAPIKey  string
 	BridgeBaseURL string
 	BridgeProvider string
+
+	// SSEKeepaliveInterval is how often the SSE handler emits a ": keep-alive"
+	// comment to prevent idle-connection timeouts. Defaults to 15s in New().
+	// Tests can set a small value (e.g., 50ms) to verify keepalive behaviour
+	// without sleeping for 15 seconds.
+	SSEKeepaliveInterval time.Duration
 }
 
 // DefaultConfig returns config using ~/.belayer/ paths.
@@ -137,10 +143,11 @@ type Daemon struct {
 	tools   map[string][]agent.ToolSpec
 
 	// Lifecycle / shutdown fields.
-	draining            atomic.Bool   // set at start of Shutdown; readable by /health and SSE handlers
-	archiver            *archiveManager
-	archiveDrainTimeout time.Duration // max time Phase 3 archive drain may run
-	shutdownHTTPTimeout time.Duration // max time HTTP servers get to drain in-flight requests
+	draining               atomic.Bool   // set at start of Shutdown; readable by /health and SSE handlers
+	archiver               *archiveManager
+	archiveDrainTimeout    time.Duration // max time Phase 3 archive drain may run
+	shutdownHTTPTimeout    time.Duration // max time HTTP servers get to drain in-flight requests
+	sseKeepaliveInterval   time.Duration // interval for SSE ": keep-alive" comments (default 15s)
 
 	// SSE subscriber registry. Populated by handleStreamEvents; drained by
 	// announceDraining on Shutdown. Protected by sseMu.
@@ -159,17 +166,23 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: open store: %w", err)
 	}
 
+	keepaliveInterval := cfg.SSEKeepaliveInterval
+	if keepaliveInterval <= 0 {
+		keepaliveInterval = 15 * time.Second
+	}
+
 	d := &Daemon{
-		store:               st,
-		config:              cfg,
-		daemonInstanceID:    uuid.NewString(),
-		tools:               make(map[string][]agent.ToolSpec),
-		bridgeProcs:         make(map[string]*bridge.Process),
-		sessionSandboxes:    make(map[string]sessionSandbox),
-		sseSubscribers:      make(map[*sseSubscriber]struct{}),
-		startCtx:            context.Background(),
-		archiveDrainTimeout: 30 * time.Second,
-		shutdownHTTPTimeout: 5 * time.Second,
+		store:                st,
+		config:               cfg,
+		daemonInstanceID:     uuid.NewString(),
+		tools:                make(map[string][]agent.ToolSpec),
+		bridgeProcs:          make(map[string]*bridge.Process),
+		sessionSandboxes:     make(map[string]sessionSandbox),
+		sseSubscribers:       make(map[*sseSubscriber]struct{}),
+		startCtx:             context.Background(),
+		archiveDrainTimeout:  30 * time.Second,
+		shutdownHTTPTimeout:  5 * time.Second,
+		sseKeepaliveInterval: keepaliveInterval,
 	}
 	d.archiver = newArchiveManager(st, d.daemonInstanceID)
 	if cfg.SandboxDrivers != nil {
@@ -842,18 +855,19 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		waitFor = parsed
 	}
 
-	// Compute helloLastID after afterID is resolved. This snapshot is what
-	// daemon_hello advertises as the high-water mark at connection time.
+	// Compute helloLastID: the global max event ID at connect time. This is
+	// what daemon_hello advertises as the high-water mark so consumers can
+	// persist it as their epoch cursor. It is computed independently of
+	// afterID so both can be set correctly at once.
 	helloLastID, err := d.store.MaxEventID()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	// Default: stream-from-now — consumer will only see new events.
-	if lastEventIDHeader == "" && afterParam == "" {
-		afterID = helloLastID
-	}
+	// Default: afterID = 0 so the consumer receives the full backlog from the
+	// beginning (LOG_FORMAT.md §4). Consumers wanting "stream from now" MUST
+	// explicitly pass ?after=<helloLastID> (or Last-Event-ID) from daemon_hello.
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -898,7 +912,7 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	lastID := afterID
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	keepalive := time.NewTicker(15 * time.Second)
+	keepalive := time.NewTicker(d.sseKeepaliveInterval)
 	defer keepalive.Stop()
 
 	deadline := time.Time{}
