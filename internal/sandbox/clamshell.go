@@ -129,23 +129,30 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 		return Handle{}, fmt.Errorf("sandbox/clamshell: create: %w (stderr: %s)", err, stderr)
 	}
 
+	// After this point the sandbox exists in clamshell. Any failure must tear
+	// it down, otherwise we leak a running sandbox on every bad discovery.
+	cleanupAfterCreate := func(cause error) error {
+		if _, stopStderr, stopErr := c.runner.Run(ctx, c.cli, "sandbox", "stop", cfg.Name); stopErr != nil {
+			cause = fmt.Errorf("%w; additionally, cleanup stop failed: %v (stderr: %s)", cause, stopErr, stopStderr)
+		}
+		_ = os.Remove(policyPath)
+		return cause
+	}
+
 	// 4. Discover the container name so Exec can docker-exec into it. The
 	//    --json form emits a structured response clamshell guarantees stable.
 	connectOut, stderr, err := c.runner.Run(ctx, c.cli, "--json", "sandbox", "connect", cfg.Name)
 	if err != nil {
-		_ = os.Remove(policyPath)
-		return Handle{}, fmt.Errorf("sandbox/clamshell: connect: %w (stderr: %s)", err, stderr)
+		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: connect: %w (stderr: %s)", err, stderr))
 	}
 	var connect struct {
 		Container string `json:"container"`
 	}
 	if err := json.Unmarshal(connectOut, &connect); err != nil {
-		_ = os.Remove(policyPath)
-		return Handle{}, fmt.Errorf("sandbox/clamshell: parse connect output: %w (stdout: %s)", err, connectOut)
+		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: parse connect output: %w (stdout: %s)", err, connectOut))
 	}
 	if connect.Container == "" {
-		_ = os.Remove(policyPath)
-		return Handle{}, fmt.Errorf("sandbox/clamshell: connect output missing container field: %s", connectOut)
+		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: connect output missing container field: %s", connectOut))
 	}
 
 	return Handle{
@@ -158,10 +165,11 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 }
 
 // Exec launches cmd inside the sandbox container via `docker exec`.
-// Environment variables are materialized through `env KEY=VAL ...` so we don't
-// depend on docker CLI's -e semantics, and the command runs under
-// `sh -lc` so shell conveniences (pipes, globs, login profile) work as they
-// would in a normal shell session.
+// Environment variables are passed through a mode-0600 env-file referenced by
+// `--env-file` rather than folded into the argv. This keeps secrets out of
+// the host process table (`ps auxe` would otherwise expose them). The command
+// runs under `sh -lc` so shell conveniences (pipes, globs, login profile) work
+// as they would in a normal shell session.
 func (c *Clamshell) Exec(ctx context.Context, h Handle, cmd []string, opts ExecOpts) (Process, error) {
 	if len(cmd) == 0 {
 		return nil, fmt.Errorf("sandbox/clamshell: exec requires at least one argument")
@@ -171,24 +179,102 @@ func (c *Clamshell) Exec(ctx context.Context, h Handle, cmd []string, opts ExecO
 		return nil, fmt.Errorf("sandbox/clamshell: exec handle %q missing container metadata", h.ID)
 	}
 
-	args := []string{"exec", "-u", "sandbox", "-i", container}
+	args := []string{"exec", "-u", "sandbox", "-i"}
+	envFile := ""
 	if len(opts.Env) > 0 {
-		args = append(args, "env")
-		args = append(args, opts.Env...)
+		path, err := writeEnvFile(opts.Env)
+		if err != nil {
+			return nil, err
+		}
+		envFile = path
+		args = append(args, "--env-file", envFile)
 	}
+	args = append(args, container)
+
 	shellCmd := shellJoin(cmd)
 	if opts.Dir != "" {
 		shellCmd = fmt.Sprintf("cd %s && %s", shellQuote(opts.Dir), shellCmd)
 	}
 	args = append(args, "sh", "-lc", shellCmd)
 
-	// Env was folded into the argv via `env`; don't also set it on the
-	// docker process (docker exec won't forward host env to the container).
-	return c.runner.Start(ctx, c.docker, args, ExecOpts{
+	// Env was written to envFile; don't also set it on the docker process
+	// (docker exec won't forward host env to the container anyway).
+	proc, err := c.runner.Start(ctx, c.docker, args, ExecOpts{
 		Stdin:  opts.Stdin,
 		Stdout: opts.Stdout,
 		Stderr: opts.Stderr,
 	})
+	if err != nil {
+		if envFile != "" {
+			_ = os.Remove(envFile)
+		}
+		return nil, err
+	}
+	if envFile != "" {
+		return &envFileProcess{Process: proc, path: envFile}, nil
+	}
+	return proc, nil
+}
+
+// writeEnvFile materializes env ("KEY=VALUE" entries) into a 0600 tempfile
+// suitable for `docker exec --env-file`. Callers must remove the returned
+// path once the referring process has exited.
+func writeEnvFile(env []string) (string, error) {
+	tmp, err := os.CreateTemp("", "belayer-env-*.env")
+	if err != nil {
+		return "", fmt.Errorf("sandbox/clamshell: temp env: %w", err)
+	}
+	// CreateTemp already uses 0600 on Unix, but be explicit so hardened umask
+	// environments (or future filesystems) don't widen it.
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("sandbox/clamshell: chmod env: %w", err)
+	}
+	body := strings.Join(env, "\n")
+	if len(env) > 0 {
+		body += "\n"
+	}
+	if _, err := tmp.WriteString(body); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("sandbox/clamshell: write env: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("sandbox/clamshell: close env: %w", err)
+	}
+	return tmp.Name(), nil
+}
+
+// envFileProcess wraps a Process to unlink the temporary env file once the
+// underlying process has exited (via Wait) or been killed. Cleanup runs at
+// most once.
+type envFileProcess struct {
+	Process
+	path    string
+	cleaned bool
+}
+
+func (p *envFileProcess) cleanup() {
+	if p.cleaned {
+		return
+	}
+	p.cleaned = true
+	_ = os.Remove(p.path)
+}
+
+func (p *envFileProcess) Wait() error {
+	err := p.Process.Wait()
+	p.cleanup()
+	return err
+}
+
+func (p *envFileProcess) Kill() error {
+	err := p.Process.Kill()
+	// Kill doesn't block on exit; cleanup happens in Wait. But if the caller
+	// Kills without ever Waiting, they still leak — that's on them.
+	return err
 }
 
 // Stop tears down the clamshell sandbox and removes any temp policy file
@@ -219,7 +305,14 @@ func (c *Clamshell) preparePolicy(basePath string, endpoints []TCPEndpoint) (str
 		}
 	}
 	if len(endpoints) > 0 {
-		existing, _ := doc["tcp_endpoints"].([]any)
+		var existing []any
+		if raw, present := doc["tcp_endpoints"]; present && raw != nil {
+			list, ok := raw.([]any)
+			if !ok {
+				return "", fmt.Errorf("sandbox/clamshell: policy %s has non-list tcp_endpoints (%T)", basePath, raw)
+			}
+			existing = list
+		}
 		for _, ep := range endpoints {
 			existing = append(existing, map[string]any{
 				"name": ep.Name,

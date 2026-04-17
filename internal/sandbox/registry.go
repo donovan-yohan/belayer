@@ -25,8 +25,17 @@ func Register(name string, d Driver) {
 	Default.Register(name, d)
 }
 
-// Register installs d under name in this registry.
+// Register installs d under name in this registry. Panics on empty name or
+// nil driver: Register is only called from driver init() functions, so a bad
+// registration is a programmer error that should surface immediately rather
+// than as a nil-deref from Get at session-create time.
 func (r *Registry) Register(name string, d Driver) {
+	if name == "" {
+		panic("sandbox.Registry.Register: empty driver name")
+	}
+	if d == nil {
+		panic(fmt.Sprintf("sandbox.Registry.Register: nil driver for %q", name))
+	}
 	if r.drivers == nil {
 		r.drivers = map[string]Driver{}
 	}

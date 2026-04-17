@@ -76,3 +76,23 @@ func TestRegistryEmptyGetReturnsError(t *testing.T) {
 	}
 }
 
+func TestRegistryRegisterEmptyNamePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("Register with empty name did not panic")
+		}
+	}()
+	reg := &sandbox.Registry{}
+	reg.Register("", &sandbox.Noop{})
+}
+
+func TestRegistryRegisterNilDriverPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("Register with nil driver did not panic")
+		}
+	}()
+	reg := &sandbox.Registry{}
+	reg.Register("fake", nil)
+}
+
