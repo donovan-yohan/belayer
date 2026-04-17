@@ -295,7 +295,9 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 			continue
 		}
 		if line == "" && payload.Len() > 0 {
-			if eventType == "error" {
+			switch eventType {
+			case "error", "daemon_hello", "daemon_draining":
+				// Control frames and error frames are not session events; drop.
 				payload.Reset()
 				eventType = ""
 				continue
