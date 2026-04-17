@@ -503,6 +503,7 @@ func (d *Daemon) ensureSandboxHandle(ctx context.Context, sess store.Session) (s
 		Workspace: sess.WorkspaceDir,
 		Policy:    settings.Policy,
 		Endpoints: runtimeEndpointsToSandbox(d.runtimeEndpoints),
+		Providers: settings.Providers,
 	})
 	if err != nil {
 		return sessionSandbox{}, err
