@@ -168,6 +168,9 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 			"container":     connect.Container,
 			"policyFile":    policyPath,
 			"hostWorkspace": cfg.Workspace,
+			// clamshell always mounts the sandbox home at {runtime_dir}/home.
+			// runtime_dir defaults to /run/agent per clamshell policy convention.
+			"containerHome": "/run/agent/home",
 		},
 	}, nil
 }
@@ -218,8 +221,24 @@ func (c *Clamshell) Exec(ctx context.Context, h Handle, cmd []string, opts ExecO
 
 	args := []string{"exec", "-u", "sandbox", "-i"}
 	envFile := ""
-	if len(opts.Env) > 0 {
-		path, err := writeEnvFile(opts.Env)
+	env := opts.Env
+	// Override HOME with the container home dir so the bridge doesn't try to
+	// write to the host user's home path (which is read-only inside the container).
+	if containerHome := h.Meta["containerHome"]; containerHome != "" {
+		replaced := false
+		for i, e := range env {
+			if strings.HasPrefix(e, "HOME=") {
+				env[i] = "HOME=" + containerHome
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			env = append(env, "HOME="+containerHome)
+		}
+	}
+	if len(env) > 0 {
+		path, err := writeEnvFile(env)
 		if err != nil {
 			return nil, err
 		}

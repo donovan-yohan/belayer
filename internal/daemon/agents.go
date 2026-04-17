@@ -330,9 +330,10 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		}
 	}
 
-	// Load belayer_tools from <agent-dir>/agent.yaml if it exists. Same
+	// Load belayer_tools and model from <agent-dir>/agent.yaml if it exists. Same
 	// project-local-over-shipped resolution as the system prompt.
 	var belayerTools []string
+	agentModel := req.Model // explicit spawn request takes precedence
 	for _, yamlPath := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "agent.yaml") {
 		data, err := os.ReadFile(yamlPath)
 		if err != nil {
@@ -340,9 +341,15 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		}
 		// Simple line-based parse — avoid YAML library dependency.
 		// Looks for "belayer_tools:" then collects "  - tool_name" lines.
+		// Also reads "model: <value>" for the default model.
 		inTools := false
 		for _, line := range splitLines(string(data)) {
 			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "model:") && agentModel == "" {
+				agentModel = strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
+				inTools = false
+				continue
+			}
 			if trimmed == "belayer_tools:" || trimmed == "belayer_tools: []" {
 				inTools = true
 				if trimmed == "belayer_tools: []" {
@@ -359,7 +366,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 				}
 			}
 		}
-		log.Printf("Loaded belayer_tools from %s for agent %s (identity=%s): %v", yamlPath, req.Name, identity, belayerTools)
+		log.Printf("Loaded agent.yaml from %s for agent %s (identity=%s): model=%q tools=%v", yamlPath, req.Name, identity, agentModel, belayerTools)
 		break
 	}
 
@@ -408,7 +415,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		AgentID:         req.Name,
 		Role:            req.Role,
 		Profile:         req.Profile,
-		Model:           req.Model,
+		Model:           agentModel,
 		Message:         req.Message,
 		SystemPrompt:    systemPrompt,
 		HermesSessionID: req.HermesSessionID,
