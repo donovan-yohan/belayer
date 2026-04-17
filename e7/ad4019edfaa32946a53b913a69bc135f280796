@@ -1,0 +1,31 @@
+.gitignore
+  e763a424956efef3 4-6
+scripts/build-belayer-clamshell-image.sh
+  e763a424956efef3 1-37
+dockerfiles/belayer-clamshell.Dockerfile
+  e763a424956efef3 1-48
+dockerfiles/belayer-clamshell-entrypoint.sh
+  e763a424956efef3 1-2
+tests/scripts/test-build-belayer-clamshell-image.sh
+  e763a424956efef3 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "e7ad4019edfaa32946a53b913a69bc135f280796",
+  "prompts": {
+    "e763a424956efef3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ef2fc39-34ef-4510-9803-a7bab7d3b0b3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 98,
+      "total_deletions": 0,
+      "accepted_lines": 101,
+      "overriden_lines": 0
+    }
+  }
+}
