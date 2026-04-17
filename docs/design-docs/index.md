@@ -9,3 +9,4 @@
 - [Tool catalog and identity](2026-04-16-tool-catalog-and-identity.md) — Co-locate belayer tools with agent templates, role-based tool gating
 - ~~[VM sandbox and template bootstrap](2026-04-16-vm-sandbox-and-template-bootstrap.md)~~ — Superseded by sandbox-runtime-and-crag-proof
 - [Sandbox, runtime, and crag proof](2026-04-16-sandbox-runtime-and-crag-proof.md) — SandboxDriver + RuntimeProvider interfaces, lightweight crag, arielcharts E2E proof
+- [Embed hermes_bridge + deployment docs](2026-04-17-embed-hermes-bridge-design.md) — Ship bridge embedded in binary, extract via belayer init; rewrite SANDBOXING.md with prod/dev topologies and known security gaps
