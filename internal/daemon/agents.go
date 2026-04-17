@@ -750,6 +750,10 @@ func agentIdentityPaths(workdir, belayerRoot, identity, file string) []string {
 // container and accesses the daemon via a Unix socket in the bind-mounted
 // workspace directory (/workspace/.belayer/daemon.sock). Falls back to the
 // TCP gateway URL if the workspace socket path was not configured.
+//
+// The container-side /workspace path is a clamshell convention enforced by the
+// sandbox driver (see sandbox/clamshell.go:sandboxWorkspace). If that constant
+// ever changes, this function must be updated in lockstep.
 func bridgeSocketPath(mode, unixPath, dockerGateway string, tcpPort int, workspaceSockPath string) string {
 	if mode != "clamshell" {
 		return unixPath
