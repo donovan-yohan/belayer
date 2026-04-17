@@ -35,9 +35,13 @@ type Config struct {
 	Role            string
 	Profile         string
 	Workdir         string
-	SocketPath      string // daemon Unix socket path
+	SocketPath      string // daemon Unix socket path or http://host:port for TCP
+	HTTPProxy       string // HTTP CONNECT proxy for clamshell (e.g. http://172.31.0.2:3128)
 	RunDir          string // e.g. /workspace/.belayer/runs/{session}/{agent}
 	Model           string // optional model override
+	APIKey          string // LLM provider API key (injected when Hermes config is unavailable, e.g. clamshell)
+	BaseURL         string // LLM provider base URL (e.g. https://opencode.ai/zen/go/v1)
+	Provider        string // LLM provider name (e.g. "openai")
 	Message         string // initial message/instructions for the agent
 	SystemPrompt    string // optional system prompt injected via ephemeral_system_prompt
 	HermesSessionID string // for crash recovery resume
@@ -105,11 +109,31 @@ func BuildEnv(cfg Config) []string {
 	env = appendEnv(env, "BELAYER_SESSION_ID", cfg.SessionID)
 	env = appendEnv(env, "BELAYER_AGENT_ID", cfg.AgentID)
 	env = appendEnv(env, "BELAYER_SOCKET", cfg.SocketPath)
+	if cfg.HTTPProxy != "" {
+		env = appendEnv(env, "BELAYER_HTTP_PROXY", cfg.HTTPProxy)
+		// Inject standard proxy env vars so Python's httpx/requests/urllib route
+		// LLM API calls through the sandbox egress broker. The docker exec env-file
+		// only contains what we pass — the container's startup env is not inherited.
+		for _, k := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"} {
+			env = appendEnv(env, k, cfg.HTTPProxy)
+		}
+		env = appendEnv(env, "NO_PROXY", "127.0.0.1,localhost,::1")
+		env = appendEnv(env, "no_proxy", "127.0.0.1,localhost,::1")
+	}
 	env = appendEnv(env, "BELAYER_RUN_DIR", cfg.RunDir)
 	env = appendEnv(env, "BELAYER_ROLE", cfg.Role)
 	env = appendEnv(env, "BELAYER_PROFILE", cfg.Profile)
 	if cfg.Model != "" {
 		env = appendEnv(env, "BELAYER_MODEL", cfg.Model)
+	}
+	if cfg.APIKey != "" {
+		env = appendEnv(env, "BELAYER_API_KEY", cfg.APIKey)
+	}
+	if cfg.BaseURL != "" {
+		env = appendEnv(env, "BELAYER_BASE_URL", cfg.BaseURL)
+	}
+	if cfg.Provider != "" {
+		env = appendEnv(env, "BELAYER_PROVIDER", cfg.Provider)
 	}
 	if cfg.Message != "" {
 		env = appendEnv(env, "BELAYER_MESSAGE", cfg.Message)

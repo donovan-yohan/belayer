@@ -30,6 +30,22 @@ type Config struct {
 	DBPath      string
 	BelayerRoot string // directory containing hermes_bridge/ (for PYTHONPATH)
 
+	// TCPAddr, if non-empty, causes the daemon to also bind a TCP listener at
+	// this address (e.g. "0.0.0.0:7523"). Used when sandbox.mode=clamshell so
+	// bridge subprocesses inside Docker containers can reach the daemon via the
+	// Docker host gateway (172.17.0.1). Use "host:0" to let the OS pick a port.
+	TCPAddr string
+	// DockerHostGateway is the IP address of the Docker host as seen from inside
+	// Docker containers. Used to build BELAYER_SOCKET for clamshell bridge
+	// subprocesses. Defaults to "172.17.0.1" (standard Docker bridge network).
+	DockerHostGateway string
+
+	// WorkspaceSockPath, if non-empty, causes the daemon to also bind a Unix
+	// socket at this path. Used when sandbox.mode=clamshell so bridge
+	// subprocesses inside Docker containers can reach the daemon via a
+	// bind-mounted workspace path (e.g. /workspace/.belayer/daemon.sock).
+	WorkspaceSockPath string
+
 	// SandboxDrivers is the registry the daemon resolves per-session drivers
 	// against. Each session's driver is chosen by name from .belayer/config.yaml's
 	// sandbox.mode. Nil falls back to a registry containing only the noop driver,
@@ -38,6 +54,13 @@ type Config struct {
 	// Runtime overrides the dev-stack provider.
 	// Nil falls back to &runtime.Noop{}.
 	Runtime runtime.Provider
+
+	// BridgeAPIKey, BridgeBaseURL, BridgeProvider are injected as BELAYER_API_KEY /
+	// BELAYER_BASE_URL / BELAYER_PROVIDER into every bridge subprocess. Used in
+	// clamshell mode where the sandbox user has no Hermes provider configured.
+	BridgeAPIKey  string
+	BridgeBaseURL string
+	BridgeProvider string
 }
 
 // DefaultConfig returns config using ~/.belayer/ paths.
@@ -45,8 +68,9 @@ func DefaultConfig() Config {
 	home, _ := os.UserHomeDir()
 	base := filepath.Join(home, ".belayer")
 	return Config{
-		SocketPath: filepath.Join(base, "daemon.sock"),
-		DBPath:     filepath.Join(base, "belayer.db"),
+		SocketPath:        filepath.Join(base, "daemon.sock"),
+		DBPath:            filepath.Join(base, "belayer.db"),
+		DockerHostGateway: "172.17.0.1",
 	}
 }
 
@@ -71,6 +95,16 @@ type Daemon struct {
 	// calls so they observe daemon shutdown. Initialized to context.Background
 	// in New so tests that skip Start still work.
 	startCtx context.Context
+
+	// tcpListener is the optional TCP listener for clamshell container access.
+	// Nil when config.TCPAddr is empty.
+	tcpListener *http.Server
+	tcpPort     int
+
+	// workspaceSockListener is an optional Unix socket inside the workspace
+	// directory so clamshell bridge subprocesses can reach the daemon via a
+	// bind-mounted path without network proxying.
+	workspaceSockListener *http.Server
 
 	// Per-session sandbox state. Each entry caches the driver resolved from
 	// .belayer/config.yaml's sandbox.mode plus the Handle returned by Create.
@@ -168,12 +202,83 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.listener = ln
 	d.startCtx = ctx
 
+	// cleanupExtraListeners shuts down any TCP/workspace servers started below
+	// and removes the workspace socket file. Called on any early-return error
+	// path so we don't leak background goroutines or bound sockets.
+	cleanupExtraListeners := func() {
+		if d.tcpListener != nil {
+			_ = d.tcpListener.Close()
+		}
+		if d.workspaceSockListener != nil {
+			_ = d.workspaceSockListener.Close()
+		}
+		if d.config.WorkspaceSockPath != "" {
+			os.Remove(d.config.WorkspaceSockPath)
+		}
+	}
+
+	// Optional TCP listener for clamshell container bridge access.
+	if d.config.TCPAddr != "" {
+		tcpLn, err := net.Listen("tcp", d.config.TCPAddr)
+		if err != nil {
+			ln.Close()
+			return fmt.Errorf("daemon: listen tcp %s: %w", d.config.TCPAddr, err)
+		}
+		d.tcpPort = tcpLn.Addr().(*net.TCPAddr).Port
+		d.tcpListener = &http.Server{Handler: d.server.Handler}
+		go func() {
+			if serveErr := d.tcpListener.Serve(tcpLn); serveErr != nil && serveErr != http.ErrServerClosed {
+				log.Printf("daemon: tcp serve: %v", serveErr)
+			}
+		}()
+		log.Printf("daemon: TCP listener on %s (port %d)", d.config.TCPAddr, d.tcpPort)
+	}
+
+	// Optional workspace Unix socket for clamshell container bridge access.
+	// The workspace directory is bind-mounted into clamshell containers so the
+	// bridge can reach the daemon via /workspace/.belayer/daemon.sock without
+	// any network proxying.
+	if d.config.WorkspaceSockPath != "" {
+		if err := os.MkdirAll(filepath.Dir(d.config.WorkspaceSockPath), 0o755); err != nil {
+			cleanupExtraListeners()
+			ln.Close()
+			return fmt.Errorf("daemon: create workspace sock dir: %w", err)
+		}
+		os.Remove(d.config.WorkspaceSockPath)
+		wsLn, err := net.Listen("unix", d.config.WorkspaceSockPath)
+		if err != nil {
+			cleanupExtraListeners()
+			ln.Close()
+			return fmt.Errorf("daemon: listen workspace sock %s: %w", d.config.WorkspaceSockPath, err)
+		}
+		// Readable/writable by any user so the non-root sandbox user inside the
+		// clamshell container can reach the socket through the bind mount.
+		// Execute bit is meaningless on a socket, so 0o666 is strictly tighter
+		// than 0o777. TODO: narrow to 0o660 via dedicated group + chown once
+		// the container UID/GID mapping is stabilized.
+		if err := os.Chmod(d.config.WorkspaceSockPath, 0o666); err != nil {
+			wsLn.Close()
+			cleanupExtraListeners()
+			ln.Close()
+			return fmt.Errorf("daemon: chmod workspace sock %s: %w", d.config.WorkspaceSockPath, err)
+		}
+		d.workspaceSockListener = &http.Server{Handler: d.server.Handler}
+		go func() {
+			if serveErr := d.workspaceSockListener.Serve(wsLn); serveErr != nil && serveErr != http.ErrServerClosed {
+				log.Printf("daemon: workspace sock serve: %v", serveErr)
+			}
+		}()
+		log.Printf("daemon: workspace socket on %s", d.config.WorkspaceSockPath)
+	}
+
 	// Provision the runtime before serving. For the noop provider this is a
 	// no-op; the hook exists so future providers (command, clamshell, ...)
 	// can fail fast if the dev stack can't come up. Captured endpoints flow
 	// into each session's sandbox via ensureSandboxHandle.
 	endpoints, err := d.runtime.Up(ctx)
 	if err != nil {
+		cleanupExtraListeners()
+		ln.Close()
 		return fmt.Errorf("daemon: runtime up: %w", err)
 	}
 	d.runtimeEndpoints = endpoints
@@ -190,12 +295,22 @@ func (d *Daemon) Start(ctx context.Context) error {
 	return nil
 }
 
+// TCPPort returns the port the TCP listener is bound to, or 0 if no TCP
+// listener was configured. Valid after Start() returns without error.
+func (d *Daemon) TCPPort() int { return d.tcpPort }
+
 // Shutdown gracefully drains in-flight requests and closes everything.
 func (d *Daemon) Shutdown(ctx context.Context) error {
 	shutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	err := d.server.Shutdown(shutCtx)
+	if d.tcpListener != nil {
+		_ = d.tcpListener.Shutdown(shutCtx)
+	}
+	if d.workspaceSockListener != nil {
+		_ = d.workspaceSockListener.Shutdown(shutCtx)
+	}
 
 	// Tear down any outstanding sandbox handles.
 	d.sandboxMu.Lock()
@@ -214,6 +329,9 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 
 	d.store.Close()
 	os.Remove(d.config.SocketPath)
+	if d.config.WorkspaceSockPath != "" {
+		os.Remove(d.config.WorkspaceSockPath)
+	}
 	return err
 }
 
@@ -223,6 +341,7 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 type sessionSandbox struct {
 	driver sandbox.Driver
 	handle sandbox.Handle
+	mode   string // sandbox.mode value from .belayer/config.yaml (e.g. "noop", "clamshell")
 }
 
 // ensureSandboxHandle returns the session's sandbox state, creating one on
@@ -268,7 +387,7 @@ func (d *Daemon) ensureSandboxHandle(ctx context.Context, sess store.Session) (s
 		}()
 		return existing, nil
 	}
-	ss := sessionSandbox{driver: driver, handle: h}
+	ss := sessionSandbox{driver: driver, handle: h, mode: mode}
 	d.sessionSandboxes[sess.ID] = ss
 	return ss, nil
 }

@@ -145,6 +145,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 
 	proc, err := d.spawnBridgeAgent(req)
 	if err != nil {
+		log.Printf("spawn agent %s failed: %v", req.Name, err)
 		_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -329,9 +330,10 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		}
 	}
 
-	// Load belayer_tools from <agent-dir>/agent.yaml if it exists. Same
+	// Load belayer_tools and model from <agent-dir>/agent.yaml if it exists. Same
 	// project-local-over-shipped resolution as the system prompt.
 	var belayerTools []string
+	agentModel := req.Model // explicit spawn request takes precedence
 	for _, yamlPath := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "agent.yaml") {
 		data, err := os.ReadFile(yamlPath)
 		if err != nil {
@@ -339,9 +341,15 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		}
 		// Simple line-based parse — avoid YAML library dependency.
 		// Looks for "belayer_tools:" then collects "  - tool_name" lines.
+		// Also reads "model: <value>" for the default model.
 		inTools := false
 		for _, line := range splitLines(string(data)) {
 			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "model:") && agentModel == "" {
+				agentModel = strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
+				inTools = false
+				continue
+			}
 			if trimmed == "belayer_tools:" || trimmed == "belayer_tools: []" {
 				inTools = true
 				if trimmed == "belayer_tools: []" {
@@ -358,31 +366,9 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 				}
 			}
 		}
-		log.Printf("Loaded belayer_tools from %s for agent %s (identity=%s): %v", yamlPath, req.Name, identity, belayerTools)
+		log.Printf("Loaded agent.yaml from %s for agent %s (identity=%s): model=%q tools=%v", yamlPath, req.Name, identity, agentModel, belayerTools)
 		break
 	}
-
-	cfg := bridge.Config{
-		SessionID:       req.SessionID,
-		AgentID:         req.Name,
-		Role:            req.Role,
-		Profile:         req.Profile,
-		Model:           req.Model,
-		Message:         req.Message,
-		SystemPrompt:    systemPrompt,
-		HermesSessionID: req.HermesSessionID,
-		Ephemeral:       ephemeral,
-		Workdir:         workdir,
-		SocketPath:      d.config.SocketPath,
-		RunDir:          runDir,
-		BelayerRoot:     d.config.BelayerRoot,
-		BelayerTools:    belayerTools,
-	}
-	_ = worktreePath // stored in DB; cleanup handled separately
-
-	// Build command and environment using bridge pure functions.
-	argv := bridge.BuildCmd(cfg)
-	env := bridge.BuildEnv(cfg)
 
 	// Set up stdin pipe for daemon→agent communication.
 	stdinR, stdinW, err := os.Pipe()
@@ -405,7 +391,8 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("open stderr log: %w", err)
 	}
 
-	// Get or create sandbox handle for the session.
+	// Get or create sandbox handle for the session. Must happen before building
+	// bridge.Config so we can select the correct socket path (Unix vs TCP).
 	sess, err := d.store.GetSession(req.SessionID)
 	if err != nil {
 		stdinR.Close()
@@ -422,6 +409,40 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		stderrLog.Close()
 		return nil, fmt.Errorf("ensure sandbox handle: %w", err)
 	}
+
+	socketPath := bridgeSocketPath(ss.mode, d.config.SocketPath, d.config.DockerHostGateway, d.tcpPort, d.config.WorkspaceSockPath)
+	log.Printf("spawn %s: mode=%q socketPath=%q tcpPort=%d gateway=%q", req.Name, ss.mode, socketPath, d.tcpPort, d.config.DockerHostGateway)
+	cfg := bridge.Config{
+		SessionID:       req.SessionID,
+		AgentID:         req.Name,
+		Role:            req.Role,
+		Profile:         req.Profile,
+		Model:           agentModel,
+		APIKey:          d.config.BridgeAPIKey,
+		BaseURL:         d.config.BridgeBaseURL,
+		Provider:        d.config.BridgeProvider,
+		Message:         req.Message,
+		SystemPrompt:    systemPrompt,
+		HermesSessionID: req.HermesSessionID,
+		Ephemeral:       ephemeral,
+		Workdir:         workdir,
+		SocketPath:      socketPath,
+		RunDir:          runDir,
+		BelayerRoot:     d.config.BelayerRoot,
+		BelayerTools:    belayerTools,
+	}
+	// In clamshell mode the bridge runs inside the Docker container where the
+	// host hermes venv path doesn't exist; use the container's system python3.
+	// Also inject proxy vars so LLM API calls route through the egress broker.
+	if ss.mode == "clamshell" {
+		cfg.Cmd = []string{"python3", "-m", "hermes_bridge"}
+		cfg.HTTPProxy = "http://proxy.internal:3128"
+	}
+	_ = worktreePath // stored in DB; cleanup handled separately
+
+	// Build command and environment using bridge pure functions.
+	argv := bridge.BuildCmd(cfg)
+	env := bridge.BuildEnv(cfg)
 
 	osProc, err := ss.driver.Exec(d.startCtx, ss.handle, argv, sandbox.ExecOpts{
 		Env:    env,
@@ -722,6 +743,31 @@ func agentIdentityPaths(workdir, belayerRoot, identity, file string) []string {
 		addPath(filepath.Join(belayerRoot, "agents", identity, file))
 	}
 	return paths
+}
+
+// bridgeSocketPath returns the socket path/URL to use as BELAYER_SOCKET for a
+// bridge subprocess. For clamshell sandboxes the bridge runs inside a Docker
+// container and accesses the daemon via a Unix socket in the bind-mounted
+// workspace directory (/workspace/.belayer/daemon.sock). Falls back to the
+// TCP gateway URL if the workspace socket path was not configured.
+//
+// The container-side /workspace path is a clamshell convention enforced by the
+// sandbox driver (see sandbox/clamshell.go:sandboxWorkspace). If that constant
+// ever changes, this function must be updated in lockstep.
+func bridgeSocketPath(mode, unixPath, dockerGateway string, tcpPort int, workspaceSockPath string) string {
+	if mode != "clamshell" {
+		return unixPath
+	}
+	// Prefer workspace Unix socket: the workspace is bind-mounted into the
+	// container at /workspace, so the container-side path is always this.
+	if workspaceSockPath != "" {
+		return "/workspace/.belayer/daemon.sock"
+	}
+	// Fallback: TCP listener via Docker host gateway.
+	if tcpPort > 0 {
+		return fmt.Sprintf("http://%s:%d", dockerGateway, tcpPort)
+	}
+	return unixPath
 }
 
 func splitLines(s string) []string {

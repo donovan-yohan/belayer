@@ -29,7 +29,7 @@ func newRunStartCmd() *cobra.Command {
 				return fmt.Errorf("--task is required")
 			}
 			if strings.TrimSpace(supervisorProfile) == "" {
-				return fmt.Errorf("--supervisor-profile is required")
+				supervisorProfile = "default"
 			}
 
 			// Parse repos.
@@ -57,8 +57,9 @@ func newRunStartCmd() *cobra.Command {
 				return fmt.Errorf("auto-init .belayer/: %w", err)
 			}
 
-			// Create session — we need its ID first to provision the workspace.
-			sess, err := c.CreateSession(sessionName, "nightshift", repos, "")
+			// Create session with baseDir as workspace so the daemon can resolve
+			// sandbox settings (.belayer/config.yaml) even when no repos are given.
+			sess, err := c.CreateSession(sessionName, "nightshift", repos, baseDir)
 			if err != nil {
 				return fmt.Errorf("create session: %w", err)
 			}
@@ -112,7 +113,7 @@ func newRunStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	cmd.Flags().StringVar(&name, "name", "", "Run/session name")
 	cmd.Flags().StringVar(&task, "task", "", "Initial task text for the supervisor")
-	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", "", "Hermes profile for the supervisor")
+	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", "default", "Hermes profile for the supervisor")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
 	return cmd

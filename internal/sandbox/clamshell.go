@@ -147,10 +147,18 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: connect: %w (stderr: %s)", err, stderr))
 	}
 	var connect struct {
-		Container string `json:"container"`
+		Container string   `json:"container"`
+		Argv      []string `json:"argv"`
 	}
 	if err := json.Unmarshal(connectOut, &connect); err != nil {
 		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: parse connect output: %w (stdout: %s)", err, connectOut))
+	}
+	// Newer clamshell versions may return argv=[docker exec -it <container> /bin/bash]
+	// instead of a direct container field. Scan for the first non-flag positional
+	// after the `exec` token so future reorderings (extra flags, podman, split
+	// -i/-t) don't silently pick up a flag string as the container name.
+	if connect.Container == "" {
+		connect.Container = extractContainerFromArgv(connect.Argv)
 	}
 	if connect.Container == "" {
 		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: connect output missing container field: %s", connectOut))
@@ -162,6 +170,9 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 			"container":     connect.Container,
 			"policyFile":    policyPath,
 			"hostWorkspace": cfg.Workspace,
+			// clamshell always mounts the sandbox home at {runtime_dir}/home.
+			// runtime_dir defaults to /run/agent per clamshell policy convention.
+			"containerHome": "/run/agent/home",
 		},
 	}, nil
 }
@@ -212,8 +223,26 @@ func (c *Clamshell) Exec(ctx context.Context, h Handle, cmd []string, opts ExecO
 
 	args := []string{"exec", "-u", "sandbox", "-i"}
 	envFile := ""
-	if len(opts.Env) > 0 {
-		path, err := writeEnvFile(opts.Env)
+	// Copy opts.Env before mutating: callers may reuse the same opts across
+	// parallel execs and the HOME override below writes through the slice.
+	env := append([]string(nil), opts.Env...)
+	// Override HOME with the container home dir so the bridge doesn't try to
+	// write to the host user's home path (which is read-only inside the container).
+	if containerHome := h.Meta["containerHome"]; containerHome != "" {
+		replaced := false
+		for i, e := range env {
+			if strings.HasPrefix(e, "HOME=") {
+				env[i] = "HOME=" + containerHome
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			env = append(env, "HOME="+containerHome)
+		}
+	}
+	if len(env) > 0 {
+		path, err := writeEnvFile(env)
 		if err != nil {
 			return nil, err
 		}
@@ -250,6 +279,10 @@ func (c *Clamshell) Exec(ctx context.Context, h Handle, cmd []string, opts ExecO
 // writeEnvFile materializes env ("KEY=VALUE" entries) into a 0600 tempfile
 // suitable for `docker exec --env-file`. Callers must remove the returned
 // path once the referring process has exited.
+//
+// Docker's --env-file does not support multiline values. Any newlines in a
+// value are encoded as the two-character sequence \n so the file stays valid.
+// Readers (e.g. hermes_bridge) must decode \n back to real newlines.
 func writeEnvFile(env []string) (string, error) {
 	tmp, err := os.CreateTemp("", "belayer-env-*.env")
 	if err != nil {
@@ -262,8 +295,19 @@ func writeEnvFile(env []string) (string, error) {
 		os.Remove(tmp.Name())
 		return "", fmt.Errorf("sandbox/clamshell: chmod env: %w", err)
 	}
-	body := strings.Join(env, "\n")
-	if len(env) > 0 {
+	var lines []string
+	for _, entry := range env {
+		idx := strings.IndexByte(entry, '=')
+		if idx < 0 {
+			lines = append(lines, entry)
+			continue
+		}
+		key := entry[:idx]
+		val := strings.ReplaceAll(entry[idx+1:], "\n", `\n`)
+		lines = append(lines, key+"="+val)
+	}
+	body := strings.Join(lines, "\n")
+	if len(lines) > 0 {
 		body += "\n"
 	}
 	if _, err := tmp.WriteString(body); err != nil {
@@ -372,6 +416,38 @@ func (c *Clamshell) preparePolicy(basePath string, endpoints []TCPEndpoint) (str
 		return "", fmt.Errorf("sandbox/clamshell: close temp policy: %w", err)
 	}
 	return tmp.Name(), nil
+}
+
+// extractContainerFromArgv parses a `docker exec ...` (or `podman exec ...`)
+// argv and returns the first positional argument after the `exec` verb, which
+// is the container name. Returns "" if the shape doesn't match.
+func extractContainerFromArgv(argv []string) string {
+	if len(argv) < 2 {
+		return ""
+	}
+	binBase := filepath.Base(argv[0])
+	if binBase != "docker" && binBase != "podman" {
+		return ""
+	}
+	// Find the `exec` token, then the first non-flag positional after it.
+	execIdx := -1
+	for i, tok := range argv {
+		if tok == "exec" {
+			execIdx = i
+			break
+		}
+	}
+	if execIdx < 0 {
+		return ""
+	}
+	for i := execIdx + 1; i < len(argv); i++ {
+		tok := argv[i]
+		if tok == "" || strings.HasPrefix(tok, "-") {
+			continue
+		}
+		return tok
+	}
+	return ""
 }
 
 // shellJoin renders argv as a single sh-safe string. We single-quote every
