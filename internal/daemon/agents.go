@@ -362,28 +362,6 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		break
 	}
 
-	cfg := bridge.Config{
-		SessionID:       req.SessionID,
-		AgentID:         req.Name,
-		Role:            req.Role,
-		Profile:         req.Profile,
-		Model:           req.Model,
-		Message:         req.Message,
-		SystemPrompt:    systemPrompt,
-		HermesSessionID: req.HermesSessionID,
-		Ephemeral:       ephemeral,
-		Workdir:         workdir,
-		SocketPath:      d.config.SocketPath,
-		RunDir:          runDir,
-		BelayerRoot:     d.config.BelayerRoot,
-		BelayerTools:    belayerTools,
-	}
-	_ = worktreePath // stored in DB; cleanup handled separately
-
-	// Build command and environment using bridge pure functions.
-	argv := bridge.BuildCmd(cfg)
-	env := bridge.BuildEnv(cfg)
-
 	// Set up stdin pipe for daemon→agent communication.
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
@@ -405,7 +383,8 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("open stderr log: %w", err)
 	}
 
-	// Get or create sandbox handle for the session.
+	// Get or create sandbox handle for the session. Must happen before building
+	// bridge.Config so we can select the correct socket path (Unix vs TCP).
 	sess, err := d.store.GetSession(req.SessionID)
 	if err != nil {
 		stdinR.Close()
@@ -422,6 +401,28 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		stderrLog.Close()
 		return nil, fmt.Errorf("ensure sandbox handle: %w", err)
 	}
+
+	cfg := bridge.Config{
+		SessionID:       req.SessionID,
+		AgentID:         req.Name,
+		Role:            req.Role,
+		Profile:         req.Profile,
+		Model:           req.Model,
+		Message:         req.Message,
+		SystemPrompt:    systemPrompt,
+		HermesSessionID: req.HermesSessionID,
+		Ephemeral:       ephemeral,
+		Workdir:         workdir,
+		SocketPath:      bridgeSocketPath(ss.mode, d.config.SocketPath, d.config.DockerHostGateway, d.tcpPort),
+		RunDir:          runDir,
+		BelayerRoot:     d.config.BelayerRoot,
+		BelayerTools:    belayerTools,
+	}
+	_ = worktreePath // stored in DB; cleanup handled separately
+
+	// Build command and environment using bridge pure functions.
+	argv := bridge.BuildCmd(cfg)
+	env := bridge.BuildEnv(cfg)
 
 	osProc, err := ss.driver.Exec(d.startCtx, ss.handle, argv, sandbox.ExecOpts{
 		Env:    env,
@@ -722,6 +723,17 @@ func agentIdentityPaths(workdir, belayerRoot, identity, file string) []string {
 		addPath(filepath.Join(belayerRoot, "agents", identity, file))
 	}
 	return paths
+}
+
+// bridgeSocketPath returns the socket path/URL to use as BELAYER_SOCKET for a
+// bridge subprocess. For clamshell sandboxes the bridge runs inside a Docker
+// container and must reach the daemon via the Docker host gateway over TCP.
+// For all other drivers the Unix socket path is returned unchanged.
+func bridgeSocketPath(mode, unixPath, dockerGateway string, tcpPort int) string {
+	if mode == "clamshell" && tcpPort > 0 {
+		return fmt.Sprintf("http://%s:%d", dockerGateway, tcpPort)
+	}
+	return unixPath
 }
 
 func splitLines(s string) []string {

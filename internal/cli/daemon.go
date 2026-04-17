@@ -14,7 +14,7 @@ import (
 )
 
 func newDaemonCmd() *cobra.Command {
-	var socketPath, dbPath, belayerRoot, workdir string
+	var socketPath, dbPath, belayerRoot, workdir, tcpAddr, dockerGateway string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -30,6 +30,12 @@ func newDaemonCmd() *cobra.Command {
 			}
 			if belayerRoot != "" {
 				cfg.BelayerRoot = belayerRoot
+			}
+			if tcpAddr != "" {
+				cfg.TCPAddr = tcpAddr
+			}
+			if dockerGateway != "" {
+				cfg.DockerHostGateway = dockerGateway
 			}
 
 			wd := workdir
@@ -71,5 +77,7 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite database path (default ~/.belayer/belayer.db)")
 	cmd.Flags().StringVar(&belayerRoot, "belayer-root", "", "Path to belayer repo root (for hermes_bridge PYTHONPATH)")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Workspace directory (for .belayer/config.yaml lookup; default cwd)")
+	cmd.Flags().StringVar(&tcpAddr, "tcp-addr", "", "Also bind a TCP listener (e.g. 0.0.0.0:7523) for clamshell container access")
+	cmd.Flags().StringVar(&dockerGateway, "docker-gateway", "", "Docker host gateway IP for clamshell bridge access (default 172.17.0.1)")
 	return cmd
 }
