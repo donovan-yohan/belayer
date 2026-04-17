@@ -434,9 +434,13 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// In clamshell mode the bridge runs inside the Docker container where the
 	// host hermes venv path doesn't exist; use the container's system python3.
 	// Also inject proxy vars so LLM API calls route through the egress broker.
+	// BelayerRoot is overridden to the container's view of the extracted
+	// hermes_bridge parent (/workspace/.belayer) so `python3 -m hermes_bridge`
+	// imports the copy placed there by `belayer init`, not the host path.
 	if ss.mode == "clamshell" {
 		cfg.Cmd = []string{"python3", "-m", "hermes_bridge"}
 		cfg.HTTPProxy = "http://proxy.internal:3128"
+		cfg.BelayerRoot = "/workspace/.belayer"
 	}
 	_ = worktreePath // stored in DB; cleanup handled separately
 

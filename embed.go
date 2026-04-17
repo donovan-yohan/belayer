@@ -11,3 +11,13 @@ import "embed"
 //
 //go:embed all:agents
 var DefaultAgents embed.FS
+
+// DefaultBridge is the hermes_bridge Python package copied into a project's
+// .belayer/hermes_bridge/ directory by `belayer init`. Unlike DefaultAgents,
+// this copy is machine-generated and gitignored — it is always overwritten
+// on init so the extracted bridge matches the binary version. The extractor
+// filters __pycache__/ and *.pyc entries at walk time to avoid leaking host
+// bytecode into projects.
+//
+//go:embed all:hermes_bridge
+var DefaultBridge embed.FS

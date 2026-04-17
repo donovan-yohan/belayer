@@ -154,7 +154,7 @@ func TestInitCreatesGitignoreWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
 	}
-	for _, want := range []string{"/.belayer/runs/", "/.belayer/worktrees/"} {
+	for _, want := range []string{"/.belayer/runs/", "/.belayer/worktrees/", "/.belayer/hermes_bridge/"} {
 		if !strings.Contains(string(got), want) {
 			t.Fatalf("expected %q in .gitignore, got: %s", want, string(got))
 		}
@@ -246,12 +246,135 @@ func TestAutoInitIfMissingScaffoldsAndAnnounces(t *testing.T) {
 		t.Fatalf("expected scaffolded supervisor prompt: %v", err)
 	}
 
-	// Second call must be silent.
+	// Second call must be silent — the bridge refresh is a hot-path no-op from
+	// the user's perspective (files may be rewritten byte-for-byte but the
+	// announce is suppressed).
 	out2 := &bytes.Buffer{}
 	if err := autoInitIfMissing(dir, out2); err != nil {
 		t.Fatalf("autoInit second call: %v", err)
 	}
 	if out2.Len() != 0 {
 		t.Fatalf("expected silent no-op, got: %s", out2.String())
+	}
+}
+
+func TestInitExtractsHermesBridge(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newInitCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--target", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	bridgeDir := filepath.Join(dir, ".belayer", "hermes_bridge")
+	// __main__.py is the package entry point; its absence is a hard failure.
+	if _, err := os.Stat(filepath.Join(bridgeDir, "__main__.py")); err != nil {
+		t.Fatalf("expected hermes_bridge/__main__.py to exist: %v", err)
+	}
+	// __init__.py makes it an importable package.
+	if _, err := os.Stat(filepath.Join(bridgeDir, "__init__.py")); err != nil {
+		t.Fatalf("expected hermes_bridge/__init__.py to exist: %v", err)
+	}
+
+	// __pycache__ from the host build must never leak into the extracted copy.
+	if _, err := os.Stat(filepath.Join(bridgeDir, "__pycache__")); err == nil {
+		t.Fatalf("__pycache__ was extracted; expected it to be filtered")
+	}
+
+	// No *.pyc files at any depth.
+	walkErr := filepath.Walk(bridgeDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".pyc") {
+			t.Errorf("unexpected .pyc file in extracted bridge: %s", path)
+		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("walk bridge dir: %v", walkErr)
+	}
+}
+
+func TestInitRefreshesBridgeOnReInit(t *testing.T) {
+	dir := t.TempDir()
+
+	first := newInitCmd()
+	first.SetOut(&bytes.Buffer{})
+	first.SetErr(&bytes.Buffer{})
+	first.SetArgs([]string{"--target", dir})
+	if err := first.Execute(); err != nil {
+		t.Fatalf("first init: %v", err)
+	}
+
+	mainPath := filepath.Join(dir, ".belayer", "hermes_bridge", "__main__.py")
+	originalBytes, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read extracted __main__.py: %v", err)
+	}
+
+	// Simulate drift: replace the extracted bridge file with garbage.
+	if err := os.WriteFile(mainPath, []byte("# drifted\n"), 0o644); err != nil {
+		t.Fatalf("seed drift: %v", err)
+	}
+
+	second := newInitCmd()
+	out := &bytes.Buffer{}
+	second.SetOut(out)
+	second.SetErr(out)
+	second.SetArgs([]string{"--target", dir})
+	if err := second.Execute(); err != nil {
+		t.Fatalf("second init: %v", err)
+	}
+
+	// Output must announce the bridge refresh.
+	if !strings.Contains(out.String(), "refreshed") {
+		t.Fatalf("expected re-init output to mention refreshed bridge files, got: %s", out.String())
+	}
+
+	got, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read bridge after re-init: %v", err)
+	}
+	if !bytes.Equal(got, originalBytes) {
+		t.Fatalf("re-init did not restore bridge __main__.py; drift persisted")
+	}
+}
+
+func TestAutoInitRefreshesBridgeOnExistingProject(t *testing.T) {
+	dir := t.TempDir()
+
+	// First auto-init creates everything.
+	if err := autoInitIfMissing(dir, &bytes.Buffer{}); err != nil {
+		t.Fatalf("first autoInit: %v", err)
+	}
+
+	mainPath := filepath.Join(dir, ".belayer", "hermes_bridge", "__main__.py")
+	originalBytes, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read bridge: %v", err)
+	}
+	if err := os.WriteFile(mainPath, []byte("# drifted\n"), 0o644); err != nil {
+		t.Fatalf("seed drift: %v", err)
+	}
+
+	// Second auto-init (simulating another `belayer run`) must refresh bridge
+	// silently — the announce is suppressed on already-initialized projects.
+	out := &bytes.Buffer{}
+	if err := autoInitIfMissing(dir, out); err != nil {
+		t.Fatalf("second autoInit: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("expected silent refresh on existing project, got: %s", out.String())
+	}
+
+	got, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("read bridge after auto re-init: %v", err)
+	}
+	if !bytes.Equal(got, originalBytes) {
+		t.Fatalf("auto-init did not refresh drifted bridge file")
 	}
 }
