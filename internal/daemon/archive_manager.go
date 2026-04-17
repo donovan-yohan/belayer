@@ -25,8 +25,9 @@ import (
 //     partial=true, then waits for in-flight terminal archives to finish
 //     up to the supplied context's deadline.
 type archiveManager struct {
-	store    *store.Store
-	inflight sync.WaitGroup
+	store            *store.Store
+	daemonInstanceID string
+	inflight         sync.WaitGroup
 
 	// stopping is set at the start of DrainAll. Terminal archives that arrive
 	// after stopping is true are dropped (drain has already started; we can't
@@ -39,10 +40,11 @@ type archiveManager struct {
 	seen   map[string]bool
 }
 
-func newArchiveManager(st *store.Store) *archiveManager {
+func newArchiveManager(st *store.Store, daemonInstanceID string) *archiveManager {
 	return &archiveManager{
-		store: st,
-		seen:  make(map[string]bool),
+		store:            st,
+		daemonInstanceID: daemonInstanceID,
+		seen:             make(map[string]bool),
 	}
 }
 
@@ -172,9 +174,8 @@ func (m *archiveManager) doArchive(sessionID string, partial bool) error {
 
 	destDir := filepath.Join(sess.WorkspaceDir, ".belayer", "archive", sessionID)
 	meta := archive.Meta{
-		SchemaVersion: "belayer-log/v1",
-		// TODO(phase-5): populate DaemonInstanceID from GET /health capabilities.
-		DaemonInstanceID: "",
+		SchemaVersion:    "belayer-log/v1",
+		DaemonInstanceID: m.daemonInstanceID,
 		Session: archive.SessionMeta{
 			ID:        sess.ID,
 			Name:      sess.Name,

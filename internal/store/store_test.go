@@ -529,6 +529,47 @@ func TestSearchEventsV1_ContextCancelled(t *testing.T) {
 	}
 }
 
+// TestMaxEventID_EmptyAndNonEmpty verifies that MaxEventID returns 0 for an
+// empty store and the correct max ID after events are written.
+func TestMaxEventID_EmptyAndNonEmpty(t *testing.T) {
+	s := openMemory(t)
+
+	// Empty store should return 0.
+	id, err := s.MaxEventID()
+	if err != nil {
+		t.Fatalf("MaxEventID on empty store: %v", err)
+	}
+	if id != 0 {
+		t.Errorf("empty store: expected 0, got %d", id)
+	}
+
+	// Create a session and write some events.
+	sessID, _ := s.CreateSession(Session{Name: "max-id-test"})
+	for _, typ := range []string{"a", "b", "c"} {
+		if err := s.LogEvent(SessionEvent{SessionID: sessID, Type: typ, Data: "{}"}); err != nil {
+			t.Fatalf("LogEvent(%s): %v", typ, err)
+		}
+	}
+
+	maxID, err := s.MaxEventID()
+	if err != nil {
+		t.Fatalf("MaxEventID after writes: %v", err)
+	}
+	if maxID <= 0 {
+		t.Fatalf("expected positive max ID, got %d", maxID)
+	}
+
+	// Verify it matches the last event.
+	events, err := s.QueryEvents(sessID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	lastEventID := events[len(events)-1].ID
+	if maxID != lastEventID {
+		t.Errorf("MaxEventID=%d != last event ID=%d", maxID, lastEventID)
+	}
+}
+
 // TestCreateSession_Template verifies that template is persisted and retrieved.
 func TestCreateSession_Template(t *testing.T) {
 	s := openMemory(t)

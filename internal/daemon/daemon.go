@@ -23,6 +23,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/runtime"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
+	"github.com/google/uuid"
 )
 
 // Config holds daemon startup configuration.
@@ -75,6 +76,12 @@ func DefaultConfig() Config {
 	}
 }
 
+// sseSubscriber represents a live SSE connection that should receive
+// daemon_draining when Shutdown begins.
+type sseSubscriber struct {
+	drain chan struct{} // closed once by announceDraining; handler returns on receive
+}
+
 // Daemon is the long-running belayer supervisor process.
 type Daemon struct {
 	store    *store.Store
@@ -82,6 +89,11 @@ type Daemon struct {
 	server   *http.Server
 	config   Config
 	broker   broker.Broker
+
+	// DaemonInstanceID is a UUID assigned at daemon startup that is stable for
+	// the process lifetime. It is included in /health, SSE daemon_hello frames,
+	// and archive manifests so consumers can correlate streams with archives.
+	DaemonInstanceID string
 
 	sandboxDrivers *sandbox.Registry
 	runtime        runtime.Provider
@@ -125,10 +137,15 @@ type Daemon struct {
 	tools   map[string][]agent.ToolSpec
 
 	// Lifecycle / shutdown fields.
-	draining             atomic.Bool   // set at start of Shutdown; readable by future /health and SSE handlers
-	archiver             *archiveManager
-	archiveDrainTimeout  time.Duration // max time Phase 3 archive drain may run
-	shutdownHTTPTimeout  time.Duration // max time HTTP servers get to drain in-flight requests
+	draining            atomic.Bool   // set at start of Shutdown; readable by /health and SSE handlers
+	archiver            *archiveManager
+	archiveDrainTimeout time.Duration // max time Phase 3 archive drain may run
+	shutdownHTTPTimeout time.Duration // max time HTTP servers get to drain in-flight requests
+
+	// SSE subscriber registry. Populated by handleStreamEvents; drained by
+	// announceDraining on Shutdown. Protected by sseMu.
+	sseMu          sync.Mutex
+	sseSubscribers map[*sseSubscriber]struct{}
 }
 
 // New creates a Daemon with the given config. Call Start to begin serving.
@@ -145,14 +162,16 @@ func New(cfg Config) (*Daemon, error) {
 	d := &Daemon{
 		store:               st,
 		config:              cfg,
+		DaemonInstanceID:    uuid.NewString(),
 		tools:               make(map[string][]agent.ToolSpec),
 		bridgeProcs:         make(map[string]*bridge.Process),
 		sessionSandboxes:    make(map[string]sessionSandbox),
+		sseSubscribers:      make(map[*sseSubscriber]struct{}),
 		startCtx:            context.Background(),
 		archiveDrainTimeout: 30 * time.Second,
 		shutdownHTTPTimeout: 5 * time.Second,
 	}
-	d.archiver = newArchiveManager(st)
+	d.archiver = newArchiveManager(st, d.DaemonInstanceID)
 	if cfg.SandboxDrivers != nil {
 		d.sandboxDrivers = cfg.SandboxDrivers
 	} else {
@@ -336,12 +355,35 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// announceDraining is the Phase (b) seat for Phase 5's SSE daemon_draining
-// control frame emission. No-op until Phase 5 lands.
+// announceDraining is Phase (b) of Shutdown. It closes every live SSE
+// subscriber's drain channel, giving them time to write+flush the
+// daemon_draining frame before HTTP shutdown closes the connections.
 func (d *Daemon) announceDraining(ctx context.Context) {
-	// Phase 5: emit `event: daemon_draining\ndata: {...}\n\n` to live SSE
-	// consumers here. Use its own context; do NOT share shutCtx below.
-	_ = ctx
+	d.sseMu.Lock()
+	subs := make([]*sseSubscriber, 0, len(d.sseSubscribers))
+	for sub := range d.sseSubscribers {
+		subs = append(subs, sub)
+	}
+	d.sseMu.Unlock()
+
+	for _, sub := range subs {
+		close(sub.drain)
+	}
+
+	n := len(subs)
+	log.Printf("daemon: announced draining to %d SSE subscriber(s)", n)
+
+	if n == 0 {
+		return
+	}
+
+	// Give subscribers time to write + flush the daemon_draining frame before
+	// HTTP shutdown closes connections. Cap at 200ms or the context deadline.
+	grace := 200 * time.Millisecond
+	select {
+	case <-time.After(grace):
+	case <-ctx.Done():
+	}
 }
 
 // drainArchive runs the Phase (c) archive drain. It uses its own
@@ -487,8 +529,41 @@ func isTerminalSessionStatus(status string) bool {
 
 // --- HTTP handlers ---
 
+// healthCapabilities is the static capabilities block returned by GET /health.
+// Extracted as a package-level var so tests can read it without parsing JSON.
+var healthCapabilities = struct {
+	SearchPredicates []string `json:"search_predicates"`
+	ArchiveHTTP      bool     `json:"archive_http"`
+	SSEControlFrames []string `json:"sse_control_frames"`
+}{
+	SearchPredicates: []string{"q", "session", "type_prefix", "agent", "after", "before"},
+	ArchiveHTTP:      true,
+	SSEControlFrames: []string{"daemon_hello", "daemon_draining"},
+}
+
+type healthResponse struct {
+	Status           string `json:"status"`
+	SchemaVersion    string `json:"schema_version"`
+	DaemonInstanceID string `json:"daemon_instance_id"`
+	Draining         bool   `json:"draining"`
+	Capabilities     any    `json:"capabilities"`
+}
+
 func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	draining := d.draining.Load()
+	status := "ok"
+	code := http.StatusOK
+	if draining {
+		status = "draining"
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, healthResponse{
+		Status:           status,
+		SchemaVersion:    "belayer-log/v1",
+		DaemonInstanceID: d.DaemonInstanceID,
+		Draining:         draining,
+		Capabilities:     healthCapabilities,
+	})
 }
 
 // sessionAPIResponse is the JSON-serializable session type returned by the API.
@@ -732,20 +807,49 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	afterID, waitFor, err := parseEventCursor(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if strings.TrimSpace(r.URL.Query().Get("after")) == "" {
-		existing, err := d.store.QueryEventsForSessionsAfter(filtered, 0)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	// Determine afterID. Precedence: Last-Event-ID header > ?after= param > default.
+	var afterID int64
+	lastEventIDHeader := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	afterParam := strings.TrimSpace(r.URL.Query().Get("after"))
+
+	if lastEventIDHeader != "" {
+		parsed, err := strconv.ParseInt(lastEventIDHeader, 10, 64)
+		if err != nil || parsed < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Last-Event-ID must be a non-negative integer"})
 			return
 		}
-		if len(existing) > 0 {
-			afterID = existing[len(existing)-1].ID
+		afterID = parsed
+	} else if afterParam != "" {
+		parsed, err := strconv.ParseInt(afterParam, 10, 64)
+		if err != nil || parsed < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "after must be a non-negative integer"})
+			return
 		}
+		afterID = parsed
+	}
+
+	// Parse the optional wait parameter.
+	var waitFor time.Duration
+	if waitRaw := strings.TrimSpace(r.URL.Query().Get("wait")); waitRaw != "" {
+		parsed, err := time.ParseDuration(waitRaw)
+		if err != nil || parsed < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "wait must be a valid non-negative duration"})
+			return
+		}
+		waitFor = parsed
+	}
+
+	// Compute helloLastID after afterID is resolved. This snapshot is what
+	// daemon_hello advertises as the high-water mark at connection time.
+	helloLastID, err := d.store.MaxEventID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Default: stream-from-now — consumer will only see new events.
+	if lastEventIDHeader == "" && afterParam == "" {
+		afterID = helloLastID
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -754,9 +858,30 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Register subscriber BEFORE writing headers so announceDraining cannot
+	// race past registration.
+	sub := &sseSubscriber{drain: make(chan struct{})}
+	d.sseMu.Lock()
+	d.sseSubscribers[sub] = struct{}{}
+	d.sseMu.Unlock()
+	defer func() {
+		d.sseMu.Lock()
+		delete(d.sseSubscribers, sub)
+		d.sseMu.Unlock()
+	}()
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
+	// Emit daemon_hello as the FIRST frame. No id: line (control frame invariant).
+	helloData, _ := json.Marshal(map[string]any{
+		"daemon_instance_id": d.DaemonInstanceID,
+		"schema_version":     "belayer-log/v1",
+		"last_id":            helloLastID,
+	})
+	fmt.Fprintf(w, "event: daemon_hello\ndata: %s\n\n", helloData)
+	flusher.Flush()
 
 	enc := json.NewEncoder(w)
 	lastID := afterID
@@ -780,7 +905,8 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(events) > 0 {
 			for _, evt := range events {
-				fmt.Fprint(w, "event: session_event\ndata: ")
+				// Domain frames carry id: lines (spec §4 A8).
+				fmt.Fprintf(w, "id: %d\nevent: session_event\ndata: ", evt.ID)
 				if err := enc.Encode(evt); err != nil {
 					return
 				}
@@ -798,6 +924,16 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 
 		select {
 		case <-r.Context().Done():
+			return
+		case <-sub.drain:
+			// Shutdown has begun. Emit daemon_draining (no id: line) and exit.
+			totalGraceMS := int64((d.shutdownHTTPTimeout + d.archiveDrainTimeout) / time.Millisecond)
+			drainingData, _ := json.Marshal(map[string]any{
+				"reason":     "shutdown",
+				"timeout_ms": totalGraceMS,
+			})
+			fmt.Fprintf(w, "event: daemon_draining\ndata: %s\n\n", drainingData)
+			flusher.Flush()
 			return
 		case <-ticker.C:
 		case <-keepalive.C:

@@ -607,6 +607,17 @@ func (s *Store) SearchEvents(query string) ([]SessionEvent, error) {
 	return scanEvents(rows)
 }
 
+// MaxEventID returns the maximum event ID in the store, or 0 if the table is
+// empty. Used by the SSE handler to populate daemon_hello.last_id.
+func (s *Store) MaxEventID() (int64, error) {
+	var maxID int64
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM events`).Scan(&maxID)
+	if err != nil {
+		return 0, fmt.Errorf("store: max event id: %w", err)
+	}
+	return maxID, nil
+}
+
 // SearchPredicates is the query shape for SearchEventsV1.
 // Zero-valued predicates are treated as "no filter".
 type SearchPredicates struct {

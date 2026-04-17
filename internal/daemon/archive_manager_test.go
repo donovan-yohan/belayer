@@ -100,7 +100,7 @@ func TestArchiveManager_TerminalTransitionWritesArchive(t *testing.T) {
 		t.Fatalf("UpdateSessionStatus: %v", err)
 	}
 
-	m := newArchiveManager(st)
+	m := newArchiveManager(st, "test-instance")
 	m.ArchiveTerminal(id)
 
 	manifest := waitForManifest(t, ws, id, 2*time.Second)
@@ -121,7 +121,7 @@ func TestArchiveManager_DedupesConcurrentCalls(t *testing.T) {
 	id := createStoreSession(t, st, "dedupe-test", "complete", ws)
 	logTestEvent(t, st, id, "session_created")
 
-	m := newArchiveManager(st)
+	m := newArchiveManager(st, "test-instance")
 
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
@@ -164,7 +164,7 @@ func TestArchiveManager_DrainAllPartialForNonTerminal(t *testing.T) {
 	completeID := createStoreSession(t, st, "complete-sess", "complete", wsComplete)
 	logTestEvent(t, st, runningID, "session_created")
 
-	m := newArchiveManager(st)
+	m := newArchiveManager(st, "test-instance")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -191,7 +191,7 @@ func TestArchiveManager_DrainAllStopsAcceptingNew(t *testing.T) {
 	ws := t.TempDir()
 	newID := createStoreSession(t, st, "late-sess", "complete", ws)
 
-	m := newArchiveManager(st)
+	m := newArchiveManager(st, "test-instance")
 
 	// Start DrainAll with a short timeout — it will set stopping=true immediately.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -225,7 +225,7 @@ func TestArchiveManager_NoWorkspaceSkipped(t *testing.T) {
 	// Session without a workspace dir.
 	id := createStoreSession(t, st, "no-ws", "complete", "")
 
-	m := newArchiveManager(st)
+	m := newArchiveManager(st, "test-instance")
 	m.ArchiveTerminal(id)
 
 	// Wait for the inflight goroutine to finish — it must not panic.
@@ -235,7 +235,7 @@ func TestArchiveManager_NoWorkspaceSkipped(t *testing.T) {
 
 func TestArchiveManager_DrainAllReturnsFalseOnTimeout(t *testing.T) {
 	st := openTestStore(t)
-	m := newArchiveManager(st)
+	m := newArchiveManager(st, "test-instance")
 
 	// Inject a goroutine that blocks indefinitely via the test hook.
 	release := m.addForTest()
@@ -259,7 +259,7 @@ func TestArchiveManager_ConcurrentAddVsDrain(t *testing.T) {
 	for iter := 0; iter < 20; iter++ {
 		ws := t.TempDir()
 		st := openTestStore(t)
-		m := newArchiveManager(st)
+		m := newArchiveManager(st, "test-instance")
 
 		ids := make([]string, 30)
 		for i := range ids {
@@ -296,7 +296,7 @@ func TestArchiveManager_ConcurrentAddVsDrain(t *testing.T) {
 func TestArchiveTerminal_WorksAfterDedupeEviction(t *testing.T) {
 	ws := t.TempDir()
 	st := openTestStore(t)
-	m := newArchiveManager(st)
+	m := newArchiveManager(st, "test-instance")
 
 	id := createStoreSession(t, st, "dedupe-evict", "complete", ws)
 	logTestEvent(t, st, id, "session_created")
