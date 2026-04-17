@@ -51,7 +51,7 @@ Parallel to the existing `DefaultAgents` pattern in `embed.go`:
 var DefaultBridge embed.FS
 ```
 
-`internal/cli/init.go` grows a `copyDefaultBridge(dst string) ([]string, error)` function that walks the embedded tree and writes files to `dst`, always overwriting (no `force` parameter). It skips `__pycache__/` directories and `*.pyc` files so stale bytecode from the host build never leaks into projects.
+`internal/cli/init.go` grows a `copyDefaultBridge(dst string) ([]string, error)` function that wipes `dst` and then walks the embedded tree, writing each file. The wipe is required because files renamed or deleted in later binary versions would otherwise linger on disk and get picked up by Python's import machinery; the tree is fully machine-owned and gitignored, so destroying it before re-extracting is safe. The walk skips `__pycache__/` directories and `*.pyc` files so stale bytecode from the host build never leaks into projects.
 
 `scaffold()` calls `copyDefaultBridge()` after `copyDefaultAgents()` and includes the written paths in the result summary. The `--force` flag's scope is unchanged — it only affects `copyDefaultAgents()`, since bridge extraction already overwrites unconditionally.
 
@@ -59,13 +59,13 @@ var DefaultBridge embed.FS
 
 ### Gitignore update
 
-The `gitignoreBlock` constant gets one new line:
+The gitignore list gets one new entry:
 
 ```
 /.belayer/hermes_bridge/
 ```
 
-Added alongside the existing `/.belayer/runs/` and `/.belayer/worktrees/` entries. The marker comment and append logic are unchanged — projects that have already been initialized will get the new entry appended on the next `belayer init` run (or can add it manually).
+Added alongside the existing `/.belayer/runs/` and `/.belayer/worktrees/` entries. `ensureGitignoreEntries()` is upgraded from a marker-gated "write block once" check to a per-entry check that diffs the expected entries against the file contents and appends any missing ones — so projects initialized under an older binary pick up new entries on the next `belayer init` or auto-init run. Fresh projects still get a single labelled block; upgrades get the missing entries appended under a compact `# belayer — added on upgrade` header so their provenance is visible.
 
 ### PYTHONPATH routing in clamshell mode
 

@@ -343,6 +343,114 @@ func TestInitRefreshesBridgeOnReInit(t *testing.T) {
 	}
 }
 
+func TestInitGitignoreUpgradeAppendsMissingEntry(t *testing.T) {
+	dir := t.TempDir()
+	// Seed a .gitignore that looks like a project initialized under an older
+	// belayer version: it has the marker and the two historical entries but
+	// not /.belayer/hermes_bridge/.
+	legacy := gitignoreHeader + "\n/.belayer/runs/\n/.belayer/worktrees/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(legacy), 0o644); err != nil {
+		t.Fatalf("seed legacy gitignore: %v", err)
+	}
+
+	cmd := newInitCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--target", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read gitignore: %v", err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "/.belayer/hermes_bridge/") {
+		t.Fatalf("expected missing entry to be appended, got:\n%s", gotStr)
+	}
+	// Must not duplicate entries the user already had.
+	if strings.Count(gotStr, "/.belayer/runs/") != 1 {
+		t.Fatalf("existing /.belayer/runs/ entry should not be duplicated:\n%s", gotStr)
+	}
+	// Original marker should still appear exactly once — upgrade uses a
+	// separate labelled block.
+	if strings.Count(gotStr, gitignoreMarker) != 1 {
+		t.Fatalf("marker should appear exactly once; got:\n%s", gotStr)
+	}
+	// Upgrade header visible so users see where the new entry came from.
+	if !strings.Contains(gotStr, gitignoreUpgradeHeader) {
+		t.Fatalf("expected upgrade header in gitignore, got:\n%s", gotStr)
+	}
+
+	// Re-running should be a no-op now — all entries are present.
+	second := newInitCmd()
+	second.SetOut(&bytes.Buffer{})
+	second.SetErr(&bytes.Buffer{})
+	second.SetArgs([]string{"--target", dir})
+	if err := second.Execute(); err != nil {
+		t.Fatalf("second init: %v", err)
+	}
+	got2, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read gitignore #2: %v", err)
+	}
+	if !bytes.Equal(got, got2) {
+		t.Fatalf("second init mutated gitignore; before=%q after=%q", got, got2)
+	}
+}
+
+func TestInitPrunesStaleBridgeFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	first := newInitCmd()
+	first.SetOut(&bytes.Buffer{})
+	first.SetErr(&bytes.Buffer{})
+	first.SetArgs([]string{"--target", dir})
+	if err := first.Execute(); err != nil {
+		t.Fatalf("first init: %v", err)
+	}
+
+	// Simulate an upstream rename/deletion by planting a stale file in the
+	// extracted tree that doesn't exist in the embedded bridge.
+	bridgeDir := filepath.Join(dir, ".belayer", "hermes_bridge")
+	stalePath := filepath.Join(bridgeDir, "stale_removed_module.py")
+	if err := os.WriteFile(stalePath, []byte("# stale\n"), 0o644); err != nil {
+		t.Fatalf("seed stale file: %v", err)
+	}
+	staleSubdir := filepath.Join(bridgeDir, "removed_subpackage")
+	if err := os.MkdirAll(staleSubdir, 0o755); err != nil {
+		t.Fatalf("seed stale subdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(staleSubdir, "__init__.py"), []byte(""), 0o644); err != nil {
+		t.Fatalf("seed stale subdir file: %v", err)
+	}
+
+	second := newInitCmd()
+	second.SetOut(&bytes.Buffer{})
+	second.SetErr(&bytes.Buffer{})
+	second.SetArgs([]string{"--target", dir})
+	if err := second.Execute(); err != nil {
+		t.Fatalf("second init: %v", err)
+	}
+
+	if _, err := os.Stat(stalePath); err == nil {
+		t.Fatalf("stale file survived re-init: %s", stalePath)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat stale file: %v", err)
+	}
+	if _, err := os.Stat(staleSubdir); err == nil {
+		t.Fatalf("stale subdir survived re-init: %s", staleSubdir)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat stale subdir: %v", err)
+	}
+
+	// The real bridge files must still be present.
+	if _, err := os.Stat(filepath.Join(bridgeDir, "__main__.py")); err != nil {
+		t.Fatalf("expected __main__.py after prune: %v", err)
+	}
+}
+
 func TestAutoInitRefreshesBridgeOnExistingProject(t *testing.T) {
 	dir := t.TempDir()
 

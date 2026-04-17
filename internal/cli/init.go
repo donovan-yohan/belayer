@@ -100,6 +100,12 @@ upgrading belayer); existing config.yaml and policies/ are never overwritten.`,
 			if result.alreadyInitialized && !force {
 				fmt.Fprintf(out, "belayer already initialized at %s (refreshed %d bridge file(s))\n",
 					belayerDir, result.bridgeRefreshed)
+				// Surface any upgrade changes (e.g. new .gitignore entries
+				// appended on a binary bump) so the user sees them even though
+				// the rest of the re-init path is silent.
+				for _, line := range result.created {
+					fmt.Fprintln(out, line)
+				}
 				return nil
 			}
 
@@ -174,6 +180,17 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 		}
 	}
 
+	// Gitignore maintenance runs before the re-init early return so that
+	// binary upgrades which add new entries (e.g. /.belayer/hermes_bridge/)
+	// land in already-initialized projects, not just fresh ones.
+	gitignoreNote, err := ensureGitignoreEntries(filepath.Dir(belayerDir))
+	if err != nil {
+		return result, err
+	}
+	if gitignoreNote != "" {
+		result.created = append(result.created, gitignoreNote)
+	}
+
 	// If already initialized and not --force, stop here — user-owned files
 	// (config.yaml, policies/, agents/) remain untouched.
 	if result.alreadyInitialized && !force {
@@ -206,72 +223,97 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 
 	sort.Strings(result.created)
 
-	// Update the project's .gitignore so per-run scratch directories under
-	// .belayer/ (runs/, worktrees/) don't get committed, while leaving the
-	// committed config (agents/, config.yaml, policies/) tracked.
-	gitignoreNote, err := ensureGitignoreEntries(filepath.Dir(belayerDir))
-	if err != nil {
-		return result, err
-	}
-	if gitignoreNote != "" {
-		result.created = append(result.created, gitignoreNote)
-	}
-
 	return result, nil
 }
 
-// gitignoreBlock is appended to the project .gitignore on first init. Entries
-// are anchored with a leading slash so they only match at the repo root —
-// nested .belayer/ inside subprojects (e.g. inside .belayer/worktrees/...)
-// are not affected by these rules. The leading newline is a separator from
-// preceding content; it is stripped when the file is created from scratch
-// so the file doesn't start with a blank line.
+// gitignoreHeader labels the belayer-managed block. Kept as a named constant
+// so the marker check below can match on it exactly, and so later versions can
+// append a second labelled block for entries added on upgrade.
+//
+// Entries in gitignoreEntries are anchored with a leading slash so they only
+// match at the repo root — nested .belayer/ inside subprojects (e.g. inside
+// .belayer/worktrees/...) are not affected by these rules.
 //
 // hermes_bridge/ is gitignored because the tree is extracted from the binary
 // on every `belayer init` and always overwrites — committing it would drift
 // against the binary version.
-const gitignoreBlock = `
-# belayer — per-run state (committed: agents/, config.yaml, policies/)
-/.belayer/runs/
-/.belayer/worktrees/
-/.belayer/hermes_bridge/
-`
+const (
+	gitignoreHeader        = "# belayer — per-run state (committed: agents/, config.yaml, policies/)"
+	gitignoreUpgradeHeader = "# belayer — added on upgrade"
+	gitignoreMarker        = "# belayer — per-run state"
+)
 
-const gitignoreMarker = "# belayer — per-run state"
+var gitignoreEntries = []string{
+	"/.belayer/runs/",
+	"/.belayer/worktrees/",
+	"/.belayer/hermes_bridge/",
+}
 
-// ensureGitignoreEntries appends gitignoreBlock to <project>/.gitignore when
-// the marker is absent. Returns a one-line summary describing what changed,
-// suitable for printing in the init summary; returns "" when no change was
-// needed. Never modifies an existing line — only appends.
+// ensureGitignoreEntries makes sure every entry in gitignoreEntries is present
+// in <project>/.gitignore. On a fresh file (or one without the belayer marker)
+// it writes the full labelled block. On upgrades — marker present but a newer
+// belayer release introduced an entry — it appends the missing entries under
+// an "added on upgrade" label so their provenance is visible. Returns a
+// one-line summary describing what changed, or "" when no change was needed.
+// Never modifies an existing line — only appends.
 func ensureGitignoreEntries(projectDir string) (string, error) {
 	path := filepath.Join(projectDir, ".gitignore")
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	if strings.Contains(string(existing), gitignoreMarker) {
+
+	present := map[string]bool{}
+	for _, line := range strings.Split(string(existing), "\n") {
+		present[strings.TrimSpace(line)] = true
+	}
+
+	var missing []string
+	for _, entry := range gitignoreEntries {
+		if !present[entry] {
+			missing = append(missing, entry)
+		}
+	}
+	if len(missing) == 0 {
 		return "", nil
 	}
 
-	block := gitignoreBlock
+	fresh := len(existing) == 0
+	markerPresent := strings.Contains(string(existing), gitignoreMarker)
+
 	out := append([]byte{}, existing...)
-	if len(out) == 0 {
-		// Fresh file — drop the separator newline so the file starts with the marker.
-		block = strings.TrimLeft(block, "\n")
-	} else if out[len(out)-1] != '\n' {
-		// Existing file without a trailing newline — add one so we don't merge
-		// onto a previous incomplete line.
+	if !fresh {
+		if out[len(out)-1] != '\n' {
+			out = append(out, '\n')
+		}
+		// Separator blank line before the belayer block so it doesn't merge
+		// visually into whatever the user had above.
 		out = append(out, '\n')
 	}
-	out = append(out, []byte(block)...)
+
+	switch {
+	case !markerPresent:
+		out = append(out, []byte(gitignoreHeader+"\n")...)
+	default:
+		// Marker already present but new entries surfaced in a later release.
+		// Label the upgrade block so users can see where these came from.
+		out = append(out, []byte(gitignoreUpgradeHeader+"\n")...)
+	}
+	for _, entry := range missing {
+		out = append(out, []byte(entry+"\n")...)
+	}
 
 	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
 	}
-	if len(existing) == 0 {
+	switch {
+	case fresh:
 		return "  + .gitignore (created with belayer entries)", nil
+	case !markerPresent:
+		return "  ~ .gitignore (appended belayer entries)", nil
+	default:
+		return "  ~ .gitignore (appended missing belayer entries on upgrade)", nil
 	}
-	return "  ~ .gitignore (appended belayer entries)", nil
 }
 
 // copyDefaultAgents walks the embedded agents/ tree and writes each file into
@@ -328,9 +370,21 @@ func copyDefaultAgents(dst string, force bool) ([]string, error) {
 // is machine-generated Go+Python glue pinned to this binary's version, so a
 // stale file on disk would produce a hard-to-debug version-skew bug.
 //
+// The destination is wiped before extraction so files renamed or deleted in
+// later binary versions don't linger on disk and get picked up by Python's
+// import machinery. The tree is gitignored and fully machine-owned, so this
+// is safe — nothing user-authored should live here.
+//
 // __pycache__ directories and *.pyc files are skipped so host bytecode from
 // developer builds never leaks into projects.
 func copyDefaultBridge(dst string) ([]string, error) {
+	if err := os.RemoveAll(dst); err != nil {
+		return nil, fmt.Errorf("reset bridge tree %s: %w", dst, err)
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir %s: %w", dst, err)
+	}
+
 	var written []string
 	err := fs.WalkDir(belayer.DefaultBridge, "hermes_bridge", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
