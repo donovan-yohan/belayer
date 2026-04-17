@@ -84,7 +84,7 @@ func newRunStartCmd() *cobra.Command {
 			// Persist the operator's spec to disk + register it as an artifact so
 			// every agent (and the PM gate) reads the same source of truth instead
 			// of mining `belayer message list` for the supervisor's instruction.
-			specRel, err := writeSpecArtifact(c, baseDir, sess.ID, spec)
+			specRel, err := writeSpecArtifact(c, baseDir, sess.ID, supervisorWorkdir, spec)
 			if err != nil {
 				return fmt.Errorf("persist spec: %w", err)
 			}
@@ -197,23 +197,48 @@ func provisionWorkspace(baseDir, sessionID string, repos map[string]string) (str
 // .belayer/runs/<sessionID>/SPEC.md and registers it as an artifact with
 // kind=spec, producer=operator. This is the canonical operator-input artifact:
 // every agent (and the PM gate) reads SPEC.md instead of mining the message log
-// for the supervisor's first instruction. Returns the absolute path written.
-func writeSpecArtifact(c *Client, baseDir, sessionID, spec string) (string, error) {
+// for the supervisor's first instruction.
+//
+// The registered artifact Path follows the workspace-relative convention
+// documented in CREATE_ARTIFACT_SCHEMA: paths are resolvable from the agent's
+// workspace root (supervisorWorkdir). In multi-repo mode the agent cwd is
+// .belayer/runs/<id>/workspace/, which cannot reach ../SPEC.md when the
+// workspace is sandboxed, so SPEC.md is also linked into the workspace root.
+// Returns the registered workspace-relative path.
+func writeSpecArtifact(c *Client, baseDir, sessionID, supervisorWorkdir, spec string) (string, error) {
 	runDir := filepath.Join(baseDir, ".belayer", "runs", sessionID)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return "", fmt.Errorf("create run dir: %w", err)
 	}
-	specPath := filepath.Join(runDir, "SPEC.md")
-	if err := os.WriteFile(specPath, []byte(spec), 0o600); err != nil {
+	specAbs := filepath.Join(runDir, "SPEC.md")
+	if err := os.WriteFile(specAbs, []byte(spec), 0o600); err != nil {
 		return "", fmt.Errorf("write SPEC.md: %w", err)
 	}
+
+	// Path to register with the artifact API, relative to the agent's
+	// workspace root. Single-repo runs have supervisorWorkdir == baseDir so
+	// the path is the canonical on-disk location. Multi-repo runs set
+	// supervisorWorkdir to the provisioned workspace dir, so we mirror
+	// SPEC.md into the workspace root and register it there.
+	registeredPath := filepath.Join(".belayer", "runs", sessionID, "SPEC.md")
+	if supervisorWorkdir != "" && supervisorWorkdir != baseDir {
+		linkPath := filepath.Join(supervisorWorkdir, "SPEC.md")
+		if err := os.Symlink(specAbs, linkPath); err != nil {
+			// Fall back to a plain copy if symlinks are unavailable (e.g. cross-device, Windows).
+			if writeErr := os.WriteFile(linkPath, []byte(spec), 0o600); writeErr != nil {
+				return "", fmt.Errorf("place SPEC.md in workspace: %w (symlink: %v)", writeErr, err)
+			}
+		}
+		registeredPath = "SPEC.md"
+	}
+
 	if _, err := c.CreateArtifact(sessionID, artifactCreateCLIRequest{
 		Kind:     "spec",
-		Path:     specPath,
+		Path:     registeredPath,
 		Producer: "operator",
 		Summary:  "Initial run spec from operator (--spec text passed to belayer run start).",
 	}); err != nil {
 		return "", fmt.Errorf("register spec artifact: %w", err)
 	}
-	return specPath, nil
+	return registeredPath, nil
 }

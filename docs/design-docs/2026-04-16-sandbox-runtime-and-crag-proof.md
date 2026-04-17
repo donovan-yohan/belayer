@@ -83,15 +83,19 @@ Six default agents — **supervisor, pm, web-dev, backend-dev, qa, reviewer**. U
 
 For multi-repo setups, `.belayer/config.yaml` can't live in any single repo because the workspace is assembled at session start. Instead, the workspace definition lives in **crag** — the outer daemon that submits requests to workers. Crag is infrastructure (a server with a database), not source code. It knows "extend-fullstack means these repos with this config."
 
-For local dev without crag, pass a workspace config explicitly:
+For local dev without crag, the eventual interface is to pass a workspace
+config explicitly. A `--workspace` flag is *planned but not yet implemented*
+— the current CLI accepts `--workdir` plus a comma-separated `--repos`
+mapping (see `belayer run start --help`). The planned shape:
 
 ```bash
+# Planned — not yet implemented. Today: use --workdir / --repos.
 belayer run start --workspace ~/.belayer/workspaces/extend-fullstack.yaml --spec "..."
 ```
 
-Resolution:
+Resolution (target state):
 - **Single-repo**: `.belayer/config.yaml` in the repo, auto-discovered
-- **Multi-repo**: workspace definition from crag or `--workspace` flag
+- **Multi-repo**: workspace definition from crag or `--workspace` flag (planned)
 - **No config**: `belayer run` auto-runs `belayer init` and scaffolds the six-agent default team
 
 ## Phase 2.5: `belayer init` workflow

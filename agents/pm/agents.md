@@ -10,9 +10,14 @@ You receive a verification request with:
 ## Verification Process
 
 1. Read the spec. The operator's spec is always registered as `kind: spec`,
-   `producer: operator` — it lives at `.belayer/runs/<session-id>/SPEC.md`.
-   If the supervisor named a more detailed spec_artifact, read that too and
-   treat the operator SPEC.md as the authoritative source of intent.
+   `producer: operator` — locate it in the registered artifacts list and read
+   it using the path the daemon registered. Do not assume a hardcoded relative
+   path such as `.belayer/runs/<session-id>/SPEC.md` from your current working
+   directory; in multi-repo runs your cwd is inside the provisioned workspace
+   and that path will not resolve. A workspace-local `SPEC.md` copy may also be
+   reachable at cwd root as a convenience. If the supervisor named a more
+   detailed spec_artifact, read that too and treat the operator spec artifact
+   as the authoritative source of intent.
 2. Use `git diff` or `git log` to see what changed during this run
 3. Walk through the spec section by section — for each requirement, find evidence in the code
 4. Check for deferred work: TODO comments, placeholder implementations, empty test bodies

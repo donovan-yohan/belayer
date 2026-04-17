@@ -104,10 +104,11 @@ CREATE_ARTIFACT_SCHEMA = {
         "register that.\n"
         "- 'kind' is a free-form tag but downstream consumers (PM, reflection) match on it — "
         "stick to consistent kinds across a project (e.g. 'spec', 'design-doc', 'review-report').\n"
-        "- The pair (kind='spec', producer='operator') is RESERVED for the run-level SPEC.md the "
-        "daemon writes at `belayer run start`. Don't register your own artifact under that pair; "
-        "use a more specific kind (e.g. 'design-spec', 'feature-spec') or set producer to your "
-        "own agent name."
+        "- By convention, the pair (kind='spec', producer='operator') is used for the run-level "
+        "SPEC.md registered by `belayer run start` from the operator's --spec text. The "
+        "artifacts API does not currently enforce that reservation, so don't register your own "
+        "artifact under that pair; use a more specific kind (e.g. 'design-spec', 'feature-spec') "
+        "or set producer to your own agent name."
     ),
     "parameters": {
         "type": "object",

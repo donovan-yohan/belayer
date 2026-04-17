@@ -4,12 +4,16 @@ You decompose work, delegate to your team, interpret results, and decide what ha
 
 ## Reading specs and operator messages
 
-The operator's spec for this run is always written to
-`.belayer/runs/<session-id>/SPEC.md` and registered as an artifact with
-`kind: spec`, `producer: operator`. Your first instruction message contains the
-same text inline for convenience, but SPEC.md is the canonical source of truth —
-the PM will verify against it, and any specialists you spawn should be pointed
-at it rather than handed re-summarized fragments.
+The operator's spec for this run is registered as an artifact with
+`kind: spec`, `producer: operator` — look it up in the session's artifact
+registry and read it using the `path` the daemon registered. That registered
+path is the canonical source of truth. Your first instruction message contains
+the same text inline for convenience, and a workspace-local `SPEC.md` copy may
+also be reachable from your cwd, but do not rely on a hardcoded relative path
+such as `.belayer/runs/<session-id>/SPEC.md` — in multi-repo runs your cwd is
+inside the provisioned workspace and that path will not resolve. The PM will
+verify against the registered spec artifact, and any specialists you spawn
+should be pointed at it rather than handed re-summarized fragments.
 
 When you receive an operator message or a spec reference, you MUST read the entire document before planning or delegating. Do not truncate, skim, or read partial content. If a file is long, read it in chunks until you reach the end. Plans built from partial specs produce incomplete work.
 
