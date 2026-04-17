@@ -243,6 +243,41 @@ type artManifest struct {
 	Path string `json:"path"`
 }
 
+// ExtractArtifacts scans events for artifact_created events and returns the
+// ArtifactInfo list along with a count of artifact_created events that had
+// unparseable data (silently dropped would hide belayer bugs — the caller surfaces
+// this as a warning so cragd and operators can see the mismatch between
+// artifact_created events in the NDJSON and artifacts in the manifest).
+func ExtractArtifacts(events []Event) (arts []ArtifactInfo, skipped int) {
+	for _, e := range events {
+		if e.Type != "artifact_created" {
+			continue
+		}
+		var payload struct {
+			Kind string `json:"kind"`
+			Path string `json:"path"`
+		}
+		// e.Data may be a JSON string (HTTP shape) or an object. Try both.
+		raw := e.Data
+		if len(raw) > 0 && raw[0] == '"' {
+			var s string
+			if err := json.Unmarshal(raw, &s); err == nil {
+				raw = json.RawMessage(s)
+			}
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil || payload.Kind == "" {
+			skipped++
+			continue
+		}
+		arts = append(arts, ArtifactInfo{
+			ID:   fmt.Sprintf("%d", e.ID),
+			Kind: payload.Kind,
+			Path: payload.Path,
+		})
+	}
+	return arts, skipped
+}
+
 // writeManifest writes manifest.json.tmp with 2-space indentation.
 func writeManifest(path string, meta Meta, count int, firstID, lastID int64) error {
 	roster := make([]agentManifest, len(meta.AgentRoster))

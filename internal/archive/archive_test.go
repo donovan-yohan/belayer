@@ -358,6 +358,25 @@ func TestWrite_IDsSorted(t *testing.T) {
 	}
 }
 
+func TestExtractArtifacts_SkipCounter(t *testing.T) {
+	events := []Event{
+		{ID: 1, Type: "artifact_created", Data: json.RawMessage(`{"kind":"spec","path":"/tmp/spec.md"}`)},
+		{ID: 2, Type: "artifact_created", Data: json.RawMessage(`not json at all`)},
+		{ID: 3, Type: "bridge:heartbeat", Data: json.RawMessage(`{"agent":"sup"}`)},
+		{ID: 4, Type: "artifact_created", Data: json.RawMessage(`{"path":"/tmp/x.md"}`)},
+	}
+	arts, skipped := ExtractArtifacts(events)
+	if len(arts) != 1 {
+		t.Errorf("expected 1 parseable artifact, got %d", len(arts))
+	}
+	if skipped != 2 {
+		t.Errorf("expected skipped=2 (unparseable + missing kind), got %d", skipped)
+	}
+	if len(arts) > 0 && arts[0].Kind != "spec" {
+		t.Errorf("expected kind=spec, got %s", arts[0].Kind)
+	}
+}
+
 func TestWrite_EventIDGapsPreserved(t *testing.T) {
 	dir := t.TempDir()
 	events := []Event{

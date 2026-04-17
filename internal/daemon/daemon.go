@@ -126,6 +126,7 @@ type Daemon struct {
 
 	// Lifecycle / shutdown fields.
 	draining             atomic.Bool   // set at start of Shutdown; readable by future /health and SSE handlers
+	archiver             *archiveManager
 	archiveDrainTimeout  time.Duration // max time Phase 3 archive drain may run
 	shutdownHTTPTimeout  time.Duration // max time HTTP servers get to drain in-flight requests
 }
@@ -151,6 +152,7 @@ func New(cfg Config) (*Daemon, error) {
 		archiveDrainTimeout: 30 * time.Second,
 		shutdownHTTPTimeout: 5 * time.Second,
 	}
+	d.archiver = newArchiveManager(st)
 	if cfg.SandboxDrivers != nil {
 		d.sandboxDrivers = cfg.SandboxDrivers
 	} else {
@@ -342,13 +344,17 @@ func (d *Daemon) announceDraining(ctx context.Context) {
 	_ = ctx
 }
 
-// drainArchive is the Phase (c) seat for Phase 3's archiveManager.drainAll.
-// No-op until Phase 3 lands.
+// drainArchive runs the Phase (c) archive drain. It uses its own
+// context.WithTimeout so the 30s archive budget is independent of the 5s HTTP
+// shutdown timeout set in shutCtx. Reusing shutCtx here would cap the archive
+// drain at 5s, violating the phase-budget contract.
 func (d *Daemon) drainArchive(ctx context.Context) {
-	// Phase 3: archive drain MUST use its own context.WithTimeout(ctx,
-	// d.archiveDrainTimeout), NOT shutCtx — the 30s archive budget must not
-	// be capped by the 5s HTTP shutdown timeout.
-	_ = ctx
+	if d.archiver == nil {
+		return
+	}
+	archiveCtx, cancel := context.WithTimeout(ctx, d.archiveDrainTimeout)
+	defer cancel()
+	d.archiver.DrainAll(archiveCtx)
 }
 
 // shutdownHTTP closes the three HTTP servers (Unix socket, optional TCP,
@@ -473,7 +479,7 @@ func (d *Daemon) terminateSandbox(ctx context.Context, sessionID string) {
 // is finished and its sandbox can be torn down.
 func isTerminalSessionStatus(status string) bool {
 	switch status {
-	case "complete", "blocked", "failed", "cancelled", "needs_human_review":
+	case "complete", "blocked", "failed", "cancelled", "needs_human_review", "stalled":
 		return true
 	}
 	return false
@@ -628,6 +634,9 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 			Data:      mustJSON(map[string]string{"status": req.Status}),
 		})
 		if isTerminalSessionStatus(req.Status) {
+			// Archive before sandbox teardown so the archiver reads session
+			// state before any teardown side-effects can perturb the session row.
+			d.archiver.ArchiveTerminal(id)
 			d.terminateSandbox(r.Context(), id)
 		}
 	}

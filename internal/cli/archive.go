@@ -83,7 +83,7 @@ func newArchiveCmd() *cobra.Command {
 				}
 			}
 
-			artifacts, skipped := extractArtifacts(events)
+			artifacts, skipped := archive.ExtractArtifacts(events)
 			if skipped > 0 {
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"warning: %d artifact_created event(s) had unparseable data; omitted from manifest.artifacts\n",
@@ -133,37 +133,3 @@ func resolveOutputDir(outputFlag, workspaceDir, sessionID string) (string, error
 	return filepath.Join(workspaceDir, ".belayer", "archive", sessionID), nil
 }
 
-// extractArtifacts scans events for artifact_created events and returns the
-// ArtifactInfo list along with a count of artifact_created events that had
-// unparseable data (silently dropped would hide belayer bugs — the caller surfaces
-// this as a warning so cragd and operators can see the mismatch between
-// artifact_created events in the NDJSON and artifacts in the manifest).
-func extractArtifacts(events []archive.Event) (arts []archive.ArtifactInfo, skipped int) {
-	for _, e := range events {
-		if e.Type != "artifact_created" {
-			continue
-		}
-		var payload struct {
-			Kind string `json:"kind"`
-			Path string `json:"path"`
-		}
-		// e.Data may be a JSON string (HTTP shape) or an object. Try both.
-		raw := e.Data
-		if len(raw) > 0 && raw[0] == '"' {
-			var s string
-			if err := json.Unmarshal(raw, &s); err == nil {
-				raw = json.RawMessage(s)
-			}
-		}
-		if err := json.Unmarshal(raw, &payload); err != nil || payload.Kind == "" {
-			skipped++
-			continue
-		}
-		arts = append(arts, archive.ArtifactInfo{
-			ID:   fmt.Sprintf("%d", e.ID),
-			Kind: payload.Kind,
-			Path: payload.Path,
-		})
-	}
-	return arts, skipped
-}

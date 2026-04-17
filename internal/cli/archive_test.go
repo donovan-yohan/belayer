@@ -200,6 +200,7 @@ func TestArchiveCmd_EmptyWorkspaceNoOutput(t *testing.T) {
 
 // TestExtractArtifacts_SkipCounter validates that unparseable artifact_created
 // events are surfaced via the skipped counter rather than silently dropped.
+// The implementation lives in internal/archive; this test calls the shared function.
 func TestExtractArtifacts_SkipCounter(t *testing.T) {
 	events := []archivePkg.Event{
 		{ID: 1, Type: "artifact_created", Data: json.RawMessage(`{"kind":"spec","path":"/tmp/spec.md"}`)},
@@ -207,7 +208,7 @@ func TestExtractArtifacts_SkipCounter(t *testing.T) {
 		{ID: 3, Type: "bridge:heartbeat", Data: json.RawMessage(`{"agent":"sup"}`)},
 		{ID: 4, Type: "artifact_created", Data: json.RawMessage(`{"path":"/tmp/x.md"}`)},
 	}
-	arts, skipped := extractArtifacts(events)
+	arts, skipped := archivePkg.ExtractArtifacts(events)
 	if len(arts) != 1 {
 		t.Errorf("expected 1 parseable artifact, got %d", len(arts))
 	}
