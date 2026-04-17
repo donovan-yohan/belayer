@@ -1,0 +1,27 @@
+tests/e2e/belayer-in-clamshell.sh
+  e763a424956efef3 1-120
+docs/exec-plans/active/2026-04-17-belayer-in-clamshell.md
+  e763a424956efef3 28,46
+docs/design-docs/2026-04-17-belayer-in-clamshell-review.md
+  e763a424956efef3 1-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "1f88165c4b5123357da9ca3a35ca4cfa31372061",
+  "prompts": {
+    "e763a424956efef3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ef2fc39-34ef-4510-9803-a7bab7d3b0b3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 237,
+      "total_deletions": 1,
+      "accepted_lines": 240,
+      "overriden_lines": 0
+    }
+  }
+}
