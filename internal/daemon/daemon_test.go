@@ -32,15 +32,17 @@ func testDaemon(t *testing.T) *Daemon {
 	}
 	t.Cleanup(func() { st.Close() })
 
+	reg := &sandbox.Registry{}
+	reg.Register(sandbox.DefaultMode, &sandbox.Noop{})
 	d := &Daemon{
-		store:          st,
-		config:         Config{},
-		tools:          make(map[string][]agent.ToolSpec),
-		bridgeProcs:    make(map[string]*bridge.Process),
-		sandboxHandles: make(map[string]sandbox.Handle),
-		sandbox:        &sandbox.Noop{},
-		runtime:        &runtime.Noop{},
-		startCtx:       context.Background(),
+		store:            st,
+		config:           Config{},
+		tools:            make(map[string][]agent.ToolSpec),
+		bridgeProcs:      make(map[string]*bridge.Process),
+		sessionSandboxes: make(map[string]sessionSandbox),
+		sandboxDrivers:   reg,
+		runtime:          &runtime.Noop{},
+		startCtx:         context.Background(),
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }
@@ -618,7 +620,9 @@ func (c *capturingSandbox) Create(ctx context.Context, cfg sandbox.Config) (sand
 func TestEnsureSandboxHandlePassesRuntimeEndpoints(t *testing.T) {
 	d := testDaemon(t)
 	fake := &capturingSandbox{}
-	d.sandbox = fake
+	reg := &sandbox.Registry{}
+	reg.Register(sandbox.DefaultMode, fake)
+	d.sandboxDrivers = reg
 	d.runtimeEndpoints = []runtime.Endpoint{
 		{Name: "api", Host: "localhost", Port: 4000},
 		{Name: "web", Host: "localhost", Port: 3000},
@@ -649,7 +653,9 @@ func TestEnsureSandboxHandlePassesRuntimeEndpoints(t *testing.T) {
 func TestEnsureSandboxHandleNilEndpointsWhenRuntimeReportsNone(t *testing.T) {
 	d := testDaemon(t)
 	fake := &capturingSandbox{}
-	d.sandbox = fake
+	reg := &sandbox.Registry{}
+	reg.Register(sandbox.DefaultMode, fake)
+	d.sandboxDrivers = reg
 	// d.runtimeEndpoints left nil — mirrors Noop provider's Up return.
 
 	sess := store.Session{ID: "sess-1"}
@@ -658,6 +664,122 @@ func TestEnsureSandboxHandleNilEndpointsWhenRuntimeReportsNone(t *testing.T) {
 	}
 	if fake.lastCreateConfig.Endpoints != nil {
 		t.Errorf("sandbox.Create endpoints = %v, want nil", fake.lastCreateConfig.Endpoints)
+	}
+}
+
+// unavailableDriverStub fails every Driver call with a clamshell-style
+// unavailable error, mimicking the default-build clamshell_stub for tests
+// that need to assert the daemon routes errors back to callers without
+// tearing itself down.
+type unavailableDriverStub struct{ msg string }
+
+func (u *unavailableDriverStub) Create(context.Context, sandbox.Config) (sandbox.Handle, error) {
+	return sandbox.Handle{}, errStub(u.msg)
+}
+func (u *unavailableDriverStub) Exec(context.Context, sandbox.Handle, []string, sandbox.ExecOpts) (sandbox.Process, error) {
+	return nil, errStub(u.msg)
+}
+func (u *unavailableDriverStub) Stop(context.Context, sandbox.Handle) error {
+	return errStub(u.msg)
+}
+
+type errStub string
+
+func (e errStub) Error() string { return string(e) }
+
+// writeSandboxConfig writes .belayer/config.yaml under workspaceDir with the
+// given sandbox.mode. Used by the resolution tests.
+func writeSandboxConfig(t *testing.T, workspaceDir, mode string) {
+	t.Helper()
+	belayerDir := filepath.Join(workspaceDir, ".belayer")
+	if err := os.MkdirAll(belayerDir, 0o700); err != nil {
+		t.Fatalf("mkdir .belayer: %v", err)
+	}
+	contents := "sandbox:\n  mode: " + mode + "\n"
+	if err := os.WriteFile(filepath.Join(belayerDir, "config.yaml"), []byte(contents), 0o600); err != nil {
+		t.Fatalf("write config.yaml: %v", err)
+	}
+}
+
+func TestEnsureSandboxHandleResolvesModeNoop(t *testing.T) {
+	d := testDaemon(t)
+	fake := &capturingSandbox{}
+	reg := &sandbox.Registry{}
+	reg.Register("noop", fake)
+	reg.Register("clamshell", &unavailableDriverStub{msg: "clamshell not compiled in"})
+	d.sandboxDrivers = reg
+
+	ws := t.TempDir()
+	writeSandboxConfig(t, ws, "noop")
+
+	sess := store.Session{ID: "sess-noop", WorkspaceDir: ws}
+	ss, err := d.ensureSandboxHandle(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("ensureSandboxHandle noop: %v", err)
+	}
+	if ss.handle.ID != "sess-noop" {
+		t.Errorf("handle ID = %q, want sess-noop", ss.handle.ID)
+	}
+	if fake.lastCreateConfig.Name != "sess-noop" {
+		t.Errorf("noop driver was not invoked for sandbox.mode=noop (captured name %q)", fake.lastCreateConfig.Name)
+	}
+}
+
+func TestEnsureSandboxHandleResolvesDefaultWhenConfigMissing(t *testing.T) {
+	d := testDaemon(t)
+	fake := &capturingSandbox{}
+	reg := &sandbox.Registry{}
+	reg.Register("noop", fake)
+	d.sandboxDrivers = reg
+
+	sess := store.Session{ID: "sess-default", WorkspaceDir: t.TempDir()} // no .belayer/config.yaml
+	if _, err := d.ensureSandboxHandle(context.Background(), sess); err != nil {
+		t.Fatalf("ensureSandboxHandle default: %v", err)
+	}
+	if fake.lastCreateConfig.Name != "sess-default" {
+		t.Errorf("default-mode fallback did not route to noop (captured name %q)", fake.lastCreateConfig.Name)
+	}
+}
+
+func TestEnsureSandboxHandleSurfacesUnavailableDriver(t *testing.T) {
+	d := testDaemon(t)
+	reg := &sandbox.Registry{}
+	reg.Register("noop", &sandbox.Noop{})
+	reg.Register("clamshell", &unavailableDriverStub{msg: `sandbox driver "clamshell" is unavailable: this binary was built without -tags clamshell`})
+	d.sandboxDrivers = reg
+
+	// Session A wants clamshell; must fail with the unavailable message.
+	wsA := t.TempDir()
+	writeSandboxConfig(t, wsA, "clamshell")
+	sessA := store.Session{ID: "sess-unavailable", WorkspaceDir: wsA}
+	if _, err := d.ensureSandboxHandle(context.Background(), sessA); err == nil {
+		t.Fatal("ensureSandboxHandle clamshell: expected error, got nil")
+	} else if !strings.Contains(err.Error(), "unavailable") || !strings.Contains(err.Error(), "-tags clamshell") {
+		t.Errorf("error %q missing unavailable / -tags clamshell text", err.Error())
+	}
+
+	// Session B keeps working — one bad session must not poison the daemon.
+	sessB := store.Session{ID: "sess-healthy", WorkspaceDir: t.TempDir()}
+	if _, err := d.ensureSandboxHandle(context.Background(), sessB); err != nil {
+		t.Fatalf("ensureSandboxHandle healthy session after clamshell failure: %v", err)
+	}
+}
+
+func TestEnsureSandboxHandleUnknownModeReturnsError(t *testing.T) {
+	d := testDaemon(t)
+	reg := &sandbox.Registry{}
+	reg.Register("noop", &sandbox.Noop{})
+	d.sandboxDrivers = reg
+
+	ws := t.TempDir()
+	writeSandboxConfig(t, ws, "does-not-exist")
+	sess := store.Session{ID: "sess-unknown", WorkspaceDir: ws}
+	_, err := d.ensureSandboxHandle(context.Background(), sess)
+	if err == nil {
+		t.Fatal("expected not-registered error, got nil")
+	}
+	if !strings.Contains(err.Error(), "not registered") {
+		t.Errorf("error %q does not mention \"not registered\"", err.Error())
 	}
 }
 

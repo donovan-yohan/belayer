@@ -9,6 +9,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/daemon"
 	"github.com/donovan-yohan/belayer/internal/runtime"
+	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -44,6 +45,9 @@ func newDaemonCmd() *cobra.Command {
 				return err
 			}
 			cfg.Runtime = runtime.NewFromConfig(rtCfg)
+			// Drivers register themselves from init(); hand the daemon the
+			// process-wide registry so per-session sandbox.mode can resolve.
+			cfg.SandboxDrivers = sandbox.Default
 			if rtCfg.Empty() {
 				fmt.Fprintln(cmd.OutOrStdout(), "belayer runtime: noop (no .belayer/config.yaml runtime section found)")
 			} else {
