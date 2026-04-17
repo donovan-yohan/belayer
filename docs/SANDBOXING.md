@@ -31,7 +31,7 @@ graph TD
         subgraph proxy["Docker: clamshell-proxy-{session}"]
             EGRESS["egress broker\nCONNECT proxy\nproxy.internal:3128"]
             ATTEST["process attestation\nbinary=python3 ✓"]
-            ALLOW["allowlist\nopencode.ai:443 ✓\n192.168.5.2:7523 ✓\n192.168.5.2:3000-4000 ✓"]
+            ALLOW["allowlist\nopencode.ai:443 ✓\nDocker host gateway:7523 ✓\nDocker host gateway:3000-4000 ✓"]
         end
     end
 
@@ -62,7 +62,7 @@ Provider credentials (e.g. `OPENCODE_GO_API_KEY`) live in `~/.belayer.env` on th
 
 When the daemon spawns a bridge subprocess via `docker exec`, `bridge.BuildEnv()` serialises the daemon's env into a temp env-file. The container process inherits `OPENCODE_GO_API_KEY` (and any other provider-specific vars) from there. `resolve_runtime_provider()` in `__main__.py` detects the key and selects the `opencode-go` Hermes provider.
 
-`BELAYER_PROVIDER` / `BELAYER_BASE_URL` act as fallbacks only — they are ignored when the Hermes config already resolves a provider.
+`BELAYER_PROVIDER` / `BELAYER_BASE_URL` act as fallbacks only — they are ignored when the Hermes config already resolves a provider. `BELAYER_API_KEY` is the exception: it always overrides the key returned by `resolve_runtime_provider()`, because the in-container user may carry an invalid or stale token (e.g. from a copied-in OAuth cache) that would otherwise win.
 
 ## Proxy client lifecycle fix
 

@@ -22,7 +22,10 @@ log = logging.getLogger("http_client")
 
 
 def _is_http_url(socket_path: str) -> bool:
-    return socket_path.startswith("http://") or socket_path.startswith("https://")
+    """Return True for plain HTTP URLs. HTTPS is intentionally not supported;
+    the daemon is only reached over loopback, a bind-mounted Unix socket, or
+    an HTTP-CONNECT proxy, so TLS termination is never needed."""
+    return socket_path.startswith("http://")
 
 
 def _make_conn(socket_path: str) -> http.client.HTTPConnection:

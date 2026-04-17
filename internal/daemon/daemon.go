@@ -202,6 +202,21 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.listener = ln
 	d.startCtx = ctx
 
+	// cleanupExtraListeners shuts down any TCP/workspace servers started below
+	// and removes the workspace socket file. Called on any early-return error
+	// path so we don't leak background goroutines or bound sockets.
+	cleanupExtraListeners := func() {
+		if d.tcpListener != nil {
+			_ = d.tcpListener.Close()
+		}
+		if d.workspaceSockListener != nil {
+			_ = d.workspaceSockListener.Close()
+		}
+		if d.config.WorkspaceSockPath != "" {
+			os.Remove(d.config.WorkspaceSockPath)
+		}
+	}
+
 	// Optional TCP listener for clamshell container bridge access.
 	if d.config.TCPAddr != "" {
 		tcpLn, err := net.Listen("tcp", d.config.TCPAddr)
@@ -225,17 +240,28 @@ func (d *Daemon) Start(ctx context.Context) error {
 	// any network proxying.
 	if d.config.WorkspaceSockPath != "" {
 		if err := os.MkdirAll(filepath.Dir(d.config.WorkspaceSockPath), 0o755); err != nil {
+			cleanupExtraListeners()
 			ln.Close()
 			return fmt.Errorf("daemon: create workspace sock dir: %w", err)
 		}
 		os.Remove(d.config.WorkspaceSockPath)
 		wsLn, err := net.Listen("unix", d.config.WorkspaceSockPath)
 		if err != nil {
+			cleanupExtraListeners()
 			ln.Close()
 			return fmt.Errorf("daemon: listen workspace sock %s: %w", d.config.WorkspaceSockPath, err)
 		}
-		// World-readable so the sandbox user (non-root) inside clamshell can connect.
-		os.Chmod(d.config.WorkspaceSockPath, 0o777)
+		// Readable/writable by any user so the non-root sandbox user inside the
+		// clamshell container can reach the socket through the bind mount.
+		// Execute bit is meaningless on a socket, so 0o666 is strictly tighter
+		// than 0o777. TODO: narrow to 0o660 via dedicated group + chown once
+		// the container UID/GID mapping is stabilized.
+		if err := os.Chmod(d.config.WorkspaceSockPath, 0o666); err != nil {
+			wsLn.Close()
+			cleanupExtraListeners()
+			ln.Close()
+			return fmt.Errorf("daemon: chmod workspace sock %s: %w", d.config.WorkspaceSockPath, err)
+		}
 		d.workspaceSockListener = &http.Server{Handler: d.server.Handler}
 		go func() {
 			if serveErr := d.workspaceSockListener.Serve(wsLn); serveErr != nil && serveErr != http.ErrServerClosed {
@@ -251,6 +277,8 @@ func (d *Daemon) Start(ctx context.Context) error {
 	// into each session's sandbox via ensureSandboxHandle.
 	endpoints, err := d.runtime.Up(ctx)
 	if err != nil {
+		cleanupExtraListeners()
+		ln.Close()
 		return fmt.Errorf("daemon: runtime up: %w", err)
 	}
 	d.runtimeEndpoints = endpoints
@@ -301,6 +329,9 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 
 	d.store.Close()
 	os.Remove(d.config.SocketPath)
+	if d.config.WorkspaceSockPath != "" {
+		os.Remove(d.config.WorkspaceSockPath)
+	}
 	return err
 }
 

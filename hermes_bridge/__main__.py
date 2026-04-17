@@ -116,12 +116,18 @@ def main() -> None:
     socket_path = _require_env("BELAYER_SOCKET")
     log.info("BELAYER_SOCKET=%s (is_http=%s)", socket_path, socket_path.startswith("http"))
 
+    # Multiline env values are escaped by the Go-side writeEnvFile() as the
+    # two-character sequence `\n` so docker --env-file stays parseable. Decode
+    # any BELAYER_* value that can legitimately contain newlines here.
+    def _decode_nl(val: str) -> str:
+        return val.replace(r"\n", "\n")
+
     run_dir = os.environ.get("BELAYER_RUN_DIR", "")
     role = os.environ.get("BELAYER_ROLE", "specialist")
     profile = os.environ.get("BELAYER_PROFILE", "")
     model = os.environ.get("BELAYER_MODEL", "")
-    initial_message = os.environ.get("BELAYER_MESSAGE", "")
-    system_prompt = os.environ.get("BELAYER_SYSTEM_PROMPT", "").replace(r"\n", "\n")
+    initial_message = _decode_nl(os.environ.get("BELAYER_MESSAGE", ""))
+    system_prompt = _decode_nl(os.environ.get("BELAYER_SYSTEM_PROMPT", ""))
     hermes_session_id = os.environ.get("BELAYER_HERMES_SESSION_ID", "")
     ephemeral = os.environ.get("BELAYER_EPHEMERAL", "true").lower() != "false"
 
@@ -257,10 +263,18 @@ def main() -> None:
                 return _orig_create(fresh, reason=reason, shared=shared)
 
             agent._create_openai_client = _proxy_create
-            # Rebuild now so the initial client also gets the proxy.
+            # Rebuild now so the initial client also gets the proxy. Close the
+            # pre-patch client first so its httpx transport pool is released —
+            # otherwise the original client's sockets hang around until GC.
+            old_client = getattr(agent, "client", None)
             agent.client = agent._create_openai_client(
                 agent._client_kwargs, reason="proxy_inject", shared=True
             )
+            if old_client is not None:
+                try:
+                    old_client.close()
+                except Exception:  # noqa: BLE001 - best-effort cleanup
+                    pass
             log.info("Patched _create_openai_client for proxy+keepalive (proxy=%s)", _proxy_url)
         except Exception as _e:
             log.warning("Could not patch proxy client into AIAgent: %s", _e)

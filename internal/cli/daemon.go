@@ -65,9 +65,15 @@ func newDaemonCmd() *cobra.Command {
 			if dockerGateway != "" {
 				cfg.DockerHostGateway = dockerGateway
 			}
-			cfg.BridgeAPIKey = bridgeAPIKey
-			cfg.BridgeBaseURL = bridgeBaseURL
-			cfg.BridgeProvider = bridgeProvider
+			if bridgeAPIKey != "" {
+				cfg.BridgeAPIKey = bridgeAPIKey
+			}
+			if bridgeBaseURL != "" {
+				cfg.BridgeBaseURL = bridgeBaseURL
+			}
+			if bridgeProvider != "" {
+				cfg.BridgeProvider = bridgeProvider
+			}
 
 			wd := workdir
 			if wd == "" {

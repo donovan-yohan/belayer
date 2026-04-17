@@ -154,9 +154,11 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: parse connect output: %w (stdout: %s)", err, connectOut))
 	}
 	// Newer clamshell versions may return argv=[docker exec -it <container> /bin/bash]
-	// instead of a direct container field; extract the container name from argv[3].
-	if connect.Container == "" && len(connect.Argv) >= 4 {
-		connect.Container = connect.Argv[3]
+	// instead of a direct container field. Scan for the first non-flag positional
+	// after the `exec` token so future reorderings (extra flags, podman, split
+	// -i/-t) don't silently pick up a flag string as the container name.
+	if connect.Container == "" {
+		connect.Container = extractContainerFromArgv(connect.Argv)
 	}
 	if connect.Container == "" {
 		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: connect output missing container field: %s", connectOut))
@@ -221,7 +223,9 @@ func (c *Clamshell) Exec(ctx context.Context, h Handle, cmd []string, opts ExecO
 
 	args := []string{"exec", "-u", "sandbox", "-i"}
 	envFile := ""
-	env := opts.Env
+	// Copy opts.Env before mutating: callers may reuse the same opts across
+	// parallel execs and the HOME override below writes through the slice.
+	env := append([]string(nil), opts.Env...)
 	// Override HOME with the container home dir so the bridge doesn't try to
 	// write to the host user's home path (which is read-only inside the container).
 	if containerHome := h.Meta["containerHome"]; containerHome != "" {
@@ -412,6 +416,38 @@ func (c *Clamshell) preparePolicy(basePath string, endpoints []TCPEndpoint) (str
 		return "", fmt.Errorf("sandbox/clamshell: close temp policy: %w", err)
 	}
 	return tmp.Name(), nil
+}
+
+// extractContainerFromArgv parses a `docker exec ...` (or `podman exec ...`)
+// argv and returns the first positional argument after the `exec` verb, which
+// is the container name. Returns "" if the shape doesn't match.
+func extractContainerFromArgv(argv []string) string {
+	if len(argv) < 2 {
+		return ""
+	}
+	binBase := filepath.Base(argv[0])
+	if binBase != "docker" && binBase != "podman" {
+		return ""
+	}
+	// Find the `exec` token, then the first non-flag positional after it.
+	execIdx := -1
+	for i, tok := range argv {
+		if tok == "exec" {
+			execIdx = i
+			break
+		}
+	}
+	if execIdx < 0 {
+		return ""
+	}
+	for i := execIdx + 1; i < len(argv); i++ {
+		tok := argv[i]
+		if tok == "" || strings.HasPrefix(tok, "-") {
+			continue
+		}
+		return tok
+	}
+	return ""
 }
 
 // shellJoin renders argv as a single sh-safe string. We single-quote every
