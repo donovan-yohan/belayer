@@ -873,17 +873,92 @@ func (d *Daemon) querySessionEvents(ctx context.Context, sessionID string, after
 }
 
 func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
-	if q == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q is required"})
+	preds, err := parseSearchQuery(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	events, err := d.store.SearchEvents(q)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	events, err := d.store.SearchEventsV1(ctx, preds)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		status, msg := classifySearchError(err)
+		writeJSON(w, status, map[string]string{"error": msg})
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+const searchQLenCap = 4096
+
+// parseSearchQuery extracts and validates SearchPredicates from r.URL.Query().
+// Returns an error if validation fails (caller emits HTTP 400).
+func parseSearchQuery(r *http.Request) (store.SearchPredicates, error) {
+	q := r.URL.Query()
+	noParams := r.URL.RawQuery == ""
+
+	var p store.SearchPredicates
+	p.DescOrder = noParams // no-params: return most-recent DESC
+	p.Limit = 1000
+
+	raw := strings.TrimSpace(q.Get("q"))
+	if len(raw) > searchQLenCap {
+		return p, fmt.Errorf("q too long: max %d bytes", searchQLenCap)
+	}
+	p.Q = raw
+
+	p.SessionID = q.Get("session")
+	p.TypePrefix = q.Get("type_prefix")
+	p.Agent = q.Get("agent")
+
+	if afterStr := q.Get("after"); afterStr != "" {
+		v, err := strconv.ParseInt(afterStr, 10, 64)
+		if err != nil || v < 0 {
+			return p, fmt.Errorf("after must be a non-negative integer")
+		}
+		p.AfterID = v
+	}
+
+	if beforeStr := q.Get("before"); beforeStr != "" {
+		v, err := strconv.ParseInt(beforeStr, 10, 64)
+		if err != nil || v < 0 {
+			return p, fmt.Errorf("before must be a non-negative integer")
+		}
+		p.BeforeID = v
+	}
+
+	return p, nil
+}
+
+// classifySearchError maps a store error to an HTTP status + operator-clean
+// message. Never leaks raw SQL or stack frames.
+func classifySearchError(err error) (int, string) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout, "search timed out (limit 2s)"
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "fts5: syntax error"),
+		strings.Contains(lower, "malformed match expression"),
+		strings.Contains(lower, "no such column"),
+		strings.Contains(lower, "unknown special query"),
+		strings.Contains(lower, "unterminated string"),
+		strings.Contains(lower, "unmatched parenthesis"),
+		strings.Contains(lower, "fts5: parse error"):
+		return http.StatusBadRequest, "invalid q: " + sanitizeFTS5Error(msg)
+	}
+	log.Printf("search: unexpected error: %v", err)
+	return http.StatusInternalServerError, "search failed"
+}
+
+// sanitizeFTS5Error strips SQL-driver prefixes so the consumer sees a clean
+// human message.
+func sanitizeFTS5Error(msg string) string {
+	for _, prefix := range []string{"SQL logic error: ", "SQL logic error (SQLITE_ERROR): "} {
+		msg = strings.TrimPrefix(msg, prefix)
+	}
+	return msg
 }
 
 // --- helpers ---

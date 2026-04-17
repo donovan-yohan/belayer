@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -350,6 +352,180 @@ func TestSearchEvents_NoMatches(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+// --- SearchEventsV1 tests ---
+
+func TestSearchEventsV1_QPredicateOnly(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "v1-q"})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "bridge:hello", Data: `{"msg":"found"}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "other:thing", Data: `{"msg":"not"}`})
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{Q: "found"})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Type != "bridge:hello" {
+		t.Errorf("unexpected type %q", results[0].Type)
+	}
+}
+
+func TestSearchEventsV1_SessionFilter(t *testing.T) {
+	s := openMemory(t)
+	idA, _ := s.CreateSession(Session{Name: "sess-a"})
+	idB, _ := s.CreateSession(Session{Name: "sess-b"})
+	s.LogEvent(SessionEvent{SessionID: idA, Type: "ev", Data: `{"x":"a"}`})
+	s.LogEvent(SessionEvent{SessionID: idA, Type: "ev", Data: `{"x":"a2"}`})
+	s.LogEvent(SessionEvent{SessionID: idB, Type: "ev", Data: `{"x":"b"}`})
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{SessionID: idA})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 events for session A, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.SessionID != idA {
+			t.Errorf("expected session %q, got %q", idA, r.SessionID)
+		}
+	}
+}
+
+func TestSearchEventsV1_TypePrefix(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "type-prefix"})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "bridge:foo", Data: `{}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "bridge:bar", Data: `{}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "other:baz", Data: `{}`})
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{TypePrefix: "bridge:"})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 bridge events, got %d", len(results))
+	}
+	for _, r := range results {
+		if !strings.HasPrefix(r.Type, "bridge:") {
+			t.Errorf("unexpected type %q", r.Type)
+		}
+	}
+}
+
+func TestSearchEventsV1_AgentFilter(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "agent-filter"})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{"agent":"sup"}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{"agent":"impl"}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{"agent":"sup"}`})
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{Agent: "sup"})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 sup events, got %d", len(results))
+	}
+}
+
+func TestSearchEventsV1_AfterBefore(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "after-before"})
+	for i := 0; i < 5; i++ {
+		s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{}`})
+	}
+	all, _ := s.QueryEvents(id)
+	if len(all) < 5 {
+		t.Fatalf("need 5 events, got %d", len(all))
+	}
+	afterID := all[1].ID  // skip first two
+	beforeID := all[4].ID // skip last one
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{AfterID: afterID, BeforeID: beforeID})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	// Should return events[2] and events[3] (between after and before exclusive)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 events in window, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.ID <= afterID || r.ID >= beforeID {
+			t.Errorf("event id %d out of window (%d, %d)", r.ID, afterID, beforeID)
+		}
+	}
+}
+
+func TestSearchEventsV1_LimitCap(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "limit-cap"})
+	for i := 0; i < 1200; i++ {
+		s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{}`})
+	}
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{DescOrder: true})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 1000 {
+		t.Fatalf("expected 1000 (cap), got %d", len(results))
+	}
+}
+
+func TestSearchEventsV1_DescOrder(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "desc-order"})
+	for i := 0; i < 5; i++ {
+		s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{}`})
+	}
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{DescOrder: true})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	for i := 1; i < len(results); i++ {
+		if results[i].ID > results[i-1].ID {
+			t.Errorf("results not in DESC order: [%d].id=%d > [%d].id=%d", i, results[i].ID, i-1, results[i-1].ID)
+		}
+	}
+}
+
+func TestSearchEventsV1_EmptyAllPredicates(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "empty-preds"})
+	for i := 0; i < 5; i++ {
+		s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{}`})
+	}
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{DescOrder: true})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results, got none")
+	}
+	// Verify DESC ordering.
+	for i := 1; i < len(results); i++ {
+		if results[i].ID > results[i-1].ID {
+			t.Errorf("not DESC: results[%d].ID=%d > results[%d].ID=%d", i, results[i].ID, i-1, results[i-1].ID)
+		}
+	}
+}
+
+func TestSearchEventsV1_ContextCancelled(t *testing.T) {
+	s := openMemory(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+
+	_, err := s.SearchEventsV1(ctx, SearchPredicates{})
+	if err == nil {
+		t.Fatal("expected error for cancelled context, got nil")
 	}
 }
 

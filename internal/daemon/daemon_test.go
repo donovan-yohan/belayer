@@ -513,12 +513,15 @@ func TestSearchEvents(t *testing.T) {
 	}
 }
 
+// TestSearchEventsMissingQuery: per the v1 contract, GET /search with no params
+// is a valid query that returns the most-recent 1000 events in DESC order.
+// It is NOT an error.
 func TestSearchEventsMissingQuery(t *testing.T) {
 	d := testDaemon(t)
 
 	rr := doRequest(t, d, "GET", "/search", nil)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (no-params is valid in v1 contract), got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -900,4 +903,130 @@ func TestStartCapturesRuntimeEndpoints(t *testing.T) {
 		t.Error("runtime.Down was not called during shutdown")
 	}
 }
+
+// --- GET /search tests ---
+
+func TestSearch_NoParamsReturnsMostRecent(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create a session and insert 10 events.
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "search-test"})
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+
+	for i := 0; i < 10; i++ {
+		doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", map[string]string{
+			"type": "ev",
+			"data": `{}`,
+		})
+	}
+
+	// GET /search with no params — should return events in id DESC order.
+	rr := doRequest(t, d, "GET", "/search", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	events := decodeJSON[[]store.SessionEvent](t, rr)
+	// Session creation itself logs a session_created event, so total >= 10.
+	if len(events) < 10 {
+		t.Fatalf("expected at least 10 events, got %d", len(events))
+	}
+	// Verify DESC order.
+	for i := 1; i < len(events); i++ {
+		if events[i].ID > events[i-1].ID {
+			t.Errorf("events not in DESC order at index %d: id=%d > prev id=%d", i, events[i].ID, events[i-1].ID)
+		}
+	}
+}
+
+func TestSearch_MalformedFTS5Returns400(t *testing.T) {
+	d := testDaemon(t)
+
+	// Unbalanced quote in q should trigger FTS5 parse error -> 400.
+	rr := doRequest(t, d, "GET", `/search?q=%22unbalanced`, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed FTS5, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON[map[string]string](t, rr)
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message")
+	}
+	// Must not leak SQL internals.
+	if strings.Contains(resp["error"], "SQL logic error") {
+		t.Errorf("error leaks SQL driver internals: %q", resp["error"])
+	}
+}
+
+func TestSearch_QueryTooLongReturns400(t *testing.T) {
+	d := testDaemon(t)
+
+	longQ := strings.Repeat("a", 4097)
+	rr := doRequest(t, d, "GET", "/search?q="+longQ, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for q too long, got %d", rr.Code)
+	}
+	resp := decodeJSON[map[string]string](t, rr)
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+func TestSearch_AllPredicatesCombined(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create two sessions.
+	createA := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sess-a"})
+	sessA := decodeJSON[sessionAPIResponse](t, createA)
+	createB := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sess-b"})
+	sessB := decodeJSON[sessionAPIResponse](t, createB)
+
+	// Insert events across sessions with various types, agents, and data.
+	doRequest(t, d, "POST", "/sessions/"+sessA.ID+"/events", map[string]string{"type": "bridge:start", "data": `{"agent":"sup","msg":"hello"}`})
+	doRequest(t, d, "POST", "/sessions/"+sessA.ID+"/events", map[string]string{"type": "bridge:end", "data": `{"agent":"impl","msg":"hello"}`})
+	doRequest(t, d, "POST", "/sessions/"+sessB.ID+"/events", map[string]string{"type": "bridge:start", "data": `{"agent":"sup","msg":"hello"}`})
+
+	// Fetch all events to get real IDs.
+	allRR := doRequest(t, d, "GET", "/search", nil)
+	all := decodeJSON[[]store.SessionEvent](t, allRR)
+	if len(all) < 3 {
+		t.Fatalf("need at least 3 events inserted, got %d", len(all))
+	}
+
+	// Find the lowest and highest IDs.
+	minID := all[len(all)-1].ID // DESC order, so last is smallest
+	maxID := all[0].ID          // first is largest
+
+	// Query: q=hello, session=sessA, type_prefix=bridge:, agent=sup, after=minID-1, before=maxID+1
+	path := fmt.Sprintf("/search?q=hello&session=%s&type_prefix=bridge:&agent=sup&after=%d&before=%d",
+		sessA.ID, minID-1, maxID+1)
+	rr := doRequest(t, d, "GET", path, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	results := decodeJSON[[]store.SessionEvent](t, rr)
+	// Only the bridge:start event in sessA with agent=sup should match.
+	if len(results) != 1 {
+		t.Fatalf("expected 1 intersecting event, got %d: %+v", len(results), results)
+	}
+	if results[0].SessionID != sessA.ID {
+		t.Errorf("expected sessA event, got session %q", results[0].SessionID)
+	}
+}
+
+func TestSearch_NegativeAfterReturns400(t *testing.T) {
+	d := testDaemon(t)
+
+	rr := doRequest(t, d, "GET", "/search?after=-1", nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for negative after, got %d", rr.Code)
+	}
+	resp := decodeJSON[map[string]string](t, rr)
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+// TestSearch_TimeoutReturns504: end-to-end 504 test requires injectable timeout
+// or a slow store and would add invasive changes. The context-cancellation
+// behaviour is validated at the store layer in TestSearchEventsV1_ContextCancelled.
+// TODO: add a store wrapper that sleeps on SearchEventsV1 to test 504 end-to-end.
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -601,6 +602,88 @@ func (s *Store) SearchEvents(query string) ([]SessionEvent, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store: search events: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
+// SearchPredicates is the query shape for SearchEventsV1.
+// Zero-valued predicates are treated as "no filter".
+type SearchPredicates struct {
+	Q          string // FTS5 MATCH query (may be empty)
+	SessionID  string // exact session_id filter
+	TypePrefix string // events where type LIKE prefix||'%'
+	Agent      string // events where json_extract(data,'$.agent') == agent
+	AfterID    int64  // id > after (0 = no filter)
+	BeforeID   int64  // id < before (0 = no filter)
+	Limit      int    // cap 1000; if 0 use 1000
+	DescOrder  bool   // true when caller wants id DESC (no-params default)
+}
+
+const searchMaxLimit = 1000
+
+// SearchEventsV1 executes a bounded, predicated search. Accepts ctx so handlers
+// can enforce a timeout. Returns events sorted by id (ASC by default, DESC
+// when p.DescOrder is true). LIMIT is always applied (cap 1000).
+func (s *Store) SearchEventsV1(ctx context.Context, p SearchPredicates) ([]SessionEvent, error) {
+	limit := p.Limit
+	if limit <= 0 || limit > searchMaxLimit {
+		limit = searchMaxLimit
+	}
+
+	var sb strings.Builder
+	var args []any
+
+	if p.Q != "" {
+		// FTS5 INNER JOIN path.
+		sb.WriteString(`SELECT e.id, e.session_id, e.timestamp, e.type, e.data
+FROM events e
+JOIN events_fts f ON f.rowid = e.id
+WHERE events_fts MATCH ?`)
+		args = append(args, p.Q)
+	} else {
+		sb.WriteString(`SELECT e.id, e.session_id, e.timestamp, e.type, e.data
+FROM events e
+WHERE 1=1`)
+	}
+
+	if p.SessionID != "" {
+		sb.WriteString(` AND e.session_id = ?`)
+		args = append(args, p.SessionID)
+	}
+
+	if p.TypePrefix != "" {
+		// Escape LIKE special chars in the prefix so they match literally.
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(p.TypePrefix)
+		sb.WriteString(` AND e.type LIKE ? || '%' ESCAPE '\'`)
+		args = append(args, escaped)
+	}
+
+	if p.Agent != "" {
+		sb.WriteString(` AND json_extract(e.data, '$.agent') = ?`)
+		args = append(args, p.Agent)
+	}
+
+	if p.AfterID > 0 {
+		sb.WriteString(` AND e.id > ?`)
+		args = append(args, p.AfterID)
+	}
+
+	if p.BeforeID > 0 {
+		sb.WriteString(` AND e.id < ?`)
+		args = append(args, p.BeforeID)
+	}
+
+	order := "ASC"
+	if p.DescOrder {
+		order = "DESC"
+	}
+	sb.WriteString(` ORDER BY e.id ` + order + ` LIMIT ?`)
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 	return scanEvents(rows)
