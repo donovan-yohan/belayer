@@ -1,0 +1,51 @@
+internal/sandbox/clamshell_test.go
+  070b1f6d41cc63de 1-396
+internal/sandbox/clamshell.go
+  070b1f6d41cc63de 1-271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "123ea046b7e5c998d99f88aa324fba6a10099777",
+  "prompts": {
+    "070b1f6d41cc63de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "32aaa413-25e1-41d9-aefa-477c4e50b26b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 667,
+      "overriden_lines": 0
+    },
+    "6ea66a8f7b3aa96a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6db8302f-30d8-46df-abbd-c9cca6313e79",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
