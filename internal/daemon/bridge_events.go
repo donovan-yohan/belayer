@@ -439,16 +439,18 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		}
 	}
 
+	// rejectionCount is the count of prior bridge:completion_rejected events.
+	// The current rejection is rejectionCount+1 (spec §3.7 requires positive integers).
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
 		Type:      "completion_rejected",
 		Data: mustJSON(map[string]string{
 			"rejected_by": agentName,
-			"cycle":       fmt.Sprintf("%d/%d", rejectionCount, maxRejectionCycles),
+			"cycle":       fmt.Sprintf("%d/%d", rejectionCount+1, maxRejectionCycles),
 		}),
 	})
 
-	if rejectionCount > maxRejectionCycles {
+	if rejectionCount >= maxRejectionCycles {
 		log.Printf("Session %s hit max rejection cycles (%d), escalating to operator", sessionID, maxRejectionCycles)
 		_ = d.store.UpdateSessionStatus(sessionID, "needs_human_review")
 		_ = d.store.LogEvent(store.SessionEvent{
@@ -488,7 +490,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 	// Send gap list to supervisor for remediation.
 	content := fmt.Sprintf(
 		"PM rejected completion (cycle %d/%d). Gaps found:\n\n%s\n\nAddress these gaps and call belayer_request_completion again when ready.",
-		rejectionCount, maxRejectionCycles, gapList,
+		rejectionCount+1, maxRejectionCycles, gapList,
 	)
 	msgID := uuid.New().String()
 	msg := broker.Message{
@@ -509,5 +511,5 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 
 	log.Printf("PM rejected completion for session %s (cycle %d/%d), gap list sent to supervisor",
-		sessionID, rejectionCount, maxRejectionCycles)
+		sessionID, rejectionCount+1, maxRejectionCycles)
 }

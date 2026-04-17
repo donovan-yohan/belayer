@@ -931,7 +931,11 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		if len(events) > 0 {
 			for _, evt := range events {
 				// Domain frames carry id: lines (spec §4 A8).
-				fmt.Fprintf(w, "id: %d\nevent: session_event\ndata: ", evt.ID)
+				// emit event: <type> per LOG_FORMAT.md §4 (A2). Sanitize the type
+				// so malformed event types inserted via POST /sessions/{id}/events
+				// cannot inject additional SSE frames by embedding newlines or null bytes.
+				evtType := sanitizeSSEEventType(evt.Type)
+				fmt.Fprintf(w, "id: %d\nevent: %s\ndata: ", evt.ID, evtType)
 				if err := enc.Encode(evt); err != nil {
 					return
 				}
@@ -1133,6 +1137,26 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// sanitizeSSEEventType replaces any characters that would break SSE frame
+// parsing (\n, \r, \x00) with '_'. The event type is user-controlled (anything
+// posted via POST /sessions/{id}/events), so we must guard against SSE frame
+// injection before emitting the event: line.
+func sanitizeSSEEventType(t string) string {
+	if !strings.ContainsAny(t, "\n\r\x00") {
+		return t
+	}
+	var b strings.Builder
+	b.Grow(len(t))
+	for _, r := range t {
+		if r == '\n' || r == '\r' || r == 0 {
+			b.WriteByte('_')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // bridgeKey returns the map key for a bridge process given session and agent name.

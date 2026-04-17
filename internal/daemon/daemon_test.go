@@ -409,7 +409,7 @@ func TestStreamEventsSSE_EmitsMultiplexedEvents(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		// Accumulate chunks until we see a session_event or 2KiB is read.
+		// Accumulate chunks until we see event: streamed or 2KiB is read.
 		// The first frame is daemon_hello; we read past it into the domain frame.
 		buf := make([]byte, 4096)
 		var accumulated []byte
@@ -417,7 +417,7 @@ func TestStreamEventsSSE_EmitsMultiplexedEvents(t *testing.T) {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
 				accumulated = append(accumulated, buf[:n]...)
-				if strings.Contains(string(accumulated), "event: session_event") {
+				if strings.Contains(string(accumulated), "event: streamed") {
 					break
 				}
 			}
@@ -433,7 +433,7 @@ func TestStreamEventsSSE_EmitsMultiplexedEvents(t *testing.T) {
 
 	select {
 	case payload := <-resultCh:
-		if !strings.Contains(payload, "event: session_event") {
+		if !strings.Contains(payload, "event: streamed") {
 			t.Fatalf("expected SSE event header, got %q", payload)
 		}
 		if !strings.Contains(payload, `"Type":"streamed"`) {
@@ -1270,17 +1270,18 @@ func TestSSE_DomainFramesCarryIDLine(t *testing.T) {
 	if frames[0].event != "daemon_hello" {
 		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
 	}
-	// Find the domain frame (session_event).
+	// Find the domain frame. Domain frames are any event that is not a
+	// control frame (daemon_hello, daemon_draining).
 	var domainFrame *sseFrame
 	for i := range frames[1:] {
 		f := &frames[i+1]
-		if f.event == "session_event" {
+		if !isSSEControlFrame(f.event) {
 			domainFrame = f
 			break
 		}
 	}
 	if domainFrame == nil {
-		t.Fatalf("no session_event frame found in %d frames", len(frames))
+		t.Fatalf("no domain frame found in %d frames; events: %+v", len(frames), frames)
 	}
 	if domainFrame.id == "" {
 		t.Error("domain frame must carry an id: line")
@@ -1333,8 +1334,9 @@ func TestSSE_LastEventIDHeaderHonored(t *testing.T) {
 	if frames[0].event != "daemon_hello" {
 		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
 	}
-	if frames[1].event != "session_event" {
-		t.Fatalf("second frame must be session_event, got %q", frames[1].event)
+	// Second frame must be a domain frame (event type matches logged type).
+	if frames[1].event != "ev_c" {
+		t.Fatalf("second frame must be ev_c, got %q", frames[1].event)
 	}
 	// Verify only ev_c is in the data.
 	if !strings.Contains(frames[1].data, "ev_c") {
@@ -1518,17 +1520,26 @@ func TestSSE_DaemonHelloLastIDReflectsMaxStoreID(t *testing.T) {
 	}
 }
 
+// isSSEControlFrame returns true for SSE control frames (daemon_hello,
+// daemon_draining). Any other event type is a domain frame.
+// The set is intentionally small: spec §4 lists exactly two control frames.
+func isSSEControlFrame(eventType string) bool {
+	return eventType == "daemon_hello" || eventType == "daemon_draining"
+}
+
 // TestSSE_ControlFramesNeverCarryIDLine is a regression guard for spec §4 A3:
 // daemon_hello and daemon_draining are control frames and must never carry an
-// id: line, while session_event domain frames must carry exactly one id: line
-// that parses as a positive integer. The assertion is on raw frame text so a
-// future refactor that accidentally routes control frames through the domain
-// id-stamping path will be caught immediately.
+// id: line, while domain frames must carry exactly one id: line that parses as
+// a positive integer. The assertion is on raw frame text so a future refactor
+// that accidentally routes control frames through the domain id-stamping path
+// will be caught immediately.
+//
+// With the B2 fix, domain frames emit event: <actual type>, not "session_event".
 func TestSSE_ControlFramesNeverCarryIDLine(t *testing.T) {
 	d := testDaemon(t)
 	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-ctrl-id"}))
 
-	// Log a domain event BEFORE connecting so the stream has a session_event
+	// Log a domain event BEFORE connecting so the stream has a domain frame
 	// between daemon_hello and daemon_draining.
 	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "before_drain"})
 
@@ -1563,14 +1574,14 @@ func TestSSE_ControlFramesNeverCarryIDLine(t *testing.T) {
 
 	for _, f := range frames {
 		rawText := strings.Join(f.lines, "\n")
-		switch f.event {
-		case "daemon_hello", "daemon_draining":
+		if isSSEControlFrame(f.event) {
 			// Control frames: must NOT contain an id: line.
 			if strings.Contains(rawText, "\nid:") || strings.HasPrefix(rawText, "id:") {
 				t.Errorf("control frame %q contains id: line; raw:\n%s", f.event, rawText)
 			}
-		case "session_event":
+		} else {
 			// Domain frames: must contain EXACTLY ONE id: line that is a positive integer.
+			// Event type matches the logged event type (e.g. "session_created", "before_drain").
 			idCount := 0
 			var parsedID int64
 			for _, line := range f.lines {
@@ -1579,20 +1590,20 @@ func TestSSE_ControlFramesNeverCarryIDLine(t *testing.T) {
 					val := strings.TrimPrefix(line, "id: ")
 					v, err := strconv.ParseInt(val, 10, 64)
 					if err != nil || v <= 0 {
-						t.Errorf("session_event id: line %q is not a positive integer: %v", line, err)
+						t.Errorf("domain frame %q id: line %q is not a positive integer: %v", f.event, line, err)
 					}
 					parsedID = v
 				}
 			}
 			if idCount != 1 {
-				t.Errorf("session_event must have exactly 1 id: line, got %d; raw:\n%s", idCount, rawText)
+				t.Errorf("domain frame %q must have exactly 1 id: line, got %d; raw:\n%s", f.event, idCount, rawText)
 			}
 			// Cross-check: the id: value must match the event's JSON ID field.
 			if parsedID > 0 {
 				var evtPayload store.SessionEvent
 				if err := json.Unmarshal([]byte(f.data), &evtPayload); err == nil {
 					if evtPayload.ID != parsedID {
-						t.Errorf("session_event id: line %d does not match JSON ID %d", parsedID, evtPayload.ID)
+						t.Errorf("domain frame %q id: line %d does not match JSON ID %d", f.event, parsedID, evtPayload.ID)
 					}
 				}
 			}
@@ -1650,10 +1661,10 @@ func TestSSE_LastEventIDWinsOverAfterParam(t *testing.T) {
 	if frames[0].event != "daemon_hello" {
 		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
 	}
-	// Check both ev2 and ev3 appear.
+	// Check both ev2 and ev3 appear. Domain frames carry the actual event type.
 	var types []string
 	for _, f := range frames[1:] {
-		if f.event == "session_event" {
+		if !isSSEControlFrame(f.event) {
 			types = append(types, f.data)
 		}
 	}

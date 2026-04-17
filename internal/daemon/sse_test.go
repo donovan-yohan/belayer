@@ -76,16 +76,17 @@ func TestSSE_T1_MultiSessionCursorOrdering(t *testing.T) {
 		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
 	}
 
-	// Extract session_event frames and verify monotonically increasing IDs.
+	// Extract domain frames and verify monotonically increasing IDs.
+	// Domain frames carry the actual event type (e.g. "session_created", "A1").
 	var lastID int64
 	seenTypes := map[string]bool{}
 	for _, f := range frames[1:] {
-		if f.event != "session_event" {
+		if isSSEControlFrame(f.event) {
 			continue
 		}
 		var evt store.SessionEvent
 		if err := json.Unmarshal([]byte(f.data), &evt); err != nil {
-			t.Fatalf("parse session_event: %v", err)
+			t.Fatalf("parse domain frame %q: %v", f.event, err)
 		}
 		if evt.ID <= lastID {
 			t.Errorf("non-monotonic ID: got %d after %d (type=%s)", evt.ID, lastID, evt.Type)
@@ -195,9 +196,9 @@ func TestSSE_T5_ReconnectGapFree(t *testing.T) {
 		frames := readSSEFrames(t, resp.Body, 7, 2*time.Second)
 		resp.Body.Close()
 
-		// Find the last session_event ID.
+		// Find the last domain frame ID.
 		for _, f := range frames {
-			if f.event == "session_event" && f.id != "" {
+			if !isSSEControlFrame(f.event) && f.id != "" {
 				var id int64
 				fmt.Sscan(f.id, &id)
 				if id > reconnectAfter {
@@ -241,7 +242,7 @@ func TestSSE_T5_ReconnectGapFree(t *testing.T) {
 	var gotIDs []int64
 	seenGap := map[string]bool{}
 	for _, f := range frames2[1:] {
-		if f.event != "session_event" {
+		if isSSEControlFrame(f.event) {
 			continue
 		}
 		var evt store.SessionEvent
@@ -337,12 +338,12 @@ func TestSSE_TA0_BacklogOnConnectNoAfter(t *testing.T) {
 	var seenTypes []string
 	var lastReceivedID int64
 	for _, f := range frames[1:] {
-		if f.event != "session_event" {
+		if isSSEControlFrame(f.event) {
 			continue
 		}
 		var evt store.SessionEvent
 		if err := json.Unmarshal([]byte(f.data), &evt); err != nil {
-			t.Fatalf("parse session_event: %v", err)
+			t.Fatalf("parse domain frame %q: %v", f.event, err)
 		}
 		seenTypes = append(seenTypes, evt.Type)
 		if evt.ID > lastReceivedID {
@@ -370,7 +371,7 @@ func TestSSE_TA0_BacklogOnConnectNoAfter(t *testing.T) {
 	// IDs must be monotonically increasing (no gaps, no duplicates).
 	var prevID int64
 	for _, f := range frames[1:] {
-		if f.event != "session_event" {
+		if isSSEControlFrame(f.event) {
 			continue
 		}
 		var evt store.SessionEvent
@@ -441,7 +442,7 @@ func TestSSE_TA1_Corner_MidStreamSubscriptionLosesHistory(t *testing.T) {
 	seenHistorical := false
 	seenPost := false
 	for _, f := range frames[1:] {
-		if f.event != "session_event" {
+		if isSSEControlFrame(f.event) {
 			continue
 		}
 		if strings.Contains(f.data, "C_historical") {
