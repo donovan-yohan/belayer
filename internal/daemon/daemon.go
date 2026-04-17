@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -219,6 +222,9 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
 	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
 	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
+	mux.HandleFunc("GET /sessions/{id}/archive.ndjson", d.handleArchiveNDJSON)
+	mux.HandleFunc("GET /sessions/{id}/archive/manifest.json", d.handleArchiveManifest)
+	mux.HandleFunc("GET /sessions/{id}/archive.tar.gz", d.handleArchiveTarGz)
 	mux.HandleFunc("GET /search", d.handleSearch)
 	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
@@ -1035,6 +1041,147 @@ func (d *Daemon) querySessionEvents(ctx context.Context, sessionID string, after
 		case <-ticker.C:
 		}
 	}
+}
+
+// archiveDir returns the on-disk archive directory for a session, or a non-nil
+// error response that has already been written to w if something is wrong.
+// Callers should return immediately on a non-empty errorSent=true.
+//
+// Resolution rules (in order):
+//  1. Session not found → 404 {"error":"session not found"}
+//  2. Session has no workspace → 404 {"error":"no archive (session has no workspace)"}
+//  3. Archive dir missing → 404 {"error":"no archive"}
+func (d *Daemon) resolveArchiveDir(w http.ResponseWriter, r *http.Request) (dir string, ok bool) {
+	id := r.PathValue("id")
+	sess, err := d.store.GetSession(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+			return "", false
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return "", false
+	}
+	if sess.WorkspaceDir == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no archive (session has no workspace)"})
+		return "", false
+	}
+	archDir := filepath.Join(sess.WorkspaceDir, ".belayer", "archive", id)
+	if _, err := os.Stat(archDir); os.IsNotExist(err) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no archive"})
+		return "", false
+	} else if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return "", false
+	}
+	return archDir, true
+}
+
+// serveArchiveFile streams a single archive file to w with the given content type.
+// Returns false and writes an error response if the file is missing or unreadable.
+func serveArchiveFile(w http.ResponseWriter, path, contentType string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no archive"})
+			return false
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return false
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, f)
+	return true
+}
+
+// handleArchiveNDJSON serves GET /sessions/{id}/archive.ndjson.
+// Streams <workspace>/.belayer/archive/<id>/events.ndjson with no in-memory buffering.
+func (d *Daemon) handleArchiveNDJSON(w http.ResponseWriter, r *http.Request) {
+	archDir, ok := d.resolveArchiveDir(w, r)
+	if !ok {
+		return
+	}
+	serveArchiveFile(w, filepath.Join(archDir, "events.ndjson"), "application/x-ndjson")
+}
+
+// handleArchiveManifest serves GET /sessions/{id}/archive/manifest.json.
+func (d *Daemon) handleArchiveManifest(w http.ResponseWriter, r *http.Request) {
+	archDir, ok := d.resolveArchiveDir(w, r)
+	if !ok {
+		return
+	}
+	serveArchiveFile(w, filepath.Join(archDir, "manifest.json"), "application/json")
+}
+
+// handleArchiveTarGz serves GET /sessions/{id}/archive.tar.gz.
+// Streams a gzip-compressed tar containing events.ndjson + manifest.json directly
+// to w without buffering either file in memory.
+func (d *Daemon) handleArchiveTarGz(w http.ResponseWriter, r *http.Request) {
+	archDir, ok := d.resolveArchiveDir(w, r)
+	if !ok {
+		return
+	}
+
+	// Verify both files exist before touching response headers.
+	ndjsonPath := filepath.Join(archDir, "events.ndjson")
+	manifestPath := filepath.Join(archDir, "manifest.json")
+	for _, p := range []string{ndjsonPath, manifestPath} {
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no archive"})
+			return
+		} else if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	sessionID := r.PathValue("id")
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.tar.gz"`, sessionID))
+	w.WriteHeader(http.StatusOK)
+
+	gw := gzip.NewWriter(w)
+	tw := tar.NewWriter(gw)
+
+	for _, entry := range []struct {
+		name string
+		path string
+	}{
+		{"events.ndjson", ndjsonPath},
+		{"manifest.json", manifestPath},
+	} {
+		fi, err := os.Stat(entry.path)
+		if err != nil {
+			// Headers already sent; can't send a JSON error — just stop.
+			log.Printf("archive tar.gz: stat %s: %v", entry.path, err)
+			return
+		}
+		hdr := &tar.Header{
+			Name:    entry.name,
+			Mode:    0o644,
+			Size:    fi.Size(),
+			ModTime: fi.ModTime(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			log.Printf("archive tar.gz: write header %s: %v", entry.name, err)
+			return
+		}
+		f, err := os.Open(entry.path)
+		if err != nil {
+			log.Printf("archive tar.gz: open %s: %v", entry.path, err)
+			return
+		}
+		if _, err := io.Copy(tw, f); err != nil {
+			f.Close()
+			log.Printf("archive tar.gz: copy %s: %v", entry.name, err)
+			return
+		}
+		f.Close()
+	}
+	_ = tw.Close()
+	_ = gw.Close()
 }
 
 func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
