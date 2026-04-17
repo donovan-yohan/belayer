@@ -1,0 +1,29 @@
+internal/daemon/health_test.go
+  37238b64ac0d5a34 1-53
+internal/daemon/sse_test.go
+  37238b64ac0d5a34 1-468
+internal/daemon/search_test.go
+  37238b64ac0d5a34 1-256
+internal/daemon/shutdown_test.go
+  37238b64ac0d5a34 1-135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "d7f4c0d2fba61fad60c83c4a39407b28cef487b9",
+  "prompts": {
+    "37238b64ac0d5a34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "85c03206-a5e6-43f5-b159-aae4882c50da",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 930,
+      "total_deletions": 18,
+      "accepted_lines": 915,
+      "overriden_lines": 0
+    }
+  }
+}
