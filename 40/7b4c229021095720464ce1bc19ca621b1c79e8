@@ -1,0 +1,27 @@
+tests/scripts/test-belayer-host-dry-run.sh
+  e763a424956efef3 1-24
+scripts/belayer-host
+  e763a424956efef3 1-109
+docs/exec-plans/active/2026-04-17-belayer-in-clamshell.md
+  e763a424956efef3 26,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "407b4c229021095720464ce1bc19ca621b1c79e8",
+  "prompts": {
+    "e763a424956efef3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ef2fc39-34ef-4510-9803-a7bab7d3b0b3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 135,
+      "total_deletions": 1,
+      "accepted_lines": 138,
+      "overriden_lines": 0
+    }
+  }
+}
