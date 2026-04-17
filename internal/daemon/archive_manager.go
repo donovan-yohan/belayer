@@ -48,35 +48,54 @@ func newArchiveManager(st *store.Store) *archiveManager {
 
 // ArchiveTerminal spawns an async archive for a session that just transitioned
 // to a terminal status. Safe to call concurrently; deduped per session.
+//
+// The stopping check, seen-map read, and inflight.Add live in a single
+// seenMu-held critical section so there is no TOCTOU where a caller races
+// past the stopping check and reaches inflight.Add AFTER DrainAll's
+// inflight.Wait() starts (which sync.WaitGroup forbids). DrainAll flips
+// stopping under the same mutex, giving us the invariant:
+//
+//	stopping=true ⇒ no future inflight.Add.
 func (m *archiveManager) ArchiveTerminal(sessionID string) {
-	if m.stopping.Load() {
-		return
-	}
 	m.seenMu.Lock()
-	if m.seen[sessionID] {
+	if m.stopping.Load() || m.seen[sessionID] {
 		m.seenMu.Unlock()
 		return
 	}
 	m.seen[sessionID] = true
+	m.inflight.Add(1)
 	m.seenMu.Unlock()
 
-	m.inflight.Add(1)
 	go func() {
 		defer m.inflight.Done()
+		defer m.forgetSeen(sessionID)
 		if err := m.doArchive(sessionID, false); err != nil {
 			log.Printf("archive: terminal archive %s: %v", sessionID, err)
 		}
 	}()
 }
 
+// forgetSeen removes sessionID from the dedupe map after the archive
+// goroutine finishes. Keeps the map bounded over long daemon lifetimes.
+// A second terminal transition for the same session then archives again,
+// overwriting the previous archive via archive.Write's atomic staging rename.
+func (m *archiveManager) forgetSeen(sessionID string) {
+	m.seenMu.Lock()
+	delete(m.seen, sessionID)
+	m.seenMu.Unlock()
+}
+
 // DrainAll runs the shutdown archive drain:
-//  1. Sets stopping so late ArchiveTerminal calls are dropped.
+//  1. Sets stopping so late ArchiveTerminal calls are dropped (under
+//     seenMu so the stopping/Add invariant holds).
 //  2. Archives every non-terminal session synchronously with partial=true.
 //  3. Waits for in-flight terminal archives to finish or ctx to expire.
 //
 // Returns true if all archives finished before ctx expiry, false on timeout.
 func (m *archiveManager) DrainAll(ctx context.Context) bool {
+	m.seenMu.Lock()
 	m.stopping.Store(true)
+	m.seenMu.Unlock()
 
 	sessions, err := m.store.ListSessions()
 	if err != nil {
@@ -104,20 +123,6 @@ func (m *archiveManager) DrainAll(ctx context.Context) bool {
 		log.Printf("archive: drain timeout; some archives may be incomplete")
 		return false
 	}
-}
-
-// addForTest injects a blocked goroutine into the WaitGroup without ever
-// calling Done. Tests use this to exercise DrainAll timeout behaviour without
-// exporting internal state. The returned release func must be called to unblock
-// the goroutine (so the test doesn't leak goroutines on cleanup).
-func (m *archiveManager) addForTest() (release func()) {
-	ch := make(chan struct{})
-	m.inflight.Add(1)
-	go func() {
-		<-ch
-		m.inflight.Done()
-	}()
-	return func() { close(ch) }
 }
 
 // doArchive loads session state and writes the archive. destDir is

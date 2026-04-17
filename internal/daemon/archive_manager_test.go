@@ -142,12 +142,16 @@ func TestArchiveManager_DedupesConcurrentCalls(t *testing.T) {
 		t.Error("manifest.session missing")
 	}
 
-	// The seen map must have exactly one entry.
+	// After completion, seen is cleared so the map stays bounded over long
+	// daemon lifetimes. The dedupe proof is the single-archive outcome above;
+	// if seen had leaked, the test would still pass the count check but we'd
+	// have ambiguity about which mechanism deduped. Assert the post-completion
+	// invariant: seen empty.
 	m.seenMu.Lock()
 	seenCount := len(m.seen)
 	m.seenMu.Unlock()
-	if seenCount != 1 {
-		t.Errorf("expected seen map to have 1 entry, got %d", seenCount)
+	if seenCount != 0 {
+		t.Errorf("expected seen map empty after archive completion, got %d entries", seenCount)
 	}
 }
 
@@ -243,5 +247,76 @@ func TestArchiveManager_DrainAllReturnsFalseOnTimeout(t *testing.T) {
 	ok := m.DrainAll(ctx)
 	if ok {
 		t.Error("expected DrainAll to return false on timeout, got true")
+	}
+}
+
+// TestArchiveManager_ConcurrentAddVsDrain stress-tests the WaitGroup
+// Add/Wait invariant: ArchiveTerminal's stopping check + seen dedupe +
+// inflight.Add must all live in one seenMu critical section so DrainAll
+// (which flips stopping under the same mutex) can never race an Add after
+// inflight.Wait has started. Run under `go test -race` to catch regressions.
+func TestArchiveManager_ConcurrentAddVsDrain(t *testing.T) {
+	for iter := 0; iter < 20; iter++ {
+		ws := t.TempDir()
+		st := openTestStore(t)
+		m := newArchiveManager(st)
+
+		ids := make([]string, 30)
+		for i := range ids {
+			ids[i] = createStoreSession(t, st,
+				"race-"+string(rune('a'+(i%26))),
+				"complete", ws)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(len(ids) + 1)
+		for _, id := range ids {
+			go func(sessionID string) {
+				defer wg.Done()
+				m.ArchiveTerminal(sessionID)
+			}(id)
+		}
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			m.DrainAll(ctx)
+		}()
+		wg.Wait()
+		// The assertion is absence-of-panic; `go test -race` catches the
+		// Add/Wait race if the stopping-check + Add escape the mutex.
+		st.Close()
+	}
+}
+
+// TestArchiveTerminal_WorksAfterDedupeEviction verifies that a second
+// terminal transition for the same session archives again after the first
+// goroutine cleared the seen entry. This is the "status re-set" path cragd
+// cares about when operators re-run a completed session's PATCH.
+func TestArchiveTerminal_WorksAfterDedupeEviction(t *testing.T) {
+	ws := t.TempDir()
+	st := openTestStore(t)
+	m := newArchiveManager(st)
+
+	id := createStoreSession(t, st, "dedupe-evict", "complete", ws)
+	logTestEvent(t, st, id, "session_created")
+
+	m.ArchiveTerminal(id)
+	m.inflight.Wait()
+	_ = waitForManifest(t, ws, id, 2*time.Second)
+
+	// seen is cleared — a second call must produce a new archive (overwriting
+	// the first via atomic directory rename).
+	logTestEvent(t, st, id, "session_re_completed")
+	m.ArchiveTerminal(id)
+	m.inflight.Wait()
+
+	manifest := waitForManifest(t, ws, id, 2*time.Second)
+	count, ok := manifest["event_count"].(float64)
+	if !ok {
+		t.Fatalf("event_count not numeric: %T", manifest["event_count"])
+	}
+	if count < 2 {
+		t.Errorf("expected event_count >= 2 after re-archive, got %v", count)
 	}
 }

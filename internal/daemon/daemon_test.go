@@ -43,6 +43,7 @@ func testDaemon(t *testing.T) *Daemon {
 		sandboxDrivers:   reg,
 		runtime:          &runtime.Noop{},
 		startCtx:         context.Background(),
+		archiver:         newArchiveManager(st),
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }

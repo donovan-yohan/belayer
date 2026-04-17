@@ -531,6 +531,12 @@ type createSessionRequest struct {
 }
 
 func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	// Reject session creation during shutdown: a session created after DrainAll
+	// snapshots the session list would never be archived.
+	if d.draining.Load() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon draining"})
+		return
+	}
 	var req createSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})

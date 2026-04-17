@@ -153,6 +153,7 @@ func (d *Daemon) checkSessionStalled(sessionID string) {
 	}); err != nil {
 		log.Printf("WARNING: checkSessionStalled: session %s marked stalled but event log failed: %v", sessionID, err)
 	}
+	d.archiver.ArchiveTerminal(sessionID)
 	log.Printf("Session %s marked stalled: all agents exited without completion approval", sessionID)
 }
 
@@ -197,6 +198,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 				log.Printf("ERROR: processAgentStatusEvent: failed to escalate session %s to needs_human_review: %v", sessionID, err)
 			} else {
 				log.Printf("Session %s escalated to human review: supervisor reported incomplete", sessionID)
+				d.archiver.ArchiveTerminal(sessionID)
 				d.terminateSandbox(d.startCtx, sessionID)
 			}
 		}
@@ -409,6 +411,7 @@ func (d *Daemon) handleBridgeCompletionApproved(sessionID, agentName string, dat
 			"report":      report[:min(len(report), 1000)],
 		}),
 	})
+	d.archiver.ArchiveTerminal(sessionID)
 	d.terminateSandbox(d.startCtx, sessionID)
 
 	log.Printf("Session %s marked complete (approved by %s)", sessionID, agentName)
@@ -456,6 +459,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 				"rejections": fmt.Sprintf("%d", rejectionCount),
 			}),
 		})
+		d.archiver.ArchiveTerminal(sessionID)
 		d.terminateSandbox(d.startCtx, sessionID)
 		// Notify supervisor of escalation.
 		msg := broker.Message{
