@@ -129,7 +129,10 @@ type scaffoldResult struct {
 func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 	var result scaffoldResult
 
-	if _, err := os.Stat(belayerDir); err == nil {
+	if info, err := os.Stat(belayerDir); err == nil {
+		if !info.IsDir() {
+			return result, fmt.Errorf("%s exists but is not a directory", belayerDir)
+		}
 		result.alreadyInitialized = true
 		if !force {
 			return result, nil
@@ -187,7 +190,9 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 // gitignoreBlock is appended to the project .gitignore on first init. Entries
 // are anchored with a leading slash so they only match at the repo root —
 // nested .belayer/ inside subprojects (e.g. inside .belayer/worktrees/...)
-// are not affected by these rules.
+// are not affected by these rules. The leading newline is a separator from
+// preceding content; it is stripped when the file is created from scratch
+// so the file doesn't start with a blank line.
 const gitignoreBlock = `
 # belayer — per-run state (committed: agents/, config.yaml, policies/)
 /.belayer/runs/
@@ -210,13 +215,17 @@ func ensureGitignoreEntries(projectDir string) (string, error) {
 		return "", nil
 	}
 
+	block := gitignoreBlock
 	out := append([]byte{}, existing...)
-	// Ensure a trailing newline before the appended block so we don't merge
-	// onto a previous incomplete line.
-	if len(out) > 0 && out[len(out)-1] != '\n' {
+	if len(out) == 0 {
+		// Fresh file — drop the separator newline so the file starts with the marker.
+		block = strings.TrimLeft(block, "\n")
+	} else if out[len(out)-1] != '\n' {
+		// Existing file without a trailing newline — add one so we don't merge
+		// onto a previous incomplete line.
 		out = append(out, '\n')
 	}
-	out = append(out, []byte(gitignoreBlock)...)
+	out = append(out, []byte(block)...)
 
 	if err := os.WriteFile(path, out, 0o644); err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)

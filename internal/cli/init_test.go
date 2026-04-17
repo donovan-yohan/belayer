@@ -190,6 +190,49 @@ func TestInitAppendsToExistingGitignoreOnce(t *testing.T) {
 	}
 }
 
+func TestInitRejectsBelayerWhenNotADirectory(t *testing.T) {
+	dir := t.TempDir()
+	belayerPath := filepath.Join(dir, ".belayer")
+	if err := os.WriteFile(belayerPath, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	cmd := newInitCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"--target", dir})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected init to reject .belayer file, got success: %s", out.String())
+	}
+	if !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("expected 'not a directory' error, got: %v", err)
+	}
+}
+
+func TestInitGitignoreCreatesWithoutLeadingBlankLine(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newInitCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--target", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if len(got) == 0 || got[0] == '\n' {
+		t.Fatalf("freshly-created .gitignore must not start with a blank line; got: %q", string(got))
+	}
+	if !strings.HasPrefix(string(got), gitignoreMarker) {
+		t.Fatalf(".gitignore must start with the belayer marker; got: %q", string(got))
+	}
+}
+
 func TestAutoInitIfMissingScaffoldsAndAnnounces(t *testing.T) {
 	dir := t.TempDir()
 	out := &bytes.Buffer{}

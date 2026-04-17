@@ -220,14 +220,20 @@ SPAWN_AGENT_SCHEMA = {
         "- Triggering the run-completion gate -> use belayer_request_completion; the daemon "
         "spawns the PM itself, you do not spawn it manually\n\n"
         "IMPORTANT:\n"
-        "- The 'profile' must match an identity defined in .belayer/agents/. Spawning an "
-        "unknown profile fails with a clear error. Consult the roster shown at session start "
-        "(or the .belayer/agents/ directory) for the available identities in this project.\n"
-        "- 'name' is the session-local identifier (e.g. 'reviewer-1'); 'profile' is the "
-        "identity template (e.g. 'reviewer'). They differ when you spawn multiple peers of the "
-        "same role in one session.\n"
-        "- Implementer-style profiles need 'branch' for git worktree isolation; review/QA-style "
-        "profiles do not. Spawning an implementer without a branch makes it share the "
+        "- 'name' is the session-local handle (e.g. 'reviewer-1'); 'identity' is the template "
+        "under .belayer/agents/<identity>/ (e.g. 'reviewer') and defaults to 'name' when "
+        "omitted. Set 'identity' explicitly when you spawn multiple peers off the same "
+        "template (e.g. name='reviewer-1', identity='reviewer').\n"
+        "- 'identity' must match a directory under .belayer/agents/. An unknown identity "
+        "spawns an agent with no system prompt and no belayer tool gating — almost certainly "
+        "not what you want. Consult the roster shown at session start (or the "
+        ".belayer/agents/ directory) for available identities in this project.\n"
+        "- 'profile' is a separate concern: it selects the Hermes runtime profile "
+        "(BELAYER_PROFILE / HERMES_HOME), not the identity. Most spawns can leave it as "
+        "'default'; only override when a particular agent needs a non-default Hermes "
+        "configuration (custom tool inventory, alternative model defaults, etc.).\n"
+        "- Implementer-style identities need 'branch' for git worktree isolation; review/QA "
+        "identities do not. Spawning an implementer without a branch makes it share the "
         "workspace with you, which is rarely what you want.\n"
         "- Spawned agents persist until they exit or you stop them — budget spawns "
         "intentionally; each peer consumes tokens for as long as it lives."
@@ -241,16 +247,29 @@ SPAWN_AGENT_SCHEMA = {
                     "The session-local identifier for the new agent (e.g. 'reviewer-1', "
                     "'web-dev-checkout'). This is how other agents will address it via "
                     "belayer_send_message. Must be unique within the session. By convention, "
-                    "use '<profile>-<sequence>' or '<profile>-<purpose>' so the role is "
+                    "use '<identity>-<sequence>' or '<identity>-<purpose>' so the role is "
                     "obvious at a glance."
+                ),
+            },
+            "identity": {
+                "type": "string",
+                "description": (
+                    "The identity template to load — must match a directory under "
+                    ".belayer/agents/ (e.g. 'reviewer', 'web-dev', 'qa'). The daemon reads "
+                    "the system prompt and belayer_tools allowlist from that directory at "
+                    "spawn time. Optional: defaults to 'name' when omitted, which works for "
+                    "single-instance roles like 'supervisor' and 'pm' where the handle and "
+                    "the template share a name."
                 ),
             },
             "profile": {
                 "type": "string",
                 "description": (
-                    "The identity template to load — must match a directory under "
-                    ".belayer/agents/ (e.g. 'reviewer', 'web-dev', 'qa'). The daemon reads "
-                    "the system prompt and tool list from that directory at spawn time."
+                    "Hermes runtime profile to launch the agent under (sets BELAYER_PROFILE "
+                    "/ HERMES_HOME). Independent of 'identity' — 'profile' chooses the "
+                    "Hermes config (tool inventory, model defaults, credentials) while "
+                    "'identity' chooses the soul. Most spawns use 'default'; only change "
+                    "this when an agent needs a non-default Hermes configuration."
                 ),
             },
             "message": {
@@ -268,8 +287,8 @@ SPAWN_AGENT_SCHEMA = {
                     "Git branch for worktree isolation. When set, the daemon creates (or "
                     "reuses) a git worktree on this branch under .belayer/worktrees/ and the "
                     "agent works there, isolated from other agents and the main checkout. "
-                    "Use for implementer-style profiles that will write code. Omit for "
-                    "review/QA/research profiles that read but don't commit."
+                    "Use for implementer-style identities that will write code. Omit for "
+                    "review/QA/research identities that read but don't commit."
                 ),
             },
         },
@@ -508,10 +527,17 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
 
     def handler(args: dict, **kwargs) -> str:
         name = args.get("name", "")
+        identity = args.get("identity", "") or name  # default to name for single-instance roles
         profile = args.get("profile", "")
         message = args.get("message", "")
         branch = args.get("branch", "")
-        payload: dict = {"name": name, "role": name, "profile": profile, "message": message}
+        payload: dict = {
+            "name": name,
+            "identity": identity,
+            "role": identity,  # role tracks the identity template by default
+            "profile": profile,
+            "message": message,
+        }
         if branch:
             payload["branch"] = branch
         status, body = unix_post(
@@ -521,7 +547,8 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
         )
         if status == 201:
             extra = f" on branch '{branch}'" if branch else ""
-            return f"Agent '{name}' spawned with profile '{profile}'{extra}."
+            id_suffix = f" (identity '{identity}')" if identity != name else ""
+            return f"Agent '{name}'{id_suffix} spawned with profile '{profile}'{extra}."
         log.warning("spawn_agent %s failed (%d): %s", name, status, body[:200])
         return f"[System] Failed to spawn agent '{name}'. Error: {body[:200]}"
 

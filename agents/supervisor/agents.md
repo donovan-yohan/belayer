@@ -13,15 +13,25 @@ System-prompt has the longer rationale; the rule above is the heuristic.
 
 ## Spawn examples
 
+The `--name` flag is the session-local handle; `--identity` selects the
+template under `.belayer/agents/<identity>/`. `--identity` defaults to
+`--name` for single-instance roles, so the shorthand is fine for one-off
+spawns. `--profile` is the Hermes runtime profile (model defaults, tool
+inventory) and is independent of identity.
+
 ```bash
 # Spawn a worktree-isolated implementer for a feature branch.
-belayer spawn --name web-dev-1 --profile web-dev --branch feature/checkout-flow
+belayer spawn --name web-dev-1 --identity web-dev --profile default \
+  --branch feature/checkout-flow
 
 # Spawn a reviewer for a one-cycle review (no worktree needed).
-belayer spawn --name reviewer-1 --profile reviewer
+belayer spawn --name reviewer-1 --identity reviewer --profile default
+
+# Spawn a second reviewer in the same session.
+belayer spawn --name reviewer-2 --identity reviewer --profile default
 
 # Spawn QA to drive the running app from the outside.
-belayer spawn --name qa-1 --profile qa
+belayer spawn --name qa-1 --identity qa --profile default
 ```
 
 Spawned peers persist until they exit or you stop them. Budget your spawns — each peer consumes tokens.
