@@ -147,10 +147,16 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: connect: %w (stderr: %s)", err, stderr))
 	}
 	var connect struct {
-		Container string `json:"container"`
+		Container string   `json:"container"`
+		Argv      []string `json:"argv"`
 	}
 	if err := json.Unmarshal(connectOut, &connect); err != nil {
 		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: parse connect output: %w (stdout: %s)", err, connectOut))
+	}
+	// Newer clamshell versions may return argv=[docker exec -it <container> /bin/bash]
+	// instead of a direct container field; extract the container name from argv[3].
+	if connect.Container == "" && len(connect.Argv) >= 4 {
+		connect.Container = connect.Argv[3]
 	}
 	if connect.Container == "" {
 		return Handle{}, cleanupAfterCreate(fmt.Errorf("sandbox/clamshell: connect output missing container field: %s", connectOut))
@@ -250,6 +256,10 @@ func (c *Clamshell) Exec(ctx context.Context, h Handle, cmd []string, opts ExecO
 // writeEnvFile materializes env ("KEY=VALUE" entries) into a 0600 tempfile
 // suitable for `docker exec --env-file`. Callers must remove the returned
 // path once the referring process has exited.
+//
+// Docker's --env-file does not support multiline values. Any newlines in a
+// value are encoded as the two-character sequence \n so the file stays valid.
+// Readers (e.g. hermes_bridge) must decode \n back to real newlines.
 func writeEnvFile(env []string) (string, error) {
 	tmp, err := os.CreateTemp("", "belayer-env-*.env")
 	if err != nil {
@@ -262,8 +272,19 @@ func writeEnvFile(env []string) (string, error) {
 		os.Remove(tmp.Name())
 		return "", fmt.Errorf("sandbox/clamshell: chmod env: %w", err)
 	}
-	body := strings.Join(env, "\n")
-	if len(env) > 0 {
+	var lines []string
+	for _, entry := range env {
+		idx := strings.IndexByte(entry, '=')
+		if idx < 0 {
+			lines = append(lines, entry)
+			continue
+		}
+		key := entry[:idx]
+		val := strings.ReplaceAll(entry[idx+1:], "\n", `\n`)
+		lines = append(lines, key+"="+val)
+	}
+	body := strings.Join(lines, "\n")
+	if len(lines) > 0 {
 		body += "\n"
 	}
 	if _, err := tmp.WriteString(body); err != nil {

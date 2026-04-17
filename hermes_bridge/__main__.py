@@ -120,7 +120,7 @@ def main() -> None:
     profile = os.environ.get("BELAYER_PROFILE", "")
     model = os.environ.get("BELAYER_MODEL", "")
     initial_message = os.environ.get("BELAYER_MESSAGE", "")
-    system_prompt = os.environ.get("BELAYER_SYSTEM_PROMPT", "")
+    system_prompt = os.environ.get("BELAYER_SYSTEM_PROMPT", "").replace(r"\n", "\n")
     hermes_session_id = os.environ.get("BELAYER_HERMES_SESSION_ID", "")
     ephemeral = os.environ.get("BELAYER_EPHEMERAL", "true").lower() != "false"
 

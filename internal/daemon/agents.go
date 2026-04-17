@@ -145,6 +145,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 
 	proc, err := d.spawnBridgeAgent(req)
 	if err != nil {
+		log.Printf("spawn agent %s failed: %v", req.Name, err)
 		_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -417,6 +418,11 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		RunDir:          runDir,
 		BelayerRoot:     d.config.BelayerRoot,
 		BelayerTools:    belayerTools,
+	}
+	// In clamshell mode the bridge runs inside the Docker container where the
+	// host hermes venv path doesn't exist; use the container's system python3.
+	if ss.mode == "clamshell" {
+		cfg.Cmd = []string{"python3", "-m", "hermes_bridge"}
 	}
 	_ = worktreePath // stored in DB; cleanup handled separately
 

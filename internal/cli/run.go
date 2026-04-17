@@ -57,8 +57,9 @@ func newRunStartCmd() *cobra.Command {
 				return fmt.Errorf("auto-init .belayer/: %w", err)
 			}
 
-			// Create session — we need its ID first to provision the workspace.
-			sess, err := c.CreateSession(sessionName, "nightshift", repos, "")
+			// Create session with baseDir as workspace so the daemon can resolve
+			// sandbox settings (.belayer/config.yaml) even when no repos are given.
+			sess, err := c.CreateSession(sessionName, "nightshift", repos, baseDir)
 			if err != nil {
 				return fmt.Errorf("create session: %w", err)
 			}
