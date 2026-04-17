@@ -52,5 +52,11 @@ func LoadSettings(workdir string) (Settings, error) {
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		return Settings{}, fmt.Errorf("sandbox: parse config: %w", err)
 	}
+	// Policy paths in config.yaml are written relative to the workspace root
+	// (e.g. ".belayer/policies/default.yaml"). The daemon's cwd is unrelated,
+	// so anchor non-absolute paths to workdir before handing them to drivers.
+	if f.Sandbox.Policy != "" && !filepath.IsAbs(f.Sandbox.Policy) {
+		f.Sandbox.Policy = filepath.Join(workdir, f.Sandbox.Policy)
+	}
 	return f.Sandbox, nil
 }

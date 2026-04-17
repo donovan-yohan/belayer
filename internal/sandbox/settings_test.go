@@ -48,8 +48,11 @@ sandbox:
 	if s.Mode != "clamshell" {
 		t.Errorf("Mode = %q, want clamshell", s.Mode)
 	}
-	if s.Policy != ".belayer/policies/belayer-standard.yaml" {
-		t.Errorf("Policy = %q, want .belayer/policies/belayer-standard.yaml", s.Policy)
+	// Relative Policy paths in config.yaml must be anchored to workdir so
+	// drivers can os.ReadFile them regardless of the daemon's cwd.
+	wantPolicy := filepath.Join(dir, ".belayer/policies/belayer-standard.yaml")
+	if s.Policy != wantPolicy {
+		t.Errorf("Policy = %q, want %q", s.Policy, wantPolicy)
 	}
 	if got := s.ModeOrDefault(); got != "clamshell" {
 		t.Errorf("ModeOrDefault = %q, want clamshell", got)
@@ -72,6 +75,22 @@ runtime:
 	}
 	if got := s.ModeOrDefault(); got != sandbox.DefaultMode {
 		t.Errorf("ModeOrDefault = %q, want %q", got, sandbox.DefaultMode)
+	}
+}
+
+func TestLoadSettingsAbsolutePolicyIsPreserved(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigYAML(t, dir, `
+sandbox:
+  mode: clamshell
+  policy: /etc/belayer/strict.yaml
+`)
+	s, err := sandbox.LoadSettings(dir)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	if s.Policy != "/etc/belayer/strict.yaml" {
+		t.Errorf("absolute Policy = %q, want unchanged", s.Policy)
 	}
 }
 

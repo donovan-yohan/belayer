@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -158,10 +159,40 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 	return Handle{
 		ID: cfg.Name,
 		Meta: map[string]string{
-			"container":  connect.Container,
-			"policyFile": policyPath,
+			"container":     connect.Container,
+			"policyFile":    policyPath,
+			"hostWorkspace": cfg.Workspace,
 		},
 	}, nil
+}
+
+// sandboxWorkspace is where Clamshell mounts the host workspace inside the
+// container. The clamshell CLI guarantees this path; Exec rewrites host-side
+// Dir values that fall under it to the container-side equivalent.
+const sandboxWorkspace = "/workspace"
+
+// translateDir rewrites a host-path Dir to the container-side path when it
+// lives under the sandbox's host workspace. Paths that are empty, already
+// container-side, or outside the workspace are returned unchanged so callers
+// that pass raw container paths (or leave Dir empty) still work.
+func translateDir(dir, hostWorkspace string) string {
+	if dir == "" || hostWorkspace == "" {
+		return dir
+	}
+	if !filepath.IsAbs(dir) {
+		return dir
+	}
+	rel, err := filepath.Rel(hostWorkspace, dir)
+	if err != nil {
+		return dir
+	}
+	if rel == "." {
+		return sandboxWorkspace
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return dir
+	}
+	return sandboxWorkspace + "/" + filepath.ToSlash(rel)
 }
 
 // Exec launches cmd inside the sandbox container via `docker exec`.
@@ -192,8 +223,8 @@ func (c *Clamshell) Exec(ctx context.Context, h Handle, cmd []string, opts ExecO
 	args = append(args, container)
 
 	shellCmd := shellJoin(cmd)
-	if opts.Dir != "" {
-		shellCmd = fmt.Sprintf("cd %s && %s", shellQuote(opts.Dir), shellCmd)
+	if dir := translateDir(opts.Dir, h.Meta["hostWorkspace"]); dir != "" {
+		shellCmd = fmt.Sprintf("cd %s && %s", shellQuote(dir), shellCmd)
 	}
 	args = append(args, "sh", "-lc", shellCmd)
 

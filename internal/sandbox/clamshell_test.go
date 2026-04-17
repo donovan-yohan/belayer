@@ -396,6 +396,79 @@ func TestClamshellExecNoEnvSkipsEnvFile(t *testing.T) {
 	}
 }
 
+func TestClamshellExecTranslatesHostWorkdirToContainerPath(t *testing.T) {
+	// The daemon passes ExecOpts.Dir as a host-side path (e.g. the absolute
+	// workspace path). Inside the clamshell container the workspace is
+	// mounted at /workspace, so host paths produce a broken `cd`. Exec must
+	// rewrite paths that live under the handle's hostWorkspace.
+	c, f := newTestClamshell()
+	f.startProc = &fakeProcess{}
+
+	_, err := c.Exec(context.Background(),
+		Handle{ID: "sess-1", Meta: map[string]string{
+			"container":     "sbx",
+			"hostWorkspace": "/home/user/workspace",
+		}},
+		[]string{"echo", "hi"},
+		ExecOpts{Dir: "/home/user/workspace/repo/src"},
+	)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	shellCmd := f.starts[0].args[len(f.starts[0].args)-1]
+	if !strings.Contains(shellCmd, "cd '/workspace/repo/src'") {
+		t.Errorf("shell cmd did not translate host workdir: %q", shellCmd)
+	}
+	if strings.Contains(shellCmd, "/home/user/workspace") {
+		t.Errorf("host workspace path leaked into container: %q", shellCmd)
+	}
+}
+
+func TestClamshellExecWorkdirAtWorkspaceRoot(t *testing.T) {
+	c, f := newTestClamshell()
+	f.startProc = &fakeProcess{}
+
+	_, err := c.Exec(context.Background(),
+		Handle{ID: "sess-1", Meta: map[string]string{
+			"container":     "sbx",
+			"hostWorkspace": "/home/user/workspace",
+		}},
+		[]string{"echo", "hi"},
+		ExecOpts{Dir: "/home/user/workspace"},
+	)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	shellCmd := f.starts[0].args[len(f.starts[0].args)-1]
+	if !strings.Contains(shellCmd, "cd '/workspace'") {
+		t.Errorf("workspace root did not translate to /workspace: %q", shellCmd)
+	}
+}
+
+func TestClamshellExecContainerPathPassesThrough(t *testing.T) {
+	// Callers that already compute container-side paths (or the daemon once
+	// it gains mount-aware planning) must still work. Paths outside the host
+	// workspace are preserved verbatim.
+	c, f := newTestClamshell()
+	f.startProc = &fakeProcess{}
+
+	_, err := c.Exec(context.Background(),
+		Handle{ID: "sess-1", Meta: map[string]string{
+			"container":     "sbx",
+			"hostWorkspace": "/home/user/workspace",
+		}},
+		[]string{"echo", "hi"},
+		ExecOpts{Dir: "/workspace/nested"},
+	)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	shellCmd := f.starts[0].args[len(f.starts[0].args)-1]
+	if !strings.Contains(shellCmd, "cd '/workspace/nested'") {
+		t.Errorf("container path not preserved: %q", shellCmd)
+	}
+}
+
 func TestClamshellExecEmptyCmdErrors(t *testing.T) {
 	c, _ := newTestClamshell()
 	_, err := c.Exec(context.Background(),
