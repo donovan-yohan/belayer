@@ -1,0 +1,120 @@
+agents/pm/system-prompt.md
+  cecea7f84ed5333b 1-13
+agents/qa/agent.yaml
+  cecea7f84ed5333b 2,4-6
+agents/reviewer/agents.md
+  cecea7f84ed5333b 6,9,11,13,15-16,18,20,22-25,29
+agents/backend-dev/agents.md
+  cecea7f84ed5333b 1,26,28
+docs/design-docs/2026-04-16-sandbox-runtime-and-crag-proof.md
+  cecea7f84ed5333b 46,48,53-71,73,76,78-80,95-133
+internal/cli/init_test.go
+  cecea7f84ed5333b 1-214
+agents/backend-dev/system-prompt.md
+  cecea7f84ed5333b 1-15
+agents/web-dev/system-prompt.md
+  cecea7f84ed5333b 1-23
+docs/AGENT_ARCHITECTURE.md
+  cecea7f84ed5333b 593,610,612,618,622
+CLAUDE.md
+  cecea7f84ed5333b 47-50
+agents/reviewer/agent.yaml
+  cecea7f84ed5333b 1-9
+README.md
+  cecea7f84ed5333b 54-55,61
+agents/supervisor/system-prompt.md
+  cecea7f84ed5333b 9-30
+agents/qa/system-prompt.md
+  cecea7f84ed5333b 1-5
+internal/cli/root_test.go
+  cecea7f84ed5333b 11
+agents/backend-dev/agent.yaml
+  cecea7f84ed5333b 2
+agents/reviewer/system-prompt.md
+  cecea7f84ed5333b 1-67
+agents/pm/agents.md
+  cecea7f84ed5333b 1,5-8,10-28,31-35,38-40,44-47
+agents/pm/agent.yaml
+  cecea7f84ed5333b 1-11
+agents/supervisor/agent.yaml
+  cecea7f84ed5333b 1-11
+internal/cli/init.go
+  cecea7f84ed5333b 1-324
+embed.go
+  cecea7f84ed5333b 1-13
+agents/qa/agents.md
+  cecea7f84ed5333b 1-12
+hermes_bridge/tools.py
+  cecea7f84ed5333b 32-52,59-64,68-73,83-106,113-119,123-127,131-134,144-170,179-183,188-193,203-233,240-246,250-254,258-263,268-272,283-310,317-322,326-332,342-363,370-375,385-408,415-420,424-430
+agents/supervisor/agents.md
+  cecea7f84ed5333b 7,9-14,17-18,20-24,27-29,55,68,70-72
+agents/web-dev/agents.md
+  cecea7f84ed5333b 1,27,29
+internal/daemon/agents.go
+  cecea7f84ed5333b 302-304,306-307,309,314-315,317,665-682
+agents/web-dev/agent.yaml
+  cecea7f84ed5333b 2
+internal/cli/root.go
+  cecea7f84ed5333b 38
+internal/cli/run.go
+  cecea7f84ed5333b 53-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "92d7abe680a6dbae4c6b8c1de7df8f3ad03ae5a6",
+  "prompts": {
+    "5675b10eef084412": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4ad64ac8-3dc5-4e1a-ac1a-427fe4d7e310",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 259,
+      "total_deletions": 0,
+      "accepted_lines": 259,
+      "overriden_lines": 0
+    },
+    "6ea66a8f7b3aa96a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6db8302f-30d8-46df-abbd-c9cca6313e79",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    },
+    "cecea7f84ed5333b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "28feb1db-7e63-4c00-88e6-1d99142bfad7",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1663,
+      "total_deletions": 449,
+      "accepted_lines": 1426,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}
