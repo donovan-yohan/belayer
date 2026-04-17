@@ -43,27 +43,41 @@ The shared filesystem is the connection between runtime and sandbox. When an age
 
 ## Identity: `.belayer/` in the Repo
 
-Agent templates live in `.belayer/templates/` in the repo itself, committed to git.
+Agent identities live in `.belayer/agents/` in the repo itself, committed to git. The shipped defaults live alongside the binary at `<BelayerRoot>/agents/`; the loader reads project-local first, falls back to shipped (see `internal/daemon/agents.go`).
 
-On first run (`belayer init` or auto-scaffolded), belayer creates:
+On first run (`belayer init` or auto-scaffolded by `belayer run`), belayer creates:
 
 ```
 .belayer/
   config.yaml
-  templates/
-    supervisor/
-      system-prompt.md       # the supervisor soul
-      agent.yaml             # belayer_tools: [spawn, request_completion]
-    pm/
-      system-prompt.md       # the PM soul
-      agent.yaml             # belayer_tools: [approve, reject]
+  agents/
+    supervisor/                # orchestrator; default Opus
+      system-prompt.md
+      agent.yaml               # belayer_tools: [spawn, request_completion]
+    pm/                        # adversarial spec verifier; final completion gate
+      system-prompt.md
+      agent.yaml               # belayer_tools: [approve, reject]
+    web-dev/                   # frontend/web app implementer; worktree-isolated
+      system-prompt.md
+      agent.yaml
+    backend-dev/               # backend/API implementer; worktree-isolated
+      system-prompt.md
+      agent.yaml
+    qa/                        # outside-in tester; drives the running app
+      system-prompt.md
+      agent.yaml
+    reviewer/                  # adversarial code/plan reviewer
+      system-prompt.md
+      agent.yaml
   policies/
-    belayer-standard.yaml    # default network egress policy
+    standard.yaml              # placeholder clamshell policy; opt in via config.yaml
 ```
 
-Users customize from there: edit souls, add new agents (backend, frontend, qa, reviewer), adjust policies. The defaults originate from chalk-bag (copied at belayer build time), but belayer reads only from the repo at runtime.
+Six default agents — **supervisor, pm, web-dev, backend-dev, qa, reviewer**. Users customize from there: edit souls, add or remove agents, adjust policies. The defaults are embedded into the binary via `//go:embed` (see `embed.go` at the repo root); `belayer init` writes them to the user's `.belayer/agents/`. The on-disk copy is the source of truth at runtime.
 
-**chalk-bag's role**: canonical source for developing and versioning shared agent archetypes. Belayer's compiled-in defaults are built from chalk-bag. Users can also copy templates from chalk-bag manually when bootstrapping a new project. But chalk-bag is not a runtime dependency.
+~~**chalk-bag's role**: canonical source for developing and versioning shared agent archetypes. Belayer's compiled-in defaults are built from chalk-bag. Users can also copy templates from chalk-bag manually when bootstrapping a new project. But chalk-bag is not a runtime dependency.~~ *(superseded by Phase 2.5: defaults now ship embedded in the belayer binary; chalk-bag is no longer the bootstrap source.)*
+
+~~The defaults included only `supervisor` and `pm`; users were expected to add `backend`, `frontend`, `qa`, `reviewer` themselves.~~ *(superseded by Phase 2.5: the six-agent default team now scaffolds on init. `frontend` → `web-dev`, `backend` → `backend-dev`, and the redundant `sprite` identity was removed in favor of hermes's built-in `delegate_task`.)*
 
 ### Multi-repo workspaces
 
@@ -78,7 +92,45 @@ belayer run start --workspace ~/.belayer/workspaces/extend-fullstack.yaml --task
 Resolution:
 - **Single-repo**: `.belayer/config.yaml` in the repo, auto-discovered
 - **Multi-repo**: workspace definition from crag or `--workspace` flag
-- **No config**: belayer scaffolds defaults (supervisor + PM)
+- **No config**: `belayer run` auto-runs `belayer init` and scaffolds the six-agent default team
+
+## Phase 2.5: `belayer init` workflow
+
+Added on top of Phase 2's sandbox driver registry. The init command and the six-agent default team turn "what does a fresh repo need" from a copy-paste exercise into a single command.
+
+### `belayer init`
+
+```
+belayer init                  # scaffold .belayer/ in cwd, idempotent
+belayer init --target <dir>   # scaffold elsewhere
+belayer init --force          # refresh shipped agents from defaults; never touches config.yaml
+```
+
+Behavior:
+1. If `.belayer/` exists and `--force` is not set: print "belayer already initialized at <path>" and exit 0.
+2. Otherwise: create `.belayer/{config.yaml,policies/standard.yaml,agents/<six defaults>}`.
+3. Append a managed block to `<project>/.gitignore` (creating it if absent) so per-run scratch directories don't get committed: `/.belayer/runs/` and `/.belayer/worktrees/`. The committed surface — `agents/`, `config.yaml`, `policies/` — stays tracked. The block is fenced by a `# belayer — per-run state` marker so re-runs are a no-op and user-added rules above it are preserved verbatim.
+4. Print one line per file created so the user knows what landed in their repo.
+5. `--force` overwrites only `.belayer/agents/`. The user's `config.yaml`, `policies/standard.yaml`, and `.gitignore` are never overwritten — re-running with `--force` is the supported path for upgrading shipped agents after a `belayer` upgrade.
+
+### Auto-init from `belayer run`
+
+`belayer run start` calls `autoInitIfMissing(workdir)` before creating the session. When `.belayer/` does not exist, it runs init and prints:
+
+```
+Auto-initialized <workdir>/.belayer with default agents — review and tweak as needed before next run.
+```
+
+The notice is one line. Existing `.belayer/` directories are silently skipped — no warning, no log entry. Rationale: the supervisor's first identity lookup needs `.belayer/agents/supervisor/system-prompt.md` to exist, and forcing a separate command before every fresh-repo run is gratuitous friction.
+
+### Decision rule: `belayer_spawn_agent` vs hermes `delegate_task`
+
+The supervisor has two ways to push work onto another agent. The system prompt at `agents/supervisor/system-prompt.md` is the source of truth; the rule in short:
+
+- **Spawn a belayer peer** (`belayer_spawn_agent`) for ongoing work that needs its own workspace, bidirectional dialogue, or a presence in the session log. Implementers on a feature branch, reviewers iterating with the supervisor on findings, QA reporting back over multiple rounds.
+- **Delegate a focused subtask** (hermes's built-in `delegate_task`) for a one-shot result with no follow-up. Research, summaries, isolated lint fixes. Cheaper than spawning a peer; runs in an isolated context; returns only the summary.
+
+If you want a back-and-forth with a delegated task, you should have spawned a peer. If you spawn a peer just to ask one question, delegate next time. Schemas in `hermes_bridge/tools.py` carry the same WHEN / WHEN NOT framing so the model picks consistently.
 
 ## Worktrees: Coding Tool, Not Integration Surface
 

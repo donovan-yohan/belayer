@@ -35,6 +35,7 @@ over SQLite.`,
 		newRequestCompletionCmd(),
 		newRunCmd(),
 		newArtifactCmd(),
+		newInitCmd(),
 	)
 	return cmd
 }

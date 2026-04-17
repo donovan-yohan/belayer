@@ -44,7 +44,10 @@ belayer status              # running sessions overview
 
 ## Agent identity
 
-Identity templates live in `templates/<name>/`:
+Agent identities live in `agents/<name>/` (shipped defaults, embedded in the binary)
+and `.belayer/agents/<name>/` (project-local override; `belayer init` scaffolds it).
+The loader at `internal/daemon/agents.go` reads project-local first, falls back to shipped.
+Each directory contains:
 - `agent.yaml` — vendor, model, ephemeral flag, tier
 - `system-prompt.md` — the agent's soul
 - `agents.md` — operating instructions, tools, workflows

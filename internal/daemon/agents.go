@@ -299,29 +299,22 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		ephemeral = false
 	}
 
-	// Load system prompt from templates/<name>/system-prompt.md if it exists.
-	// The template is keyed by agent name (e.g. "pm", "supervisor", "reviewer").
-	// Check the workspace first, then fall back to belayer root.
+	// Load system prompt from agent identity dir if it exists. Project-local
+	// overrides under <workdir>/.belayer/agents/<name>/ win over the shipped
+	// defaults at <BelayerRoot>/agents/<name>/.
 	var systemPrompt string
-	for _, base := range []string{workdir, d.config.BelayerRoot} {
-		if base == "" {
-			continue
-		}
-		promptPath := filepath.Join(base, "templates", req.Name, "system-prompt.md")
-		if data, err := os.ReadFile(promptPath); err == nil {
+	for _, candidate := range agentIdentityPaths(workdir, d.config.BelayerRoot, req.Name, "system-prompt.md") {
+		if data, err := os.ReadFile(candidate); err == nil {
 			systemPrompt = string(data)
-			log.Printf("Loaded system prompt from %s for agent %s", promptPath, req.Name)
+			log.Printf("Loaded system prompt from %s for agent %s", candidate, req.Name)
 			break
 		}
 	}
 
-	// Load belayer_tools from templates/<name>/agent.yaml if it exists.
+	// Load belayer_tools from <agent-dir>/agent.yaml if it exists. Same
+	// project-local-over-shipped resolution as the system prompt.
 	var belayerTools []string
-	for _, base := range []string{workdir, d.config.BelayerRoot} {
-		if base == "" {
-			continue
-		}
-		yamlPath := filepath.Join(base, "templates", req.Name, "agent.yaml")
+	for _, yamlPath := range agentIdentityPaths(workdir, d.config.BelayerRoot, req.Name, "agent.yaml") {
 		data, err := os.ReadFile(yamlPath)
 		if err != nil {
 			continue
@@ -667,6 +660,24 @@ func worktreesDisabled(workdir string) bool {
 		}
 	}
 	return false
+}
+
+// agentIdentityPaths returns the ordered list of candidate paths to look up
+// for an agent identity file, in priority order:
+//
+//  1. <workdir>/.belayer/agents/<name>/<file>  — project-local override
+//  2. <belayerRoot>/agents/<name>/<file>       — shipped default
+//
+// Empty bases are skipped.
+func agentIdentityPaths(workdir, belayerRoot, name, file string) []string {
+	var paths []string
+	if workdir != "" {
+		paths = append(paths, filepath.Join(workdir, ".belayer", "agents", name, file))
+	}
+	if belayerRoot != "" {
+		paths = append(paths, filepath.Join(belayerRoot, "agents", name, file))
+	}
+	return paths
 }
 
 func splitLines(s string) []string {

@@ -1,4 +1,4 @@
-# Backend Implementer Operating Instructions
+# Backend Dev Operating Instructions
 
 ## Communication
 
@@ -23,16 +23,9 @@ Your workspace is extend-api (Kotlin/Gradle). Common commands:
 ./gradlew bootRun                  # run the API locally (if workbench not needed)
 ```
 
-## Spawning Helpers
+## Focused subtasks
 
-You can spawn ephemeral sprites for focused subtasks:
-
-```bash
-belayer session add-agent lint-fix-1 --template sprite --ephemeral
-belayer message send --to lint-fix-1 "Fix all detekt warnings in src/main/kotlin/com/extend/cards/"
-```
-
-The sprite will complete the task and auto-terminate.
+When you need a one-shot subtask (research, a tightly-scoped fix, an isolated analysis) and don't need a peer in the session afterward, prefer hermes's built-in `delegate_task` over asking the supervisor to spawn another belayer agent. `delegate_task` runs in an isolated context, returns a summary, and exits. Spawning a peer is for ongoing dialogue.
 
 ## Git
 

@@ -1,5 +1,5 @@
 schema_version: "1"
-description: "Frontend implementer — writes code in the frontend/web app"
+description: "Backend dev — implementer for backend/API server code, works in worktree"
 vendor: opencode
 model: kimi-2.5
 max_turns: 100

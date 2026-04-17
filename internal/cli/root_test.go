@@ -8,7 +8,7 @@ func TestRootCmdRegistersBridgeCommands(t *testing.T) {
 	want := []string{
 		"daemon", "session", "logs", "status", "recall",
 		"run", "spawn", "finish", "roster", "message",
-		"request-completion", "artifact", "version",
+		"request-completion", "artifact", "version", "init",
 	}
 	seen := map[string]bool{}
 	for _, child := range cmd.Commands() {

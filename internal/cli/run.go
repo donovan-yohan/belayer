@@ -50,6 +50,13 @@ func newRunStartCmd() *cobra.Command {
 				baseDir, _ = os.Getwd()
 			}
 
+			// Scaffold .belayer/ if the user has not run `belayer init`.
+			// Done before session creation so the supervisor's first lookup
+			// of agent identities finds the project-local copies.
+			if err := autoInitIfMissing(baseDir, cmd.OutOrStdout()); err != nil {
+				return fmt.Errorf("auto-init .belayer/: %w", err)
+			}
+
 			// Create session — we need its ID first to provision the workspace.
 			sess, err := c.CreateSession(sessionName, "nightshift", repos, "")
 			if err != nil {

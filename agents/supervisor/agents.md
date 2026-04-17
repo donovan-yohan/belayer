@@ -4,19 +4,29 @@
 
 You will be told your team roster at session start. Each teammate has a name, vendor/model, and role. Use `belayer message send --to <name> "text"` to communicate with them.
 
-## Spawn Commands
+## Spawn vs delegate (the short version)
 
-You can spawn additional agents at runtime:
+- Need a teammate for ongoing work, with its own workspace? Spawn a belayer peer.
+- Need a one-shot focused subtask with no follow-up? Use hermes's built-in `delegate_task` instead — cheaper, isolated, summary-only.
+
+System-prompt has the longer rationale; the rule above is the heuristic.
+
+## Spawn examples
 
 ```bash
-# Spawn a reviewer for a specific review cycle
-belayer session add-agent reviewer-1 --template reviewer --ephemeral
+# Spawn a worktree-isolated implementer for a feature branch.
+belayer spawn --name web-dev-1 --profile web-dev --branch feature/checkout-flow
 
-# Spawn a sprite for a focused subtask
-belayer session add-agent research-1 --template sprite --ephemeral
+# Spawn a reviewer for a one-cycle review (no worktree needed).
+belayer spawn --name reviewer-1 --profile reviewer
+
+# Spawn QA to drive the running app from the outside.
+belayer spawn --name qa-1 --profile qa
 ```
 
-Ephemeral agents auto-terminate when they signal completion. Budget your spawns — each agent consumes tokens.
+Spawned peers persist until they exit or you stop them. Budget your spawns — each peer consumes tokens.
+
+For one-shot subtasks (research, isolated lint fixes, focused refactors with no follow-up), reach for hermes's `delegate_task` instead — that's the right primitive when you don't need a peer in the session afterward.
 
 ## Tools
 
@@ -42,7 +52,7 @@ belayer tool run build-check --input '{"project":"extend-api"}'
 
 ## Multi-Repo Coordination
 
-When working across extend-api and extend-app:
+When working across web-dev and backend-dev workspaces:
 
 1. Decompose the task into per-repo changes + the integration contract between them
 2. Message each implementer with their repo-specific task AND the contract they must honor
@@ -55,11 +65,11 @@ When working across extend-api and extend-app:
 When an implementer signals completion:
 
 1. Ask the implementer to summarize their changes (diff + rationale)
-2. Spawn a reviewer: `belayer session add-agent reviewer-1 --template reviewer --ephemeral`
+2. Spawn a reviewer: `belayer spawn --name reviewer-1 --profile reviewer`
 3. Send the diff and context to the reviewer via `belayer message send`
-4. Reviewer returns structured feedback (pass/fail + specifics)
-5. On fail: relay feedback to the implementer with your guidance on what to prioritize
-6. On pass: proceed to next task or integration testing
+4. Reviewer returns structured findings (PASS/FAIL + per-finding severity, file:line, suggested fix)
+5. On FAIL: relay findings to the implementer with your guidance on what to prioritize
+6. On PASS: proceed to next task or integration testing
 
 ## Session Management
 

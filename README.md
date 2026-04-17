@@ -51,13 +51,14 @@ Three layers:
 
 ## Agent identity
 
-Identity templates live in `templates/<name>/`:
+Agent identities live in `agents/<name>/` (shipped defaults) and `.belayer/agents/<name>/`
+(project-local override; `belayer init` scaffolds it). Each directory contains:
 
 - `agent.yaml` .. vendor, model, tier, ephemeral flag
 - `system-prompt.md` .. the agent's soul (injected as ephemeral_system_prompt)
 - `agents.md` .. operating instructions, tools, workflows
 
-Current identities: planner, pm, reviewer, sprite, api-implementer, app-implementer.
+Default team: supervisor, pm, web-dev, backend-dev, qa, reviewer.
 
 ## CLI
 
