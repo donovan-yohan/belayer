@@ -1,0 +1,46 @@
+internal/daemon/daemon.go
+  9ffa070d281a689b 33-42,58-60,86-90,187-203,226-229,236-238,266,312
+docs/exec-plans/active/2026-04-17-clamshell-e2e-proof.md
+  9ffa070d281a689b 1-1276
+hermes_bridge/http_client.py
+  9ffa070d281a689b 1,3-6,13,18-30,33-36,38,49,51
+internal/cli/daemon.go
+  9ffa070d281a689b 17,34-39,80-81
+docs/PLANS.md
+  9ffa070d281a689b 1-11
+internal/daemon/agents.go
+  9ffa070d281a689b 386-387,405-426,728-738
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "1a464f865aa9744cf94fc32ba70ec8c5d2077bc3",
+  "prompts": {
+    "2f2292feccaec2ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3942b2c4-4cdc-4bb3-94e5-decb632685e0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 90,
+      "total_deletions": 0,
+      "accepted_lines": 89,
+      "overriden_lines": 1
+    },
+    "9ffa070d281a689b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e2e9c348-279b-4210-8f57-84044ec4e553",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1403,
+      "total_deletions": 60,
+      "accepted_lines": 1402,
+      "overriden_lines": 0
+    }
+  }
+}
