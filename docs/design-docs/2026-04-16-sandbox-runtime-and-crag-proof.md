@@ -646,3 +646,14 @@ SQLite for the PoC. Workspace definitions as YAML files in `~/.crag/workspaces/`
 ### 5. `runtime.Endpoint` shape (deferred)
 
 `Endpoint` currently carries only `Name`/`Host`/`Port`. A protocol/scheme field plus a `URL()` helper was raised in code review (2026-04-16, CodeRabbit on PR #71) — it would help once endpoints drive sandbox egress policy or get injected as env vars for agents. Deferred until a real provider lands so we design the shape around concrete needs (e.g., does the clamshell policy need a protocol discriminator, or is host/port enough?). Revisit when implementing the command provider's endpoint wiring in Phase 5.
+
+### 6. Multi-repo: revisit `--repos` and per-agent starting cwd
+
+Today `belayer run start --repos name=path,...` synthesizes a workspace at `.belayer/runs/<sessionID>/workspace/` by symlinking each repo into it. The agent's `workdir` is that synthetic dir, and individual implementers see all repos as siblings. The cleaner pattern in practice is a meta-directory with sibling repos (`~/projects/extend-fullstack/{extend-app,extend-api,.belayer}`) — no `--repos` flag needed, the meta-dir IS the workspace.
+
+Two concrete things to revisit before multi-repo gets serious use:
+
+- **Should `--repos` stay?** It exists for the messy disk-layout case (repos in unrelated parent dirs). If teams converge on the meta-dir pattern, `--repos` is dead weight. If they don't, the symlink synthesis needs more care (worktrees, gitignore handling inside the synthetic dir, etc.).
+- **Per-agent starting cwd in `agent.yaml`.** The `workspace:` field today takes `inherit` (run inside the supervisor's workdir) or `none` (no workspace). For multi-repo, web-dev probably wants to start in `extend-app/` and backend-dev in `extend-api/`. A `workspace: ./extend-app` (relative to the run workdir) would let the agent identity declare its starting repo without the supervisor having to pass it in every spawn message. Open question: do we put repo selection in the identity (web-dev always starts in the web app) or in the spawn call (supervisor decides per-task)? Identity feels right for the default, spawn-override for special cases.
+
+Both belong in a follow-up once we have a real multi-repo run to design against. Don't over-spec ahead of usage.
