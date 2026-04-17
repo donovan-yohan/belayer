@@ -39,11 +39,12 @@ type Process interface {
 
 // Config holds the parameters used to create a sandbox environment.
 type Config struct {
-	Name      string        // sandbox identifier (typically session ID)
-	Workspace string        // host path to mount at /workspace
-	Policy    string        // path to policy YAML (driver-specific)
-	Mounts    []Mount       // additional mounts
-	Endpoints []TCPEndpoint // runtime services to allow through the sandbox
+	Name      string           // sandbox identifier (typically session ID)
+	Workspace string           // host path to mount at /workspace
+	Policy    string           // path to policy YAML (driver-specific)
+	Mounts    []Mount          // additional mounts
+	Endpoints []TCPEndpoint    // runtime services to allow through the sandbox
+	Providers []ProviderConfig // credential-broker providers to attach (clamshell only)
 }
 
 // ExecOpts configures how a command is executed inside the sandbox.

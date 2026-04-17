@@ -102,8 +102,9 @@ func (p *osProcess) Kill() error {
 }
 
 // Create provisions a clamshell sandbox. It ensures the clamshell gateway is
-// up, merges runtime endpoints into the supplied policy, creates the sandbox,
-// and then discovers the backing Docker container so Exec can target it.
+// up, registers any configured credential-broker providers, merges runtime
+// endpoints into the supplied policy, creates the sandbox, and then discovers
+// the backing Docker container so Exec can target it.
 func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 	// 1. Ensure the gateway is running. `clamshell gateway start` is expected
 	//    to be idempotent; surfacing errors here catches misconfigured workers.
@@ -111,7 +112,16 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 		return Handle{}, fmt.Errorf("sandbox/clamshell: gateway start: %w (stderr: %s)", err, stderr)
 	}
 
-	// 2. Inject runtime endpoints into the policy's tcp_endpoints section and
+	// 2. Register credential-broker providers with the gateway. This mints the
+	//    opaque handle the proxy will substitute for the real secret on
+	//    outbound requests. Must happen before sandbox create so the --provider
+	//    attachment can reference a provider that actually exists.
+	providerFlags, err := c.upsertProviders(ctx, cfg.Providers)
+	if err != nil {
+		return Handle{}, err
+	}
+
+	// 3. Inject runtime endpoints into the policy's tcp_endpoints section and
 	//    write the merged copy to a temp file. The temp file lives for the
 	//    session — Stop cleans it up via handle.Meta["policyFile"].
 	policyPath, err := c.preparePolicy(cfg.Policy, cfg.Endpoints)
@@ -119,12 +129,13 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 		return Handle{}, err
 	}
 
-	// 3. Create the sandbox.
+	// 4. Create the sandbox, attaching any configured providers.
 	createArgs := []string{"sandbox", "create",
 		"--name", cfg.Name,
 		"--policy", policyPath,
 		"--workspace", cfg.Workspace,
 	}
+	createArgs = append(createArgs, providerFlags...)
 	if _, stderr, err := c.runner.Run(ctx, c.cli, createArgs...); err != nil {
 		_ = os.Remove(policyPath)
 		return Handle{}, fmt.Errorf("sandbox/clamshell: create: %w (stderr: %s)", err, stderr)
@@ -140,7 +151,7 @@ func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
 		return cause
 	}
 
-	// 4. Discover the container name so Exec can docker-exec into it. The
+	// 5. Discover the container name so Exec can docker-exec into it. The
 	//    --json form emits a structured response clamshell guarantees stable.
 	connectOut, stderr, err := c.runner.Run(ctx, c.cli, "--json", "sandbox", "connect", cfg.Name)
 	if err != nil {
@@ -360,6 +371,71 @@ func (c *Clamshell) Stop(ctx context.Context, h Handle) error {
 	}
 	if _, stderr, err := c.runner.Run(ctx, c.cli, "sandbox", "stop", h.ID); err != nil {
 		return fmt.Errorf("sandbox/clamshell: stop: %w (stderr: %s)", err, stderr)
+	}
+	return nil
+}
+
+// upsertProviders registers each configured apikey provider with the clamshell
+// gateway before sandbox attachment. Returns the --provider flags the caller
+// should append to the sandbox create argv. Returns nil flags when no
+// providers are configured.
+//
+// Each provider is delete-then-created so the gateway's provider store matches
+// the current session's config regardless of prior daemon runs. Belayer runs
+// one session per daemon (one Nightshift worker), so there are no concurrent
+// consumers of these provider names to worry about.
+func (c *Clamshell) upsertProviders(ctx context.Context, providers []ProviderConfig) ([]string, error) {
+	if len(providers) == 0 {
+		return nil, nil
+	}
+	flags := make([]string, 0, 2*len(providers))
+	for _, p := range providers {
+		if err := p.Validate(); err != nil {
+			return nil, fmt.Errorf("sandbox/clamshell: %w", err)
+		}
+		// Fail fast with a clear, config-relative error when the referenced
+		// host env var is missing. clamshell's --from-existing lookup happens
+		// inside its own process and would otherwise surface a less helpful
+		// message back through the subprocess stderr.
+		if os.Getenv(p.SecretEnv) == "" {
+			return nil, fmt.Errorf("sandbox/clamshell: provider %q: %s is empty or unset in daemon env", p.Name, p.SecretEnv)
+		}
+		if err := c.upsertProvider(ctx, p); err != nil {
+			return nil, err
+		}
+		flags = append(flags, "--provider", ProviderTypeAPIKey+"="+p.Name)
+	}
+	return flags, nil
+}
+
+// upsertProvider ensures the gateway has a provider matching p. We delete any
+// existing provider of the same name first (ignoring errors — "not found" is
+// expected on the first call and any other failure will resurface during
+// create) and then create it fresh. This keeps the gateway's stored config in
+// sync with the current session's settings across daemon restarts.
+func (c *Clamshell) upsertProvider(ctx context.Context, p ProviderConfig) error {
+	_, _, _ = c.runner.Run(ctx, c.cli, "provider", "delete", "--name", p.Name)
+
+	args := []string{
+		"provider", "create",
+		"--type", ProviderTypeAPIKey,
+		"--name", p.Name,
+		"--from-existing", p.SecretEnv,
+		"--project", strings.Join(p.Project, ","),
+		"--endpoints", strings.Join(p.Endpoints, ","),
+	}
+	if p.AuthHeader != "" {
+		args = append(args, "--auth-header", p.AuthHeader)
+	}
+	// AuthSchemeSet distinguishes "omitted (use clamshell default)" from
+	// "explicitly empty (no prefix — e.g., x-api-key auth)". Only forward the
+	// flag when explicitly set so we don't overwrite clamshell's default with
+	// an empty string the user never configured.
+	if p.AuthSchemeSet {
+		args = append(args, "--auth-scheme", p.AuthScheme)
+	}
+	if _, stderr, err := c.runner.Run(ctx, c.cli, args...); err != nil {
+		return fmt.Errorf("sandbox/clamshell: provider %q create: %w (stderr: %s)", p.Name, err, stderr)
 	}
 	return nil
 }

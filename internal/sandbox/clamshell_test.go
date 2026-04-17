@@ -624,6 +624,244 @@ func TestClamshellCreateCleanupErrorIsWrapped(t *testing.T) {
 	}
 }
 
+func TestClamshellCreateUpsertsProviders(t *testing.T) {
+	// Providers configured on cfg.Providers must be registered with the
+	// gateway (delete-then-create for idempotence) before sandbox create, and
+	// each provider must be attached to the sandbox via --provider.
+	t.Setenv("OPENCODE_GO_API_KEY", "sk-real-opencode")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-real-anthropic")
+
+	c, f := newTestClamshell(
+		runResponse{},                                           // gateway start
+		runResponse{},                                           // provider delete opencode (best-effort)
+		runResponse{},                                           // provider create opencode
+		runResponse{},                                           // provider delete anthropic (best-effort)
+		runResponse{},                                           // provider create anthropic
+		runResponse{},                                           // sandbox create
+		runResponse{stdout: []byte(`{"container":"sbx-abc"}`)},  // connect
+	)
+
+	handle, err := c.Create(context.Background(), Config{
+		Name:      "sess-prov",
+		Workspace: "/tmp/ws",
+		Providers: []ProviderConfig{
+			{
+				Name:      "opencode",
+				Type:      "apikey",
+				SecretEnv: "OPENCODE_GO_API_KEY",
+				Project:   []string{"OPENCODE_GO_API_KEY"},
+				Endpoints: []string{"opencode.ai"},
+			},
+			{
+				Name:          "anthropic",
+				Type:          "apikey",
+				SecretEnv:     "ANTHROPIC_API_KEY",
+				Project:       []string{"ANTHROPIC_API_KEY"},
+				Endpoints:     []string{"api.anthropic.com"},
+				AuthHeader:    "x-api-key",
+				AuthScheme:    "",
+				AuthSchemeSet: true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if p := handle.Meta["policyFile"]; p != "" {
+			os.Remove(p)
+		}
+	})
+
+	if len(f.runs) != 7 {
+		t.Fatalf("expected 7 clamshell calls, got %d: %+v", len(f.runs), f.runs)
+	}
+
+	// Call 1: provider delete opencode (idempotence)
+	if !equalSlice(f.runs[1].args, []string{"provider", "delete", "--name", "opencode"}) {
+		t.Errorf("runs[1] args = %v, want provider delete --name opencode", f.runs[1].args)
+	}
+	// Call 2: provider create opencode — Bearer defaults, no auth flags
+	wantOpencode := []string{
+		"provider", "create",
+		"--type", "apikey",
+		"--name", "opencode",
+		"--from-existing", "OPENCODE_GO_API_KEY",
+		"--project", "OPENCODE_GO_API_KEY",
+		"--endpoints", "opencode.ai",
+	}
+	if !equalSlice(f.runs[2].args, wantOpencode) {
+		t.Errorf("runs[2] args = %v, want %v", f.runs[2].args, wantOpencode)
+	}
+	// Call 3: provider delete anthropic
+	if !equalSlice(f.runs[3].args, []string{"provider", "delete", "--name", "anthropic"}) {
+		t.Errorf("runs[3] args = %v, want provider delete --name anthropic", f.runs[3].args)
+	}
+	// Call 4: provider create anthropic — explicit x-api-key with empty scheme
+	wantAnthropic := []string{
+		"provider", "create",
+		"--type", "apikey",
+		"--name", "anthropic",
+		"--from-existing", "ANTHROPIC_API_KEY",
+		"--project", "ANTHROPIC_API_KEY",
+		"--endpoints", "api.anthropic.com",
+		"--auth-header", "x-api-key",
+		"--auth-scheme", "",
+	}
+	if !equalSlice(f.runs[4].args, wantAnthropic) {
+		t.Errorf("runs[4] args = %v, want %v", f.runs[4].args, wantAnthropic)
+	}
+
+	// Call 5: sandbox create — must carry the --provider apikey=<name> flags
+	createArgs := f.runs[5].args
+	joined := strings.Join(createArgs, " ")
+	if !strings.Contains(joined, "--provider apikey=opencode") {
+		t.Errorf("sandbox create missing --provider apikey=opencode: %v", createArgs)
+	}
+	if !strings.Contains(joined, "--provider apikey=anthropic") {
+		t.Errorf("sandbox create missing --provider apikey=anthropic: %v", createArgs)
+	}
+	// Secrets must never appear in any argv to clamshell or docker.
+	for _, call := range f.runs {
+		for _, arg := range call.args {
+			if strings.Contains(arg, "sk-real") {
+				t.Errorf("secret leaked into argv: %q (call: %v)", arg, call.args)
+			}
+		}
+	}
+}
+
+func TestClamshellCreateNoProvidersSkipsUpsert(t *testing.T) {
+	// With no providers configured, Create must not call `provider delete`
+	// or `provider create` at all, and sandbox create must not carry any
+	// --provider flags. This guards the default (provider-less) path.
+	c, f := newTestClamshell(
+		runResponse{},                                           // gateway start
+		runResponse{},                                           // sandbox create
+		runResponse{stdout: []byte(`{"container":"sbx-abc"}`)},  // connect
+	)
+
+	handle, err := c.Create(context.Background(), Config{
+		Name:      "sess-none",
+		Workspace: "/tmp/ws",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	t.Cleanup(func() {
+		if p := handle.Meta["policyFile"]; p != "" {
+			os.Remove(p)
+		}
+	})
+
+	if len(f.runs) != 3 {
+		t.Fatalf("expected 3 calls (no provider commands), got %d: %+v", len(f.runs), f.runs)
+	}
+	for _, call := range f.runs {
+		for _, a := range call.args {
+			if a == "--provider" {
+				t.Errorf("sandbox create carries --provider flag with no providers: %v", call.args)
+			}
+		}
+	}
+}
+
+func TestClamshellCreateMissingSecretEnvFailsEarly(t *testing.T) {
+	// If the referenced host env var is empty, Create must fail before we
+	// call `provider delete` — otherwise clamshell would reject the create
+	// with an opaque message later.
+	t.Setenv("OPENCODE_GO_API_KEY", "")
+
+	c, f := newTestClamshell(
+		runResponse{}, // gateway start
+	)
+	_, err := c.Create(context.Background(), Config{
+		Name:      "sess-missing",
+		Workspace: "/tmp/ws",
+		Providers: []ProviderConfig{{
+			Name:      "opencode",
+			Type:      "apikey",
+			SecretEnv: "OPENCODE_GO_API_KEY",
+			Project:   []string{"OPENCODE_GO_API_KEY"},
+			Endpoints: []string{"opencode.ai"},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected error for missing secret env, got nil")
+	}
+	if !strings.Contains(err.Error(), "OPENCODE_GO_API_KEY") {
+		t.Errorf("error %q does not mention missing env var", err.Error())
+	}
+	// Only the gateway start call — we must not have touched provider at all.
+	if len(f.runs) != 1 {
+		t.Errorf("expected only gateway start, got %d calls: %+v", len(f.runs), f.runs)
+	}
+}
+
+func TestClamshellCreateProviderCreateFailureStopsCreate(t *testing.T) {
+	// A provider-create failure must surface the clamshell error and skip the
+	// sandbox create call entirely — otherwise we'd create a sandbox that
+	// references a nonexistent provider.
+	t.Setenv("OPENCODE_GO_API_KEY", "sk-real")
+	c, f := newTestClamshell(
+		runResponse{},                                                  // gateway start
+		runResponse{},                                                  // provider delete (best-effort)
+		runResponse{stderr: []byte("duplicate field"), err: fmt.Errorf("exit 1")}, // provider create fails
+	)
+	_, err := c.Create(context.Background(), Config{
+		Name:      "sess-pc-fail",
+		Workspace: "/tmp/ws",
+		Providers: []ProviderConfig{{
+			Name:      "opencode",
+			Type:      "apikey",
+			SecretEnv: "OPENCODE_GO_API_KEY",
+			Project:   []string{"OPENCODE_GO_API_KEY"},
+			Endpoints: []string{"opencode.ai"},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected provider create error, got nil")
+	}
+	if !strings.Contains(err.Error(), "provider \"opencode\" create") {
+		t.Errorf("error %q does not identify the failing provider", err.Error())
+	}
+	if !strings.Contains(err.Error(), "duplicate field") {
+		t.Errorf("error %q does not include clamshell stderr", err.Error())
+	}
+	// gateway + delete + create = 3 runs; sandbox create must not have been called.
+	if len(f.runs) != 3 {
+		t.Fatalf("expected 3 runs (no sandbox create), got %d: %+v", len(f.runs), f.runs)
+	}
+}
+
+func TestClamshellCreateProviderValidateFailureRejectsEarly(t *testing.T) {
+	// An invalid ProviderConfig (missing SecretEnv) must fail before touching
+	// the clamshell CLI — no provider commands, no sandbox create.
+	c, f := newTestClamshell(
+		runResponse{}, // gateway start
+	)
+	_, err := c.Create(context.Background(), Config{
+		Name:      "sess-bad",
+		Workspace: "/tmp/ws",
+		Providers: []ProviderConfig{{
+			Name:      "bad",
+			Type:      "apikey",
+			SecretEnv: "", // invalid
+			Project:   []string{"K"},
+			Endpoints: []string{"e.example"},
+		}},
+	})
+	if err == nil {
+		t.Fatal("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "secret_env is required") {
+		t.Errorf("error %q does not mention missing secret_env", err.Error())
+	}
+	if len(f.runs) != 1 {
+		t.Errorf("expected only gateway start, got %d calls: %+v", len(f.runs), f.runs)
+	}
+}
+
 func equalSlice(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
