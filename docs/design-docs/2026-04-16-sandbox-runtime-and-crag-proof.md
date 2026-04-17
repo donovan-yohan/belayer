@@ -153,20 +153,104 @@ type Handle struct {
 ### What ships in belayer (open source)
 
 - `internal/sandbox/driver.go` — the `Driver` interface
+- `internal/sandbox/registry.go` — the driver registry with override-injection
 - `internal/sandbox/noop.go` — the noop driver (direct exec, zero overhead)
+- `internal/sandbox/unavailable.go` — explicit "not in this build" stub for known drivers (e.g. clamshell)
 - `internal/runtime/provider.go` — the `Provider` interface
 - `internal/runtime/noop.go` — the noop provider
 - `internal/runtime/command.go` — the command provider (shells out to up/health/down)
 - Default policy YAMLs scaffolded on `belayer init`
+- `daemon.Config` exposes `SandboxDrivers *sandbox.Registry` (and the runtime equivalent) so a different `cmd/` main can wire in additional drivers at compile time
 
 ### What does NOT ship in belayer
 
-- The clamshell driver — lives in the crag/proof infrastructure, not the open-source repo
+- The clamshell driver — lives in a private repo that imports belayer-as-library
 - The crag binary — separate project
 - Specific agent identities — per-repo `.belayer/` or chalk-bag
 - Workspace definitions — crag config
 
-Belayer ships the interfaces. Driver implementations are deployment details. The clamshell driver is the proof that the interface works, not a first-class dependency.
+Belayer ships the interfaces and a registry. Driver implementations are deployment details. Open-source belayer never imports the closed clamshell tool; a private repo (e.g. `cmd/belayerd-extend/main.go`) imports both belayer-as-library and the closed clamshell driver, registers the override, and ships its own binary.
+
+### Driver registry and build-time injection
+
+The mechanism is build-time injection through a registry — same pattern superlemmings uses for `RuntimeAdapter` in `src/deepagents/runtimeAdapters/registry.ts`. Known driver names are listed in OSS belayer's defaults. Names without an in-tree implementation get an `unavailable` stub that fails preflight with a clear "not in this build" error. Private builds override entries by name.
+
+```go
+// internal/sandbox/registry.go (OSS)
+type Registry struct {
+    drivers map[string]Driver
+}
+
+type Override struct {
+    Name   string
+    Driver Driver
+}
+
+func NewRegistry(overrides ...Override) *Registry {
+    drivers := map[string]Driver{
+        "noop":      &Noop{},
+        "clamshell": NewUnavailable("clamshell", "not available in this build"),
+    }
+    for _, o := range overrides {
+        drivers[o.Name] = o.Driver
+    }
+    return &Registry{drivers: drivers}
+}
+
+func (r *Registry) Get(name string) (Driver, error) {
+    d, ok := r.drivers[name]
+    if !ok {
+        return nil, fmt.Errorf("sandbox driver %q is not registered", name)
+    }
+    return d, nil
+}
+```
+
+OSS `cmd/belayer/main.go` constructs the registry with no overrides:
+
+```go
+cfg := daemon.DefaultConfig()
+cfg.SandboxDrivers = sandbox.NewRegistry()  // noop + unavailable-clamshell
+daemon.Run(cfg)
+```
+
+A private build (separate repo, e.g. `extend-belayerd`) wires the closed driver in:
+
+```go
+import (
+    "github.com/donovan-yohan/belayer/internal/daemon"
+    "github.com/donovan-yohan/belayer/internal/sandbox"
+    "github.com/extend-private/clamshell-driver"
+)
+
+func main() {
+    cfg := daemon.DefaultConfig()
+    cfg.SandboxDrivers = sandbox.NewRegistry(
+        sandbox.Override{Name: "clamshell", Driver: clamshell.New()},
+    )
+    daemon.Run(cfg)
+}
+```
+
+`.belayer/config.yaml` selects the driver by name:
+
+```yaml
+sandbox:
+  mode: clamshell
+  policy: .belayer/policies/standard.yaml
+```
+
+When an OSS-belayer session arrives with `sandbox.mode: clamshell`, the registry's `Get("clamshell")` succeeds — `clamshell` IS a known name, registered to the `Unavailable` stub. The first method call on the stub (typically `Create` at session start) returns a clear error: `sandbox driver "clamshell" is unavailable in this build`. The daemon keeps serving other sessions; only the one requesting the missing driver fails, and it fails with a useful message instead of `driver not registered` or a nil-pointer panic. The private build's override replaces the stub with the real driver, and the same session config runs.
+
+Note that the daemon cannot pre-validate at startup — `.belayer/config.yaml` is per-project, so the daemon doesn't know which mode any future session will request. Per-session resolution is the right hook.
+
+Why this shape over alternatives:
+
+- vs. **subprocess driver protocol** (driver = separate binary, JSON-RPC over stdio): rejected as overkill. The constraint is "open belayer doesn't ship clamshell code," not "support third-party drivers in any language." Subprocess adds a versioned wire-protocol surface and stdio plumbing for agent processes, in exchange for crash isolation and hot-swap — neither of which we need at PoC.
+- vs. **Go plugins** (`plugin.Open`): rejected. GOOS/GOARCH lockstep, fragile in practice.
+- vs. **shipping clamshell in-tree behind a build tag**: rejected. Even with the tag, the clamshell driver code lives in the OSS repo, which is exactly what we're trying to avoid.
+
+The cost we accept: drivers must be Go (fine — the only two real drivers are noop and clamshell, both written by us); driver crashes can crash the daemon (fine for PoC; revisit when production hardening demands it).
 
 ### noop driver (ships with belayer)
 
@@ -195,9 +279,9 @@ func (n *Noop) Stop(ctx context.Context, h Handle) error {
 }
 ```
 
-### clamshell driver (proof-of-concept, NOT in belayer repo)
+### clamshell driver (private build, NOT in belayer repo)
 
-Wraps the clamshell CLI. Creates a sandbox at session start, execs agents via `docker exec`. Lives in the crag proof infrastructure.
+Wraps the clamshell CLI. Creates a sandbox at session start, execs agents via `docker exec`. Lives in a private repo and is wired into a private belayer binary via `sandbox.NewRegistry(sandbox.Override{Name: "clamshell", Driver: clamshell.New()})` from that repo's `cmd/belayerd-extend/main.go`. Code shape (satisfies `belayer/internal/sandbox.Driver`):
 
 ```go
 func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
@@ -473,9 +557,20 @@ sandbox:
 - Wire into daemon session start
 - Test: existing behavior unchanged with noop drivers
 
-**Phase 2: Clamshell driver**
-- Implement clamshell sandbox driver
+**Phase 2: Sandbox registry + clamshell driver**
+
+Belayer side (OSS, this repo):
+- Add `internal/sandbox/registry.go` with `Registry`, `Override`, `NewRegistry(...)`, and `Get(name)`
+- Add `internal/sandbox/unavailable.go` with a stub `Driver` that returns a clear "not available in this build" error from every method
+- Pre-register `noop` and `unavailable-clamshell` in `NewRegistry`'s defaults
+- Replace `daemon.Config.Sandbox sandbox.Driver` with `daemon.Config.SandboxDrivers *sandbox.Registry`; resolve the per-session driver by name from `.belayer/config.yaml`'s `sandbox.mode` (default `noop`)
+- Update `cmd/belayer/main.go` to construct `cfg.SandboxDrivers = sandbox.NewRegistry()` (no overrides, behavior preserved)
 - Ship default policies in `.belayer/policies/`
+- Tests: registry returns noop by default; returns unavailable for clamshell with the documented error; accepts overrides; daemon resolves `sandbox.mode` correctly and surfaces the unavailable error at session start
+
+Private side (separate repo, e.g. `extend-belayerd`):
+- Implement the clamshell driver against `belayer/internal/sandbox.Driver` (Create/Exec/Stop per the code sketch above)
+- New `cmd/belayerd-extend/main.go` imports both belayer-as-library and the clamshell driver, wires the override into `cfg.SandboxDrivers`
 - Test in Lima VM: create sandbox, exec agent, verify egress policy
 - Iterate on policy by watching deny events
 

@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -597,6 +600,162 @@ func TestListMessagesWithoutForReturnsEventLog(t *testing.T) {
 		if !strings.HasPrefix(e.Type, "message_") {
 			t.Errorf("unexpected non-message event type %q in message list", e.Type)
 		}
+	}
+}
+
+// capturingSandbox records the last sandbox.Config passed to Create so tests
+// can assert the daemon populated it correctly.
+type capturingSandbox struct {
+	sandbox.Noop
+	lastCreateConfig sandbox.Config
+}
+
+func (c *capturingSandbox) Create(ctx context.Context, cfg sandbox.Config) (sandbox.Handle, error) {
+	c.lastCreateConfig = cfg
+	return sandbox.Handle{ID: cfg.Name}, nil
+}
+
+func TestEnsureSandboxHandlePassesRuntimeEndpoints(t *testing.T) {
+	d := testDaemon(t)
+	fake := &capturingSandbox{}
+	d.sandbox = fake
+	d.runtimeEndpoints = []runtime.Endpoint{
+		{Name: "api", Host: "localhost", Port: 4000},
+		{Name: "web", Host: "localhost", Port: 3000},
+	}
+
+	sess := store.Session{ID: "sess-1", WorkspaceDir: "/tmp/ws"}
+	if _, err := d.ensureSandboxHandle(context.Background(), sess); err != nil {
+		t.Fatalf("ensureSandboxHandle: %v", err)
+	}
+
+	want := []sandbox.TCPEndpoint{
+		{Name: "api", Host: "localhost", Port: 4000},
+		{Name: "web", Host: "localhost", Port: 3000},
+	}
+	if len(fake.lastCreateConfig.Endpoints) != len(want) {
+		t.Fatalf("sandbox.Create got %d endpoints, want %d", len(fake.lastCreateConfig.Endpoints), len(want))
+	}
+	for i, got := range fake.lastCreateConfig.Endpoints {
+		if got != want[i] {
+			t.Errorf("endpoints[%d] = %+v, want %+v", i, got, want[i])
+		}
+	}
+	if fake.lastCreateConfig.Workspace != "/tmp/ws" {
+		t.Errorf("sandbox.Create workspace = %q, want /tmp/ws", fake.lastCreateConfig.Workspace)
+	}
+}
+
+func TestEnsureSandboxHandleNilEndpointsWhenRuntimeReportsNone(t *testing.T) {
+	d := testDaemon(t)
+	fake := &capturingSandbox{}
+	d.sandbox = fake
+	// d.runtimeEndpoints left nil — mirrors Noop provider's Up return.
+
+	sess := store.Session{ID: "sess-1"}
+	if _, err := d.ensureSandboxHandle(context.Background(), sess); err != nil {
+		t.Fatalf("ensureSandboxHandle: %v", err)
+	}
+	if fake.lastCreateConfig.Endpoints != nil {
+		t.Errorf("sandbox.Create endpoints = %v, want nil", fake.lastCreateConfig.Endpoints)
+	}
+}
+
+// fakeRuntime returns a preset endpoint list from Up and signals Up/Down via
+// channels so tests can establish happens-before without races. sync.Once
+// guards the closes so callers can invoke Up/Down more than once without
+// panicking — useful if a future Start path retries provisioning.
+type fakeRuntime struct {
+	endpoints []runtime.Endpoint
+	upOnce    sync.Once
+	upDone    chan struct{}
+	downOnce  sync.Once
+	downDone  chan struct{}
+}
+
+func newFakeRuntime(eps []runtime.Endpoint) *fakeRuntime {
+	return &fakeRuntime{
+		endpoints: eps,
+		upDone:    make(chan struct{}),
+		downDone:  make(chan struct{}),
+	}
+}
+
+func (f *fakeRuntime) Up(ctx context.Context) ([]runtime.Endpoint, error) {
+	f.upOnce.Do(func() { close(f.upDone) })
+	return f.endpoints, nil
+}
+func (f *fakeRuntime) Health(ctx context.Context) error { return nil }
+func (f *fakeRuntime) Down(ctx context.Context) error {
+	f.downOnce.Do(func() { close(f.downDone) })
+	return nil
+}
+
+func TestStartCapturesRuntimeEndpoints(t *testing.T) {
+	// Start binds a Unix socket; Darwin limits sun_path to 104 bytes so we use
+	// a short /tmp path rather than t.TempDir().
+	socketDir, err := os.MkdirTemp("/tmp", "bl")
+	if err != nil {
+		t.Fatalf("mkdir temp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	socketPath := filepath.Join(socketDir, "d.sock")
+	dbPath := filepath.Join(t.TempDir(), "belayer.db")
+
+	fake := newFakeRuntime([]runtime.Endpoint{
+		{Name: "api", Host: "localhost", Port: 4000},
+	})
+	d, err := New(Config{SocketPath: socketPath, DBPath: dbPath, Runtime: fake})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- d.Start(ctx) }()
+
+	// Wait until the daemon is accepting connections so we know Start is past
+	// runtime.Up and into Serve. Drain serveErr to surface any fast-fail.
+	ready := false
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		select {
+		case err := <-serveErr:
+			t.Fatalf("Start returned early: %v", err)
+		default:
+		}
+		c, dialErr := net.Dial("unix", socketPath)
+		if dialErr == nil {
+			c.Close()
+			ready = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("daemon never became reachable on its Unix socket")
+	}
+
+	select {
+	case <-fake.upDone:
+	case <-time.After(time.Second):
+		t.Fatal("runtime.Up was not called by Start")
+	}
+
+	cancel()
+	select {
+	case <-serveErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Start did not return after cancel")
+	}
+	// After <-serveErr, the Start goroutine has returned, giving happens-before
+	// for the endpoints written during runtime.Up.
+	if len(d.runtimeEndpoints) != 1 || d.runtimeEndpoints[0].Port != 4000 {
+		t.Errorf("runtimeEndpoints = %+v, want single endpoint on :4000", d.runtimeEndpoints)
+	}
+	select {
+	case <-fake.downDone:
+	case <-time.After(2 * time.Second):
+		t.Error("runtime.Down was not called during shutdown")
 	}
 }
 
