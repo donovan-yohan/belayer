@@ -21,7 +21,7 @@ func resolveAgentID(flagVal string) (string, error) {
 }
 
 func newSpawnCmd() *cobra.Command {
-	var session, socket, name, role, profile, repo, workdir string
+	var session, socket, name, identity, role, profile, repo, workdir, branch string
 	cmd := &cobra.Command{
 		Use:   "spawn",
 		Short: "Spawn a new agent in the current session",
@@ -34,7 +34,15 @@ func newSpawnCmd() *cobra.Command {
 				return fmt.Errorf("--name and --profile are required")
 			}
 			c := NewClient(resolveSocket(socket))
-			run, err := c.SpawnAgent(sessID, spawnAgentRequest{Name: name, Role: role, Profile: profile, Repo: repo, Workdir: workdir})
+			run, err := c.SpawnAgent(sessID, spawnAgentRequest{
+				Name:     name,
+				Identity: identity,
+				Role:     role,
+				Profile:  profile,
+				Repo:     repo,
+				Workdir:  workdir,
+				Branch:   branch,
+			})
 			if err != nil {
 				return fmt.Errorf("spawn agent: %w", err)
 			}
@@ -44,11 +52,13 @@ func newSpawnCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&session, "session", "", "Session ID (required if BELAYER_SESSION_ID not set)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	cmd.Flags().StringVar(&name, "name", "", "Logical agent name")
+	cmd.Flags().StringVar(&name, "name", "", "Session-local agent name (e.g. reviewer-1)")
+	cmd.Flags().StringVar(&identity, "identity", "", "Identity template under .belayer/agents/<identity>/ (defaults to --name)")
 	cmd.Flags().StringVar(&role, "role", "", "Role description/id")
-	cmd.Flags().StringVar(&profile, "profile", "", "Hermes profile to launch")
+	cmd.Flags().StringVar(&profile, "profile", "", "Hermes runtime profile to launch (separate from --identity)")
 	cmd.Flags().StringVar(&repo, "repo", "", "Repo scope label")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory for the agent")
+	cmd.Flags().StringVar(&branch, "branch", "", "Git branch for worktree isolation (implementer-style spawns)")
 	return cmd
 }
 
@@ -114,11 +124,13 @@ func newFinishCmd() *cobra.Command {
 }
 
 type spawnAgentRequest struct {
-	Name    string `json:"name"`
-	Role    string `json:"role"`
-	Profile string `json:"profile"`
-	Repo    string `json:"repo,omitempty"`
-	Workdir string `json:"workdir,omitempty"`
+	Name     string `json:"name"`
+	Identity string `json:"identity,omitempty"` // identity template under .belayer/agents/<identity>/; defaults to Name
+	Role     string `json:"role"`
+	Profile  string `json:"profile"`
+	Repo     string `json:"repo,omitempty"`
+	Workdir  string `json:"workdir,omitempty"`
+	Branch   string `json:"branch,omitempty"` // git branch for worktree-isolated spawns
 }
 
 type finishAgentRequest struct {

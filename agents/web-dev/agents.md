@@ -1,4 +1,4 @@
-# Frontend Implementer Operating Instructions
+# Web Dev Operating Instructions
 
 ## Communication
 
@@ -24,14 +24,9 @@ npm start                          # run the app locally (if workbench not neede
 npm run dev                        # dev server with hot reload
 ```
 
-## Spawning Helpers
+## Focused subtasks
 
-You can spawn ephemeral sprites for focused subtasks:
-
-```bash
-belayer session add-agent fix-types-1 --template sprite --ephemeral
-belayer message send --to fix-types-1 "Fix all TypeScript errors in src/components/Cards/"
-```
+When you need a one-shot subtask (research, a tightly-scoped fix, an isolated analysis) and don't need a peer in the session afterward, prefer hermes's built-in `delegate_task` over asking the supervisor to spawn another belayer agent. `delegate_task` runs in an isolated context, returns a summary, and exits. Spawning a peer is for ongoing dialogue.
 
 ## Git
 

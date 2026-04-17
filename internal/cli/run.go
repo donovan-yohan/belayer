@@ -50,6 +50,13 @@ func newRunStartCmd() *cobra.Command {
 				baseDir, _ = os.Getwd()
 			}
 
+			// Scaffold .belayer/ if the user has not run `belayer init`.
+			// Done before session creation so the supervisor's first lookup
+			// of agent identities finds the project-local copies.
+			if err := autoInitIfMissing(baseDir, cmd.OutOrStdout()); err != nil {
+				return fmt.Errorf("auto-init .belayer/: %w", err)
+			}
+
 			// Create session — we need its ID first to provision the workspace.
 			sess, err := c.CreateSession(sessionName, "nightshift", repos, "")
 			if err != nil {
@@ -146,6 +153,12 @@ func parseRepos(raw string) (map[string]string, error) {
 
 // provisionWorkspace creates a workspace directory with symlinks to each repo
 // and a shared artifacts directory. Returns the workspace root path.
+//
+// TODO(multi-repo): revisit the --repos symlink-synthesis approach. The cleaner
+// pattern in practice is a meta-directory with sibling repos and no --repos
+// flag. See docs/design-docs/2026-04-16-sandbox-runtime-and-crag-proof.md
+// "Open Questions #6" for the design conversation, including the related
+// question of per-agent starting cwd in agent.yaml.
 func provisionWorkspace(baseDir, sessionID string, repos map[string]string) (string, error) {
 	workspaceDir := filepath.Join(baseDir, ".belayer", "runs", sessionID, "workspace")
 	if err := os.MkdirAll(workspaceDir, 0o700); err != nil {

@@ -29,19 +29,48 @@ log = logging.getLogger("tools")
 SEND_MESSAGE_SCHEMA = {
     "name": "belayer_send_message",
     "description": (
-        "Send a message to another agent in this Belayer session. "
-        "Use this to communicate with the supervisor or other specialists."
+        "Send a message to another live agent in this Belayer session. "
+        "The recipient receives the content as a turn in their conversation; the daemon records "
+        "the message in the session event log. This is the primary way agents talk to each other "
+        "for coordination, hand-off, and follow-up dialogue.\n\n"
+        "WHEN TO USE belayer_send_message:\n"
+        "- Peer-to-peer dialogue with another agent in the session (questions, hand-offs, "
+        "follow-ups, requests for review)\n"
+        "- Routing a finding or instruction to a specific teammate by their session-local name\n"
+        "- Continuing a conversation you started with a peer who is still alive\n\n"
+        "WHEN NOT TO USE (use these instead):\n"
+        "- Reporting your own progress or state -> use belayer_report_status (it's the right "
+        "channel for status events; messages aren't)\n"
+        "- Bringing up a new teammate -> use belayer_spawn_agent first; messaging an agent that "
+        "isn't in the session yet will fail\n"
+        "- Publishing a durable output other agents will reference later -> use "
+        "belayer_create_artifact (artifacts are addressable; messages scroll past)\n\n"
+        "IMPORTANT:\n"
+        "- The recipient must be a currently-running agent in this session. Messaging an exited "
+        "agent fails with a clear error directing you to belayer_spawn_agent for re-spawn.\n"
+        "- Messages are visible in session logs and to the operator; treat them as on-the-record.\n"
+        "- 'to' is the session-local agent name (e.g. 'reviewer-1'), not a profile name."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "to": {
                 "type": "string",
-                "description": "The recipient agent name (e.g. 'supervisor', 'backend', 'reviewer')",
+                "description": (
+                    "The recipient's session-local agent name as shown in your team roster "
+                    "(e.g. 'supervisor', 'reviewer-1'). This is the per-session identifier "
+                    "assigned at spawn time, not the identity profile name. Consult the roster "
+                    "if you're unsure who is currently live."
+                ),
             },
             "content": {
                 "type": "string",
-                "description": "The message content",
+                "description": (
+                    "The message body. Be specific and self-contained — the recipient sees "
+                    "this as a single turn, so include enough context (what you're asking for, "
+                    "what file/diff/issue you're referring to, what success looks like) that "
+                    "they can act without a clarifying round-trip."
+                ),
             },
         },
         "required": ["to", "content"],
@@ -51,23 +80,58 @@ SEND_MESSAGE_SCHEMA = {
 CREATE_ARTIFACT_SCHEMA = {
     "name": "belayer_create_artifact",
     "description": (
-        "Register a durable output artifact with Belayer. "
-        "Use this for shared contracts, reports, task graphs, etc."
+        "Register a durable output with the session's artifact registry. The artifact is recorded "
+        "with a kind, a path on the workspace, the producing agent, and a summary; other agents "
+        "and the operator can list it, look it up, and reference it by path in later messages.\n\n"
+        "WHEN TO USE belayer_create_artifact:\n"
+        "- Publishing a spec, design doc, or task graph the supervisor or PM will need to verify "
+        "against later\n"
+        "- Recording a shared contract between repos (e.g. an API schema two implementers must "
+        "honour)\n"
+        "- Filing a structured report (review findings, QA results, verification reports) that a "
+        "later agent — possibly in a future session — needs to read\n\n"
+        "WHEN NOT TO USE (use these instead):\n"
+        "- Scratch files, intermediate work, or transient logs -> just write to the workspace "
+        "without registering\n"
+        "- A short status update -> use belayer_report_status\n"
+        "- A direct hand-off to one peer -> use belayer_send_message and reference the file path "
+        "inline\n\n"
+        "IMPORTANT:\n"
+        "- The file at 'path' must already exist on disk before you call this — the daemon does "
+        "not write content for you, it only registers metadata.\n"
+        "- Artifacts are append-only in spirit: don't overwrite a registered artifact in place. "
+        "For revisions, write to a new path (e.g. add a version suffix or bump the kind) and "
+        "register that.\n"
+        "- 'kind' is a free-form tag but downstream consumers (PM, reflection) match on it — "
+        "stick to consistent kinds across a project (e.g. 'spec', 'design-doc', 'review-report')."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "kind": {
                 "type": "string",
-                "description": "Artifact kind (e.g. 'shared-contract', 'specialist-report', 'task-graph')",
+                "description": (
+                    "A short tag describing what the artifact is. Common kinds: 'spec', "
+                    "'design-doc', 'task-graph', 'shared-contract', 'review-report', "
+                    "'qa-report', 'verification-report'. Downstream tools (PM gate, reflection) "
+                    "look artifacts up by kind, so reuse existing kinds in your project rather "
+                    "than inventing new ones for similar concepts."
+                ),
             },
             "path": {
                 "type": "string",
-                "description": "Path to the artifact file (relative to workspace)",
+                "description": (
+                    "Path to the artifact file, relative to your workspace root (e.g. "
+                    "'artifacts/checkout-flow.spec.md' or 'reports/review-2026-04-16.md'). "
+                    "The file must already exist."
+                ),
             },
             "summary": {
                 "type": "string",
-                "description": "Brief summary of the artifact contents",
+                "description": (
+                    "One- to three-sentence summary so other agents can decide whether to read "
+                    "the full artifact. State what's in it and who would care."
+                ),
             },
         },
         "required": ["kind", "path"],
@@ -77,10 +141,33 @@ CREATE_ARTIFACT_SCHEMA = {
 REPORT_STATUS_SCHEMA = {
     "name": "belayer_report_status",
     "description": (
-        "Report your current status to the Belayer session bus. "
-        "Use 'incomplete' to escalate to a human when you've made progress but cannot finish. "
-        "Use 'working', 'blocked', 'done', or 'needs-review' for log-only status updates "
-        "(these are recorded in the event log but do not trigger daemon-side state transitions)."
+        "Publish a status event to the session bus. Most statuses are observability-only — they "
+        "go in the event log so the operator and reflection can see what you're up to, but they "
+        "do not change daemon state. The exception is 'incomplete', which is the canonical "
+        "escalation signal: when you report 'incomplete' the daemon treats the run as needing "
+        "human review and wakes the operator.\n\n"
+        "WHEN TO USE belayer_report_status:\n"
+        "- A real state transition the operator should see in the timeline (started, hit a "
+        "wall, finished a phase)\n"
+        "- Escalating to a human after you've made progress but cannot finish — use 'incomplete' "
+        "and explain why in 'detail'\n"
+        "- Marking your own work 'done' so the supervisor and event stream reflect that you've "
+        "wrapped your assigned task\n\n"
+        "WHEN NOT TO USE (use these instead):\n"
+        "- Asking a peer for help or sending coordination instructions -> use "
+        "belayer_send_message\n"
+        "- Logging every micro-step (\"reading file\", \"thinking\") -> don't; status events "
+        "are for transitions, not narration\n"
+        "- Signalling the whole run is complete and the spec is satisfied -> that's "
+        "belayer_request_completion (supervisor only), not 'done'\n\n"
+        "IMPORTANT:\n"
+        "- 'incomplete' is the only status that triggers daemon-side action (operator "
+        "escalation). Use it when truly stuck — looping, unable to make progress, missing "
+        "credentials or context you can't recover.\n"
+        "- 'working', 'blocked', 'done', and 'needs-review' are log-only. They give telemetry "
+        "but do not move the session forward on their own.\n"
+        "- Don't spam status events; the event log is shared and noisy events drown out real "
+        "transitions."
     ),
     "parameters": {
         "type": "object",
@@ -89,14 +176,21 @@ REPORT_STATUS_SCHEMA = {
                 "type": "string",
                 "enum": ["working", "blocked", "done", "needs-review", "incomplete"],
                 "description": (
-                    "Your current status. 'incomplete' triggers escalation to a human — "
-                    "use when stuck in a loop or unable to finish. Other values are logged "
-                    "for observability but do not change session state."
+                    "Your current status. 'incomplete' is the only value that triggers "
+                    "daemon-side action (it escalates to a human) — use it when you have made "
+                    "progress but cannot finish. The others ('working', 'blocked', 'done', "
+                    "'needs-review') are recorded in the event log for observability but do not "
+                    "change session state."
                 ),
             },
             "detail": {
                 "type": "string",
-                "description": "Details about your status (what you're working on, why you're blocked, etc.)",
+                "description": (
+                    "What this status means right now. For 'blocked' or 'incomplete', explain "
+                    "the cause concretely (file you can't read, credential missing, conflicting "
+                    "instructions). For 'done', say what you finished. The operator reads this "
+                    "to decide whether to intervene."
+                ),
             },
         },
         "required": ["status"],
@@ -106,32 +200,95 @@ REPORT_STATUS_SCHEMA = {
 SPAWN_AGENT_SCHEMA = {
     "name": "belayer_spawn_agent",
     "description": (
-        "Spawn a new specialist agent in this Belayer session. "
-        "Use this to bring up backend, frontend, qa, or reviewer agents when you need them. "
-        "The agent starts with the given message as its first instruction. "
-        "Implementer agents (backend, frontend) should be given a branch name for worktree isolation."
+        "Spawn a specialist agent into this Belayer session. The new agent becomes a first-class "
+        "peer: visible in session logs, addressable via belayer_send_message, with its own "
+        "conversation, workspace, and tool budget. Available agent identities are configured "
+        "in .belayer/agents/ — query session state for the current roster.\n\n"
+        "WHEN TO USE belayer_spawn_agent:\n"
+        "- Bringing up a teammate for ongoing work (an implementer for a feature, a reviewer "
+        "for a diff, QA for verification)\n"
+        "- Work that needs bidirectional dialogue: you send instructions, they report back, "
+        "you respond, they iterate\n"
+        "- Roles that need their own workspace (worktree-isolated implementers)\n"
+        "- Multi-turn collaboration where the peer's intermediate state matters\n\n"
+        "WHEN NOT TO USE (use these instead):\n"
+        "- One-shot focused subtask, research, or analysis with no follow-up "
+        "-> use delegate_task (cheaper, isolated, summary-only)\n"
+        "- Simple file read or shell command -> call the tool directly\n"
+        "- Tasks where you don't need a peer in the session afterward "
+        "-> delegate_task is the right primitive\n"
+        "- Triggering the run-completion gate -> use belayer_request_completion; the daemon "
+        "spawns the PM itself, you do not spawn it manually\n\n"
+        "IMPORTANT:\n"
+        "- 'name' is the session-local handle (e.g. 'reviewer-1'); 'identity' is the template "
+        "under .belayer/agents/<identity>/ (e.g. 'reviewer') and defaults to 'name' when "
+        "omitted. Set 'identity' explicitly when you spawn multiple peers off the same "
+        "template (e.g. name='reviewer-1', identity='reviewer').\n"
+        "- 'identity' must match a directory under .belayer/agents/. An unknown identity "
+        "spawns an agent with no system prompt and no belayer tool gating — almost certainly "
+        "not what you want. Consult the roster shown at session start (or the "
+        ".belayer/agents/ directory) for available identities in this project.\n"
+        "- 'profile' is a separate concern: it selects the Hermes runtime profile "
+        "(BELAYER_PROFILE / HERMES_HOME), not the identity. Most spawns can leave it as "
+        "'default'; only override when a particular agent needs a non-default Hermes "
+        "configuration (custom tool inventory, alternative model defaults, etc.).\n"
+        "- Implementer-style identities need 'branch' for git worktree isolation; review/QA "
+        "identities do not. Spawning an implementer without a branch makes it share the "
+        "workspace with you, which is rarely what you want.\n"
+        "- Spawned agents persist until they exit or you stop them — budget spawns "
+        "intentionally; each peer consumes tokens for as long as it lives."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Agent name (e.g. 'backend', 'frontend', 'qa', 'reviewer')",
+                "description": (
+                    "The session-local identifier for the new agent (e.g. 'reviewer-1', "
+                    "'web-dev-checkout'). This is how other agents will address it via "
+                    "belayer_send_message. Must be unique within the session. By convention, "
+                    "use '<identity>-<sequence>' or '<identity>-<purpose>' so the role is "
+                    "obvious at a glance."
+                ),
+            },
+            "identity": {
+                "type": "string",
+                "description": (
+                    "The identity template to load — must match a directory under "
+                    ".belayer/agents/ (e.g. 'reviewer', 'web-dev', 'qa'). The daemon reads "
+                    "the system prompt and belayer_tools allowlist from that directory at "
+                    "spawn time. Optional: defaults to 'name' when omitted, which works for "
+                    "single-instance roles like 'supervisor' and 'pm' where the handle and "
+                    "the template share a name."
+                ),
             },
             "profile": {
                 "type": "string",
-                "description": "Hermes profile to use (e.g. 'backend', 'frontend', 'qa', 'reviewer')",
+                "description": (
+                    "Hermes runtime profile to launch the agent under (sets BELAYER_PROFILE "
+                    "/ HERMES_HOME). Independent of 'identity' — 'profile' chooses the "
+                    "Hermes config (tool inventory, model defaults, credentials) while "
+                    "'identity' chooses the soul. Most spawns use 'default'; only change "
+                    "this when an agent needs a non-default Hermes configuration."
+                ),
             },
             "message": {
                 "type": "string",
-                "description": "Initial instruction/assignment for the agent",
+                "description": (
+                    "First instruction the new agent receives. Treat this like a prompt — "
+                    "include the goal, relevant file paths or artifact references, the "
+                    "constraints they must honour, and what success looks like. A vague "
+                    "first message produces a vague first turn."
+                ),
             },
             "branch": {
                 "type": "string",
                 "description": (
-                    "Git branch name for worktree isolation. When set, the agent works in its own "
-                    "git worktree on this branch, isolated from other agents. Use for implementer "
-                    "agents (backend, frontend) to prevent conflicts. Not needed for reviewers or QA."
+                    "Git branch for worktree isolation. When set, the daemon creates (or "
+                    "reuses) a git worktree on this branch under .belayer/worktrees/ and the "
+                    "agent works there, isolated from other agents and the main checkout. "
+                    "Use for implementer-style identities that will write code. Omit for "
+                    "review/QA/research identities that read but don't commit."
                 ),
             },
         },
@@ -142,27 +299,56 @@ SPAWN_AGENT_SCHEMA = {
 REQUEST_COMPLETION_SCHEMA = {
     "name": "belayer_request_completion",
     "description": (
-        "Signal that the run is complete and ready to close. This is a terminal "
-        "workflow action — it ends the active work phase and spawns the PM agent "
-        "for adversarial spec-vs-reality verification. The PM will independently "
-        "verify every spec item against the code and either approve (closing the "
-        "session) or reject (returning gaps for remediation). "
-        "Do NOT call this until: all specialist agents have reported done, all "
-        "implementation branches have been merged or are ready, you have independently "
-        "verified the work (tests pass, builds succeed), and review/QA feedback has "
-        "been addressed. Once called, you must wait for the PM's verdict. You cannot "
-        "approve or reject the run yourself."
+        "Signal that the run is complete and ready for the spec-vs-reality gate. This ends the "
+        "active work phase and triggers the daemon to spawn the PM agent for adversarial "
+        "verification. The PM independently checks every spec item against the actual code and "
+        "either approves (closing the session) or rejects (returning a gap list for "
+        "remediation). You cannot approve or reject the run yourself.\n\n"
+        "WHEN TO USE belayer_request_completion:\n"
+        "- All assigned work is done and you believe the spec is satisfied — you want the PM "
+        "gate to confirm before the session closes\n"
+        "- After all specialist agents have reported done, all implementation branches are "
+        "merged or ready, and review/QA feedback has been addressed\n"
+        "- When you have independently verified the work (builds pass, tests pass, behaviour "
+        "matches spec) and want the human's last automated check\n\n"
+        "WHEN NOT TO USE (use these instead):\n"
+        "- 'I'm done with my piece' (you're a specialist, not the supervisor) -> use "
+        "belayer_report_status with 'done'\n"
+        "- The run is partially complete and you want to hand off mid-flight -> use "
+        "belayer_report_status with 'incomplete' to escalate to a human\n"
+        "- You want to retract or amend a previous request -> you cannot; the gate is "
+        "one-shot, the PM is already running\n\n"
+        "IMPORTANT:\n"
+        "- This is a terminal action for the active work phase. Do NOT call it until: all "
+        "specialist agents have reported done; all implementation branches are merged or "
+        "ready to merge; you have independently verified the work (tests pass, builds "
+        "succeed); and review/QA feedback has been addressed.\n"
+        "- Once called, you must wait for the PM's verdict. You cannot approve or reject the "
+        "run yourself — that authority belongs only to the PM.\n"
+        "- The PM has up to three remediation cycles. Use the rejection feedback to address "
+        "real gaps, not to argue with the PM."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "summary": {
                 "type": "string",
-                "description": "Summary of what was accomplished, which spec items were implemented, and any deviations from the spec",
+                "description": (
+                    "Plain-language summary of what was accomplished. List the spec items you "
+                    "implemented, any deviations from the spec (with reasons), and anything "
+                    "the PM should know to verify efficiently. The PM treats your summary as "
+                    "a starting point, not as truth — they will independently check the code."
+                ),
             },
             "spec_artifact": {
                 "type": "string",
-                "description": "Path to the spec/design-doc artifact (optional, PM will search if not provided)",
+                "description": (
+                    "Optional path to the spec or design-doc artifact (e.g. "
+                    "'artifacts/checkout-flow.spec.md'). If omitted, the PM searches the "
+                    "artifact registry for kinds 'spec' or 'design-doc'. Provide it "
+                    "explicitly when there are multiple specs in play and you want the PM to "
+                    "verify against a specific one."
+                ),
             },
         },
         "required": ["summary"],
@@ -172,16 +358,40 @@ REQUEST_COMPLETION_SCHEMA = {
 APPROVE_COMPLETION_SCHEMA = {
     "name": "belayer_approve_completion",
     "description": (
-        "Approve the run after verifying the spec is fully satisfied. "
-        "This marks the session as complete. Only call this after thorough verification "
-        "confirms all spec items have been implemented."
+        "Mark the run complete after verifying the spec is fully satisfied. This is the PM's "
+        "terminal action — it closes the session and ends the run. Only the PM agent has "
+        "access to this tool; no other agent should ever see it.\n\n"
+        "WHEN TO USE belayer_approve_completion:\n"
+        "- You are the PM, you have read the spec end-to-end, and you have evidence that every "
+        "spec item is implemented in the code (not just claimed by the supervisor's summary)\n"
+        "- Your verification report enumerates each spec item with the file/test/behaviour "
+        "that satisfies it\n\n"
+        "WHEN NOT TO USE (use these instead):\n"
+        "- You found gaps, even small ones -> use belayer_reject_completion with a specific "
+        "gap list so the supervisor can remediate\n"
+        "- You are not the PM -> you do not have authority to close a run; the supervisor "
+        "calls belayer_request_completion to invoke the gate, you don't bypass it\n"
+        "- You want to close the session for an unrelated reason (cancel, abandon) -> that's "
+        "an operator action, not an agent action\n\n"
+        "IMPORTANT:\n"
+        "- This is irreversible: it closes the session. There is no 'undo approve'.\n"
+        "- Your verification_report MUST reference the specific spec items you confirmed, by "
+        "name or number, with the evidence (code path, test, observable behaviour). "
+        "'Everything looks good' is not a verification report.\n"
+        "- 'The supervisor said it was done' is not evidence. Code in the repo, tests that "
+        "run, and observable behaviour are evidence."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "verification_report": {
                 "type": "string",
-                "description": "The full verification report showing which spec items passed, failed, or were deferred",
+                "description": (
+                    "Full verification report enumerating each spec item with evidence "
+                    "(file:line, test name, observable behaviour). For deferred items, name "
+                    "what was deferred and why the deferral is acceptable. The operator and "
+                    "reflection both read this report to understand what was actually shipped."
+                ),
             },
         },
         "required": ["verification_report"],
@@ -191,20 +401,52 @@ APPROVE_COMPLETION_SCHEMA = {
 REJECT_COMPLETION_SCHEMA = {
     "name": "belayer_reject_completion",
     "description": (
-        "Reject the run because the spec is not fully satisfied. "
-        "This sends the gap list back to the supervisor for remediation. "
-        "Be specific about what's missing so the supervisor can fix it."
+        "Reject the run because the spec is not fully satisfied. This sends a structured gap "
+        "list back to the supervisor for remediation; the run does not close. Like "
+        "approve_completion, this is a PM-only terminal action — no other agent should see it.\n\n"
+        "WHEN TO USE belayer_reject_completion:\n"
+        "- You are the PM and your verification found at least one spec item that is not "
+        "implemented or is implemented incorrectly\n"
+        "- You found a gap that the supervisor can address — you have a concrete fix in mind, "
+        "not just a vague concern\n\n"
+        "WHEN NOT TO USE (use these instead):\n"
+        "- The spec is fully satisfied -> use belayer_approve_completion\n"
+        "- You are not the PM -> only the PM has authority to reject the gate; specialists "
+        "send findings via belayer_send_message instead\n"
+        "- You want to flag a stylistic issue or a non-blocking concern -> that's reviewer "
+        "territory, not PM territory; the PM gates on spec satisfaction, not code quality\n\n"
+        "IMPORTANT:\n"
+        "- This is irreversible in the sense that you cannot un-reject; the supervisor must "
+        "now remediate and re-request completion. There is a hard cap of three remediation "
+        "cycles before the daemon escalates to a human.\n"
+        "- Your gap_list MUST reference specific spec items, by name or number, with what you "
+        "expected to find and what you found instead. 'Tests are missing' is not actionable; "
+        "'spec section 3.2 requires a regression test for the rate-limit path; no test exists "
+        "in tests/rate_limit_test.go' is.\n"
+        "- Be specific enough that the supervisor can fix the gap without coming back to you "
+        "for clarification."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "verification_report": {
                 "type": "string",
-                "description": "The full verification report showing which spec items passed, failed, or were deferred",
+                "description": (
+                    "Full verification report — the same shape as in approve_completion. "
+                    "Enumerate each spec item with what you found (or didn't find). The "
+                    "operator and reflection use this to understand the verification, "
+                    "independent of the gap list."
+                ),
             },
             "gap_list": {
                 "type": "string",
-                "description": "Specific list of gaps: what the spec requires vs what was found (or not found) in the code",
+                "description": (
+                    "Specific, actionable list of gaps. Each gap should name the spec item, "
+                    "what the spec requires, what you found (or didn't find) in the code, and "
+                    "the concrete next step the supervisor can take to close it. The "
+                    "supervisor reads this and routes work to remediate; vague gap lists "
+                    "produce wasted remediation cycles."
+                ),
             },
         },
         "required": ["verification_report", "gap_list"],
@@ -285,10 +527,17 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
 
     def handler(args: dict, **kwargs) -> str:
         name = args.get("name", "")
+        identity = args.get("identity", "") or name  # default to name for single-instance roles
         profile = args.get("profile", "")
         message = args.get("message", "")
         branch = args.get("branch", "")
-        payload: dict = {"name": name, "role": name, "profile": profile, "message": message}
+        payload: dict = {
+            "name": name,
+            "identity": identity,
+            "role": identity,  # role tracks the identity template by default
+            "profile": profile,
+            "message": message,
+        }
         if branch:
             payload["branch"] = branch
         status, body = unix_post(
@@ -298,7 +547,8 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
         )
         if status == 201:
             extra = f" on branch '{branch}'" if branch else ""
-            return f"Agent '{name}' spawned with profile '{profile}'{extra}."
+            id_suffix = f" (identity '{identity}')" if identity != name else ""
+            return f"Agent '{name}'{id_suffix} spawned with profile '{profile}'{extra}."
         log.warning("spawn_agent %s failed (%d): %s", name, status, body[:200])
         return f"[System] Failed to spawn agent '{name}'. Error: {body[:200]}"
 

@@ -19,17 +19,33 @@ import (
 )
 
 type agentSpawnRequest struct {
-	SessionID       string `json:"-"`
-	Name            string `json:"name"`
+	SessionID string `json:"-"`
+	Name      string `json:"name"`
+	// Identity selects the directory under .belayer/agents/<identity>/ used to
+	// load the agent's system prompt and belayer_tools allowlist. When empty it
+	// defaults to Name, preserving the single-instance-per-identity convention
+	// (e.g. "supervisor", "pm"). Set explicitly when spawning multiple agents
+	// off the same identity (e.g. Name="reviewer-1", Identity="reviewer").
+	Identity        string `json:"identity,omitempty"`
 	Role            string `json:"role"`
-	Profile         string `json:"profile"`
+	Profile         string `json:"profile"` // Hermes runtime profile (BELAYER_PROFILE / HERMES_HOME), independent of identity
 	Model           string `json:"model,omitempty"`
 	Message         string `json:"message,omitempty"`
 	Repo            string `json:"repo,omitempty"`
 	Workdir         string `json:"workdir,omitempty"`
-	Branch          string `json:"branch,omitempty"`          // if set, agent works in a git worktree on this branch
+	Branch          string `json:"branch,omitempty"` // if set, agent works in a git worktree on this branch
 	HermesSessionID string `json:"hermes_session_id,omitempty"`
 	Ephemeral       *bool  `json:"ephemeral,omitempty"` // nil = default (true for specialists, false for supervisor)
+}
+
+// identityKey returns the identity directory name to use for this spawn.
+// Falls back to Name when Identity is unset, preserving the original
+// single-instance-per-identity behavior.
+func (r agentSpawnRequest) identityKey() string {
+	if r.Identity != "" {
+		return r.Identity
+	}
+	return r.Name
 }
 
 type finishAgentRequest struct {
@@ -299,29 +315,24 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		ephemeral = false
 	}
 
-	// Load system prompt from templates/<name>/system-prompt.md if it exists.
-	// The template is keyed by agent name (e.g. "pm", "supervisor", "reviewer").
-	// Check the workspace first, then fall back to belayer root.
+	// Load system prompt from agent identity dir if it exists. Project-local
+	// overrides under <workdir>/.belayer/agents/<identity>/ win over the shipped
+	// defaults at <BelayerRoot>/agents/<identity>/. Identity defaults to Name
+	// when not explicitly set — see agentSpawnRequest.identityKey for details.
+	identity := req.identityKey()
 	var systemPrompt string
-	for _, base := range []string{workdir, d.config.BelayerRoot} {
-		if base == "" {
-			continue
-		}
-		promptPath := filepath.Join(base, "templates", req.Name, "system-prompt.md")
-		if data, err := os.ReadFile(promptPath); err == nil {
+	for _, candidate := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "system-prompt.md") {
+		if data, err := os.ReadFile(candidate); err == nil {
 			systemPrompt = string(data)
-			log.Printf("Loaded system prompt from %s for agent %s", promptPath, req.Name)
+			log.Printf("Loaded system prompt from %s for agent %s (identity=%s)", candidate, req.Name, identity)
 			break
 		}
 	}
 
-	// Load belayer_tools from templates/<name>/agent.yaml if it exists.
+	// Load belayer_tools from <agent-dir>/agent.yaml if it exists. Same
+	// project-local-over-shipped resolution as the system prompt.
 	var belayerTools []string
-	for _, base := range []string{workdir, d.config.BelayerRoot} {
-		if base == "" {
-			continue
-		}
-		yamlPath := filepath.Join(base, "templates", req.Name, "agent.yaml")
+	for _, yamlPath := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "agent.yaml") {
 		data, err := os.ReadFile(yamlPath)
 		if err != nil {
 			continue
@@ -347,7 +358,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 				}
 			}
 		}
-		log.Printf("Loaded belayer_tools from %s for agent %s: %v", yamlPath, req.Name, belayerTools)
+		log.Printf("Loaded belayer_tools from %s for agent %s (identity=%s): %v", yamlPath, req.Name, identity, belayerTools)
 		break
 	}
 
@@ -667,6 +678,50 @@ func worktreesDisabled(workdir string) bool {
 		}
 	}
 	return false
+}
+
+// agentIdentityPaths returns the ordered list of candidate paths to look up
+// for an agent identity file, in priority order:
+//
+//  1. <workdir>/.belayer/agents/<identity>/<file>, then each parent directory's
+//     .belayer/agents/<identity>/<file> walking up to filesystem root —
+//     project-local overrides
+//  2. <belayerRoot>/agents/<identity>/<file>                  — shipped default
+//
+// The walk-up handles the common case where workdir points at a nested location
+// (a session workspace under .belayer/runs/<id>/workspace/, or a worktree under
+// .belayer/worktrees/<id>/<name>/) rather than the project root itself —
+// without it, the project-local override would be silently invisible.
+//
+// Empty bases are skipped and duplicate paths are removed.
+func agentIdentityPaths(workdir, belayerRoot, identity, file string) []string {
+	var paths []string
+	seen := make(map[string]struct{})
+	addPath := func(path string) {
+		if path == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	if workdir != "" {
+		for dir := workdir; dir != ""; {
+			addPath(filepath.Join(dir, ".belayer", "agents", identity, file))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	if belayerRoot != "" {
+		addPath(filepath.Join(belayerRoot, "agents", identity, file))
+	}
+	return paths
 }
 
 func splitLines(s string) []string {
