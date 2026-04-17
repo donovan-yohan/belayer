@@ -1,13 +1,19 @@
 """HTTP client for daemon communication.
 
-Supports both Unix socket paths (e.g. /path/to/daemon.sock) and HTTP URL
-addresses (e.g. http://172.17.0.1:7523). Unix sockets are used when belayer
-runs with noop sandbox mode; HTTP URLs are used when bridges run inside
-clamshell Docker containers and reach the daemon via Docker's host gateway.
+Supports Unix socket paths, direct HTTP URLs, and HTTP-CONNECT-proxied URLs.
+
+- Unix socket (e.g. /path/to/daemon.sock): used in noop sandbox mode.
+- Direct HTTP URL (e.g. http://172.17.0.1:7523): used when the host gateway
+  is directly reachable from the container.
+- CONNECT-proxied HTTP URL: used inside clamshell sandboxes where the host
+  gateway is not directly routable. Set BELAYER_HTTP_PROXY=http://host:port
+  to route daemon calls through an HTTP CONNECT proxy (clamshell transparent
+  proxy at 172.31.0.2:3128).
 """
 
 import json
 import logging
+import os
 import http.client
 import socket as sock
 from urllib.parse import urlparse
@@ -22,6 +28,12 @@ def _is_http_url(socket_path: str) -> bool:
 def _make_conn(socket_path: str) -> http.client.HTTPConnection:
     if _is_http_url(socket_path):
         parsed = urlparse(socket_path)
+        proxy_url = os.environ.get("BELAYER_HTTP_PROXY", "")
+        if proxy_url:
+            proxy = urlparse(proxy_url)
+            conn = http.client.HTTPConnection(proxy.hostname, proxy.port or 3128)
+            conn.set_tunnel(parsed.hostname, parsed.port or 80)
+            return conn
         return http.client.HTTPConnection(parsed.hostname, parsed.port or 80)
     conn = http.client.HTTPConnection("localhost")
     s = sock.socket(sock.AF_UNIX, sock.SOCK_STREAM)

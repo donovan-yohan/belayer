@@ -29,7 +29,7 @@ func newRunStartCmd() *cobra.Command {
 				return fmt.Errorf("--task is required")
 			}
 			if strings.TrimSpace(supervisorProfile) == "" {
-				return fmt.Errorf("--supervisor-profile is required")
+				supervisorProfile = "default"
 			}
 
 			// Parse repos.
@@ -113,7 +113,7 @@ func newRunStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	cmd.Flags().StringVar(&name, "name", "", "Run/session name")
 	cmd.Flags().StringVar(&task, "task", "", "Initial task text for the supervisor")
-	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", "", "Hermes profile for the supervisor")
+	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", "default", "Hermes profile for the supervisor")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
 	return cmd

@@ -114,6 +114,7 @@ def main() -> None:
     session_id = _require_env("BELAYER_SESSION_ID")
     agent_id = _require_env("BELAYER_AGENT_ID")
     socket_path = _require_env("BELAYER_SOCKET")
+    log.info("BELAYER_SOCKET=%s (is_http=%s)", socket_path, socket_path.startswith("http"))
 
     run_dir = os.environ.get("BELAYER_RUN_DIR", "")
     role = os.environ.get("BELAYER_ROLE", "specialist")
@@ -162,6 +163,23 @@ def main() -> None:
     except Exception as exc:
         log.warning("Could not resolve runtime provider: %s (falling back to AIAgent defaults)", exc)
 
+    # --- Override/supplement with BELAYER_* provider vars --------------------
+    # These are injected by the daemon when the sandbox user has no Hermes config
+    # (e.g. clamshell). API key always overrides (container user may have an
+    # invalid key). Base URL and provider only apply when not already resolved.
+    belayer_api_key = os.environ.get("BELAYER_API_KEY", "")
+    belayer_base_url = os.environ.get("BELAYER_BASE_URL", "")
+    belayer_provider = os.environ.get("BELAYER_PROVIDER", "")
+    if belayer_api_key:
+        runtime_api_key = belayer_api_key
+        log.info("Using BELAYER_API_KEY for LLM provider")
+    if belayer_base_url and not runtime_base_url:
+        runtime_base_url = belayer_base_url
+        log.info("Using BELAYER_BASE_URL=%s for LLM provider (fallback)", belayer_base_url)
+    if belayer_provider and not runtime_provider:
+        runtime_provider = belayer_provider
+        log.info("Using BELAYER_PROVIDER=%s for LLM provider (fallback)", belayer_provider)
+
     # --- Resolve model from Hermes config if not explicitly set --------------
     if not model:
         try:
@@ -207,6 +225,45 @@ def main() -> None:
         log.error("Failed to construct AIAgent: %s", exc)
         post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
         sys.exit(1)
+
+    # Fix: Hermes injects a keepalive-only httpx.Client (via _create_openai_client)
+    # which wipes proxy mounts even when HTTPS_PROXY is set. Additionally, Hermes
+    # closes the OpenAI client on rebuilds, which closes any shared http_client.
+    # Solution: monkey-patch _create_openai_client to always build a fresh proxy
+    # client per OpenAI client instance, so each Hermes rebuild gets its own client.
+    _proxy_url = os.environ.get("HTTPS_PROXY", "") or os.environ.get("https_proxy", "")
+    if _proxy_url and hasattr(agent, "_create_openai_client"):
+        try:
+            import httpx as _httpx
+            import socket as _socket
+            _sock_opts = [(_socket.SOL_SOCKET, _socket.SO_KEEPALIVE, 1)]
+            if hasattr(_socket, "TCP_KEEPIDLE"):
+                _sock_opts.extend([
+                    (_socket.IPPROTO_TCP, _socket.TCP_KEEPIDLE, 30),
+                    (_socket.IPPROTO_TCP, _socket.TCP_KEEPINTVL, 10),
+                    (_socket.IPPROTO_TCP, _socket.TCP_KEEPCNT, 3),
+                ])
+            _proxy_url_cap = _proxy_url
+            _sock_opts_cap = _sock_opts
+            _orig_create = agent._create_openai_client  # bound method
+
+            def _proxy_create(client_kwargs, *, reason, shared):
+                fresh = dict(client_kwargs)
+                fresh.pop("http_client", None)
+                fresh["http_client"] = _httpx.Client(
+                    proxy=_httpx.Proxy(_proxy_url_cap),
+                    transport=_httpx.HTTPTransport(socket_options=_sock_opts_cap),
+                )
+                return _orig_create(fresh, reason=reason, shared=shared)
+
+            agent._create_openai_client = _proxy_create
+            # Rebuild now so the initial client also gets the proxy.
+            agent.client = agent._create_openai_client(
+                agent._client_kwargs, reason="proxy_inject", shared=True
+            )
+            log.info("Patched _create_openai_client for proxy+keepalive (proxy=%s)", _proxy_url)
+        except Exception as _e:
+            log.warning("Could not patch proxy client into AIAgent: %s", _e)
 
     # --- Register Belayer tools --------------------------------------------
     allowed_tools_env = os.environ.get("BELAYER_TOOLS", "")

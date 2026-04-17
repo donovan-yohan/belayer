@@ -410,26 +410,33 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("ensure sandbox handle: %w", err)
 	}
 
+	socketPath := bridgeSocketPath(ss.mode, d.config.SocketPath, d.config.DockerHostGateway, d.tcpPort, d.config.WorkspaceSockPath)
+	log.Printf("spawn %s: mode=%q socketPath=%q tcpPort=%d gateway=%q", req.Name, ss.mode, socketPath, d.tcpPort, d.config.DockerHostGateway)
 	cfg := bridge.Config{
 		SessionID:       req.SessionID,
 		AgentID:         req.Name,
 		Role:            req.Role,
 		Profile:         req.Profile,
 		Model:           agentModel,
+		APIKey:          d.config.BridgeAPIKey,
+		BaseURL:         d.config.BridgeBaseURL,
+		Provider:        d.config.BridgeProvider,
 		Message:         req.Message,
 		SystemPrompt:    systemPrompt,
 		HermesSessionID: req.HermesSessionID,
 		Ephemeral:       ephemeral,
 		Workdir:         workdir,
-		SocketPath:      bridgeSocketPath(ss.mode, d.config.SocketPath, d.config.DockerHostGateway, d.tcpPort),
+		SocketPath:      socketPath,
 		RunDir:          runDir,
 		BelayerRoot:     d.config.BelayerRoot,
 		BelayerTools:    belayerTools,
 	}
 	// In clamshell mode the bridge runs inside the Docker container where the
 	// host hermes venv path doesn't exist; use the container's system python3.
+	// Also inject proxy vars so LLM API calls route through the egress broker.
 	if ss.mode == "clamshell" {
 		cfg.Cmd = []string{"python3", "-m", "hermes_bridge"}
+		cfg.HTTPProxy = "http://proxy.internal:3128"
 	}
 	_ = worktreePath // stored in DB; cleanup handled separately
 
@@ -740,10 +747,20 @@ func agentIdentityPaths(workdir, belayerRoot, identity, file string) []string {
 
 // bridgeSocketPath returns the socket path/URL to use as BELAYER_SOCKET for a
 // bridge subprocess. For clamshell sandboxes the bridge runs inside a Docker
-// container and must reach the daemon via the Docker host gateway over TCP.
-// For all other drivers the Unix socket path is returned unchanged.
-func bridgeSocketPath(mode, unixPath, dockerGateway string, tcpPort int) string {
-	if mode == "clamshell" && tcpPort > 0 {
+// container and accesses the daemon via a Unix socket in the bind-mounted
+// workspace directory (/workspace/.belayer/daemon.sock). Falls back to the
+// TCP gateway URL if the workspace socket path was not configured.
+func bridgeSocketPath(mode, unixPath, dockerGateway string, tcpPort int, workspaceSockPath string) string {
+	if mode != "clamshell" {
+		return unixPath
+	}
+	// Prefer workspace Unix socket: the workspace is bind-mounted into the
+	// container at /workspace, so the container-side path is always this.
+	if workspaceSockPath != "" {
+		return "/workspace/.belayer/daemon.sock"
+	}
+	// Fallback: TCP listener via Docker host gateway.
+	if tcpPort > 0 {
 		return fmt.Sprintf("http://%s:%d", dockerGateway, tcpPort)
 	}
 	return unixPath
