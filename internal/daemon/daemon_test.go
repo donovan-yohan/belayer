@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -661,10 +662,14 @@ func TestEnsureSandboxHandleNilEndpointsWhenRuntimeReportsNone(t *testing.T) {
 }
 
 // fakeRuntime returns a preset endpoint list from Up and signals Up/Down via
-// channels so tests can establish happens-before without races.
+// channels so tests can establish happens-before without races. sync.Once
+// guards the closes so callers can invoke Up/Down more than once without
+// panicking — useful if a future Start path retries provisioning.
 type fakeRuntime struct {
 	endpoints []runtime.Endpoint
+	upOnce    sync.Once
 	upDone    chan struct{}
+	downOnce  sync.Once
 	downDone  chan struct{}
 }
 
@@ -677,12 +682,12 @@ func newFakeRuntime(eps []runtime.Endpoint) *fakeRuntime {
 }
 
 func (f *fakeRuntime) Up(ctx context.Context) ([]runtime.Endpoint, error) {
-	close(f.upDone)
+	f.upOnce.Do(func() { close(f.upDone) })
 	return f.endpoints, nil
 }
 func (f *fakeRuntime) Health(ctx context.Context) error { return nil }
 func (f *fakeRuntime) Down(ctx context.Context) error {
-	close(f.downDone)
+	f.downOnce.Do(func() { close(f.downDone) })
 	return nil
 }
 
@@ -711,6 +716,7 @@ func TestStartCapturesRuntimeEndpoints(t *testing.T) {
 
 	// Wait until the daemon is accepting connections so we know Start is past
 	// runtime.Up and into Serve. Drain serveErr to surface any fast-fail.
+	ready := false
 	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
 		select {
 		case err := <-serveErr:
@@ -720,9 +726,13 @@ func TestStartCapturesRuntimeEndpoints(t *testing.T) {
 		c, dialErr := net.Dial("unix", socketPath)
 		if dialErr == nil {
 			c.Close()
+			ready = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("daemon never became reachable on its Unix socket")
 	}
 
 	select {
