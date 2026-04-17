@@ -6,6 +6,10 @@ import (
 	"os/exec"
 )
 
+func init() {
+	Register("noop", &Noop{})
+}
+
 // Noop is a no-isolation driver that runs commands via direct exec.
 // It has zero overhead and is the default driver for Belayer.
 // Use this when no sandbox isolation is needed.

@@ -403,7 +403,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		stderrLog.Close()
 		return nil, fmt.Errorf("load session for sandbox handle: %w", err)
 	}
-	handle, err := d.ensureSandboxHandle(d.startCtx, sess)
+	ss, err := d.ensureSandboxHandle(d.startCtx, sess)
 	if err != nil {
 		stdinR.Close()
 		stdinW.Close()
@@ -412,7 +412,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("ensure sandbox handle: %w", err)
 	}
 
-	osProc, err := d.sandbox.Exec(d.startCtx, handle, argv, sandbox.ExecOpts{
+	osProc, err := ss.driver.Exec(d.startCtx, ss.handle, argv, sandbox.ExecOpts{
 		Env:    env,
 		Dir:    workdir,
 		Stdin:  stdinR,

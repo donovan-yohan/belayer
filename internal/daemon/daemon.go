@@ -30,9 +30,11 @@ type Config struct {
 	DBPath      string
 	BelayerRoot string // directory containing hermes_bridge/ (for PYTHONPATH)
 
-	// Sandbox overrides the driver used for agent execution.
-	// Nil falls back to &sandbox.Noop{}.
-	Sandbox sandbox.Driver
+	// SandboxDrivers is the registry the daemon resolves per-session drivers
+	// against. Each session's driver is chosen by name from .belayer/config.yaml's
+	// sandbox.mode. Nil falls back to a registry containing only the noop driver,
+	// which is what existing tests rely on.
+	SandboxDrivers *sandbox.Registry
 	// Runtime overrides the dev-stack provider.
 	// Nil falls back to &runtime.Noop{}.
 	Runtime runtime.Provider
@@ -56,8 +58,8 @@ type Daemon struct {
 	config   Config
 	broker   broker.Broker
 
-	sandbox sandbox.Driver
-	runtime runtime.Provider
+	sandboxDrivers *sandbox.Registry
+	runtime        runtime.Provider
 
 	// runtimeEndpoints is the set of endpoints reported by runtime.Up at daemon
 	// startup. Written once from Start before the HTTP server begins serving,
@@ -70,10 +72,12 @@ type Daemon struct {
 	// in New so tests that skip Start still work.
 	startCtx context.Context
 
-	// Per-session sandbox handles. Populated lazily on first agent spawn,
-	// cleared on terminal session transitions and during Shutdown.
-	sandboxMu      sync.Mutex
-	sandboxHandles map[string]sandbox.Handle
+	// Per-session sandbox state. Each entry caches the driver resolved from
+	// .belayer/config.yaml's sandbox.mode plus the Handle returned by Create.
+	// Populated lazily on first agent spawn, cleared on terminal session
+	// transitions and during Shutdown.
+	sandboxMu        sync.Mutex
+	sessionSandboxes map[string]sessionSandbox
 
 	spawnBridgeAgent func(req agentSpawnRequest) (*bridge.Process, error)
 
@@ -98,17 +102,22 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		store:          st,
-		config:         cfg,
-		tools:          make(map[string][]agent.ToolSpec),
-		bridgeProcs:    make(map[string]*bridge.Process),
-		sandboxHandles: make(map[string]sandbox.Handle),
-		startCtx:       context.Background(),
+		store:            st,
+		config:           cfg,
+		tools:            make(map[string][]agent.ToolSpec),
+		bridgeProcs:      make(map[string]*bridge.Process),
+		sessionSandboxes: make(map[string]sessionSandbox),
+		startCtx:         context.Background(),
 	}
-	if cfg.Sandbox != nil {
-		d.sandbox = cfg.Sandbox
+	if cfg.SandboxDrivers != nil {
+		d.sandboxDrivers = cfg.SandboxDrivers
 	} else {
-		d.sandbox = &sandbox.Noop{}
+		// Nil falls back to a registry with only the noop driver so tests that
+		// skip the CLI wiring path still start successfully. Callers that want
+		// the clamshell stub must pass the process-wide sandbox.Default.
+		fallback := &sandbox.Registry{}
+		fallback.Register(sandbox.DefaultMode, &sandbox.Noop{})
+		d.sandboxDrivers = fallback
 	}
 	if cfg.Runtime != nil {
 		d.runtime = cfg.Runtime
@@ -190,11 +199,11 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 
 	// Tear down any outstanding sandbox handles.
 	d.sandboxMu.Lock()
-	handles := d.sandboxHandles
-	d.sandboxHandles = make(map[string]sandbox.Handle)
+	sessions := d.sessionSandboxes
+	d.sessionSandboxes = make(map[string]sessionSandbox)
 	d.sandboxMu.Unlock()
-	for sessID, h := range handles {
-		if stopErr := d.sandbox.Stop(shutCtx, h); stopErr != nil {
+	for sessID, ss := range sessions {
+		if stopErr := ss.driver.Stop(shutCtx, ss.handle); stopErr != nil {
 			log.Printf("daemon: sandbox stop %s: %v", sessID, stopErr)
 		}
 	}
@@ -208,53 +217,74 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 	return err
 }
 
-// ensureSandboxHandle returns the session's sandbox handle, creating one on
-// first use. Safe to call from multiple goroutines; the handle is cached per
-// session in d.sandboxHandles.
-func (d *Daemon) ensureSandboxHandle(ctx context.Context, sess store.Session) (sandbox.Handle, error) {
+// sessionSandbox caches the driver (resolved from sandbox.mode per session)
+// alongside the Handle returned by Create, so Exec and Stop go to the same
+// driver that created the handle.
+type sessionSandbox struct {
+	driver sandbox.Driver
+	handle sandbox.Handle
+}
+
+// ensureSandboxHandle returns the session's sandbox state, creating one on
+// first use. The driver is resolved from <sess.WorkspaceDir>/.belayer/config.yaml's
+// sandbox.mode (defaulting to noop). Safe to call from multiple goroutines;
+// the state is cached per session in d.sessionSandboxes.
+func (d *Daemon) ensureSandboxHandle(ctx context.Context, sess store.Session) (sessionSandbox, error) {
 	d.sandboxMu.Lock()
-	if h, ok := d.sandboxHandles[sess.ID]; ok {
+	if ss, ok := d.sessionSandboxes[sess.ID]; ok {
 		d.sandboxMu.Unlock()
-		return h, nil
+		return ss, nil
 	}
 	d.sandboxMu.Unlock()
 
+	settings, err := sandbox.LoadSettings(sess.WorkspaceDir)
+	if err != nil {
+		return sessionSandbox{}, fmt.Errorf("sandbox settings: %w", err)
+	}
+	mode := settings.ModeOrDefault()
+	driver, err := d.sandboxDrivers.Get(mode)
+	if err != nil {
+		return sessionSandbox{}, err
+	}
+
 	// Create outside the lock — Create may block (container pull, VM boot).
-	h, err := d.sandbox.Create(ctx, sandbox.Config{
+	h, err := driver.Create(ctx, sandbox.Config{
 		Name:      sess.ID,
 		Workspace: sess.WorkspaceDir,
+		Policy:    settings.Policy,
 		Endpoints: runtimeEndpointsToSandbox(d.runtimeEndpoints),
 	})
 	if err != nil {
-		return sandbox.Handle{}, err
+		return sessionSandbox{}, err
 	}
 
 	d.sandboxMu.Lock()
 	defer d.sandboxMu.Unlock()
 	// Another goroutine may have raced us; keep whichever is stored first
 	// so callers never see two different handles for one session.
-	if existing, ok := d.sandboxHandles[sess.ID]; ok {
+	if existing, ok := d.sessionSandboxes[sess.ID]; ok {
 		go func() {
-			_ = d.sandbox.Stop(ctx, h)
+			_ = driver.Stop(ctx, h)
 		}()
 		return existing, nil
 	}
-	d.sandboxHandles[sess.ID] = h
-	return h, nil
+	ss := sessionSandbox{driver: driver, handle: h}
+	d.sessionSandboxes[sess.ID] = ss
+	return ss, nil
 }
 
-// terminateSandbox stops and forgets the sandbox handle for sessionID, if any.
+// terminateSandbox stops and forgets the sandbox state for sessionID, if any.
 // Safe to call for sessions that never had a handle.
 func (d *Daemon) terminateSandbox(ctx context.Context, sessionID string) {
 	d.sandboxMu.Lock()
-	h, ok := d.sandboxHandles[sessionID]
+	ss, ok := d.sessionSandboxes[sessionID]
 	if !ok {
 		d.sandboxMu.Unlock()
 		return
 	}
-	delete(d.sandboxHandles, sessionID)
+	delete(d.sessionSandboxes, sessionID)
 	d.sandboxMu.Unlock()
-	if err := d.sandbox.Stop(ctx, h); err != nil {
+	if err := ss.driver.Stop(ctx, ss.handle); err != nil {
 		log.Printf("daemon: sandbox stop %s: %v", sessionID, err)
 	}
 }

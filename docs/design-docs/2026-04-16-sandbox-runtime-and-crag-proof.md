@@ -150,107 +150,80 @@ type Handle struct {
 }
 ```
 
-### What ships in belayer (open source)
+### What ships in belayer
 
 - `internal/sandbox/driver.go` — the `Driver` interface
-- `internal/sandbox/registry.go` — the driver registry with override-injection
-- `internal/sandbox/noop.go` — the noop driver (direct exec, zero overhead)
-- `internal/sandbox/unavailable.go` — explicit "not in this build" stub for known drivers (e.g. clamshell)
+- `internal/sandbox/registry.go` — the driver registry (name → `Driver`)
+- `internal/sandbox/noop.go` — the noop driver (direct exec, zero overhead, always built)
+- `internal/sandbox/clamshell.go` — the clamshell driver, behind `//go:build clamshell`
+- `internal/sandbox/clamshell_stub.go` — the "not in this build" stub, behind `//go:build !clamshell`
 - `internal/runtime/provider.go` — the `Provider` interface
 - `internal/runtime/noop.go` — the noop provider
 - `internal/runtime/command.go` — the command provider (shells out to up/health/down)
 - Default policy YAMLs scaffolded on `belayer init`
-- `daemon.Config` exposes `SandboxDrivers *sandbox.Registry` (and the runtime equivalent) so a different `cmd/` main can wire in additional drivers at compile time
+- `daemon.Config.SandboxDrivers *sandbox.Registry` — the daemon resolves drivers by name from `.belayer/config.yaml`'s `sandbox.mode`
 
-### What does NOT ship in belayer
+### What is NOT shipped by default
 
-- The clamshell driver — lives in a private repo that imports belayer-as-library
+- The `clamshell` CLI itself — runtime dependency, not a code dependency. The driver shells out to it; if the CLI isn't installed on the worker, the driver returns a runtime error.
 - The crag binary — separate project
 - Specific agent identities — per-repo `.belayer/` or chalk-bag
 - Workspace definitions — crag config
 
-Belayer ships the interfaces and a registry. Driver implementations are deployment details. Open-source belayer never imports the closed clamshell tool; a private repo (e.g. `cmd/belayerd-extend/main.go`) imports both belayer-as-library and the closed clamshell driver, registers the override, and ships its own binary.
+### Driver selection: build tag, not separate repo
 
-### Driver registry and build-time injection
+The default `go build ./cmd/belayer` produces a binary with only the noop driver wired into the registry. A `clamshell` entry exists in the registry but resolves to a stub that fails session start with a clear "not built with clamshell support" error.
 
-The mechanism is build-time injection through a registry — same pattern superlemmings uses for `RuntimeAdapter` in `src/deepagents/runtimeAdapters/registry.ts`. Known driver names are listed in OSS belayer's defaults. Names without an in-tree implementation get an `unavailable` stub that fails preflight with a clear "not in this build" error. Private builds override entries by name.
+To compile the real clamshell driver in, build with `-tags clamshell`:
+
+```bash
+go build ./cmd/belayer                                # noop only (default)
+go build -tags clamshell ./cmd/belayer                # noop + clamshell
+go install -tags clamshell github.com/.../belayer/cmd/belayer@latest
+```
+
+The mechanism is the standard Go build constraint, not a registry override. Two files share the same `clamshell` registration — only one compiles per build:
 
 ```go
-// internal/sandbox/registry.go (OSS)
-type Registry struct {
-    drivers map[string]Driver
+// internal/sandbox/clamshell.go
+//go:build clamshell
+
+package sandbox
+
+func init() {
+    Register("clamshell", &Clamshell{})  // real driver
 }
 
-type Override struct {
-    Name   string
-    Driver Driver
-}
-
-func NewRegistry(overrides ...Override) *Registry {
-    drivers := map[string]Driver{
-        "noop":      &Noop{},
-        "clamshell": NewUnavailable("clamshell", "not available in this build"),
-    }
-    for _, o := range overrides {
-        drivers[o.Name] = o.Driver
-    }
-    return &Registry{drivers: drivers}
-}
-
-func (r *Registry) Get(name string) (Driver, error) {
-    d, ok := r.drivers[name]
-    if !ok {
-        return nil, fmt.Errorf("sandbox driver %q is not registered", name)
-    }
-    return d, nil
-}
+type Clamshell struct{ /* ... */ }
+// Create/Exec/Stop call into the clamshell CLI
 ```
-
-OSS `cmd/belayer/main.go` constructs the registry with no overrides:
 
 ```go
-cfg := daemon.DefaultConfig()
-cfg.SandboxDrivers = sandbox.NewRegistry()  // noop + unavailable-clamshell
-daemon.Run(cfg)
-```
+// internal/sandbox/clamshell_stub.go
+//go:build !clamshell
 
-A private build (separate repo, e.g. `extend-belayerd`) wires the closed driver in:
+package sandbox
 
-```go
-import (
-    "github.com/donovan-yohan/belayer/internal/daemon"
-    "github.com/donovan-yohan/belayer/internal/sandbox"
-    "github.com/extend-private/clamshell-driver"
-)
-
-func main() {
-    cfg := daemon.DefaultConfig()
-    cfg.SandboxDrivers = sandbox.NewRegistry(
-        sandbox.Override{Name: "clamshell", Driver: clamshell.New()},
-    )
-    daemon.Run(cfg)
+func init() {
+    Register("clamshell", newUnavailable("clamshell",
+        "this binary was built without -tags clamshell"))
 }
 ```
 
-`.belayer/config.yaml` selects the driver by name:
+The registry itself is trivial — a `map[string]Driver` populated by `init()` functions, with a `Get(name) (Driver, error)`. No `Override` parameter, no separate `cmd/` main per build.
 
-```yaml
-sandbox:
-  mode: clamshell
-  policy: .belayer/policies/standard.yaml
-```
+When an OSS-belayer session arrives with `sandbox.mode: clamshell`, `Get("clamshell")` succeeds (the name is registered) but the stub's `Create` returns an error. The daemon keeps serving other sessions; only the one requesting clamshell fails, with a useful message instead of `driver not registered` or a nil-pointer panic. A `-tags clamshell` build replaces the stub with the real driver; the same session config runs.
 
-When an OSS-belayer session arrives with `sandbox.mode: clamshell`, the registry's `Get("clamshell")` succeeds — `clamshell` IS a known name, registered to the `Unavailable` stub. The first method call on the stub (typically `Create` at session start) returns a clear error: `sandbox driver "clamshell" is unavailable in this build`. The daemon keeps serving other sessions; only the one requesting the missing driver fails, and it fails with a useful message instead of `driver not registered` or a nil-pointer panic. The private build's override replaces the stub with the real driver, and the same session config runs.
+The daemon cannot pre-validate at startup — `.belayer/config.yaml` is per-project, so the daemon doesn't know which mode any future session will request. Per-session resolution is the right hook.
 
-Note that the daemon cannot pre-validate at startup — `.belayer/config.yaml` is per-project, so the daemon doesn't know which mode any future session will request. Per-session resolution is the right hook.
+Why build tags over alternatives:
 
-Why this shape over alternatives:
-
-- vs. **subprocess driver protocol** (driver = separate binary, JSON-RPC over stdio): rejected as overkill. The constraint is "open belayer doesn't ship clamshell code," not "support third-party drivers in any language." Subprocess adds a versioned wire-protocol surface and stdio plumbing for agent processes, in exchange for crash isolation and hot-swap — neither of which we need at PoC.
+- vs. **separate `belayer-extend` binary that imports a private clamshell driver package**: rejected. Adds a second repo, version skew between belayer and the extension binary, and registry/override plumbing — all to avoid one file's worth of `os/exec` calls in the public repo. The constraint is "default `go install` produces an unsandboxed binary," not "no clamshell-related code anywhere in the public repo." A build tag satisfies the actual constraint.
+- vs. **subprocess driver protocol** (driver = separate binary, JSON-RPC over stdio): rejected as overkill. Adds a versioned wire-protocol surface and stdio plumbing for agent processes, in exchange for crash isolation and hot-swap — neither of which we need at PoC.
 - vs. **Go plugins** (`plugin.Open`): rejected. GOOS/GOARCH lockstep, fragile in practice.
-- vs. **shipping clamshell in-tree behind a build tag**: rejected. Even with the tag, the clamshell driver code lives in the OSS repo, which is exactly what we're trying to avoid.
+- vs. **shipping clamshell in-tree without a build tag**: rejected. The default `go install` would compile clamshell-CLI references into every binary, including ones run by people who never installed clamshell.
 
-The cost we accept: drivers must be Go (fine — the only two real drivers are noop and clamshell, both written by us); driver crashes can crash the daemon (fine for PoC; revisit when production hardening demands it).
+The cost we accept: anyone can build the clamshell-enabled binary by passing `-tags clamshell` themselves. That's fine — the closed thing is the `clamshell` CLI on the worker, not the wrapper code that calls it. Anyone who has the CLI can use the wrapper; anyone who doesn't gets a runtime error from the CLI itself.
 
 ### noop driver (ships with belayer)
 
@@ -279,9 +252,9 @@ func (n *Noop) Stop(ctx context.Context, h Handle) error {
 }
 ```
 
-### clamshell driver (private build, NOT in belayer repo)
+### clamshell driver (built with `-tags clamshell`)
 
-Wraps the clamshell CLI. Creates a sandbox at session start, execs agents via `docker exec`. Lives in a private repo and is wired into a private belayer binary via `sandbox.NewRegistry(sandbox.Override{Name: "clamshell", Driver: clamshell.New()})` from that repo's `cmd/belayerd-extend/main.go`. Code shape (satisfies `belayer/internal/sandbox.Driver`):
+Wraps the clamshell CLI. Creates a sandbox at session start, execs agents via `docker exec`. Lives in `internal/sandbox/clamshell.go` behind `//go:build clamshell`. Code shape:
 
 ```go
 func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
@@ -557,22 +530,21 @@ sandbox:
 - Wire into daemon session start
 - Test: existing behavior unchanged with noop drivers
 
-**Phase 2: Sandbox registry + clamshell driver**
+**Phase 2: Sandbox registry + clamshell driver (build-tagged)**
 
-Belayer side (OSS, this repo):
-- Add `internal/sandbox/registry.go` with `Registry`, `Override`, `NewRegistry(...)`, and `Get(name)`
-- Add `internal/sandbox/unavailable.go` with a stub `Driver` that returns a clear "not available in this build" error from every method
-- Pre-register `noop` and `unavailable-clamshell` in `NewRegistry`'s defaults
+Default-build work (no build tag, this is what `go install` produces):
+- Add `internal/sandbox/registry.go` with a package-level `map[string]Driver`, `Register(name, driver)`, and `Get(name) (Driver, error)`
+- Add `internal/sandbox/clamshell_stub.go` (`//go:build !clamshell`) that registers `clamshell` to a stub returning "this binary was built without -tags clamshell" from every method
 - Replace `daemon.Config.Sandbox sandbox.Driver` with `daemon.Config.SandboxDrivers *sandbox.Registry`; resolve the per-session driver by name from `.belayer/config.yaml`'s `sandbox.mode` (default `noop`)
-- Update `cmd/belayer/main.go` to construct `cfg.SandboxDrivers = sandbox.NewRegistry()` (no overrides, behavior preserved)
+- `cmd/belayer/main.go` constructs the registry once at startup; `init()` functions in each driver file populate it
 - Ship default policies in `.belayer/policies/`
-- Tests: registry returns noop by default; returns unavailable for clamshell with the documented error; accepts overrides; daemon resolves `sandbox.mode` correctly and surfaces the unavailable error at session start
+- Tests: registry returns noop by default; default build returns the stub for clamshell with the documented error; daemon resolves `sandbox.mode` correctly and surfaces the unavailable error at session start
 
-Private side (separate repo, e.g. `extend-belayerd`):
-- Implement the clamshell driver against `belayer/internal/sandbox.Driver` (Create/Exec/Stop per the code sketch above)
-- New `cmd/belayerd-extend/main.go` imports both belayer-as-library and the clamshell driver, wires the override into `cfg.SandboxDrivers`
-- Test in Lima VM: create sandbox, exec agent, verify egress policy
-- Iterate on policy by watching deny events
+Tagged-build work (`-tags clamshell`):
+- Add `internal/sandbox/clamshell.go` (`//go:build clamshell`) implementing `Driver` against the `clamshell` CLI (Create/Exec/Stop per the code sketch above)
+- The same `init()`-based registration replaces the stub at compile time when the tag is set
+- Tests guarded by the same tag: build with `-tags clamshell` in CI and exercise the driver against a Lima VM with the CLI installed
+- Manual verification in Lima VM: create sandbox, exec agent, verify egress policy; iterate on policy by watching deny events
 
 **Phase 3: Command runtime provider**
 - Implement `runtime.Config` loader that reads the `runtime:` section of `.belayer/config.yaml`
