@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
@@ -122,6 +123,11 @@ type Daemon struct {
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
 	tools   map[string][]agent.ToolSpec
+
+	// Lifecycle / shutdown fields.
+	draining             atomic.Bool   // set at start of Shutdown; readable by future /health and SSE handlers
+	archiveDrainTimeout  time.Duration // max time Phase 3 archive drain may run
+	shutdownHTTPTimeout  time.Duration // max time HTTP servers get to drain in-flight requests
 }
 
 // New creates a Daemon with the given config. Call Start to begin serving.
@@ -136,12 +142,14 @@ func New(cfg Config) (*Daemon, error) {
 	}
 
 	d := &Daemon{
-		store:            st,
-		config:           cfg,
-		tools:            make(map[string][]agent.ToolSpec),
-		bridgeProcs:      make(map[string]*bridge.Process),
-		sessionSandboxes: make(map[string]sessionSandbox),
-		startCtx:         context.Background(),
+		store:               st,
+		config:              cfg,
+		tools:               make(map[string][]agent.ToolSpec),
+		bridgeProcs:         make(map[string]*bridge.Process),
+		sessionSandboxes:    make(map[string]sessionSandbox),
+		startCtx:            context.Background(),
+		archiveDrainTimeout: 30 * time.Second,
+		shutdownHTTPTimeout: 5 * time.Second,
 	}
 	if cfg.SandboxDrivers != nil {
 		d.sandboxDrivers = cfg.SandboxDrivers
@@ -300,10 +308,52 @@ func (d *Daemon) Start(ctx context.Context) error {
 func (d *Daemon) TCPPort() int { return d.tcpPort }
 
 // Shutdown gracefully drains in-flight requests and closes everything.
+//
+// The phase ordering is a contract, not a convenience: external SSE consumers
+// must see the draining signal (Phase b) and archive workers must finish
+// flushing (Phase c) BEFORE HTTP sockets close (Phase d). Reordering breaks
+// cragd's ability to distinguish a graceful drain from a daemon crash. Each
+// phase is its own method so the Shutdown body reads as a strict sequence.
 func (d *Daemon) Shutdown(ctx context.Context) error {
-	shutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Phase (a): mark daemon as draining. Swap guards against double-Shutdown
+	// (signal handler + parent cleanup both calling in) — second call is a no-op.
+	if d.draining.Swap(true) {
+		return nil
+	}
+
+	d.announceDraining(ctx) // Phase (b) — Phase 5 wires daemon_draining SSE emission.
+	d.drainArchive(ctx)     // Phase (c) — Phase 3 wires archiveManager.drainAll.
+
+	shutCtx, cancel := context.WithTimeout(ctx, d.shutdownHTTPTimeout)
 	defer cancel()
 
+	err := d.shutdownHTTP(shutCtx) // Phase (d)
+	d.teardownSandboxes(shutCtx)   // Phase (e)
+	d.downRuntime(shutCtx)         // Phase (f)
+	d.closeAndCleanup()            // Phase (g)
+	return err
+}
+
+// announceDraining is the Phase (b) seat for Phase 5's SSE daemon_draining
+// control frame emission. No-op until Phase 5 lands.
+func (d *Daemon) announceDraining(ctx context.Context) {
+	// Phase 5: emit `event: daemon_draining\ndata: {...}\n\n` to live SSE
+	// consumers here. Use its own context; do NOT share shutCtx below.
+	_ = ctx
+}
+
+// drainArchive is the Phase (c) seat for Phase 3's archiveManager.drainAll.
+// No-op until Phase 3 lands.
+func (d *Daemon) drainArchive(ctx context.Context) {
+	// Phase 3: archive drain MUST use its own context.WithTimeout(ctx,
+	// d.archiveDrainTimeout), NOT shutCtx — the 30s archive budget must not
+	// be capped by the 5s HTTP shutdown timeout.
+	_ = ctx
+}
+
+// shutdownHTTP closes the three HTTP servers (Unix socket, optional TCP,
+// optional workspace Unix socket) under the given timeout-bounded context.
+func (d *Daemon) shutdownHTTP(shutCtx context.Context) error {
 	err := d.server.Shutdown(shutCtx)
 	if d.tcpListener != nil {
 		_ = d.tcpListener.Shutdown(shutCtx)
@@ -311,8 +361,12 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 	if d.workspaceSockListener != nil {
 		_ = d.workspaceSockListener.Shutdown(shutCtx)
 	}
+	return err
+}
 
-	// Tear down any outstanding sandbox handles.
+// teardownSandboxes stops every outstanding sandbox handle and clears the
+// per-session sandbox map. Safe to call on a daemon that never spawned any.
+func (d *Daemon) teardownSandboxes(shutCtx context.Context) {
 	d.sandboxMu.Lock()
 	sessions := d.sessionSandboxes
 	d.sessionSandboxes = make(map[string]sessionSandbox)
@@ -322,17 +376,24 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 			log.Printf("daemon: sandbox stop %s: %v", sessID, stopErr)
 		}
 	}
+}
 
+// downRuntime brings the runtime provider down. Errors are logged, not
+// returned, because they do not block daemon exit.
+func (d *Daemon) downRuntime(shutCtx context.Context) {
 	if downErr := d.runtime.Down(shutCtx); downErr != nil {
 		log.Printf("daemon: runtime down: %v", downErr)
 	}
+}
 
+// closeAndCleanup closes the store and removes any socket files the daemon
+// created. Final phase — nothing runs after this.
+func (d *Daemon) closeAndCleanup() {
 	d.store.Close()
 	os.Remove(d.config.SocketPath)
 	if d.config.WorkspaceSockPath != "" {
 		os.Remove(d.config.WorkspaceSockPath)
 	}
-	return err
 }
 
 // sessionSandbox caches the driver (resolved from sandbox.mode per session)

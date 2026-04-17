@@ -461,6 +461,25 @@ func TestShutdown(t *testing.T) {
 		// server.Shutdown may return an error if Serve was never called — that's fine.
 		_ = err
 	}
+	// Phase (a) contract: the draining flag must be set. Without this assertion,
+	// a future refactor that moves d.draining.Store(true) below server.Shutdown
+	// would silently pass CI and break the external SSE-consumer contract.
+	if !d.draining.Load() {
+		t.Fatal("Shutdown did not set draining flag")
+	}
+}
+
+func TestShutdownIsIdempotent(t *testing.T) {
+	d := testDaemon(t)
+	if err := d.Shutdown(context.Background()); err != nil {
+		_ = err
+	}
+	// Second Shutdown must be a no-op: no panic on double store.Close, no
+	// duplicate server.Shutdown error propagation. Phase (a) guards via
+	// d.draining.Swap — second call returns nil early.
+	if err := d.Shutdown(context.Background()); err != nil {
+		t.Fatalf("second Shutdown returned error: %v", err)
+	}
 }
 
 func TestSearchEvents(t *testing.T) {
