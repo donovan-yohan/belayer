@@ -90,10 +90,10 @@ type Daemon struct {
 	config   Config
 	broker   broker.Broker
 
-	// DaemonInstanceID is a UUID assigned at daemon startup that is stable for
+	// daemonInstanceID is a UUID assigned at daemon startup that is stable for
 	// the process lifetime. It is included in /health, SSE daemon_hello frames,
 	// and archive manifests so consumers can correlate streams with archives.
-	DaemonInstanceID string
+	daemonInstanceID string
 
 	sandboxDrivers *sandbox.Registry
 	runtime        runtime.Provider
@@ -162,7 +162,7 @@ func New(cfg Config) (*Daemon, error) {
 	d := &Daemon{
 		store:               st,
 		config:              cfg,
-		DaemonInstanceID:    uuid.NewString(),
+		daemonInstanceID:    uuid.NewString(),
 		tools:               make(map[string][]agent.ToolSpec),
 		bridgeProcs:         make(map[string]*bridge.Process),
 		sessionSandboxes:    make(map[string]sessionSandbox),
@@ -171,7 +171,7 @@ func New(cfg Config) (*Daemon, error) {
 		archiveDrainTimeout: 30 * time.Second,
 		shutdownHTTPTimeout: 5 * time.Second,
 	}
-	d.archiver = newArchiveManager(st, d.DaemonInstanceID)
+	d.archiver = newArchiveManager(st, d.daemonInstanceID)
 	if cfg.SandboxDrivers != nil {
 		d.sandboxDrivers = cfg.SandboxDrivers
 	} else {
@@ -214,6 +214,9 @@ func New(cfg Config) (*Daemon, error) {
 	d.server = &http.Server{Handler: mux}
 	return d, nil
 }
+
+// DaemonInstanceID returns the stable UUID assigned at daemon creation.
+func (d *Daemon) DaemonInstanceID() string { return d.daemonInstanceID }
 
 // Start begins listening on the Unix socket. Blocks until the server is stopped.
 func (d *Daemon) Start(ctx context.Context) error {
@@ -560,7 +563,7 @@ func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, code, healthResponse{
 		Status:           status,
 		SchemaVersion:    "belayer-log/v1",
-		DaemonInstanceID: d.DaemonInstanceID,
+		DaemonInstanceID: d.daemonInstanceID,
 		Draining:         draining,
 		Capabilities:     healthCapabilities,
 	})
@@ -858,10 +861,18 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Register subscriber BEFORE writing headers so announceDraining cannot
-	// race past registration.
+	// Register subscriber inside sseMu so it is totally ordered with respect
+	// to announceDraining's snapshot. If draining is already true (Swap
+	// happened in Shutdown Phase a before we took the lock), reject the
+	// connection immediately so no subscriber is ever registered without
+	// receiving a daemon_draining frame.
 	sub := &sseSubscriber{drain: make(chan struct{})}
 	d.sseMu.Lock()
+	if d.draining.Load() {
+		d.sseMu.Unlock()
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon draining"})
+		return
+	}
 	d.sseSubscribers[sub] = struct{}{}
 	d.sseMu.Unlock()
 	defer func() {
@@ -876,7 +887,7 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Emit daemon_hello as the FIRST frame. No id: line (control frame invariant).
 	helloData, _ := json.Marshal(map[string]any{
-		"daemon_instance_id": d.DaemonInstanceID,
+		"daemon_instance_id": d.daemonInstanceID,
 		"schema_version":     "belayer-log/v1",
 		"last_id":            helloLastID,
 	})

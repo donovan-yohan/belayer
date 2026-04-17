@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -38,7 +39,7 @@ func testDaemon(t *testing.T) *Daemon {
 	d := &Daemon{
 		store:               st,
 		config:              Config{},
-		DaemonInstanceID:    "test-daemon-instance",
+		daemonInstanceID:    "test-daemon-instance",
 		tools:               make(map[string][]agent.ToolSpec),
 		bridgeProcs:         make(map[string]*bridge.Process),
 		sessionSandboxes:    make(map[string]sessionSandbox),
@@ -1072,6 +1073,8 @@ func readSSEFrames(t *testing.T, body interface {
 }, maxFrames int, timeout time.Duration) []sseFrame {
 	t.Helper()
 	scanner := bufio.NewScanner(body)
+	// Large buffer so future tests with big data: payloads don't silently truncate.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	done := make(chan struct{})
 	go func() {
@@ -1229,8 +1232,8 @@ func TestSSE_DaemonHelloFirstWithCorrectShape(t *testing.T) {
 	if payload["schema_version"] != "belayer-log/v1" {
 		t.Errorf("schema_version: %v", payload["schema_version"])
 	}
-	if payload["daemon_instance_id"] != d.DaemonInstanceID {
-		t.Errorf("daemon_instance_id: got %v, want %v", payload["daemon_instance_id"], d.DaemonInstanceID)
+	if payload["daemon_instance_id"] != d.daemonInstanceID {
+		t.Errorf("daemon_instance_id: got %v, want %v", payload["daemon_instance_id"], d.daemonInstanceID)
 	}
 	if _, ok := payload["last_id"].(float64); !ok {
 		t.Errorf("last_id must be numeric, got %T", payload["last_id"])
@@ -1504,6 +1507,161 @@ func TestSSE_DaemonHelloLastIDReflectsMaxStoreID(t *testing.T) {
 	}
 	if int64(gotLastID) != maxID {
 		t.Errorf("daemon_hello.last_id = %v, want %d", gotLastID, maxID)
+	}
+}
+
+// TestSSE_ControlFramesNeverCarryIDLine is a regression guard for spec §4 A3:
+// daemon_hello and daemon_draining are control frames and must never carry an
+// id: line, while session_event domain frames must carry exactly one id: line
+// that parses as a positive integer. The assertion is on raw frame text so a
+// future refactor that accidentally routes control frames through the domain
+// id-stamping path will be caught immediately.
+func TestSSE_ControlFramesNeverCarryIDLine(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-ctrl-id"}))
+
+	// Log a domain event BEFORE connecting so the stream has a session_event
+	// between daemon_hello and daemon_draining.
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "before_drain"})
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=0", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Trigger shutdown after a brief pause so the stream already has at least
+	// one domain frame before daemon_draining arrives.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = d.Shutdown(context.Background())
+	}()
+
+	// Collect daemon_hello + at least one session_event + daemon_draining = 3 frames.
+	frames := readSSEFrames(t, resp.Body, 3, 4*time.Second)
+	if len(frames) < 3 {
+		t.Fatalf("expected at least 3 frames (hello + domain + draining), got %d: %+v", len(frames), frames)
+	}
+
+	for _, f := range frames {
+		rawText := strings.Join(f.lines, "\n")
+		switch f.event {
+		case "daemon_hello", "daemon_draining":
+			// Control frames: must NOT contain an id: line.
+			if strings.Contains(rawText, "\nid:") || strings.HasPrefix(rawText, "id:") {
+				t.Errorf("control frame %q contains id: line; raw:\n%s", f.event, rawText)
+			}
+		case "session_event":
+			// Domain frames: must contain EXACTLY ONE id: line that is a positive integer.
+			idCount := 0
+			var parsedID int64
+			for _, line := range f.lines {
+				if strings.HasPrefix(line, "id: ") {
+					idCount++
+					val := strings.TrimPrefix(line, "id: ")
+					v, err := strconv.ParseInt(val, 10, 64)
+					if err != nil || v <= 0 {
+						t.Errorf("session_event id: line %q is not a positive integer: %v", line, err)
+					}
+					parsedID = v
+				}
+			}
+			if idCount != 1 {
+				t.Errorf("session_event must have exactly 1 id: line, got %d; raw:\n%s", idCount, rawText)
+			}
+			// Cross-check: the id: value must match the event's JSON ID field.
+			if parsedID > 0 {
+				var evtPayload store.SessionEvent
+				if err := json.Unmarshal([]byte(f.data), &evtPayload); err == nil {
+					if evtPayload.ID != parsedID {
+						t.Errorf("session_event id: line %d does not match JSON ID %d", parsedID, evtPayload.ID)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestSSE_LastEventIDWinsOverAfterParam verifies spec precedence: when both
+// Last-Event-ID header and ?after= query param are set, the header wins.
+// Concretely: if e1 < e2 < e3, connecting with Last-Event-ID: e1 and
+// ?after=e2 must yield e2 and e3 (header takes precedence, not query).
+func TestSSE_LastEventIDWinsOverAfterParam(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-lei-wins"}))
+
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev1"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev2"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev3"})
+
+	events := decodeJSON[[]store.SessionEvent](t, doRequest(t, d, "GET", "/sessions/"+sess.ID+"/events", nil))
+	ids := map[string]int64{}
+	for _, e := range events {
+		ids[e.Type] = e.ID
+	}
+	for _, need := range []string{"ev1", "ev2", "ev3"} {
+		if ids[need] == 0 {
+			t.Fatalf("event %q not found in store", need)
+		}
+	}
+	e1ID := ids["ev1"]
+	e2ID := ids["ev2"]
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Last-Event-ID: e1 → should stream e2 and e3.
+	// ?after=e2 → would stream only e3 if it won.
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=%d", server.URL, sess.ID, e2ID), nil)
+	req.Header.Set("Last-Event-ID", fmt.Sprint(e1ID))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// daemon_hello + ev2 + ev3 = 3 frames (header wins → both e2 and e3 streamed).
+	frames := readSSEFrames(t, resp.Body, 3, 2*time.Second)
+	if len(frames) < 3 {
+		t.Fatalf("expected 3 frames (hello + ev2 + ev3), got %d; header wins means both e2 and e3 must appear", len(frames))
+	}
+	if frames[0].event != "daemon_hello" {
+		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
+	}
+	// Check both ev2 and ev3 appear.
+	var types []string
+	for _, f := range frames[1:] {
+		if f.event == "session_event" {
+			types = append(types, f.data)
+		}
+	}
+	hasEv2 := false
+	hasEv3 := false
+	for _, data := range types {
+		if strings.Contains(data, "ev2") {
+			hasEv2 = true
+		}
+		if strings.Contains(data, "ev3") {
+			hasEv3 = true
+		}
+	}
+	if !hasEv2 {
+		t.Error("ev2 not found in stream (Last-Event-ID header should have won over ?after=e2)")
+	}
+	if !hasEv3 {
+		t.Error("ev3 not found in stream")
 	}
 }
 
