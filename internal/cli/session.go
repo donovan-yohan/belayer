@@ -247,7 +247,7 @@ func newStatusCmd() *cobra.Command {
 		Short: "Show running sessions with status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := NewClient(resolveSocket(socket))
-			if err := c.Health(); err != nil {
+			if _, err := c.Health(); err != nil {
 				fmt.Fprintln(cmd.OutOrStdout(), "Daemon: offline")
 				return nil
 			}

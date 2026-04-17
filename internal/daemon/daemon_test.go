@@ -32,7 +32,6 @@ func testDaemon(t *testing.T) *Daemon {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
 
 	reg := &sandbox.Registry{}
 	reg.Register(sandbox.DefaultMode, &sandbox.Noop{})
@@ -79,6 +78,14 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
 	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
 	d.server = &http.Server{Handler: mux}
+	// Wait for in-flight archiver goroutines before closing the store so that
+	// async terminal-archive workers don't race store.Close / t.TempDir cleanup.
+	t.Cleanup(func() {
+		if d.archiver != nil {
+			d.archiver.inflight.Wait()
+		}
+		st.Close()
+	})
 	return d
 }
 

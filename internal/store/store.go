@@ -561,6 +561,44 @@ func (s *Store) QueryEventsAfter(sessionID string, afterID int64) ([]SessionEven
 	return scanEvents(rows)
 }
 
+// QueryEventsWindow returns events for a session with optional lower bound
+// (afterID), optional upper bound (beforeID), and a limit (capped at 1000).
+//
+//   - afterID=0  → no lower bound (start from the beginning).
+//   - beforeID=0 → no upper bound (return up to the end).
+//   - limit<=0   → default 1000; limit>1000 is capped to 1000.
+//
+// Events are returned ordered by id ASC.
+func (s *Store) QueryEventsWindow(sessionID string, afterID, beforeID int64, limit int) ([]SessionEvent, error) {
+	const maxLimit = 1000
+	effectiveLimit := limit
+	if effectiveLimit <= 0 || effectiveLimit > maxLimit {
+		effectiveLimit = maxLimit
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`SELECT id, session_id, timestamp, type, data FROM events WHERE session_id = ?`)
+	args := []any{sessionID}
+
+	if afterID > 0 {
+		sb.WriteString(` AND id > ?`)
+		args = append(args, afterID)
+	}
+	if beforeID > 0 {
+		sb.WriteString(` AND id < ?`)
+		args = append(args, beforeID)
+	}
+	sb.WriteString(` ORDER BY id ASC LIMIT ?`)
+	args = append(args, effectiveLimit)
+
+	rows, err := s.db.Query(sb.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: query events window: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
 // QueryEventsForSessionsAfter returns all events for the provided session IDs
 // with IDs greater than afterID, ordered by ID ASC.
 func (s *Store) QueryEventsForSessionsAfter(sessionIDs []string, afterID int64) ([]SessionEvent, error) {

@@ -761,13 +761,13 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	afterID, waitFor, err := parseEventCursor(r)
+	afterID, waitFor, beforeID, limit, err := parseEventCursor(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
-	events, err := d.querySessionEvents(r.Context(), id, afterID, waitFor)
+	events, err := d.querySessionEvents(r.Context(), id, afterID, waitFor, beforeID, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -978,53 +978,68 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func parseEventCursor(r *http.Request) (int64, time.Duration, error) {
+// parseEventCursor parses ?after=, ?wait=, ?before=, and ?limit= query params
+// from a GET /sessions/{id}/events request.
+// Returns afterID, waitFor, beforeID, limit (raw, not capped) and any parse error.
+// Negative values for after, before, and limit are rejected with an error.
+func parseEventCursor(r *http.Request) (afterID int64, waitFor time.Duration, beforeID int64, limit int, err error) {
 	afterRaw := strings.TrimSpace(r.URL.Query().Get("after"))
 	waitRaw := strings.TrimSpace(r.URL.Query().Get("wait"))
+	beforeRaw := strings.TrimSpace(r.URL.Query().Get("before"))
+	limitRaw := strings.TrimSpace(r.URL.Query().Get("limit"))
 
-	var afterID int64
 	if afterRaw != "" {
-		parsed, err := strconv.ParseInt(afterRaw, 10, 64)
-		if err != nil || parsed < 0 {
-			return 0, 0, fmt.Errorf("after must be a non-negative integer")
+		parsed, parseErr := strconv.ParseInt(afterRaw, 10, 64)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, 0, 0, fmt.Errorf("after must be a non-negative integer")
 		}
 		afterID = parsed
 	}
 
-	var waitFor time.Duration
 	if waitRaw != "" {
-		parsed, err := time.ParseDuration(waitRaw)
-		if err != nil || parsed < 0 {
-			return 0, 0, fmt.Errorf("wait must be a valid non-negative duration")
+		parsed, parseErr := time.ParseDuration(waitRaw)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, 0, 0, fmt.Errorf("wait must be a valid non-negative duration")
 		}
 		waitFor = parsed
 	}
 
-	return afterID, waitFor, nil
-}
-
-func (d *Daemon) querySessionEvents(ctx context.Context, sessionID string, afterID int64, waitFor time.Duration) ([]store.SessionEvent, error) {
-	if waitFor <= 0 {
-		if afterID > 0 {
-			return d.store.QueryEventsAfter(sessionID, afterID)
+	if beforeRaw != "" {
+		parsed, parseErr := strconv.ParseInt(beforeRaw, 10, 64)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, 0, 0, fmt.Errorf("before must be a non-negative integer")
 		}
-		return d.store.QueryEvents(sessionID)
+		beforeID = parsed
 	}
 
+	if limitRaw != "" {
+		parsed, parseErr := strconv.ParseInt(limitRaw, 10, 64)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, 0, 0, fmt.Errorf("limit must be a non-negative integer")
+		}
+		limit = int(parsed)
+	}
+
+	return afterID, waitFor, beforeID, limit, nil
+}
+
+// querySessionEvents fetches events for sessionID with optional windowing
+// (afterID, beforeID, limit) and optional long-poll (waitFor). The waitFor
+// behavior uses only the afterID lower bound for backwards-compat — window
+// params don't change wait semantics.
+func (d *Daemon) querySessionEvents(ctx context.Context, sessionID string, afterID int64, waitFor time.Duration, beforeID int64, limit int) ([]store.SessionEvent, error) {
+	if waitFor <= 0 {
+		return d.store.QueryEventsWindow(sessionID, afterID, beforeID, limit)
+	}
+
+	// Long-poll: wait until at least one event arrives after afterID.
+	// beforeID/limit apply to each poll result.
 	deadline := time.Now().Add(waitFor)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
-		var (
-			events []store.SessionEvent
-			err    error
-		)
-		if afterID > 0 {
-			events, err = d.store.QueryEventsAfter(sessionID, afterID)
-		} else {
-			events, err = d.store.QueryEvents(sessionID)
-		}
+		events, err := d.store.QueryEventsWindow(sessionID, afterID, beforeID, limit)
 		if err != nil {
 			return nil, err
 		}

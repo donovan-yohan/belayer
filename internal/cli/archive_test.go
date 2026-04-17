@@ -46,7 +46,7 @@ func startTestDaemon(t *testing.T) string {
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		c := NewClient(sockPath)
-		if c.Health() == nil {
+		if _, err := c.Health(); err == nil {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -131,6 +131,35 @@ func TestArchiveCmd_Success(t *testing.T) {
 	// 3 custom events + 1 session_created = 4 total.
 	if m["event_count"] != float64(4) {
 		t.Errorf("event_count: got %v", m["event_count"])
+	}
+}
+
+// TestArchiveCmd_ManifestHasDaemonInstanceID verifies that the archive manifest
+// carries a non-empty daemon_instance_id fetched from GET /health.
+func TestArchiveCmd_ManifestHasDaemonInstanceID(t *testing.T) {
+	sock := startTestDaemon(t)
+	outDir := t.TempDir()
+	c := NewClient(sock)
+
+	sess, err := c.CreateSession("epoch-test", "implement", nil, outDir)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	destDir := outDir + "/arch"
+	_, _, err = runArchiveCmd(t, sess.ID, "--socket", sock, "--output", destDir)
+	if err != nil {
+		t.Fatalf("archive cmd: %v", err)
+	}
+
+	raw, _ := os.ReadFile(destDir + "/manifest.json")
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	id, _ := m["daemon_instance_id"].(string)
+	if id == "" {
+		t.Error("manifest.daemon_instance_id must be non-empty (fetched from /health)")
 	}
 }
 

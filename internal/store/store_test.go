@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -773,5 +774,110 @@ func TestPendingMessages_AfterID(t *testing.T) {
 	}
 	if pending[1].Content != "third" {
 		t.Errorf("pending[1]: got %q, want %q", pending[1].Content, "third")
+	}
+}
+
+// seedStoreEvents inserts n events into the store for sessionID and returns
+// the assigned IDs in ascending order.
+func seedStoreEvents(t *testing.T, s *Store, sessionID string, n int) []int64 {
+	t.Helper()
+	for i := 1; i <= n; i++ {
+		if err := s.LogEvent(SessionEvent{
+			SessionID: sessionID,
+			Type:      fmt.Sprintf("ev_%d", i),
+		}); err != nil {
+			t.Fatalf("LogEvent %d: %v", i, err)
+		}
+	}
+	events, err := s.QueryEvents(sessionID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	ids := make([]int64, len(events))
+	for i, e := range events {
+		ids[i] = e.ID
+	}
+	return ids
+}
+
+// TestQueryEventsWindow_AfterOnly verifies that afterID > 0 returns only events
+// with id > afterID.
+func TestQueryEventsWindow_AfterOnly(t *testing.T) {
+	s := openMemory(t)
+	sessID, err := s.CreateSession(Session{Name: "win-after"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	ids := seedStoreEvents(t, s, sessID, 10)
+	cutoff := ids[4] // events at ids[5..9] should be returned
+
+	got, err := s.QueryEventsWindow(sessID, cutoff, 0, 0)
+	if err != nil {
+		t.Fatalf("QueryEventsWindow: %v", err)
+	}
+	for _, e := range got {
+		if e.ID <= cutoff {
+			t.Errorf("event id=%d should be > cutoff=%d", e.ID, cutoff)
+		}
+	}
+	if len(got) != 5 {
+		t.Errorf("expected 5 events after ids[4], got %d", len(got))
+	}
+}
+
+// TestQueryEventsWindow_BeforeOnly verifies that beforeID > 0 returns only events
+// with id < beforeID.
+func TestQueryEventsWindow_BeforeOnly(t *testing.T) {
+	s := openMemory(t)
+	sessID, err := s.CreateSession(Session{Name: "win-before"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	ids := seedStoreEvents(t, s, sessID, 10)
+	cutoff := ids[5] // events at ids[0..4] should be returned
+
+	got, err := s.QueryEventsWindow(sessID, 0, cutoff, 0)
+	if err != nil {
+		t.Fatalf("QueryEventsWindow: %v", err)
+	}
+	for _, e := range got {
+		if e.ID >= cutoff {
+			t.Errorf("event id=%d should be < cutoff=%d", e.ID, cutoff)
+		}
+	}
+	if len(got) != 5 {
+		t.Errorf("expected 5 events before ids[5], got %d", len(got))
+	}
+}
+
+// TestQueryEventsWindow_AfterAndBefore verifies that both bounds work together.
+func TestQueryEventsWindow_AfterAndBefore(t *testing.T) {
+	s := openMemory(t)
+	sessID, err := s.CreateSession(Session{Name: "win-both"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	ids := seedStoreEvents(t, s, sessID, 10)
+	afterID := ids[2]  // exclusive lower bound
+	beforeID := ids[7] // exclusive upper bound
+	// Expected: ids[3..6] = 4 events
+
+	got, err := s.QueryEventsWindow(sessID, afterID, beforeID, 0)
+	if err != nil {
+		t.Fatalf("QueryEventsWindow: %v", err)
+	}
+	for _, e := range got {
+		if e.ID <= afterID {
+			t.Errorf("event id=%d should be > afterID=%d", e.ID, afterID)
+		}
+		if e.ID >= beforeID {
+			t.Errorf("event id=%d should be < beforeID=%d", e.ID, beforeID)
+		}
+	}
+	if len(got) != 4 {
+		t.Errorf("expected 4 events in window, got %d", len(got))
 	}
 }

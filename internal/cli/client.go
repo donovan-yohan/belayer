@@ -68,17 +68,28 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	return c.http.Do(req)
 }
 
-// Health checks daemon health.
-func (c *Client) Health() error {
+// healthResponse is the JSON shape returned by GET /health.
+type healthResponse struct {
+	Status           string `json:"status"`
+	DaemonInstanceID string `json:"daemon_instance_id"`
+}
+
+// Health checks daemon health and returns the parsed response.
+// Returns an error if the daemon is unreachable or returns a non-200 status.
+func (c *Client) Health() (*healthResponse, error) {
 	resp, err := c.do("GET", "/health", nil)
 	if err != nil {
-		return fmt.Errorf("daemon not reachable at %s: %w", c.socketPath, err)
+		return nil, fmt.Errorf("daemon not reachable at %s: %w", c.socketPath, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("daemon unhealthy: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("daemon unhealthy: status %d", resp.StatusCode)
 	}
-	return nil
+	var h healthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
+		return nil, fmt.Errorf("decode health response: %w", err)
+	}
+	return &h, nil
 }
 
 type sessionResponse struct {

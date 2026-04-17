@@ -45,9 +45,14 @@ func newArchiveCmd() *cobra.Command {
 				return err
 			}
 
-			// TODO(phase-5): populate DaemonInstanceID from GET /health once the
-			// health extension lands; leave empty for now.
-			daemonInstanceID := ""
+			health, err := c.Health()
+			if err != nil {
+				return fmt.Errorf("archive: cannot fetch daemon epoch from /health: %w (is the daemon running?)", err)
+			}
+			if health.DaemonInstanceID == "" {
+				return fmt.Errorf("archive: daemon returned empty daemon_instance_id from /health")
+			}
+			daemonInstanceID := health.DaemonInstanceID
 
 			if !terminalStatuses[sess.Status] {
 				fmt.Fprintf(cmd.ErrOrStderr(),
