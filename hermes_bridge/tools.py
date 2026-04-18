@@ -747,25 +747,61 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
         if not all(isinstance(item, str) and item.strip() for item in what_tried):
             return "[System] Each entry in 'what_tried' must be a non-empty string."
 
+        # Keep the single-line detail short but informative — the daemon
+        # surfaces it verbatim in the agent_escalated log entry, which is
+        # what an on-call operator sees first. Full `blocker` and the
+        # `what_tried` list are preserved as structured fields alongside.
+        first_tried = what_tried[0].strip()
+        last_tried = what_tried[-1].strip()
+        detail = (
+            f"Escalated by agent: {reason.strip()} | blocker: {blocker.strip()[:200]} | "
+            f"tried ({len(what_tried)}): first='{first_tried[:120]}' … "
+            f"last='{last_tried[:120]}'"
+        )
         event_data = json.dumps({
             "agent": agent_id,
-            "detail": "Escalated to human by agent: " + reason,
+            # Mirror belayer_report_status' shape so both escalation paths
+            # look identical to the daemon's processAgentStatusEvent handler.
+            "status": "incomplete",
+            "detail": detail,
             "escalated_by_tool": True,
+            "reason": reason,
             "blocker": blocker,
             "what_tried": what_tried,
         })
-        status, body = unix_post(
+        status_code, body = unix_post(
             socket_path,
             f"/sessions/{session_id}/events",
             {"type": "agent_status:incomplete", "data": event_data},
         )
-        if status in (200, 201):
-            return (
-                "Escalation posted. Session will terminate. "
-                "No further action required — stop generating output."
+        if status_code not in (200, 201):
+            log.warning("escalate_to_human failed (%d): %s", status_code, body[:200])
+            return f"[System] Failed to post escalation event. Error: {body[:200]}"
+
+        # The tool is documented as a "stop button" — don't rely on the
+        # model to stop generating or on the daemon to race a sandbox
+        # teardown against the next tool call. Post bridge:finished for
+        # observability and raise SystemExit so the bridge process exits
+        # cleanly on this tool call. Best-effort on bridge:finished: if
+        # the daemon is unreachable we still want to exit, so we log and
+        # proceed rather than bail back to the agent.
+        finished_data = json.dumps({
+            "agent": agent_id,
+            "reason": "escalate_to_human",
+        })
+        finished_status, finished_body = unix_post(
+            socket_path,
+            f"/sessions/{session_id}/events",
+            {"type": "bridge:finished", "data": finished_data},
+        )
+        if finished_status not in (200, 201):
+            log.warning(
+                "escalate_to_human posted, but bridge:finished failed (%d): %s",
+                finished_status,
+                finished_body[:200],
             )
-        log.warning("escalate_to_human failed (%d): %s", status, body[:200])
-        return f"[System] Failed to post escalation event. Error: {body[:200]}"
+        log.info("escalate_to_human: exiting bridge cleanly after event post")
+        raise SystemExit(0)
 
     return handler
 

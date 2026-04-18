@@ -68,19 +68,28 @@ def fetch_pending_messages(socket_path: str, session_id: str, agent_id: str) -> 
     return []
 
 
-def fetch_roster(socket_path: str, session_id: str) -> list[dict]:
-    """Fetch the full agent roster for a session from the daemon."""
+def fetch_roster(socket_path: str, session_id: str) -> list[dict] | None:
+    """Fetch the full agent roster for a session from the daemon.
+
+    Returns None on any error (non-200, JSON decode failure, or a non-list
+    payload) so callers can distinguish "roster genuinely empty" from
+    "daemon unreachable / response garbled". The idle loop uses this to
+    avoid advancing the terminal-only idle countdown during transient
+    daemon outages.
+    """
     status, body = unix_get(
         socket_path,
         f"/sessions/{session_id}/agents",
     )
-    if status == 200:
-        try:
-            data = json.loads(body)
-            return data if isinstance(data, list) else []
-        except json.JSONDecodeError:
-            return []
-    return []
+    if status != 200:
+        return None
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return data
 
 
 def format_messages(messages: list[dict]) -> str:
@@ -492,33 +501,50 @@ def main() -> None:
 
                 # Peer-awareness: only advance the idle counter when all peer
                 # agents are in a terminal state. While any peer is still
-                # running or spawning, reset the counter so we don't
+                # running or starting, reset the counter so we don't
                 # prematurely kill the supervisor.
+                #
+                # Identity note: BELAYER_AGENT_ID is the agent *name*
+                # (e.g. "supervisor"), not a UUID — the daemon sets
+                # AgentID = req.Name when spawning the bridge (see
+                # internal/daemon/agents.go). The roster JSON exposes both
+                # `ID` (UUID) and `Name`; compare against Name.
                 roster = fetch_roster(socket_path, session_id)
-                peers = [r for r in roster if r.get("ID") != agent_id]
-                # Active = anything the daemon considers not-yet-terminal.
-                # The daemon emits "starting" during sandbox boot / hermes
-                # warm-up, then flips to "running" once the bridge reports in;
-                # both count as active so we don't idle-timeout a supervisor
-                # while a slow-booting peer is still coming online.
-                active_peers = [
-                    r for r in peers
-                    if r.get("Status") in ("starting", "running")
-                ]
-                peers_still_active = len(active_peers) > 0
-
-                if peers_still_active:
-                    if not was_waiting_on_peers:
-                        was_waiting_on_peers = True
-                    waited = 0  # reset; don't count time while specialists are running
+                if roster is None:
+                    # Daemon unreachable or malformed response. We can't
+                    # tell whether peers are terminal, so stay conservative:
+                    # don't advance the idle counter, but let the absolute
+                    # ceiling continue to tick so we don't wait forever on
+                    # a truly dead daemon.
+                    log.debug("Roster fetch failed; holding idle counter steady")
+                    active_peers = []  # unknown, treated as none-known for logging
+                    waited = 0
                 else:
-                    if was_waiting_on_peers:
-                        log.info(
-                            "All %d peer agent(s) now terminal; idle countdown started",
-                            len(peers),
-                        )
-                        was_waiting_on_peers = False
-                    waited += idle_poll_interval
+                    peers = [r for r in roster if r.get("Name") != agent_id]
+                    # Active = anything the daemon considers not-yet-terminal.
+                    # The daemon emits "starting" during sandbox boot / hermes
+                    # warm-up, then flips to "running" once the bridge reports
+                    # in; both count as active so we don't idle-timeout a
+                    # supervisor while a slow-booting peer is still coming
+                    # online.
+                    active_peers = [
+                        r for r in peers
+                        if r.get("Status") in ("starting", "running")
+                    ]
+                    peers_still_active = len(active_peers) > 0
+
+                    if peers_still_active:
+                        if not was_waiting_on_peers:
+                            was_waiting_on_peers = True
+                        waited = 0  # reset; don't count time while specialists are running
+                    else:
+                        if was_waiting_on_peers:
+                            log.info(
+                                "All %d peer agent(s) now terminal; idle countdown started",
+                                len(peers),
+                            )
+                            was_waiting_on_peers = False
+                        waited += idle_poll_interval
             else:
                 # Idle loop exited without a message/interrupt — one of the
                 # two ceilings tripped. Distinguish which so operators can
