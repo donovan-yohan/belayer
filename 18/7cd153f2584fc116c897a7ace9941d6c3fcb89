@@ -1,0 +1,55 @@
+agents/web-dev/agent.yaml
+  7e1b8c2e6a2fe221 4
+examples/templates/app-implementer/agent.yaml
+  7e1b8c2e6a2fe221 4
+agents/backend-dev/agent.yaml
+  7e1b8c2e6a2fe221 4
+examples/templates/api-implementer/agent.yaml
+  7e1b8c2e6a2fe221 4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "187cd153f2584fc116c897a7ace9941d6c3fcb89",
+  "prompts": {
+    "5c901b8895808a70": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ff6acfb-0754-4c51-93f0-3185d06c7b06",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 130,
+      "total_deletions": 0,
+      "accepted_lines": 128,
+      "overriden_lines": 0
+    },
+    "7e1b8c2e6a2fe221": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d47dc1ea-21bb-4365-a3c4-7cf7ca8bf177",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 4,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    },
+    "e763a424956efef3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ef2fc39-34ef-4510-9803-a7bab7d3b0b3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 2,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}
