@@ -1,12 +1,12 @@
 # Clamshell CLI reconnoiter (feat/apikey-provider @ 3fe6f7e)
 
-Ran against `clamshell_cli` from `/Users/donovanyohan/Documents/Programs/work/extend-clamshell` on branch `feat/apikey-provider`, commit `3fe6f7e` ("test(apikey): add CLI surface + 42 unit tests").
+Ran against `clamshell_cli` from `/path/to/extend-clamshell` on branch `feat/apikey-provider`, commit `3fe6f7e` ("test(apikey): add CLI surface + 42 unit tests").
 
 ## Confirmed flags
 
 ### `clamshell sandbox create`
 
-```
+```text
 --name NAME                       [required]
 --policy POLICY                   [required]
 --workspace WORKSPACE             [required]
@@ -25,7 +25,7 @@ Ran against `clamshell_cli` from `/Users/donovanyohan/Documents/Programs/work/ex
 
 ### `clamshell provider create`
 
-```
+```text
 --name NAME                       [required]
 --type PROVIDER_TYPE              [required]
 --endpoint URL
@@ -45,7 +45,7 @@ Ran against `clamshell_cli` from `/Users/donovanyohan/Documents/Programs/work/ex
 
 ### `clamshell forward start`
 
-```
+```text
 local_port                        [positional, 0 = ephemeral]
 sandbox                           [positional]
 --remote-port N                   [defaults to local_port]

@@ -39,7 +39,7 @@ What's missing is a provider type for the generic case: "my credential is a valu
 
 ### Provider type
 
-```
+```bash
 clamshell provider create \
   --type apikey \
   --name opencode \

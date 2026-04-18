@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -34,7 +35,7 @@ type Settings struct {
 //  2. Settings.Mode, if non-empty — from the workspace's .belayer/config.yaml.
 //  3. DefaultMode ("noop").
 func (s Settings) ModeOrDefault() string {
-	if override := os.Getenv(ModeOverrideEnv); override != "" {
+	if override := strings.TrimSpace(os.Getenv(ModeOverrideEnv)); override != "" {
 		return override
 	}
 	if s.Mode == "" {

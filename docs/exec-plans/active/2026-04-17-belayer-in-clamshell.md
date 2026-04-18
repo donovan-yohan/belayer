@@ -73,7 +73,7 @@ Before writing any scripts we must confirm which flags `clamshell sandbox create
 Run on host (macOS):
 
 ```bash
-cd /Users/donovanyohan/Documents/Programs/work/extend-clamshell
+cd "${EXTEND_CLAMSHELL_DIR:-/path/to/extend-clamshell}"
 git checkout feat/apikey-provider
 python -m clamshell_cli.commands.sandbox --help 2>&1 | tee /tmp/clamshell-sandbox-help.txt
 python -m clamshell_cli.commands.provider --help 2>&1 | tee /tmp/clamshell-provider-help.txt
@@ -415,8 +415,10 @@ OUTPUT="$(./scripts/belayer-host run \
 echo "$OUTPUT" | grep -q 'clamshell gateway start'
 echo "$OUTPUT" | grep -q 'clamshell sandbox create '
 echo "$OUTPUT" | grep -q -- '--provider apikey=opencode'
-echo "$OUTPUT" | grep -q -- '--publish 3000:3000'
-echo "$OUTPUT" | grep -q -- '--publish 4000:4000'
+# Port exposure is post-create via `clamshell forward start`, not `--publish`
+# on `sandbox create` (clamshell has no such flag — see CLI recon artifact).
+echo "$OUTPUT" | grep -q 'clamshell forward start 3000 '
+echo "$OUTPUT" | grep -q 'clamshell forward start 4000 '
 echo "$OUTPUT" | grep -q 'docker exec .* belayer run start --task'
 echo "PASS: dry-run emits all expected CLI invocations"
 ```
@@ -500,7 +502,7 @@ cmd_run() {
       --task)      task="$2"; shift 2 ;;
       --image)     image="$2"; shift 2 ;;
       --policy)    policy="$2"; shift 2 ;;
-      --publish)   publish+=("--publish" "$2"); shift 2 ;;
+      --publish)   publish+=("$2"); shift 2 ;;
       --provider)  provider+=("--provider" "$2"); shift 2 ;;
       --dry-run)   DRY_RUN=1; shift ;;
       *) echo "unknown flag: $1" >&2; exit 2 ;;
@@ -515,8 +517,18 @@ cmd_run() {
 
   local create_args="sandbox create --name $run_id --workspace $workspace --image $image"
   [ -n "$policy" ] && create_args="$create_args --policy $policy"
-  create_args="$create_args ${publish[*]-} ${provider[*]-}"
+  create_args="$create_args ${provider[*]-}"
   emit "$CLAMSHELL $create_args"
+
+  # clamshell sandbox create has no --publish flag — ports are exposed
+  # post-create via `clamshell forward start`, which proxies through the
+  # gateway (logged, policed) rather than Docker publish.
+  for mapping in "${publish[@]-}"; do
+    [ -n "$mapping" ] || continue
+    local host_port="${mapping%%:*}"
+    local cont_port="${mapping##*:}"
+    emit "$CLAMSHELL forward start $host_port $run_id --remote-port $cont_port --background"
+  done
 
   # Kick off `belayer run start` inside the freshly booted sandbox. The
   # container entrypoint is already `belayer daemon`; this is a sibling exec.
@@ -677,10 +689,13 @@ clamshell sandbox create \
   --workspace "$ARIELCHARTS_DIR" \
   --policy "$POLICY" \
   --provider apikey=opencode \
-  --publish 3000:3000 \
-  --publish 4000:4000 \
   > "$ARTIFACT_DIR/step3-create.log" 2>&1 \
   || fail "step 3: sandbox create"
+# Ports are post-create: clamshell has no --publish on create.
+clamshell forward start 3000 "$RUN_ID" --remote-port 3000 --background \
+  >> "$ARTIFACT_DIR/step3-create.log" 2>&1 || fail "step 3: forward 3000"
+clamshell forward start 4000 "$RUN_ID" --remote-port 4000 --background \
+  >> "$ARTIFACT_DIR/step3-create.log" 2>&1 || fail "step 3: forward 4000"
 trap 'clamshell sandbox stop "$RUN_ID" >/dev/null 2>&1 || true' EXIT
 
 CONTAINER="clamshell-$RUN_ID"

@@ -114,16 +114,21 @@ func BuildEnv(cfg Config) []string {
 	// Hermes's run_agent.py, hermes_state.py, tools/ etc. live at
 	// $HERMES_AGENT_PATH (or ~/.hermes/hermes-agent by default on dev hosts).
 	// The hermes_bridge package lives at BelayerRoot (the belayer repo root).
-	hermesAgent := hermesAgentRoot()
-	sep := string(os.PathListSeparator)
-	pyPath := hermesAgent
+	// Build from non-empty components so we never emit a leading/trailing/empty
+	// segment (an empty segment Python would interpret as cwd).
+	var parts []string
 	if cfg.BelayerRoot != "" {
-		pyPath = cfg.BelayerRoot + sep + pyPath
+		parts = append(parts, cfg.BelayerRoot)
+	}
+	if hermesAgent := hermesAgentRoot(); hermesAgent != "" {
+		parts = append(parts, hermesAgent)
 	}
 	if existing := os.Getenv("PYTHONPATH"); existing != "" {
-		pyPath = pyPath + sep + existing
+		parts = append(parts, existing)
 	}
-	env = appendEnv(env, "PYTHONPATH", pyPath)
+	if len(parts) > 0 {
+		env = appendEnv(env, "PYTHONPATH", strings.Join(parts, string(os.PathListSeparator)))
+	}
 
 	env = appendEnv(env, "BELAYER_SESSION_ID", cfg.SessionID)
 	env = appendEnv(env, "BELAYER_AGENT_ID", cfg.AgentID)

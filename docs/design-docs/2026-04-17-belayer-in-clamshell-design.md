@@ -67,7 +67,7 @@ macOS host
         │   ├── specialist-1: python3 -m hermes_bridge
         │   └── pm (on finish)
         ├── workspace bind-mount: /workspace = ~/Documents/Programs/personal/arielcharts
-        ├── dev-server port forwards: -p 3000:3000 -p 4000:4000 (web + server)
+        ├── dev-server port forwards: `clamshell forward start 3000|4000 <sandbox> --remote-port …` (gateway-proxied; web + server)
         └── node + pnpm available in image (for `pnpm run dev` and friends)
 ```
 
@@ -147,15 +147,16 @@ belayer-host setup   # wraps `clamshell provider create --type apikey ...`
 belayer-host run \
   --workspace ~/Documents/Programs/personal/arielcharts \
   --task "wire up a playwright test for the homepage hero" \
-  --port 3000:3000 --port 4000:4000
+  --publish 3000:3000 --publish 4000:4000
 # ↓ expands to:
 # clamshell gateway start
 # clamshell sandbox create belayer-run-$(uuid) \
 #   --provider apikey=opencode \
 #   --image belayer-clamshell:<ver> \
 #   --workspace ~/Documents/Programs/personal/arielcharts \
-#   --policy .../policies/belayer-in-clamshell-arielcharts.yaml \
-#   --publish 3000:3000 --publish 4000:4000
+#   --policy .../policies/belayer-in-clamshell-arielcharts.yaml
+# clamshell forward start 3000 belayer-run-<id> --remote-port 3000 --background
+# clamshell forward start 4000 belayer-run-<id> --remote-port 4000 --background
 # docker exec -it clamshell-belayer-<id> belayer run start --task "..."
 ```
 
@@ -191,7 +192,7 @@ Six-step acceptance loop; each step has an unambiguous pass/fail.
 
 1. **Image builds.** `docker build -t belayer-clamshell:e2e -f dockerfiles/belayer-clamshell.Dockerfile .` on the Colima VM succeeds. Binary, node, pnpm, corepack present.
 2. **Provider registration persists.** `clamshell provider create --type apikey --name opencode --credential OPENCODE_GO_API_KEY --project OPENCODE_GO_API_KEY --endpoints opencode.ai` on the Colima VM writes a provider record. `clamshell provider list` shows `opencode (apikey)`.
-3. **Sandbox boot, handle projected.** `clamshell sandbox create belayer-e2e --provider apikey=opencode --image belayer-clamshell:e2e --workspace <arielcharts> --policy <policy> --publish 3000:3000 --publish 4000:4000` brings up the container + proxy. `docker exec clamshell-belayer-e2e env | grep OPENCODE_GO_API_KEY` returns `clak_*`, not the real key.
+3. **Sandbox boot, handle projected.** `clamshell sandbox create belayer-e2e --provider apikey=opencode --image belayer-clamshell:e2e --workspace <arielcharts> --policy <policy>` brings up the container + proxy; ports come up next via `clamshell forward start 3000 belayer-e2e --remote-port 3000 --background` (and the same for 4000) — clamshell has no `--publish` on create. `docker exec clamshell-belayer-e2e env | grep OPENCODE_GO_API_KEY` returns `clak_*`, not the real key.
 4. **Daemon reaches bridge idle.** Inside the container, `belayer run start --task "say hi"` produces a supervisor that completes ≥2 LLM round-trips end-to-end (proxy logs show `Authorization: Bearer clak_...` rewritten to `Bearer <real>`, opencode.ai returns 200, session reaches `bridge:idle`).
 5. **Agent edits arielcharts.** A supervisor task "add a comment to apps/web/src/main.tsx explaining what it does" results in a file diff visible from the macOS host (because `/workspace` is bind-mounted to `~/Documents/Programs/personal/arielcharts`).
 6. **Dev server reachable.** A supervisor task "run pnpm install if needed, then run pnpm run dev in the background and confirm the web server responds on localhost:3000" produces a process that the macOS host can `curl -sSf http://localhost:3000 | head -5` successfully. Bonus: `curl` the server port too.
