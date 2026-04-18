@@ -496,9 +496,14 @@ def main() -> None:
                 # prematurely kill the supervisor.
                 roster = fetch_roster(socket_path, session_id)
                 peers = [r for r in roster if r.get("ID") != agent_id]
+                # Active = anything the daemon considers not-yet-terminal.
+                # The daemon emits "starting" during sandbox boot / hermes
+                # warm-up, then flips to "running" once the bridge reports in;
+                # both count as active so we don't idle-timeout a supervisor
+                # while a slow-booting peer is still coming online.
                 active_peers = [
                     r for r in peers
-                    if r.get("Status") in ("running", "spawning")
+                    if r.get("Status") in ("starting", "running")
                 ]
                 peers_still_active = len(active_peers) > 0
 

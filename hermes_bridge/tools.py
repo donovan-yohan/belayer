@@ -440,14 +440,15 @@ ESCALATE_TO_HUMAN_SCHEMA = {
             "what_tried": {
                 "type": "array",
                 "items": {"type": "string"},
-                "minItems": 2,
+                "minItems": 3,
                 "description": (
                     "The approaches already attempted, in order. Each entry should name the "
                     "approach and its outcome (e.g. 'pip install cryptography — egress denied "
                     "by policy on all mirrors', 'vendored wheel from workspace — import failed, "
-                    "wrong platform ABI'). Minimum 2 entries required. The operator uses this "
-                    "list to understand what has already been ruled out before deciding next "
-                    "steps."
+                    "wrong platform ABI'). Minimum 3 entries required — this matches the "
+                    "\"at least 3 materially similar failed attempts\" guardrail in the tool's "
+                    "WHEN TO USE block. The operator uses this list to understand what has "
+                    "already been ruled out before deciding next steps."
                 ),
             },
         },
@@ -741,8 +742,8 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
             return "[System] 'reason' is required and must be a non-empty string."
         if not blocker or not blocker.strip():
             return "[System] 'blocker' is required and must be a non-empty string."
-        if not isinstance(what_tried, list) or len(what_tried) < 2:
-            return "[System] 'what_tried' must be a list of at least 2 strings documenting prior attempts."
+        if not isinstance(what_tried, list) or len(what_tried) < 3:
+            return "[System] 'what_tried' must be a list of at least 3 strings documenting prior attempts (matches the 3-attempt guardrail in the tool description)."
         if not all(isinstance(item, str) and item.strip() for item in what_tried):
             return "[System] Each entry in 'what_tried' must be a non-empty string."
 
