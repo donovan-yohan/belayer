@@ -436,11 +436,24 @@ def main() -> None:
             )
             log.info("Non-ephemeral agent idle, polling for messages...")
             idle_poll_interval = 5  # seconds
-            idle_timeout = 900  # 15 minutes max idle
+            # idle_timeout fires when the idle counter reaches it — but the
+            # counter only advances while every peer is in a terminal state.
+            # This is the "everyone's done and nobody pinged me back" ceiling.
+            idle_timeout = 900  # 15 min
+            # absolute_timeout is the failsafe for the case where a peer is
+            # marked running in the roster but is actually hung, crashed
+            # without the daemon noticing, or — worst case — idle-waiting for
+            # a message from *this* supervisor (deadlock). It advances every
+            # tick regardless of peer state and only resets when the idle
+            # loop breaks out on a real message/interrupt. If this trips
+            # while peers are still "running", suspect a hang and escalate.
+            absolute_timeout = 3600  # 1 hr
             waited = 0
+            absolute_waited = 0
             was_waiting_on_peers = False
-            while waited < idle_timeout:
+            while waited < idle_timeout and absolute_waited < absolute_timeout:
                 time.sleep(idle_poll_interval)
+                absolute_waited += idle_poll_interval
 
                 # Check stdin for interrupt/stop commands first.
                 try:
@@ -502,19 +515,36 @@ def main() -> None:
                         was_waiting_on_peers = False
                     waited += idle_poll_interval
             else:
-                # Idle timeout reached — all peers are terminal and no messages arrived.
-                # This is not a successful completion; mark as incomplete
-                # so the session transitions to stalled/needs_human_review.
-                log.info("Idle timeout reached (%ds), marking incomplete", idle_timeout)
+                # Idle loop exited without a message/interrupt — one of the
+                # two ceilings tripped. Distinguish which so operators can
+                # tell a clean "everyone's done" stall from a suspected hang.
+                # Either way this is not a successful completion; mark as
+                # incomplete so the session transitions to needs_human_review.
+                if waited >= idle_timeout:
+                    detail = (
+                        f"Idle timeout after {idle_timeout}s; all peers terminal "
+                        "and no messages received"
+                    )
+                    reason = "idle_timeout"
+                else:
+                    active_count = len(active_peers)
+                    detail = (
+                        f"Absolute idle ceiling ({absolute_timeout}s) reached with "
+                        f"{active_count} peer(s) still marked running. Suspected "
+                        "hang or deadlock — no messages received despite peers "
+                        "reporting active."
+                    )
+                    reason = "absolute_idle_ceiling"
+                log.info("Idle loop exiting: %s", detail)
                 post_event(
                     socket_path, session_id, agent_id,
                     "agent_status:incomplete",
-                    {"status": "incomplete", "detail": f"Idle timeout after {idle_timeout}s; all peers terminal and no messages received"},
+                    {"status": "incomplete", "detail": detail},
                 )
                 post_event(
                     socket_path, session_id, agent_id,
                     "bridge:finished",
-                    {"reason": "idle_timeout"},
+                    {"reason": reason},
                 )
                 break
             continue
