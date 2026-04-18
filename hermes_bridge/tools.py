@@ -10,6 +10,9 @@ Role-specific tools (only registered when declared in agent.yaml):
   - belayer_request_completion  — supervisor signals "work is done, verify before closing"
   - belayer_approve_completion  — PM approves the run after spec verification
   - belayer_reject_completion   — PM rejects the run with a gap list for remediation
+  - belayer_escalate_to_human   — supervisor deliberately stops the run when genuinely
+                                   blocked by something outside its agency (last resort
+                                   stop button; transitions session to needs_human_review)
 
 Tool schemas follow the OpenAI function-calling format used by Hermes.
 Handlers receive kwargs matching schema property names (Hermes calling convention).
@@ -355,6 +358,103 @@ REQUEST_COMPLETION_SCHEMA = {
     },
 }
 
+ESCALATE_TO_HUMAN_SCHEMA = {
+    "name": "belayer_escalate_to_human",
+    "description": (
+        "Permanently stop the run and hand it to a human operator because a blocker exists that "
+        "is outside your agency and cannot be resolved by further effort. This is a stop button, "
+        "not a communication channel. Calling this tool immediately triggers session teardown: "
+        "the session transitions to `needs_human_review`, the sandbox is torn down, all "
+        "in-flight specialist work is abandoned, and a human operator must intervene before "
+        "anything further happens. There is no resume, no follow-up turn, no way to undo.\n\n"
+        "WHEN TO USE belayer_escalate_to_human (ALL of the following must be true):\n"
+        "- You have made at least 3 attempts at the same approach and each has failed with the "
+        "same or a materially similar error — not a different error, not a different symptom, "
+        "the same root cause repeating despite your changes\n"
+        "- You have exhausted alternative strategies: different libraries, different "
+        "architectures, different tool orderings, different implementations of the same goal. "
+        "'I tried twice with the same approach' does not qualify\n"
+        "- The blocker is genuinely outside your agency: an infrastructure egress-policy denial "
+        "that blocks every install path for a required package, a spec ambiguity that requires "
+        "a human business decision to resolve, an external credential problem you cannot work "
+        "around. If more effort, a different approach, or a different specialist could plausibly "
+        "fix it, that condition is NOT met\n\n"
+        "Example scenarios where using this tool IS appropriate:\n"
+        "- After 5 attempts to install dependency X (pip install, conda, from source, vendored "
+        "wheel, alternative package), each failing with the same egress-policy denial, and no "
+        "alternative package provides the capability X offers\n"
+        "- After 4 attempts with two different specialists to implement a spec section that "
+        "contains a genuine contradiction (e.g. 'must be stateless' and 'must persist across "
+        "sessions' with no guidance on which takes priority), where any implementation choice "
+        "violates one of the constraints\n\n"
+        "WHEN NOT TO USE (these are not grounds for escalation):\n"
+        "- You are unsure how to proceed: think harder, re-read the spec, try a different "
+        "approach. Uncertainty is not a blocker. This tool is not a way to ask for guidance\n"
+        "- A specialist returned unsatisfactory work: use belayer_spawn_agent to retry with "
+        "better, more specific instructions. Poor output quality from a specialist is a "
+        "supervision problem, not an escalation trigger\n"
+        "- You hit a dependency install error on your first attempt: try an alternative install "
+        "path, read the docs, try a different library, consult the error message. One failure "
+        "is not exhaustion\n"
+        "- There are spec sections you haven't implemented yet: implement them. Incomplete work "
+        "is not a blocker; it is the work\n"
+        "- You want to ask for clarification on something ambiguous: there is no clarification "
+        "mechanism — this tool terminates the run permanently. If the ambiguity has a reasonable "
+        "default interpretation, take it and proceed; only escalate if every interpretation "
+        "violates a hard constraint\n"
+        "- You're stuck and frustrated: that is not a system blocker. Step back, retry with a "
+        "fresh approach, spawn a specialist with different instructions\n"
+        "- A single specialist failed: that is one data point. Try again with different "
+        "instructions, or try a different specialist identity\n\n"
+        "COST / CONSEQUENCES:\n"
+        "Calling this tool permanently terminates the run. The session transitions to "
+        "`needs_human_review`, the sandbox is torn down, all in-flight specialist work is "
+        "abandoned, and a human operator must intervene before anything further happens. Do not "
+        "call this tool as a way to 'check in' or ask for help — it is a stop button, not a "
+        "communication channel. The operator will see your reason, your blocker, and the "
+        "approaches you tried; they will use that context to decide whether to retry with a "
+        "different strategy, adjust the spec, or abandon the run entirely."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reason": {
+                "type": "string",
+                "description": (
+                    "One-sentence description of why the run cannot proceed. Be direct and "
+                    "specific: name the capability or outcome that is blocked, not just the "
+                    "symptom. The operator reads this first to triage."
+                ),
+            },
+            "blocker": {
+                "type": "string",
+                "description": (
+                    "The specific obstacle that makes forward progress impossible. Describe "
+                    "the concrete constraint: the infrastructure policy that blocks every "
+                    "install path, the spec contradiction that makes any implementation "
+                    "invalid, the external credential that is absent and cannot be substituted. "
+                    "Be precise enough that the operator can act without asking follow-up "
+                    "questions."
+                ),
+            },
+            "what_tried": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 2,
+                "description": (
+                    "The approaches already attempted, in order. Each entry should name the "
+                    "approach and its outcome (e.g. 'pip install cryptography — egress denied "
+                    "by policy on all mirrors', 'vendored wheel from workspace — import failed, "
+                    "wrong platform ABI'). Minimum 2 entries required. The operator uses this "
+                    "list to understand what has already been ruled out before deciding next "
+                    "steps."
+                ),
+            },
+        },
+        "required": ["reason", "blocker", "what_tried"],
+    },
+}
+
 APPROVE_COMPLETION_SCHEMA = {
     "name": "belayer_approve_completion",
     "description": (
@@ -629,6 +729,46 @@ def make_reject_completion_handler(agent_id: str, session_id: str, socket_path: 
     return handler
 
 
+def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: str):
+    """Return a handler for belayer_escalate_to_human."""
+
+    def handler(args: dict, **kwargs) -> str:
+        reason = args.get("reason", "")
+        blocker = args.get("blocker", "")
+        what_tried = args.get("what_tried", [])
+
+        if not reason or not reason.strip():
+            return "[System] 'reason' is required and must be a non-empty string."
+        if not blocker or not blocker.strip():
+            return "[System] 'blocker' is required and must be a non-empty string."
+        if not isinstance(what_tried, list) or len(what_tried) < 2:
+            return "[System] 'what_tried' must be a list of at least 2 strings documenting prior attempts."
+        if not all(isinstance(item, str) and item.strip() for item in what_tried):
+            return "[System] Each entry in 'what_tried' must be a non-empty string."
+
+        event_data = json.dumps({
+            "agent": agent_id,
+            "detail": "Escalated to human by agent: " + reason,
+            "escalated_by_tool": True,
+            "blocker": blocker,
+            "what_tried": what_tried,
+        })
+        status, body = unix_post(
+            socket_path,
+            f"/sessions/{session_id}/events",
+            {"type": "agent_status:incomplete", "data": event_data},
+        )
+        if status in (200, 201):
+            return (
+                "Escalation posted. Session will terminate. "
+                "No further action required — stop generating output."
+            )
+        log.warning("escalate_to_human failed (%d): %s", status, body[:200])
+        return f"[System] Failed to post escalation event. Error: {body[:200]}"
+
+    return handler
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -647,6 +787,7 @@ _HANDLER_FACTORIES = {
     "belayer_request_completion": (REQUEST_COMPLETION_SCHEMA, make_request_completion_handler),
     "belayer_approve_completion": (APPROVE_COMPLETION_SCHEMA, make_approve_completion_handler),
     "belayer_reject_completion": (REJECT_COMPLETION_SCHEMA, make_reject_completion_handler),
+    "belayer_escalate_to_human": (ESCALATE_TO_HUMAN_SCHEMA, make_escalate_to_human_handler),
 }
 
 
