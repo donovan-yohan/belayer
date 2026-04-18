@@ -466,6 +466,83 @@ func TestBuildEnvContainsBelayerVars(t *testing.T) {
 	}
 }
 
+// TestBuildEnvHermesAgentPathOverridesPYTHONPATH verifies that setting
+// HERMES_AGENT_PATH changes the hermes-agent segment of PYTHONPATH.
+func TestBuildEnvHermesAgentPathOverridesPYTHONPATH(t *testing.T) {
+	t.Setenv("HERMES_AGENT_PATH", "/opt/custom/hermes-agent")
+	t.Setenv("PYTHONPATH", "")
+
+	cfg := Config{
+		SessionID:   "sess",
+		AgentID:     "agent",
+		Role:        "implementer",
+		Profile:     "default",
+		SocketPath:  "/tmp/t.sock",
+		RunDir:      t.TempDir(),
+		BelayerRoot: "/opt/belayer",
+	}
+	env := BuildEnv(cfg)
+
+	var pyPath string
+	for _, e := range env {
+		if strings.HasPrefix(e, "PYTHONPATH=") {
+			pyPath = strings.TrimPrefix(e, "PYTHONPATH=")
+		}
+	}
+	if pyPath == "" {
+		t.Fatal("PYTHONPATH not set")
+	}
+	if !strings.Contains(pyPath, "/opt/custom/hermes-agent") {
+		t.Errorf("PYTHONPATH = %q, want to contain HERMES_AGENT_PATH override", pyPath)
+	}
+	if strings.Contains(pyPath, ".hermes/hermes-agent") {
+		t.Errorf("PYTHONPATH = %q, must not fall back to ~/.hermes when HERMES_AGENT_PATH is set", pyPath)
+	}
+}
+
+// TestBuildEnvPYTHONPATHHasNoEmptySegments verifies that when neither
+// HERMES_AGENT_PATH nor HOME is resolvable, BuildEnv doesn't emit a PYTHONPATH
+// with leading/trailing/interior empty segments (which Python would interpret
+// as cwd).
+func TestBuildEnvPYTHONPATHHasNoEmptySegments(t *testing.T) {
+	t.Setenv("HERMES_AGENT_PATH", "")
+	t.Setenv("HOME", "")
+	t.Setenv("PYTHONPATH", "/pre/existing")
+
+	cfg := Config{
+		SessionID:   "sess",
+		AgentID:     "agent",
+		Role:        "implementer",
+		Profile:     "default",
+		SocketPath:  "/tmp/t.sock",
+		RunDir:      t.TempDir(),
+		BelayerRoot: "/opt/belayer",
+	}
+	env := BuildEnv(cfg)
+
+	var pyPath string
+	for _, e := range env {
+		if strings.HasPrefix(e, "PYTHONPATH=") {
+			pyPath = strings.TrimPrefix(e, "PYTHONPATH=")
+		}
+	}
+	if pyPath == "" {
+		t.Fatal("PYTHONPATH not set")
+	}
+	sep := string(os.PathListSeparator)
+	for _, seg := range strings.Split(pyPath, sep) {
+		if seg == "" {
+			t.Errorf("PYTHONPATH = %q contains empty segment (Python would interpret as cwd)", pyPath)
+		}
+	}
+	if !strings.Contains(pyPath, "/opt/belayer") {
+		t.Errorf("PYTHONPATH = %q, want to contain BelayerRoot", pyPath)
+	}
+	if !strings.Contains(pyPath, "/pre/existing") {
+		t.Errorf("PYTHONPATH = %q, want to preserve existing PYTHONPATH", pyPath)
+	}
+}
+
 // TestBuildEnvOmitsOptionalVars verifies that empty optional fields (Model,
 // Message, SystemPrompt, HermesSessionID, BelayerTools) are not added to the
 // environment.

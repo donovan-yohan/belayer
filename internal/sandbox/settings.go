@@ -29,6 +29,13 @@ const (
 	DefaultAuthScheme = "Bearer"
 )
 
+// ModeOverrideEnv, when set in the daemon process env, takes precedence over
+// per-workspace config.yaml sandbox.mode. This is how an outer sandbox (e.g.
+// clamshell running the daemon inside a one-container-per-run image) tells
+// belayer "you're already sandboxed by me, use noop" without requiring every
+// downstream repo's .belayer/config.yaml to opt out of mode: clamshell.
+const ModeOverrideEnv = "BELAYER_SANDBOX_MODE"
+
 // Settings holds the sandbox section of .belayer/config.yaml. A zero Settings
 // signals default-noop behavior; see Settings.ModeOrDefault.
 type Settings struct {
@@ -171,8 +178,15 @@ func (p ProviderConfig) Validate() error {
 	return nil
 }
 
-// ModeOrDefault returns Mode when non-empty, or DefaultMode otherwise.
+// ModeOrDefault returns the effective sandbox mode, resolving in this order:
+//  1. $BELAYER_SANDBOX_MODE, if set — an outer sandbox can override downstream
+//     workspace config. Trimmed; empty string is treated as unset.
+//  2. Settings.Mode, if non-empty — from the workspace's .belayer/config.yaml.
+//  3. DefaultMode ("noop").
 func (s Settings) ModeOrDefault() string {
+	if override := strings.TrimSpace(os.Getenv(ModeOverrideEnv)); override != "" {
+		return override
+	}
 	if s.Mode == "" {
 		return DefaultMode
 	}

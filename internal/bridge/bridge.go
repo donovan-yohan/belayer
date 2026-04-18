@@ -19,13 +19,32 @@ import (
 // defaultPythonCmd returns the command used to launch the bridge subprocess.
 // It uses Hermes's venv Python so that Hermes dependencies (openai, etc.) are available.
 func defaultPythonCmd() []string {
-	home, _ := os.UserHomeDir()
-	venvPython := filepath.Join(home, ".hermes", "hermes-agent", "venv", "bin", "python3")
-	if _, err := os.Stat(venvPython); err == nil {
-		return []string{venvPython, "-m", "hermes_bridge"}
+	root := hermesAgentRoot()
+	if root != "" {
+		venvPython := filepath.Join(root, "venv", "bin", "python3")
+		if _, err := os.Stat(venvPython); err == nil {
+			return []string{venvPython, "-m", "hermes_bridge"}
+		}
 	}
-	// Fallback to system python3 if venv not found.
+	// Fallback to system python3 if venv not found. Expected in bundled
+	// images where `pip install --break-system-packages` populates the
+	// system site-packages instead of a dedicated venv.
 	return []string{"python3", "-m", "hermes_bridge"}
+}
+
+// hermesAgentRoot returns the directory containing the hermes-agent source
+// tree and (optionally) its venv. It honours HERMES_AGENT_PATH so containerised
+// builds can relocate the install off the user home, then falls back to
+// $HOME/.hermes/hermes-agent for dev machines.
+func hermesAgentRoot() string {
+	if p := os.Getenv("HERMES_AGENT_PATH"); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".hermes", "hermes-agent")
 }
 
 // Config holds everything needed to spawn one bridge subprocess.
@@ -92,19 +111,24 @@ func BuildEnv(cfg Config) []string {
 	env := os.Environ()
 
 	// Set PYTHONPATH so the bridge can import hermes-agent modules and hermes_bridge.
-	// Hermes's run_agent.py, hermes_state.py, tools/ etc. live in ~/.hermes/hermes-agent/.
+	// Hermes's run_agent.py, hermes_state.py, tools/ etc. live at
+	// $HERMES_AGENT_PATH (or ~/.hermes/hermes-agent by default on dev hosts).
 	// The hermes_bridge package lives at BelayerRoot (the belayer repo root).
-	home, _ := os.UserHomeDir()
-	hermesAgent := filepath.Join(home, ".hermes", "hermes-agent")
-	sep := string(os.PathListSeparator)
-	pyPath := hermesAgent
+	// Build from non-empty components so we never emit a leading/trailing/empty
+	// segment (an empty segment Python would interpret as cwd).
+	var parts []string
 	if cfg.BelayerRoot != "" {
-		pyPath = cfg.BelayerRoot + sep + pyPath
+		parts = append(parts, cfg.BelayerRoot)
+	}
+	if hermesAgent := hermesAgentRoot(); hermesAgent != "" {
+		parts = append(parts, hermesAgent)
 	}
 	if existing := os.Getenv("PYTHONPATH"); existing != "" {
-		pyPath = pyPath + sep + existing
+		parts = append(parts, existing)
 	}
-	env = appendEnv(env, "PYTHONPATH", pyPath)
+	if len(parts) > 0 {
+		env = appendEnv(env, "PYTHONPATH", strings.Join(parts, string(os.PathListSeparator)))
+	}
 
 	env = appendEnv(env, "BELAYER_SESSION_ID", cfg.SessionID)
 	env = appendEnv(env, "BELAYER_AGENT_ID", cfg.AgentID)

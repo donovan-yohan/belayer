@@ -1,9 +1,18 @@
 # Clamshell End-to-End Proof of Concept
 
-> **Status**: Active | **Created**: 2026-04-17 | **Last Updated**: 2026-04-17
+> **Status**: Superseded | **Created**: 2026-04-17 | **Last Updated**: 2026-04-17
 > **Design Doc**: `docs/design-docs/2026-04-16-sandbox-runtime-and-crag-proof.md`
-> **Consulted Learnings**: None
-> **For Claude:** Use /harness:orchestrate to execute this plan.
+> **Superseded by:** [`2026-04-17-belayer-in-clamshell.md`](2026-04-17-belayer-in-clamshell.md)
+
+> **Superseded 2026-04-17.** This plan implemented the **per-session** clamshell
+> model: belayer daemon on host, one container per session, daemon spawns bridges
+> via `docker exec`, TCP listener for bridge→daemon reach-back. The new plan
+> collapses that to **one container per run** with daemon + bridges inside,
+> which removes the TCP-listener work (Task 8), the host-daemon/clamshell-driver
+> work (Tasks 4, 10, 11 as written), and the seccomp follow-ups (Task 6).
+> Reusable pieces — Colima env (Task 1), clamshell install (Task 2), hermes
+> install (Task 3), arielcharts config (Task 5), image build approach (Task 7) —
+> are carried into the new plan's Tasks 1-7 with updated shape.
 
 ## Goal
 

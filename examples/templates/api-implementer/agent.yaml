@@ -1,7 +1,7 @@
 schema_version: "1"
 description: "API implementer — writes code in extend-api (Kotlin/Spring Boot)"
 vendor: opencode
-model: kimi-2.5
+model: kimi-k2.5
 max_turns: 100
 max_duration: "2h"
 ephemeral: false

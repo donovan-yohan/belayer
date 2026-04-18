@@ -94,6 +94,30 @@ sandbox:
 	}
 }
 
+func TestModeOrDefaultEnvOverrideTakesPrecedence(t *testing.T) {
+	t.Setenv(sandbox.ModeOverrideEnv, "noop")
+	s := sandbox.Settings{Mode: "clamshell"}
+	if got := s.ModeOrDefault(); got != "noop" {
+		t.Errorf("ModeOrDefault with env override = %q, want noop", got)
+	}
+}
+
+func TestModeOrDefaultEnvOverrideTrimsWhitespace(t *testing.T) {
+	t.Setenv(sandbox.ModeOverrideEnv, "  noop\n")
+	s := sandbox.Settings{Mode: "clamshell"}
+	if got := s.ModeOrDefault(); got != "noop" {
+		t.Errorf("ModeOrDefault with whitespace env override = %q, want noop (trimmed)", got)
+	}
+}
+
+func TestModeOrDefaultEnvOverrideWhitespaceOnlyTreatedAsUnset(t *testing.T) {
+	t.Setenv(sandbox.ModeOverrideEnv, "   \t\n")
+	s := sandbox.Settings{Mode: "clamshell"}
+	if got := s.ModeOrDefault(); got != "clamshell" {
+		t.Errorf("ModeOrDefault with whitespace-only env override = %q, want fallthrough to Mode (clamshell)", got)
+	}
+}
+
 func TestLoadSettingsInvalidYAMLReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	writeConfigYAML(t, dir, "sandbox: [not-a-map\n")

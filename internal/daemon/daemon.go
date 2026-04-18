@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/agent"
@@ -307,11 +308,23 @@ func (d *Daemon) Start(ctx context.Context) error {
 		// Execute bit is meaningless on a socket, so 0o666 is strictly tighter
 		// than 0o777. TODO: narrow to 0o660 via dedicated group + chown once
 		// the container UID/GID mapping is stabilized.
+		//
+		// Chmod is best-effort only for known-nonfatal errors:
+		// macOS-shared bind mounts (Colima VirtIO-FS, Docker Desktop) reject
+		// chmod on Unix sockets with EINVAL (and ENOTSUP on some filesystems),
+		// but the socket itself still works for same-UID callers. Under the
+		// one-container-per-run (clamshell) shape the bridge subprocess runs
+		// as the same sandbox UID as the daemon, so 0o666 isn't required.
+		// Any other failure (EPERM/EACCES/ENOENT/...) signals a real problem
+		// — fail fast so connection errors surface now, not at first use.
 		if err := os.Chmod(d.config.WorkspaceSockPath, 0o666); err != nil {
-			wsLn.Close()
-			cleanupExtraListeners()
-			ln.Close()
-			return fmt.Errorf("daemon: chmod workspace sock %s: %w", d.config.WorkspaceSockPath, err)
+			if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
+				log.Printf("daemon: chmod workspace sock %s: %v (best-effort; socket still functional for same-UID peers)", d.config.WorkspaceSockPath, err)
+			} else {
+				cleanupExtraListeners()
+				ln.Close()
+				return fmt.Errorf("daemon: chmod workspace sock %s: %w", d.config.WorkspaceSockPath, err)
+			}
 		}
 		d.workspaceSockListener = &http.Server{Handler: d.server.Handler}
 		go func() {

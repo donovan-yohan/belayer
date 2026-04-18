@@ -68,6 +68,30 @@ def fetch_pending_messages(socket_path: str, session_id: str, agent_id: str) -> 
     return []
 
 
+def fetch_roster(socket_path: str, session_id: str) -> list[dict] | None:
+    """Fetch the full agent roster for a session from the daemon.
+
+    Returns None on any error (non-200, JSON decode failure, or a non-list
+    payload) so callers can distinguish "roster genuinely empty" from
+    "daemon unreachable / response garbled". The idle loop uses this to
+    avoid advancing the terminal-only idle countdown during transient
+    daemon outages.
+    """
+    status, body = unix_get(
+        socket_path,
+        f"/sessions/{session_id}/agents",
+    )
+    if status != 200:
+        return None
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return data
+
+
 def format_messages(messages: list[dict]) -> str:
     """Format a list of pending message dicts into a single user-turn string."""
     parts = []
@@ -279,6 +303,15 @@ def main() -> None:
         except Exception as _e:
             log.warning("Could not patch proxy client into AIAgent: %s", _e)
 
+    # TODO(upstream-hermes): `max_retries = 3` is a local var inside
+    # AIAgent.send_message (run_agent.py ~L8752) with ~2+4+8s backoff, so a
+    # single connection-level failure burns ~50s before the bridge surfaces
+    # it. For local E2E UX this dominates Step 4's 60s budget. File an
+    # upstream PR to expose max_retries via env var (HERMES_MAX_RETRIES) or
+    # as an AIAgent ctor kwarg; until then, Step 4 polls for `stalled` to
+    # short-circuit this loop on the daemon side (see belayer status output
+    # after bridge exits without completion).
+
     # --- Register Belayer tools --------------------------------------------
     allowed_tools_env = os.environ.get("BELAYER_TOOLS", "")
     allowed_tools = [t.strip() for t in allowed_tools_env.split(",") if t.strip()] if allowed_tools_env else None
@@ -412,11 +445,24 @@ def main() -> None:
             )
             log.info("Non-ephemeral agent idle, polling for messages...")
             idle_poll_interval = 5  # seconds
-            idle_timeout = 300  # 5 minutes max idle
+            # idle_timeout fires when the idle counter reaches it — but the
+            # counter only advances while every peer is in a terminal state.
+            # This is the "everyone's done and nobody pinged me back" ceiling.
+            idle_timeout = 900  # 15 min
+            # absolute_timeout is the failsafe for the case where a peer is
+            # marked running in the roster but is actually hung, crashed
+            # without the daemon noticing, or — worst case — idle-waiting for
+            # a message from *this* supervisor (deadlock). It advances every
+            # tick regardless of peer state and only resets when the idle
+            # loop breaks out on a real message/interrupt. If this trips
+            # while peers are still "running", suspect a hang and escalate.
+            absolute_timeout = 3600  # 1 hr
             waited = 0
-            while waited < idle_timeout:
+            absolute_waited = 0
+            was_waiting_on_peers = False
+            while waited < idle_timeout and absolute_waited < absolute_timeout:
                 time.sleep(idle_poll_interval)
-                waited += idle_poll_interval
+                absolute_waited += idle_poll_interval
 
                 # Check stdin for interrupt/stop commands first.
                 try:
@@ -452,20 +498,84 @@ def main() -> None:
                     )
                     log.info("Resuming from idle with %d pending message(s)", len(pending))
                     break
+
+                # Peer-awareness: only advance the idle counter when all peer
+                # agents are in a terminal state. While any peer is still
+                # running or starting, reset the counter so we don't
+                # prematurely kill the supervisor.
+                #
+                # Identity note: BELAYER_AGENT_ID is the agent *name*
+                # (e.g. "supervisor"), not a UUID — the daemon sets
+                # AgentID = req.Name when spawning the bridge (see
+                # internal/daemon/agents.go). The roster JSON exposes both
+                # `ID` (UUID) and `Name`; compare against Name.
+                roster = fetch_roster(socket_path, session_id)
+                if roster is None:
+                    # Daemon unreachable or malformed response. We can't
+                    # tell whether peers are terminal, so stay conservative:
+                    # don't advance the idle counter, but let the absolute
+                    # ceiling continue to tick so we don't wait forever on
+                    # a truly dead daemon.
+                    log.debug("Roster fetch failed; holding idle counter steady")
+                    active_peers = []  # unknown, treated as none-known for logging
+                    waited = 0
+                else:
+                    peers = [r for r in roster if r.get("Name") != agent_id]
+                    # Active = anything the daemon considers not-yet-terminal.
+                    # The daemon emits "starting" during sandbox boot / hermes
+                    # warm-up, then flips to "running" once the bridge reports
+                    # in; both count as active so we don't idle-timeout a
+                    # supervisor while a slow-booting peer is still coming
+                    # online.
+                    active_peers = [
+                        r for r in peers
+                        if r.get("Status") in ("starting", "running")
+                    ]
+                    peers_still_active = len(active_peers) > 0
+
+                    if peers_still_active:
+                        if not was_waiting_on_peers:
+                            was_waiting_on_peers = True
+                        waited = 0  # reset; don't count time while specialists are running
+                    else:
+                        if was_waiting_on_peers:
+                            log.info(
+                                "All %d peer agent(s) now terminal; idle countdown started",
+                                len(peers),
+                            )
+                            was_waiting_on_peers = False
+                        waited += idle_poll_interval
             else:
-                # Idle timeout reached — no specialists reported back.
-                # This is not a successful completion; mark as incomplete
-                # so the session transitions to stalled/needs_human_review.
-                log.info("Idle timeout reached (%ds), marking incomplete", idle_timeout)
+                # Idle loop exited without a message/interrupt — one of the
+                # two ceilings tripped. Distinguish which so operators can
+                # tell a clean "everyone's done" stall from a suspected hang.
+                # Either way this is not a successful completion; mark as
+                # incomplete so the session transitions to needs_human_review.
+                if waited >= idle_timeout:
+                    detail = (
+                        f"Idle timeout after {idle_timeout}s; all peers terminal "
+                        "and no messages received"
+                    )
+                    reason = "idle_timeout"
+                else:
+                    active_count = len(active_peers)
+                    detail = (
+                        f"Absolute idle ceiling ({absolute_timeout}s) reached with "
+                        f"{active_count} peer(s) still marked running. Suspected "
+                        "hang or deadlock — no messages received despite peers "
+                        "reporting active."
+                    )
+                    reason = "absolute_idle_ceiling"
+                log.info("Idle loop exiting: %s", detail)
                 post_event(
                     socket_path, session_id, agent_id,
                     "agent_status:incomplete",
-                    {"status": "incomplete", "detail": f"Idle timeout after {idle_timeout}s with no specialist response"},
+                    {"status": "incomplete", "detail": detail},
                 )
                 post_event(
                     socket_path, session_id, agent_id,
                     "bridge:finished",
-                    {"reason": "idle_timeout"},
+                    {"reason": reason},
                 )
                 break
             continue
