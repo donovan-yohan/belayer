@@ -1,6 +1,9 @@
 # Binary
 /belayer
 /dist/
+/belayer-linux
+/belayer-linux-amd64
+/belayer-linux-arm64
 
 # IDE
 .idea/
@@ -19,6 +22,7 @@ coverage.out
 .belayer/
 state/
 .tmp/
+.build-cache/
 
 # Python
 __pycache__/
@@ -28,11 +32,17 @@ __pycache__/
 .claude/
 .claude-plugin/
 .codex/
+.context/
 .hermes/
 .gstack/
 .mcp.json
 .omc/
 .worktrees/
+
+# Environment (local)
+.env
+.env.*
+!.env.example
 
 # Third-party skill/plugin state
 docs/superpowers/
@@ -40,3 +50,4 @@ docs/superpowers/
 # Legacy (removed in v7, still in git history)
 channel/
 artifacts/
+!docs/exec-plans/active/artifacts/

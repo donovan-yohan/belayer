@@ -256,11 +256,16 @@ func (d *Daemon) Start(ctx context.Context) error {
 		// Execute bit is meaningless on a socket, so 0o666 is strictly tighter
 		// than 0o777. TODO: narrow to 0o660 via dedicated group + chown once
 		// the container UID/GID mapping is stabilized.
+		//
+		// Chmod is best-effort: macOS-shared bind mounts (Colima VirtIO-FS,
+		// Docker Desktop) reject chmod on Unix sockets with EINVAL, but the
+		// socket itself still works for same-UID callers. Under the one-
+		// container-per-run (clamshell) shape the bridge subprocess runs as
+		// the same sandbox UID as the daemon, so 0o666 isn't required.
+		// Cross-UID shapes will notice the permission mismatch at connect
+		// time and can key off the warning to diagnose.
 		if err := os.Chmod(d.config.WorkspaceSockPath, 0o666); err != nil {
-			wsLn.Close()
-			cleanupExtraListeners()
-			ln.Close()
-			return fmt.Errorf("daemon: chmod workspace sock %s: %w", d.config.WorkspaceSockPath, err)
+			log.Printf("daemon: chmod workspace sock %s: %v (best-effort; socket still functional for same-UID peers)", d.config.WorkspaceSockPath, err)
 		}
 		d.workspaceSockListener = &http.Server{Handler: d.server.Handler}
 		go func() {

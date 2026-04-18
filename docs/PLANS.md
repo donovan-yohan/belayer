@@ -4,8 +4,10 @@
 
 | Plan | Goal | Created |
 |------|------|---------|
-| [2026-04-17-clamshell-e2e-proof](exec-plans/active/2026-04-17-clamshell-e2e-proof.md) | Prove belayer runs end-to-end in Colima+Clamshell with arielcharts pnpm dev runtime | 2026-04-17 |
+| [2026-04-17-belayer-in-clamshell](exec-plans/active/2026-04-17-belayer-in-clamshell.md) | One-container-per-run topology: belayer daemon + bridges inside a single clamshell sandbox, apikey provider projects OPENCODE_GO_API_KEY as clak_ handle, arielcharts + `pnpm run dev` as E2E proof | 2026-04-17 |
 
-## Completed Plans
+## Superseded / Completed Plans
 
-_None yet._
+| Plan | Status | Notes |
+|------|--------|-------|
+| [2026-04-17-clamshell-e2e-proof](exec-plans/active/2026-04-17-clamshell-e2e-proof.md) | Superseded 2026-04-17 | Per-session clamshell model replaced by belayer-in-clamshell (one container per run). Reusable setup steps carried forward. |

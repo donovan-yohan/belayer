@@ -442,6 +442,17 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		cfg.HTTPProxy = "http://proxy.internal:3128"
 		cfg.BelayerRoot = "/workspace/.belayer"
 	}
+	// Universal fallback: when no BelayerRoot was configured (CLI flag, env, or
+	// clamshell override above), look for an extracted hermes_bridge under
+	// workdir/.belayer. This lets belayer work inside any outer sandbox
+	// (including clamshell-as-devbox with mode=noop) without requiring the
+	// caller to plumb --belayer-root through every layer.
+	if cfg.BelayerRoot == "" && workdir != "" {
+		candidate := filepath.Join(workdir, ".belayer")
+		if _, err := os.Stat(filepath.Join(candidate, "hermes_bridge", "__main__.py")); err == nil {
+			cfg.BelayerRoot = candidate
+		}
+	}
 	_ = worktreePath // stored in DB; cleanup handled separately
 
 	// Build command and environment using bridge pure functions.

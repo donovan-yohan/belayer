@@ -279,6 +279,15 @@ def main() -> None:
         except Exception as _e:
             log.warning("Could not patch proxy client into AIAgent: %s", _e)
 
+    # TODO(upstream-hermes): `max_retries = 3` is a local var inside
+    # AIAgent.send_message (run_agent.py ~L8752) with ~2+4+8s backoff, so a
+    # single connection-level failure burns ~50s before the bridge surfaces
+    # it. For local E2E UX this dominates Step 4's 60s budget. File an
+    # upstream PR to expose max_retries via env var (HERMES_MAX_RETRIES) or
+    # as an AIAgent ctor kwarg; until then, Step 4 polls for `stalled` to
+    # short-circuit this loop on the daemon side (see belayer status output
+    # after bridge exits without completion).
+
     # --- Register Belayer tools --------------------------------------------
     allowed_tools_env = os.environ.get("BELAYER_TOOLS", "")
     allowed_tools = [t.strip() for t in allowed_tools_env.split(",") if t.strip()] if allowed_tools_env else None
