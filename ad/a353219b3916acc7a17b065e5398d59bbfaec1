@@ -1,0 +1,54 @@
+internal/sandbox/settings_test.go
+  4c067aa639d39a6e 97-120
+internal/bridge/bridge_test.go
+  4c067aa639d39a6e 469-545
+docs/design-docs/2026-04-17-clamshell-apikey-provider-design.md
+  4c067aa639d39a6e 42
+docs/exec-plans/active/artifacts/2026-04-17-clamshell-cli-notes.md
+  4c067aa639d39a6e 3,9,28,48
+docs/exec-plans/active/2026-04-17-belayer-in-clamshell.md
+  4c067aa639d39a6e 76,418-421,505,520,523-532,694-698
+docs/design-docs/2026-04-17-belayer-in-clamshell-design.md
+  4c067aa639d39a6e 70,150,157-159,195
+internal/sandbox/settings.go
+  4c067aa639d39a6e 8,38
+internal/daemon/daemon.go
+  4c067aa639d39a6e 17,261-268,270-276
+internal/bridge/bridge.go
+  4c067aa639d39a6e 117-119,121-124,127-130
+internal/daemon/agents.go
+  4c067aa639d39a6e 291-296,456-469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "ada353219b3916acc7a17b065e5398d59bbfaec1",
+  "prompts": {
+    "4c067aa639d39a6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "41896406-4e67-4114-926d-30b9c34514fe",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 183,
+      "total_deletions": 36,
+      "accepted_lines": 183,
+      "overriden_lines": 0
+    },
+    "e763a424956efef3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7ef2fc39-34ef-4510-9803-a7bab7d3b0b3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
