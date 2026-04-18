@@ -64,7 +64,7 @@ Source: `internal/store/store.go:SessionEvent`.
 | Type | Key `data` fields | Notes |
 |------|-------------------|-------|
 | `bridge:started` | `agent`, `hermes_session_id` (string, optional) | Agent bridge process started; Hermes session established |
-| `bridge:finished` | `agent` | Agent completed successfully; daemon marks status `complete` |
+| `bridge:finished` | `agent`; optional `reason` (string) OR `final_response` (string, ≤500 chars) | Bridge subprocess exited cleanly; daemon marks status `complete`. Known `reason` values: `"idle_timeout"` (idle-loop window elapsed with no peer activity), `"absolute_idle_ceiling"` (1hr hard failsafe, fires even if peers report running), `"escalate_to_human"` (supervisor invoked `belayer_escalate_to_human`), `"interrupted"` (SIGINT / no queued message after interrupt), `"stopped"` (explicit stop command). The success case carries `final_response` instead of `reason` (first 500 chars of the model's final output). Consumers MUST tolerate unknown `reason` values as opaque and MUST treat the event as a clean exit regardless of which field is present. |
 | `bridge:failed` | `agent`, `error` (string, optional) | Bridge subprocess failed; daemon marks status `blocked` |
 | `bridge:heartbeat` | `agent` | Periodic liveness signal from bridge; no side effects |
 | `bridge:step_completed` | `agent` | Intermediate step within an agent turn |
