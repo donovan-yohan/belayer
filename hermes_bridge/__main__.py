@@ -68,6 +68,21 @@ def fetch_pending_messages(socket_path: str, session_id: str, agent_id: str) -> 
     return []
 
 
+def fetch_roster(socket_path: str, session_id: str) -> list[dict]:
+    """Fetch the full agent roster for a session from the daemon."""
+    status, body = unix_get(
+        socket_path,
+        f"/sessions/{session_id}/agents",
+    )
+    if status == 200:
+        try:
+            data = json.loads(body)
+            return data if isinstance(data, list) else []
+        except json.JSONDecodeError:
+            return []
+    return []
+
+
 def format_messages(messages: list[dict]) -> str:
     """Format a list of pending message dicts into a single user-turn string."""
     parts = []
@@ -421,11 +436,11 @@ def main() -> None:
             )
             log.info("Non-ephemeral agent idle, polling for messages...")
             idle_poll_interval = 5  # seconds
-            idle_timeout = 300  # 5 minutes max idle
+            idle_timeout = 900  # 15 minutes max idle
             waited = 0
+            was_waiting_on_peers = False
             while waited < idle_timeout:
                 time.sleep(idle_poll_interval)
-                waited += idle_poll_interval
 
                 # Check stdin for interrupt/stop commands first.
                 try:
@@ -461,15 +476,40 @@ def main() -> None:
                     )
                     log.info("Resuming from idle with %d pending message(s)", len(pending))
                     break
+
+                # Peer-awareness: only advance the idle counter when all peer
+                # agents are in a terminal state. While any peer is still
+                # running or spawning, reset the counter so we don't
+                # prematurely kill the supervisor.
+                roster = fetch_roster(socket_path, session_id)
+                peers = [r for r in roster if r.get("ID") != agent_id]
+                active_peers = [
+                    r for r in peers
+                    if r.get("Status") in ("running", "spawning")
+                ]
+                peers_still_active = len(active_peers) > 0
+
+                if peers_still_active:
+                    if not was_waiting_on_peers:
+                        was_waiting_on_peers = True
+                    waited = 0  # reset; don't count time while specialists are running
+                else:
+                    if was_waiting_on_peers:
+                        log.info(
+                            "All %d peer agent(s) now terminal; idle countdown started",
+                            len(peers),
+                        )
+                        was_waiting_on_peers = False
+                    waited += idle_poll_interval
             else:
-                # Idle timeout reached — no specialists reported back.
+                # Idle timeout reached — all peers are terminal and no messages arrived.
                 # This is not a successful completion; mark as incomplete
                 # so the session transitions to stalled/needs_human_review.
                 log.info("Idle timeout reached (%ds), marking incomplete", idle_timeout)
                 post_event(
                     socket_path, session_id, agent_id,
                     "agent_status:incomplete",
-                    {"status": "incomplete", "detail": f"Idle timeout after {idle_timeout}s with no specialist response"},
+                    {"status": "incomplete", "detail": f"Idle timeout after {idle_timeout}s; all peers terminal and no messages received"},
                 )
                 post_event(
                     socket_path, session_id, agent_id,
