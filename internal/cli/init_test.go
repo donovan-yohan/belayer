@@ -288,7 +288,10 @@ func TestInitExtractsHermesBridge(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(bridgeDir, path)
+		rel, relErr := filepath.Rel(bridgeDir, path)
+		if relErr != nil {
+			return relErr
+		}
 		if info.IsDir() && filepath.Base(rel) == "tests" {
 			t.Errorf("tests/ was extracted; expected it to be filtered: %s", path)
 		}
