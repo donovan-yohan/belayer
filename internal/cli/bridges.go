@@ -11,7 +11,7 @@ func newBridgesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bridges",
 		Short: "Inspect per-agent bridge subprocess state",
-		Long:  "Inspect per-agent bridge subprocess state (raw stdout, status).",
+		Long:  "Inspect per-agent bridge subprocess state (raw stdout, status)." + ChannelsFooter,
 	}
 	cmd.AddCommand(newBridgesTailCmd())
 	return cmd

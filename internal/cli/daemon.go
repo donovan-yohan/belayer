@@ -34,7 +34,7 @@ func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the belayer daemon",
-		Long:  "Starts the long-running belayer supervisor on a Unix socket.",
+		Long:  "Starts the long-running belayer supervisor on a Unix socket." + ChannelsFooter,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Load .belayer.env files into the daemon process environment so
 			// bridge subprocesses inherit provider credentials (e.g. OPENCODE_GO_API_KEY).

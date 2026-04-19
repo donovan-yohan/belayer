@@ -111,7 +111,7 @@ func newLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs <session-id>",
 		Short: "Show session events",
-		Long:  "Show session events. Use --follow to tail in real-time.",
+		Long:  "Show session events. Use --follow to tail in real-time." + ChannelsFooter,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if rawMode {
