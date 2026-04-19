@@ -37,6 +37,7 @@ over SQLite.`,
 		newArtifactCmd(),
 		newInitCmd(),
 		newArchiveCmd(),
+		newBridgesCmd(),
 	)
 	return cmd
 }
