@@ -1,0 +1,23 @@
+internal/daemon/daemon.go
+  4c067aa639d39a6e 273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "8420dc72a89a7f1c6e2eba573350163433be9cc1",
+  "prompts": {
+    "4c067aa639d39a6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "41896406-4e67-4114-926d-30b9c34514fe",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 0,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  }
+}
