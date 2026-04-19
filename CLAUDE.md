@@ -62,7 +62,11 @@ When the supervisor calls `belayer finish`, the daemon intercepts and auto-spawn
 
 - `docs/PHILOSOPHY.md` — the six runtime interfaces (conceptual, not implementation-specific)
 - `docs/AGENT_ARCHITECTURE.md` — how agents communicate, coordinate, and resume
+- `docs/DEPLOYMENT.md` — deployment topologies, trust model, credentials, ports/sockets
+- `docs/LOG_FORMAT.md` — event schema, SSE, archive format, aggregates, HTTP API contract
+- `docs/OBSERVABILITY.md` — operator guide: tier selection, recipes, dashboard integration
 - `docs/design-docs/` — detailed design documents (see index.md)
+- Log tiers: standard / verbose / trace — see `docs/LOG_FORMAT.md`
 
 ## Development
 
