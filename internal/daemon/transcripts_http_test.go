@@ -1,12 +1,16 @@
 package daemon
 
 import (
+	"bufio"
+	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/donovan-yohan/belayer/internal/store"
 )
@@ -217,4 +221,159 @@ func TestTranscriptContent_404IfStandardTier(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for standard tier, got %d: %s", rr.Code, rr.Body.String())
 	}
+}
+
+// readFollowLines consumes newline-delimited records from r into a channel
+// until the caller cancels or the reader returns error. Helper for
+// ?follow=1 tests — every appended record should appear as a scanner line.
+func readFollowLines(t *testing.T, r interface {
+	Read([]byte) (int, error)
+}) <-chan string {
+	t.Helper()
+	ch := make(chan string, 128)
+	go func() {
+		defer close(ch)
+		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			ch <- scanner.Text()
+		}
+	}()
+	return ch
+}
+
+// waitForLine blocks until ch yields want or timeout expires. Returns nothing
+// — on failure it t.Fatals so call sites stay linear.
+func waitForLine(t *testing.T, ch <-chan string, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case line, ok := <-ch:
+			if !ok {
+				t.Fatalf("follow stream closed before receiving %q", want)
+			}
+			if line == want {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for follow line %q", want)
+		}
+	}
+}
+
+// TestTranscriptFollow_AppendsStream verifies the baseline follow contract:
+// bytes written to the transcript after the client connects are delivered.
+func TestTranscriptFollow_AppendsStream(t *testing.T) {
+	d := testDaemonWithTranscripts(t)
+	sessID, workspace := makeTranscriptSession(t, d, LogLevelVerbose)
+	path := writeTranscript(t, workspace, sessID, "backend-dev", `{"seq":0}`+"\n")
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/sessions/%s/transcripts/backend-dev.jsonl?follow=1", server.URL, sessID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET follow: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	lines := readFollowLines(t, resp.Body)
+	waitForLine(t, lines, `{"seq":0}`, 2*time.Second)
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open for append: %v", err)
+	}
+	if _, err := f.WriteString(`{"seq":1}` + "\n"); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	_ = f.Close()
+
+	waitForLine(t, lines, `{"seq":1}`, 2*time.Second)
+}
+
+// TestTranscriptFollow_RotatedFile verifies that when the transcript is
+// replaced at its path (log rotation: rename-old + create-new), the tail
+// picks up bytes written to the new inode. Prior behavior pinned the fd to
+// the original inode and silently dropped post-rotation writes.
+func TestTranscriptFollow_RotatedFile(t *testing.T) {
+	d := testDaemonWithTranscripts(t)
+	sessID, workspace := makeTranscriptSession(t, d, LogLevelVerbose)
+	path := writeTranscript(t, workspace, sessID, "backend-dev", `{"seq":"pre"}`+"\n")
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/sessions/%s/transcripts/backend-dev.jsonl?follow=1", server.URL, sessID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET follow: %v", err)
+	}
+	defer resp.Body.Close()
+
+	lines := readFollowLines(t, resp.Body)
+	waitForLine(t, lines, `{"seq":"pre"}`, 2*time.Second)
+
+	// Rotate: move the old file aside and create a new file at the same path.
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`{"seq":"post"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write rotated file: %v", err)
+	}
+
+	waitForLine(t, lines, `{"seq":"post"}`, 3*time.Second)
+}
+
+// TestTranscriptFollow_TruncatedFile verifies in-place truncation recovery:
+// if an external process rewrites the file via O_TRUNC the tail must reset
+// its read offset so the fresh contents flush through. Otherwise the fd's
+// offset (now past EOF) stays pinned and no further bytes are delivered.
+func TestTranscriptFollow_TruncatedFile(t *testing.T) {
+	d := testDaemonWithTranscripts(t)
+	sessID, workspace := makeTranscriptSession(t, d, LogLevelVerbose)
+	path := writeTranscript(t, workspace, sessID, "backend-dev", `{"seq":"pre-trunc"}`+"\n")
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/sessions/%s/transcripts/backend-dev.jsonl?follow=1", server.URL, sessID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET follow: %v", err)
+	}
+	defer resp.Body.Close()
+
+	lines := readFollowLines(t, resp.Body)
+	waitForLine(t, lines, `{"seq":"pre-trunc"}`, 2*time.Second)
+
+	// Truncate in place, then (after a gap > the tail's poll interval) write
+	// a new record. The gap lets the tail observe size=0 and rewind — the
+	// realistic pattern for in-place rotation. Back-to-back trunc+write in
+	// one syscall burst is fundamentally racy without filesystem
+	// notifications and is not what streamTranscript guarantees.
+	if err := os.Truncate(path, 0); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	if err := os.WriteFile(path, []byte(`{"seq":"post-trunc"}`+"\n"), 0o600); err != nil {
+		t.Fatalf("write after truncate: %v", err)
+	}
+
+	waitForLine(t, lines, `{"seq":"post-trunc"}`, 3*time.Second)
 }

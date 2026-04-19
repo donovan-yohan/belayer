@@ -195,6 +195,16 @@ func (d *Daemon) handleTranscriptContent(w http.ResponseWriter, r *http.Request)
 
 // streamTranscript tails filePath starting at offset start, flushing each
 // appended block to w until the client disconnects or the context is done.
+//
+// Rotation / truncation handling:
+//   - If filePath is replaced (rename+create — os.SameFile is false between the
+//     open fd and the current path) we reopen at offset 0 so the new file's
+//     bytes stream through.
+//   - If the on-disk size falls below our read offset (truncate-in-place) we
+//     seek the existing fd back to 0 and continue — the inode is unchanged.
+//   - If filePath is unlinked without a replacement (stat returns ENOENT) we
+//     keep the existing fd and poll until the caller reconnects or the writer
+//     reappears; unlinked bytes would otherwise be lost silently.
 func streamTranscript(ctx interface {
 	Done() <-chan struct{}
 }, w http.ResponseWriter, filePath string, start int64) {
@@ -207,7 +217,7 @@ func streamTranscript(ctx interface {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "open transcript: " + err.Error()})
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "seek: " + err.Error()})
@@ -234,11 +244,53 @@ func streamTranscript(ctx interface {
 		if err != nil && err != io.EOF {
 			return
 		}
-		// EOF — wait briefly for more bytes or context cancel.
+		// EOF — check whether the underlying file was replaced or truncated
+		// before going back to sleep. Without this the tail would stay pinned
+		// to the original inode across log rotation and miss all new bytes.
+		if newF := maybeReopenTranscript(f, filePath); newF != nil {
+			_ = f.Close()
+			f = newF
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// maybeReopenTranscript returns a freshly-opened fd when filePath has been
+// rotated (a different inode lives at the path now). In-place truncation is
+// handled by seeking the existing fd back to offset 0 and returning nil (no
+// reopen needed — the caller keeps using the same fd). Returns nil when the
+// existing fd is still authoritative.
+//
+// When the file vanishes without replacement (unlinked, stat returns ENOENT)
+// we keep the existing fd and rely on the caller's poll loop — otherwise a
+// transient rename+create window would lose data.
+func maybeReopenTranscript(f *os.File, filePath string) *os.File {
+	onDisk, err := os.Stat(filePath)
+	if err != nil {
+		return nil
+	}
+	openInfo, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	if !os.SameFile(openInfo, onDisk) {
+		newF, err := os.Open(filePath)
+		if err != nil {
+			return nil
+		}
+		return newF
+	}
+	// Same inode — check for in-place truncation.
+	pos, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return nil
+	}
+	if onDisk.Size() < pos {
+		_, _ = f.Seek(0, io.SeekStart)
+	}
+	return nil
 }
