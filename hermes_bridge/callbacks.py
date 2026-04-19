@@ -186,8 +186,9 @@ class _TranscriptWriter:
     """Append-only JSONL transcript for a single agent.
 
     Thread-safe; one line per write_turn call with the supplied dict merged
-    with timestamp and agent_id. Flush-on-every-write so a bridge crash
-    doesn't lose the most recent turn.
+    with timestamp and agent_id. Flush on every write to reduce loss if
+    the bridge process crashes, but without fsync this does not guarantee
+    durability across OS or host crashes.
     """
 
     def __init__(self, path: str, agent_id: str):

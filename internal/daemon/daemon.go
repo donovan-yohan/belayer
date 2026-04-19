@@ -165,6 +165,13 @@ type Daemon struct {
 
 // New creates a Daemon with the given config. Call Start to begin serving.
 func New(cfg Config) (*Daemon, error) {
+	// Fail fast on a misconfigured default log level so operators see the error
+	// at boot, not the first POST /sessions call hours later.
+	if cfg.DefaultLogLevel != "" {
+		if _, err := ValidateLogLevel(cfg.DefaultLogLevel); err != nil {
+			return nil, fmt.Errorf("daemon: DefaultLogLevel: %w", err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700); err != nil {
 		return nil, fmt.Errorf("daemon: create db dir: %w", err)
 	}

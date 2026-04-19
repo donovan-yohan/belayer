@@ -1,7 +1,6 @@
 """Tests for _TranscriptWriter and make_transcript_writer in callbacks.py."""
 
 import json
-import os
 import threading
 
 import pytest

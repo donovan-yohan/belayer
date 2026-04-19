@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -39,6 +40,34 @@ func TestValidateLogLevel(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDaemonNew_RejectsInvalidDefaultLogLevel(t *testing.T) {
+	dir := t.TempDir()
+	_, err := New(Config{
+		SocketPath:      filepath.Join(dir, "belayer.sock"),
+		DBPath:          filepath.Join(dir, "belayer.db"),
+		DefaultLogLevel: "debug",
+	})
+	if err == nil {
+		t.Fatal("New with invalid DefaultLogLevel should fail fast")
+	}
+	if !strings.Contains(err.Error(), "DefaultLogLevel") {
+		t.Errorf("error should mention DefaultLogLevel, got: %v", err)
+	}
+}
+
+func TestDaemonNew_AcceptsEmptyDefaultLogLevel(t *testing.T) {
+	dir := t.TempDir()
+	d, err := New(Config{
+		SocketPath:      filepath.Join(dir, "belayer.sock"),
+		DBPath:          filepath.Join(dir, "belayer.db"),
+		DefaultLogLevel: "",
+	})
+	if err != nil {
+		t.Fatalf("New with empty DefaultLogLevel failed: %v", err)
+	}
+	_ = d
 }
 
 func TestResolveLogLevel(t *testing.T) {

@@ -70,6 +70,10 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and profile are required"})
 		return
 	}
+	if err := validateAgentName(req.Name); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	req.SessionID = sessionID
 
 	// Resolve workdir from session repos when repo scope is set but workdir is not.
@@ -424,7 +428,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// is empty, the session is never archived anyway (archive_manager.doArchive
 	// skips), so there's no point writing transcripts.
 	var transcriptPath string
-	if sess.LogLevel == "verbose" && sess.WorkspaceDir != "" {
+	if sess.LogLevel == LogLevelVerbose && sess.WorkspaceDir != "" {
 		transcriptsDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", req.SessionID, "transcripts")
 		if mkErr := os.MkdirAll(transcriptsDir, 0o700); mkErr != nil {
 			log.Printf("spawn %s: create transcripts dir failed (continuing without transcript): %v", req.Name, mkErr)
@@ -465,6 +469,13 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		cfg.Cmd = []string{"python3", "-m", "hermes_bridge"}
 		cfg.HTTPProxy = "http://proxy.internal:3128"
 		cfg.BelayerRoot = "/workspace/.belayer"
+		// The bridge runs inside the container where the host workspace is
+		// mounted at /workspace. Translate transcriptPath (built from the host
+		// path) so the bridge can actually open it; otherwise transcript capture
+		// silently fails for verbose clamshell runs.
+		if cfg.TranscriptPath != "" && sess.WorkspaceDir != "" {
+			cfg.TranscriptPath = translateHostPathToContainer(cfg.TranscriptPath, sess.WorkspaceDir)
+		}
 	}
 	// Universal fallback: when no BelayerRoot was configured (CLI flag, env, or
 	// clamshell override above), look for an extracted hermes_bridge under
@@ -831,5 +842,55 @@ func splitLines(s string) []string {
 		s = s[i+1:]
 	}
 	return lines
+}
+
+// translateHostPathToContainer rewrites a host path under hostWorkspace to
+// the clamshell container's /workspace mount. Paths not under hostWorkspace
+// (or non-absolute paths) are returned unchanged. Mirrors
+// sandbox.translateDir, which is unexported.
+func translateHostPathToContainer(hostPath, hostWorkspace string) string {
+	if hostPath == "" || hostWorkspace == "" {
+		return hostPath
+	}
+	if !filepath.IsAbs(hostPath) {
+		return hostPath
+	}
+	rel, err := filepath.Rel(hostWorkspace, hostPath)
+	if err != nil {
+		return hostPath
+	}
+	if rel == "." {
+		return "/workspace"
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return hostPath
+	}
+	return "/workspace/" + filepath.ToSlash(rel)
+}
+
+// validateAgentName rejects names that could escape a filesystem path.
+// Agent names are used as directory segments under .belayer/runs/<session>/
+// and as filenames for per-agent transcripts, so they must not contain path
+// separators, "..", NUL bytes, or leading dots.
+func validateAgentName(name string) error {
+	if name == "" {
+		return fmt.Errorf("agent name is empty")
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("agent name %q is reserved", name)
+	}
+	if strings.HasPrefix(name, ".") {
+		return fmt.Errorf("agent name %q must not start with '.'", name)
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("agent name %q must not contain path separators", name)
+	}
+	if strings.ContainsRune(name, 0) {
+		return fmt.Errorf("agent name contains NUL byte")
+	}
+	if strings.Contains(name, "..") {
+		return fmt.Errorf("agent name %q must not contain '..'", name)
+	}
+	return nil
 }
 

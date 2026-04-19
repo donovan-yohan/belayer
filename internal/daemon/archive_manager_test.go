@@ -381,8 +381,9 @@ func TestArchiveManager_VerboseIncludesTranscripts(t *testing.T) {
 }
 
 // TestArchiveManager_StandardOmitsTranscripts verifies that a standard-level
-// session produces an archive whose manifest omits session.log_level (the
-// default) and does NOT materialize a transcripts/ directory.
+// session produces an archive whose manifest records session.log_level
+// explicitly as "standard" (so readers can distinguish from older archives
+// that predate the column) and does NOT materialize a transcripts/ directory.
 func TestArchiveManager_StandardOmitsTranscripts(t *testing.T) {
 	ws := t.TempDir()
 	st := openTestStore(t)

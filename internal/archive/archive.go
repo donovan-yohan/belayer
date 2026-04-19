@@ -134,14 +134,24 @@ func Write(destDir string, meta Meta, events []Event, opts ...WriteOption) (Writ
 	// provided and exists. Errors are propagated so the caller knows the
 	// archive is incomplete.
 	if wcfg.transcriptSrc != "" {
-		if info, statErr := os.Stat(wcfg.transcriptSrc); statErr == nil && info.IsDir() {
+		info, statErr := os.Stat(wcfg.transcriptSrc)
+		switch {
+		case statErr == nil:
+			if !info.IsDir() {
+				cleanup()
+				return WriteResult{}, fmt.Errorf("archive: transcript source %s is not a directory", wcfg.transcriptSrc)
+			}
 			if err := copyTranscripts(wcfg.transcriptSrc, filepath.Join(staging, "transcripts")); err != nil {
 				cleanup()
 				return WriteResult{}, err
 			}
+		case os.IsNotExist(statErr):
+			// Standard-level sessions never create the transcripts directory;
+			// skip silently.
+		default:
+			cleanup()
+			return WriteResult{}, fmt.Errorf("archive: stat transcript source %s: %w", wcfg.transcriptSrc, statErr)
 		}
-		// If transcriptSrc does not exist, proceed silently — standard-level
-		// sessions never create the transcripts directory.
 	}
 
 	// If destDir already exists (re-archive), remove it first — rename over an

@@ -1,8 +1,6 @@
 """Tests for reasoning_callback and interim_assistant_callback in callbacks.py."""
 
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from hermes_bridge.callbacks import make_callbacks
 
