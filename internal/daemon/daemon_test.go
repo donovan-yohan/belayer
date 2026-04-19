@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -30,19 +32,24 @@ func testDaemon(t *testing.T) *Daemon {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	t.Cleanup(func() { st.Close() })
 
 	reg := &sandbox.Registry{}
 	reg.Register(sandbox.DefaultMode, &sandbox.Noop{})
 	d := &Daemon{
-		store:            st,
-		config:           Config{},
-		tools:            make(map[string][]agent.ToolSpec),
-		bridgeProcs:      make(map[string]*bridge.Process),
-		sessionSandboxes: make(map[string]sessionSandbox),
-		sandboxDrivers:   reg,
-		runtime:          &runtime.Noop{},
-		startCtx:         context.Background(),
+		store:                st,
+		config:               Config{},
+		daemonInstanceID:     "test-daemon-instance",
+		tools:                make(map[string][]agent.ToolSpec),
+		bridgeProcs:          make(map[string]*bridge.Process),
+		sessionSandboxes:     make(map[string]sessionSandbox),
+		sseSubscribers:       make(map[*sseSubscriber]struct{}),
+		sandboxDrivers:       reg,
+		runtime:              &runtime.Noop{},
+		startCtx:             context.Background(),
+		archiver:             newArchiveManager(st, "test-instance"),
+		archiveDrainTimeout:  30 * time.Second,
+		shutdownHTTPTimeout:  5 * time.Second,
+		sseKeepaliveInterval: 15 * time.Second,
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }
@@ -63,11 +70,22 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
 	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
 	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
+	mux.HandleFunc("GET /sessions/{id}/archive.ndjson", d.handleArchiveNDJSON)
+	mux.HandleFunc("GET /sessions/{id}/archive/manifest.json", d.handleArchiveManifest)
+	mux.HandleFunc("GET /sessions/{id}/archive.tar.gz", d.handleArchiveTarGz)
 	mux.HandleFunc("GET /search", d.handleSearch)
 	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
 	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
 	d.server = &http.Server{Handler: mux}
+	// Wait for in-flight archiver goroutines before closing the store so that
+	// async terminal-archive workers don't race store.Close / t.TempDir cleanup.
+	t.Cleanup(func() {
+		if d.archiver != nil {
+			d.archiver.inflight.Wait()
+		}
+		st.Close()
+	})
 	return d
 }
 
@@ -101,9 +119,9 @@ func TestHealth(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	resp := decodeJSON[map[string]string](t, rr)
+	resp := decodeJSON[map[string]any](t, rr)
 	if resp["status"] != "ok" {
-		t.Fatalf("expected status=ok, got %s", resp["status"])
+		t.Fatalf("expected status=ok, got %v", resp["status"])
 	}
 }
 
@@ -401,9 +419,23 @@ func TestStreamEventsSSE_EmitsMultiplexedEvents(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		buf := make([]byte, 2048)
-		n, _ := resp.Body.Read(buf)
-		resultCh <- string(buf[:n])
+		// Accumulate chunks until we see event: streamed or 2KiB is read.
+		// The first frame is daemon_hello; we read past it into the domain frame.
+		buf := make([]byte, 4096)
+		var accumulated []byte
+		for len(accumulated) < 4096 {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				accumulated = append(accumulated, buf[:n]...)
+				if strings.Contains(string(accumulated), "event: streamed") {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
+		resultCh <- string(accumulated)
 	}()
 
 	time.Sleep(150 * time.Millisecond)
@@ -411,7 +443,7 @@ func TestStreamEventsSSE_EmitsMultiplexedEvents(t *testing.T) {
 
 	select {
 	case payload := <-resultCh:
-		if !strings.Contains(payload, "event: session_event") {
+		if !strings.Contains(payload, "event: streamed") {
 			t.Fatalf("expected SSE event header, got %q", payload)
 		}
 		if !strings.Contains(payload, `"Type":"streamed"`) {
@@ -461,6 +493,25 @@ func TestShutdown(t *testing.T) {
 		// server.Shutdown may return an error if Serve was never called — that's fine.
 		_ = err
 	}
+	// Phase (a) contract: the draining flag must be set. Without this assertion,
+	// a future refactor that moves d.draining.Store(true) below server.Shutdown
+	// would silently pass CI and break the external SSE-consumer contract.
+	if !d.draining.Load() {
+		t.Fatal("Shutdown did not set draining flag")
+	}
+}
+
+func TestShutdownIsIdempotent(t *testing.T) {
+	d := testDaemon(t)
+	if err := d.Shutdown(context.Background()); err != nil {
+		_ = err
+	}
+	// Second Shutdown must be a no-op: no panic on double store.Close, no
+	// duplicate server.Shutdown error propagation. Phase (a) guards via
+	// d.draining.Swap — second call returns nil early.
+	if err := d.Shutdown(context.Background()); err != nil {
+		t.Fatalf("second Shutdown returned error: %v", err)
+	}
 }
 
 func TestSearchEvents(t *testing.T) {
@@ -493,12 +544,15 @@ func TestSearchEvents(t *testing.T) {
 	}
 }
 
+// TestSearchEventsMissingQuery: per the v1 contract, GET /search with no params
+// is a valid query that returns the most-recent 1000 events in DESC order.
+// It is NOT an error.
 func TestSearchEventsMissingQuery(t *testing.T) {
 	d := testDaemon(t)
 
 	rr := doRequest(t, d, "GET", "/search", nil)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 (no-params is valid in v1 contract), got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -878,6 +932,787 @@ func TestStartCapturesRuntimeEndpoints(t *testing.T) {
 	case <-fake.downDone:
 	case <-time.After(2 * time.Second):
 		t.Error("runtime.Down was not called during shutdown")
+	}
+}
+
+// --- GET /search tests ---
+
+func TestSearch_NoParamsReturnsMostRecent(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create a session and insert 10 events.
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "search-test"})
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+
+	for i := 0; i < 10; i++ {
+		doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", map[string]string{
+			"type": "ev",
+			"data": `{}`,
+		})
+	}
+
+	// GET /search with no params — should return events in id DESC order.
+	rr := doRequest(t, d, "GET", "/search", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	events := decodeJSON[[]store.SessionEvent](t, rr)
+	// Session creation itself logs a session_created event, so total >= 10.
+	if len(events) < 10 {
+		t.Fatalf("expected at least 10 events, got %d", len(events))
+	}
+	// Verify DESC order.
+	for i := 1; i < len(events); i++ {
+		if events[i].ID > events[i-1].ID {
+			t.Errorf("events not in DESC order at index %d: id=%d > prev id=%d", i, events[i].ID, events[i-1].ID)
+		}
+	}
+}
+
+func TestSearch_MalformedFTS5Returns400(t *testing.T) {
+	d := testDaemon(t)
+
+	// Unbalanced quote in q should trigger FTS5 parse error -> 400.
+	rr := doRequest(t, d, "GET", `/search?q=%22unbalanced`, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed FTS5, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON[map[string]string](t, rr)
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message")
+	}
+	// Must not leak SQL internals.
+	if strings.Contains(resp["error"], "SQL logic error") {
+		t.Errorf("error leaks SQL driver internals: %q", resp["error"])
+	}
+}
+
+func TestSearch_QueryTooLongReturns400(t *testing.T) {
+	d := testDaemon(t)
+
+	longQ := strings.Repeat("a", 4097)
+	rr := doRequest(t, d, "GET", "/search?q="+longQ, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for q too long, got %d", rr.Code)
+	}
+	resp := decodeJSON[map[string]string](t, rr)
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+func TestSearch_AllPredicatesCombined(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create two sessions.
+	createA := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sess-a"})
+	sessA := decodeJSON[sessionAPIResponse](t, createA)
+	createB := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sess-b"})
+	sessB := decodeJSON[sessionAPIResponse](t, createB)
+
+	// Insert events across sessions with various types, agents, and data.
+	doRequest(t, d, "POST", "/sessions/"+sessA.ID+"/events", map[string]string{"type": "bridge:start", "data": `{"agent":"sup","msg":"hello"}`})
+	doRequest(t, d, "POST", "/sessions/"+sessA.ID+"/events", map[string]string{"type": "bridge:end", "data": `{"agent":"impl","msg":"hello"}`})
+	doRequest(t, d, "POST", "/sessions/"+sessB.ID+"/events", map[string]string{"type": "bridge:start", "data": `{"agent":"sup","msg":"hello"}`})
+
+	// Fetch all events to get real IDs.
+	allRR := doRequest(t, d, "GET", "/search", nil)
+	all := decodeJSON[[]store.SessionEvent](t, allRR)
+	if len(all) < 3 {
+		t.Fatalf("need at least 3 events inserted, got %d", len(all))
+	}
+
+	// Find the lowest and highest IDs.
+	minID := all[len(all)-1].ID // DESC order, so last is smallest
+	maxID := all[0].ID          // first is largest
+
+	// Query: q=hello, session=sessA, type_prefix=bridge:, agent=sup, after=minID-1, before=maxID+1
+	path := fmt.Sprintf("/search?q=hello&session=%s&type_prefix=bridge:&agent=sup&after=%d&before=%d",
+		sessA.ID, minID-1, maxID+1)
+	rr := doRequest(t, d, "GET", path, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	results := decodeJSON[[]store.SessionEvent](t, rr)
+	// Only the bridge:start event in sessA with agent=sup should match.
+	if len(results) != 1 {
+		t.Fatalf("expected 1 intersecting event, got %d: %+v", len(results), results)
+	}
+	if results[0].SessionID != sessA.ID {
+		t.Errorf("expected sessA event, got session %q", results[0].SessionID)
+	}
+}
+
+func TestSearch_NegativeAfterReturns400(t *testing.T) {
+	d := testDaemon(t)
+
+	rr := doRequest(t, d, "GET", "/search?after=-1", nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for negative after, got %d", rr.Code)
+	}
+	resp := decodeJSON[map[string]string](t, rr)
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+// TestSearch_TimeoutReturns504: end-to-end 504 test requires injectable timeout
+// or a slow store and would add invasive changes. The context-cancellation
+// behaviour is validated at the store layer in TestSearchEventsV1_ContextCancelled.
+// TODO: add a store wrapper that sleeps on SearchEventsV1 to test 504 end-to-end.
+
+// --- SSE helper ---
+
+// sseFrame holds the parsed fields of a single SSE frame.
+type sseFrame struct {
+	id    string // may be empty for control frames
+	event string
+	data  string
+	lines []string // raw lines for assertions
+}
+
+// readSSEFrames reads SSE frames from an HTTP response body. It stops after
+// reading up to maxFrames frames or when the context is done. Each frame
+// is terminated by a blank line. Lines within a frame may be "id:", "event:",
+// "data:", or ": comment".
+//
+// The function returns immediately once it has accumulated the requested number
+// of frames. If reading hangs the test will be killed by its own deadline.
+func readSSEFrames(t *testing.T, body interface {
+	Read([]byte) (int, error)
+	Close() error
+}, maxFrames int, timeout time.Duration) []sseFrame {
+	t.Helper()
+	scanner := bufio.NewScanner(body)
+	// Large buffer so future tests with big data: payloads don't silently truncate.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-time.After(timeout):
+			body.Close() // unblock the scanner
+		case <-done:
+		}
+	}()
+	defer close(done)
+
+	var frames []sseFrame
+	var current sseFrame
+	for scanner.Scan() {
+		line := scanner.Text()
+		current.lines = append(current.lines, line)
+		if line == "" {
+			// End of frame.
+			if current.event != "" || current.data != "" {
+				frames = append(frames, current)
+				if len(frames) >= maxFrames {
+					return frames
+				}
+			}
+			current = sseFrame{}
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "id: "):
+			current.id = strings.TrimPrefix(line, "id: ")
+		case strings.HasPrefix(line, "event: "):
+			current.event = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			current.data = strings.TrimPrefix(line, "data: ")
+		}
+	}
+	return frames
+}
+
+// --- Phase 5 tests ---
+
+func TestHealth_OkWhenNotDraining(t *testing.T) {
+	d := testDaemon(t)
+	rr := doRequest(t, d, "GET", "/health", nil)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp healthResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("status: got %q, want %q", resp.Status, "ok")
+	}
+	if resp.SchemaVersion != "belayer-log/v1" {
+		t.Errorf("schema_version: got %q, want %q", resp.SchemaVersion, "belayer-log/v1")
+	}
+	if resp.DaemonInstanceID == "" {
+		t.Error("daemon_instance_id must be non-empty")
+	}
+	if resp.Draining {
+		t.Error("draining: expected false")
+	}
+	// Capabilities must be present — check via raw map for flexibility.
+	raw := decodeJSON[map[string]any](t, doRequest(t, d, "GET", "/health", nil))
+	caps, ok := raw["capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("capabilities not a map: %T", raw["capabilities"])
+	}
+	preds, ok := caps["search_predicates"].([]any)
+	if !ok || len(preds) == 0 {
+		t.Errorf("search_predicates missing or empty")
+	}
+	if caps["archive_http"] != true {
+		t.Errorf("archive_http: expected true, got %v", caps["archive_http"])
+	}
+	frames, ok := caps["sse_control_frames"].([]any)
+	if !ok || len(frames) == 0 {
+		t.Errorf("sse_control_frames missing or empty")
+	}
+}
+
+func TestHealth_503WhenDraining(t *testing.T) {
+	d := testDaemon(t)
+	d.draining.Store(true)
+
+	rr := doRequest(t, d, "GET", "/health", nil)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+	var resp healthResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "draining" {
+		t.Errorf("status: got %q, want %q", resp.Status, "draining")
+	}
+	if !resp.Draining {
+		t.Error("draining: expected true")
+	}
+}
+
+func TestHealth_DaemonInstanceIDStableAcrossPolls(t *testing.T) {
+	d := testDaemon(t)
+
+	resp1 := decodeJSON[map[string]any](t, doRequest(t, d, "GET", "/health", nil))
+	resp2 := decodeJSON[map[string]any](t, doRequest(t, d, "GET", "/health", nil))
+
+	id1, _ := resp1["daemon_instance_id"].(string)
+	id2, _ := resp2["daemon_instance_id"].(string)
+	if id1 == "" {
+		t.Fatal("first poll: daemon_instance_id is empty")
+	}
+	if id1 != id2 {
+		t.Errorf("daemon_instance_id changed between polls: %q vs %q", id1, id2)
+	}
+}
+
+func TestSSE_DaemonHelloFirstWithCorrectShape(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-hello"}))
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	frames := readSSEFrames(t, resp.Body, 1, 2*time.Second)
+	if len(frames) == 0 {
+		t.Fatal("no SSE frames received")
+	}
+	hello := frames[0]
+	if hello.event != "daemon_hello" {
+		t.Errorf("first frame event: got %q, want daemon_hello", hello.event)
+	}
+	// Control frames must NOT have an id: line.
+	if hello.id != "" {
+		t.Errorf("daemon_hello must not have an id: line, got %q", hello.id)
+	}
+	// Parse payload.
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(hello.data), &payload); err != nil {
+		t.Fatalf("parse daemon_hello data: %v", err)
+	}
+	if payload["schema_version"] != "belayer-log/v1" {
+		t.Errorf("schema_version: %v", payload["schema_version"])
+	}
+	if payload["daemon_instance_id"] != d.daemonInstanceID {
+		t.Errorf("daemon_instance_id: got %v, want %v", payload["daemon_instance_id"], d.daemonInstanceID)
+	}
+	if _, ok := payload["last_id"].(float64); !ok {
+		t.Errorf("last_id must be numeric, got %T", payload["last_id"])
+	}
+}
+
+func TestSSE_DomainFramesCarryIDLine(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-id-line"}))
+
+	// Write a domain event.
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "custom_ev"})
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=0", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read 2 frames: daemon_hello + at least one domain event.
+	frames := readSSEFrames(t, resp.Body, 2, 2*time.Second)
+	if len(frames) < 2 {
+		t.Fatalf("expected at least 2 frames, got %d", len(frames))
+	}
+	if frames[0].event != "daemon_hello" {
+		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
+	}
+	// Find the domain frame. Domain frames are any event that is not a
+	// control frame (daemon_hello, daemon_draining).
+	var domainFrame *sseFrame
+	for i := range frames[1:] {
+		f := &frames[i+1]
+		if !isSSEControlFrame(f.event) {
+			domainFrame = f
+			break
+		}
+	}
+	if domainFrame == nil {
+		t.Fatalf("no domain frame found in %d frames; events: %+v", len(frames), frames)
+	}
+	if domainFrame.id == "" {
+		t.Error("domain frame must carry an id: line")
+	}
+}
+
+func TestSSE_LastEventIDHeaderHonored(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-lei"}))
+
+	// Log 3 events to get predictable IDs.
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev_a"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev_b"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev_c"})
+
+	// Fetch events to get the real ID of ev_b.
+	events := decodeJSON[[]store.SessionEvent](t, doRequest(t, d, "GET", "/sessions/"+sess.ID+"/events", nil))
+	// find ev_b
+	var evBID int64
+	for _, e := range events {
+		if e.Type == "ev_b" {
+			evBID = e.ID
+			break
+		}
+	}
+	if evBID == 0 {
+		t.Fatal("ev_b not found in events")
+	}
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s", server.URL, sess.ID), nil)
+	req.Header.Set("Last-Event-ID", fmt.Sprint(evBID))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read daemon_hello + ev_c.
+	frames := readSSEFrames(t, resp.Body, 2, 2*time.Second)
+	if len(frames) < 2 {
+		t.Fatalf("expected 2 frames (hello + ev_c), got %d", len(frames))
+	}
+	if frames[0].event != "daemon_hello" {
+		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
+	}
+	// Second frame must be a domain frame (event type matches logged type).
+	if frames[1].event != "ev_c" {
+		t.Fatalf("second frame must be ev_c, got %q", frames[1].event)
+	}
+	// Verify only ev_c is in the data.
+	if !strings.Contains(frames[1].data, "ev_c") {
+		t.Errorf("expected ev_c in domain frame data, got %q", frames[1].data)
+	}
+	if strings.Contains(frames[1].data, "ev_a") || strings.Contains(frames[1].data, "ev_b") {
+		t.Errorf("ev_a/ev_b should not appear after Last-Event-ID=evBID, got %q", frames[1].data)
+	}
+}
+
+func TestSSE_LastEventIDMalformedIs400(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-lei-bad"}))
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s", server.URL, sess.ID), nil)
+	req.Header.Set("Last-Event-ID", "abc")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 for malformed Last-Event-ID, got %d", resp.StatusCode)
+	}
+}
+
+func TestSSE_DaemonDrainingEmittedOnShutdown(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-draining"}))
+
+	// Snapshot the current max ID so we can pass ?after= and get stream-from-now
+	// behaviour (no backlog). This is the correct consumer pattern per LOG_FORMAT.md §4.
+	afterID, err := d.store.MaxEventID()
+	if err != nil {
+		t.Fatalf("MaxEventID: %v", err)
+	}
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=%d", server.URL, sess.ID, afterID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+
+	// readFrame reads lines until a blank line terminates a frame.
+	readFrame := func(timeout time.Duration) (sseFrame, bool) {
+		frameCh := make(chan sseFrame, 1)
+		go func() {
+			var f sseFrame
+			for scanner.Scan() {
+				line := scanner.Text()
+				if line == "" {
+					if f.event != "" || f.data != "" {
+						frameCh <- f
+						return
+					}
+					f = sseFrame{}
+					continue
+				}
+				switch {
+				case strings.HasPrefix(line, "id: "):
+					f.id = strings.TrimPrefix(line, "id: ")
+				case strings.HasPrefix(line, "event: "):
+					f.event = strings.TrimPrefix(line, "event: ")
+				case strings.HasPrefix(line, "data: "):
+					f.data = strings.TrimPrefix(line, "data: ")
+				}
+			}
+		}()
+		select {
+		case f := <-frameCh:
+			return f, true
+		case <-time.After(timeout):
+			return sseFrame{}, false
+		}
+	}
+
+	// First frame must be daemon_hello.
+	hello, ok := readFrame(2 * time.Second)
+	if !ok {
+		t.Fatal("timed out waiting for daemon_hello frame")
+	}
+	if hello.event != "daemon_hello" {
+		t.Fatalf("first frame must be daemon_hello, got %q", hello.event)
+	}
+
+	// Trigger Shutdown now that we know the connection is live.
+	go func() {
+		_ = d.Shutdown(context.Background())
+	}()
+
+	// Second frame must be daemon_draining.
+	draining, ok := readFrame(3 * time.Second)
+	if !ok {
+		t.Fatal("timed out waiting for daemon_draining frame")
+	}
+	if draining.event != "daemon_draining" {
+		t.Errorf("expected daemon_draining, got %q", draining.event)
+	}
+	if draining.id != "" {
+		t.Errorf("daemon_draining must not have id: line, got %q", draining.id)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(draining.data), &payload); err != nil {
+		t.Fatalf("parse daemon_draining data: %v", err)
+	}
+	if payload["reason"] != "shutdown" {
+		t.Errorf("reason: got %v, want shutdown", payload["reason"])
+	}
+	if _, ok := payload["timeout_ms"].(float64); !ok {
+		t.Errorf("timeout_ms must be numeric, got %T", payload["timeout_ms"])
+	}
+	if payload["timeout_ms"].(float64) <= 0 {
+		t.Errorf("timeout_ms must be > 0, got %v", payload["timeout_ms"])
+	}
+}
+
+func TestSSE_DaemonHelloLastIDReflectsMaxStoreID(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-lastid"}))
+
+	// Write exactly 3 domain events (session_created is already there from CreateSession).
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev1"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev2"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev3"})
+
+	// Get the actual max ID from the store.
+	maxID, err := d.store.MaxEventID()
+	if err != nil {
+		t.Fatalf("MaxEventID: %v", err)
+	}
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	frames := readSSEFrames(t, resp.Body, 1, 2*time.Second)
+	if len(frames) == 0 {
+		t.Fatal("no frames received")
+	}
+	if frames[0].event != "daemon_hello" {
+		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(frames[0].data), &payload); err != nil {
+		t.Fatalf("parse daemon_hello data: %v", err)
+	}
+	gotLastID, ok := payload["last_id"].(float64)
+	if !ok {
+		t.Fatalf("last_id not numeric: %T", payload["last_id"])
+	}
+	if int64(gotLastID) != maxID {
+		t.Errorf("daemon_hello.last_id = %v, want %d", gotLastID, maxID)
+	}
+}
+
+// isSSEControlFrame returns true for SSE control frames (daemon_hello,
+// daemon_draining). Any other event type is a domain frame.
+// The set is intentionally small: spec §4 lists exactly two control frames.
+func isSSEControlFrame(eventType string) bool {
+	return eventType == "daemon_hello" || eventType == "daemon_draining"
+}
+
+// TestSSE_ControlFramesNeverCarryIDLine is a regression guard for spec §4 A3:
+// daemon_hello and daemon_draining are control frames and must never carry an
+// id: line, while domain frames must carry exactly one id: line that parses as
+// a positive integer. The assertion is on raw frame text so a future refactor
+// that accidentally routes control frames through the domain id-stamping path
+// will be caught immediately.
+//
+// With the B2 fix, domain frames emit event: <actual type>, not "session_event".
+func TestSSE_ControlFramesNeverCarryIDLine(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-ctrl-id"}))
+
+	// Log a domain event BEFORE connecting so the stream has a domain frame
+	// between daemon_hello and daemon_draining.
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "before_drain"})
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=0", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Trigger shutdown after a brief pause so the stream already has at least
+	// one domain frame before daemon_draining arrives.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = d.Shutdown(context.Background())
+	}()
+
+	// Collect daemon_hello + session_created + before_drain + daemon_draining = 4 frames.
+	// With afterID=0, both the session_created (from CreateSession) and before_drain
+	// events are included in the backlog, so we need 4 frames total.
+	frames := readSSEFrames(t, resp.Body, 4, 4*time.Second)
+	if len(frames) < 3 {
+		t.Fatalf("expected at least 3 frames (hello + domain + draining), got %d: %+v", len(frames), frames)
+	}
+
+	for _, f := range frames {
+		rawText := strings.Join(f.lines, "\n")
+		if isSSEControlFrame(f.event) {
+			// Control frames: must NOT contain an id: line.
+			if strings.Contains(rawText, "\nid:") || strings.HasPrefix(rawText, "id:") {
+				t.Errorf("control frame %q contains id: line; raw:\n%s", f.event, rawText)
+			}
+		} else {
+			// Domain frames: must contain EXACTLY ONE id: line that is a positive integer.
+			// Event type matches the logged event type (e.g. "session_created", "before_drain").
+			idCount := 0
+			var parsedID int64
+			for _, line := range f.lines {
+				if strings.HasPrefix(line, "id: ") {
+					idCount++
+					val := strings.TrimPrefix(line, "id: ")
+					v, err := strconv.ParseInt(val, 10, 64)
+					if err != nil || v <= 0 {
+						t.Errorf("domain frame %q id: line %q is not a positive integer: %v", f.event, line, err)
+					}
+					parsedID = v
+				}
+			}
+			if idCount != 1 {
+				t.Errorf("domain frame %q must have exactly 1 id: line, got %d; raw:\n%s", f.event, idCount, rawText)
+			}
+			// Cross-check: the id: value must match the event's JSON ID field.
+			if parsedID > 0 {
+				var evtPayload store.SessionEvent
+				if err := json.Unmarshal([]byte(f.data), &evtPayload); err == nil {
+					if evtPayload.ID != parsedID {
+						t.Errorf("domain frame %q id: line %d does not match JSON ID %d", f.event, parsedID, evtPayload.ID)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestSSE_LastEventIDWinsOverAfterParam verifies spec precedence: when both
+// Last-Event-ID header and ?after= query param are set, the header wins.
+// Concretely: if e1 < e2 < e3, connecting with Last-Event-ID: e1 and
+// ?after=e2 must yield e2 and e3 (header takes precedence, not query).
+func TestSSE_LastEventIDWinsOverAfterParam(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "sse-lei-wins"}))
+
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev1"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev2"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "ev3"})
+
+	events := decodeJSON[[]store.SessionEvent](t, doRequest(t, d, "GET", "/sessions/"+sess.ID+"/events", nil))
+	ids := map[string]int64{}
+	for _, e := range events {
+		ids[e.Type] = e.ID
+	}
+	for _, need := range []string{"ev1", "ev2", "ev3"} {
+		if ids[need] == 0 {
+			t.Fatalf("event %q not found in store", need)
+		}
+	}
+	e1ID := ids["ev1"]
+	e2ID := ids["ev2"]
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Last-Event-ID: e1 → should stream e2 and e3.
+	// ?after=e2 → would stream only e3 if it won.
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=%d", server.URL, sess.ID, e2ID), nil)
+	req.Header.Set("Last-Event-ID", fmt.Sprint(e1ID))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// daemon_hello + ev2 + ev3 = 3 frames (header wins → both e2 and e3 streamed).
+	frames := readSSEFrames(t, resp.Body, 3, 2*time.Second)
+	if len(frames) < 3 {
+		t.Fatalf("expected 3 frames (hello + ev2 + ev3), got %d; header wins means both e2 and e3 must appear", len(frames))
+	}
+	if frames[0].event != "daemon_hello" {
+		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
+	}
+	// Check both ev2 and ev3 appear. Domain frames carry the actual event type.
+	var types []string
+	for _, f := range frames[1:] {
+		if !isSSEControlFrame(f.event) {
+			types = append(types, f.data)
+		}
+	}
+	hasEv2 := false
+	hasEv3 := false
+	for _, data := range types {
+		if strings.Contains(data, "ev2") {
+			hasEv2 = true
+		}
+		if strings.Contains(data, "ev3") {
+			hasEv3 = true
+		}
+	}
+	if !hasEv2 {
+		t.Error("ev2 not found in stream (Last-Event-ID header should have won over ?after=e2)")
+	}
+	if !hasEv3 {
+		t.Error("ev3 not found in stream")
+	}
+}
+
+func TestArchive_ManifestCarriesDaemonInstanceID(t *testing.T) {
+	ws := t.TempDir()
+	st := openTestStore(t)
+
+	const testInstanceID = "test-instance"
+	m := newArchiveManager(st, testInstanceID)
+
+	sessID := createStoreSession(t, st, "archive-epoch", "complete", ws)
+	logTestEvent(t, st, sessID, "session_created")
+
+	m.ArchiveTerminal(sessID)
+	m.inflight.Wait()
+
+	manifest := waitForManifest(t, ws, sessID, 2*time.Second)
+	gotID, _ := manifest["daemon_instance_id"].(string)
+	if gotID != testInstanceID {
+		t.Errorf("manifest daemon_instance_id = %q, want %q", gotID, testInstanceID)
 	}
 }
 

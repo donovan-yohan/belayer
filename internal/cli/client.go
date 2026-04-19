@@ -68,17 +68,28 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	return c.http.Do(req)
 }
 
-// Health checks daemon health.
-func (c *Client) Health() error {
+// healthResponse is the JSON shape returned by GET /health.
+type healthResponse struct {
+	Status           string `json:"status"`
+	DaemonInstanceID string `json:"daemon_instance_id"`
+}
+
+// Health checks daemon health and returns the parsed response.
+// Returns an error if the daemon is unreachable or returns a non-200 status.
+func (c *Client) Health() (*healthResponse, error) {
 	resp, err := c.do("GET", "/health", nil)
 	if err != nil {
-		return fmt.Errorf("daemon not reachable at %s: %w", c.socketPath, err)
+		return nil, fmt.Errorf("daemon not reachable at %s: %w", c.socketPath, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("daemon unhealthy: status %d", resp.StatusCode)
+		return nil, fmt.Errorf("daemon unhealthy: status %d", resp.StatusCode)
 	}
-	return nil
+	var h healthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil {
+		return nil, fmt.Errorf("decode health response: %w", err)
+	}
+	return &h, nil
 }
 
 type sessionResponse struct {
@@ -88,6 +99,7 @@ type sessionResponse struct {
 	Template     string            `json:"Template"`
 	Repos        map[string]string `json:"Repos"`
 	WorkspaceDir string            `json:"WorkspaceDir"`
+	LogLevel     string            `json:"LogLevel"`
 	CreatedAt    time.Time         `json:"CreatedAt"`
 	UpdatedAt    time.Time         `json:"UpdatedAt"`
 }
@@ -100,14 +112,19 @@ type eventResponse struct {
 	Data      string    `json:"Data"`
 }
 
-// CreateSession creates a new session via the daemon.
-func (c *Client) CreateSession(name, template string, repos map[string]string, workspaceDir string) (sessionResponse, error) {
-	resp, err := c.do("POST", "/sessions", map[string]any{
+// CreateSession creates a new session via the daemon. logLevel is optional;
+// pass an empty string to let the daemon apply its configured default.
+func (c *Client) CreateSession(name, template string, repos map[string]string, workspaceDir, logLevel string) (sessionResponse, error) {
+	body := map[string]any{
 		"name":          name,
 		"template":      template,
 		"repos":         repos,
 		"workspace_dir": workspaceDir,
-	})
+	}
+	if logLevel != "" {
+		body["log_level"] = logLevel
+	}
+	resp, err := c.do("POST", "/sessions", body)
 	if err != nil {
 		return sessionResponse{}, err
 	}
@@ -284,7 +301,9 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 			continue
 		}
 		if line == "" && payload.Len() > 0 {
-			if eventType == "error" {
+			switch eventType {
+			case "error", "daemon_hello", "daemon_draining":
+				// Control frames and error frames are not session events; drop.
 				payload.Reset()
 				eventType = ""
 				continue

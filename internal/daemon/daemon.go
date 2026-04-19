@@ -1,11 +1,14 @@
 package daemon
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -14,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -23,6 +27,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/runtime"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
+	"github.com/google/uuid"
 )
 
 // Config holds daemon startup configuration.
@@ -62,6 +67,16 @@ type Config struct {
 	BridgeAPIKey  string
 	BridgeBaseURL string
 	BridgeProvider string
+
+	// DefaultLogLevel is the default log_level for new sessions when POST
+	// /sessions does not specify one. Empty = 'standard'.
+	DefaultLogLevel string
+
+	// SSEKeepaliveInterval is how often the SSE handler emits a ": keep-alive"
+	// comment to prevent idle-connection timeouts. Defaults to 15s in New().
+	// Tests can set a small value (e.g., 50ms) to verify keepalive behaviour
+	// without sleeping for 15 seconds.
+	SSEKeepaliveInterval time.Duration
 }
 
 // DefaultConfig returns config using ~/.belayer/ paths.
@@ -75,6 +90,12 @@ func DefaultConfig() Config {
 	}
 }
 
+// sseSubscriber represents a live SSE connection that should receive
+// daemon_draining when Shutdown begins.
+type sseSubscriber struct {
+	drain chan struct{} // closed once by announceDraining; handler returns on receive
+}
+
 // Daemon is the long-running belayer supervisor process.
 type Daemon struct {
 	store    *store.Store
@@ -82,6 +103,11 @@ type Daemon struct {
 	server   *http.Server
 	config   Config
 	broker   broker.Broker
+
+	// daemonInstanceID is a UUID assigned at daemon startup that is stable for
+	// the process lifetime. It is included in /health, SSE daemon_hello frames,
+	// and archive manifests so consumers can correlate streams with archives.
+	daemonInstanceID string
 
 	sandboxDrivers *sandbox.Registry
 	runtime        runtime.Provider
@@ -123,10 +149,29 @@ type Daemon struct {
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
 	tools   map[string][]agent.ToolSpec
+
+	// Lifecycle / shutdown fields.
+	draining               atomic.Bool   // set at start of Shutdown; readable by /health and SSE handlers
+	archiver               *archiveManager
+	archiveDrainTimeout    time.Duration // max time Phase 3 archive drain may run
+	shutdownHTTPTimeout    time.Duration // max time HTTP servers get to drain in-flight requests
+	sseKeepaliveInterval   time.Duration // interval for SSE ": keep-alive" comments (default 15s)
+
+	// SSE subscriber registry. Populated by handleStreamEvents; drained by
+	// announceDraining on Shutdown. Protected by sseMu.
+	sseMu          sync.Mutex
+	sseSubscribers map[*sseSubscriber]struct{}
 }
 
 // New creates a Daemon with the given config. Call Start to begin serving.
 func New(cfg Config) (*Daemon, error) {
+	// Fail fast on a misconfigured default log level so operators see the error
+	// at boot, not the first POST /sessions call hours later.
+	if cfg.DefaultLogLevel != "" {
+		if _, err := ValidateLogLevel(cfg.DefaultLogLevel); err != nil {
+			return nil, fmt.Errorf("daemon: DefaultLogLevel: %w", err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700); err != nil {
 		return nil, fmt.Errorf("daemon: create db dir: %w", err)
 	}
@@ -136,14 +181,25 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: open store: %w", err)
 	}
 
-	d := &Daemon{
-		store:            st,
-		config:           cfg,
-		tools:            make(map[string][]agent.ToolSpec),
-		bridgeProcs:      make(map[string]*bridge.Process),
-		sessionSandboxes: make(map[string]sessionSandbox),
-		startCtx:         context.Background(),
+	keepaliveInterval := cfg.SSEKeepaliveInterval
+	if keepaliveInterval <= 0 {
+		keepaliveInterval = 15 * time.Second
 	}
+
+	d := &Daemon{
+		store:                st,
+		config:               cfg,
+		daemonInstanceID:     uuid.NewString(),
+		tools:                make(map[string][]agent.ToolSpec),
+		bridgeProcs:          make(map[string]*bridge.Process),
+		sessionSandboxes:     make(map[string]sessionSandbox),
+		sseSubscribers:       make(map[*sseSubscriber]struct{}),
+		startCtx:             context.Background(),
+		archiveDrainTimeout:  30 * time.Second,
+		shutdownHTTPTimeout:  5 * time.Second,
+		sseKeepaliveInterval: keepaliveInterval,
+	}
+	d.archiver = newArchiveManager(st, d.daemonInstanceID)
 	if cfg.SandboxDrivers != nil {
 		d.sandboxDrivers = cfg.SandboxDrivers
 	} else {
@@ -178,6 +234,9 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
 	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
 	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
+	mux.HandleFunc("GET /sessions/{id}/archive.ndjson", d.handleArchiveNDJSON)
+	mux.HandleFunc("GET /sessions/{id}/archive/manifest.json", d.handleArchiveManifest)
+	mux.HandleFunc("GET /sessions/{id}/archive.tar.gz", d.handleArchiveTarGz)
 	mux.HandleFunc("GET /search", d.handleSearch)
 	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
@@ -186,6 +245,9 @@ func New(cfg Config) (*Daemon, error) {
 	d.server = &http.Server{Handler: mux}
 	return d, nil
 }
+
+// DaemonInstanceID returns the stable UUID assigned at daemon creation.
+func (d *Daemon) DaemonInstanceID() string { return d.daemonInstanceID }
 
 // Start begins listening on the Unix socket. Blocks until the server is stopped.
 func (d *Daemon) Start(ctx context.Context) error {
@@ -314,10 +376,79 @@ func (d *Daemon) Start(ctx context.Context) error {
 func (d *Daemon) TCPPort() int { return d.tcpPort }
 
 // Shutdown gracefully drains in-flight requests and closes everything.
+//
+// The phase ordering is a contract, not a convenience: external SSE consumers
+// must see the draining signal (Phase b) and archive workers must finish
+// flushing (Phase c) BEFORE HTTP sockets close (Phase d). Reordering breaks
+// cragd's ability to distinguish a graceful drain from a daemon crash. Each
+// phase is its own method so the Shutdown body reads as a strict sequence.
 func (d *Daemon) Shutdown(ctx context.Context) error {
-	shutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Phase (a): mark daemon as draining. Swap guards against double-Shutdown
+	// (signal handler + parent cleanup both calling in) — second call is a no-op.
+	if d.draining.Swap(true) {
+		return nil
+	}
+
+	d.announceDraining(ctx) // Phase (b) — Phase 5 wires daemon_draining SSE emission.
+	d.drainArchive(ctx)     // Phase (c) — Phase 3 wires archiveManager.drainAll.
+
+	shutCtx, cancel := context.WithTimeout(ctx, d.shutdownHTTPTimeout)
 	defer cancel()
 
+	err := d.shutdownHTTP(shutCtx) // Phase (d)
+	d.teardownSandboxes(shutCtx)   // Phase (e)
+	d.downRuntime(shutCtx)         // Phase (f)
+	d.closeAndCleanup()            // Phase (g)
+	return err
+}
+
+// announceDraining is Phase (b) of Shutdown. It closes every live SSE
+// subscriber's drain channel, giving them time to write+flush the
+// daemon_draining frame before HTTP shutdown closes the connections.
+func (d *Daemon) announceDraining(ctx context.Context) {
+	d.sseMu.Lock()
+	subs := make([]*sseSubscriber, 0, len(d.sseSubscribers))
+	for sub := range d.sseSubscribers {
+		subs = append(subs, sub)
+	}
+	d.sseMu.Unlock()
+
+	for _, sub := range subs {
+		close(sub.drain)
+	}
+
+	n := len(subs)
+	log.Printf("daemon: announced draining to %d SSE subscriber(s)", n)
+
+	if n == 0 {
+		return
+	}
+
+	// Give subscribers time to write + flush the daemon_draining frame before
+	// HTTP shutdown closes connections. Cap at 200ms or the context deadline.
+	grace := 200 * time.Millisecond
+	select {
+	case <-time.After(grace):
+	case <-ctx.Done():
+	}
+}
+
+// drainArchive runs the Phase (c) archive drain. It uses its own
+// context.WithTimeout so the 30s archive budget is independent of the 5s HTTP
+// shutdown timeout set in shutCtx. Reusing shutCtx here would cap the archive
+// drain at 5s, violating the phase-budget contract.
+func (d *Daemon) drainArchive(ctx context.Context) {
+	if d.archiver == nil {
+		return
+	}
+	archiveCtx, cancel := context.WithTimeout(ctx, d.archiveDrainTimeout)
+	defer cancel()
+	d.archiver.DrainAll(archiveCtx)
+}
+
+// shutdownHTTP closes the three HTTP servers (Unix socket, optional TCP,
+// optional workspace Unix socket) under the given timeout-bounded context.
+func (d *Daemon) shutdownHTTP(shutCtx context.Context) error {
 	err := d.server.Shutdown(shutCtx)
 	if d.tcpListener != nil {
 		_ = d.tcpListener.Shutdown(shutCtx)
@@ -325,8 +456,12 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 	if d.workspaceSockListener != nil {
 		_ = d.workspaceSockListener.Shutdown(shutCtx)
 	}
+	return err
+}
 
-	// Tear down any outstanding sandbox handles.
+// teardownSandboxes stops every outstanding sandbox handle and clears the
+// per-session sandbox map. Safe to call on a daemon that never spawned any.
+func (d *Daemon) teardownSandboxes(shutCtx context.Context) {
 	d.sandboxMu.Lock()
 	sessions := d.sessionSandboxes
 	d.sessionSandboxes = make(map[string]sessionSandbox)
@@ -336,17 +471,24 @@ func (d *Daemon) Shutdown(ctx context.Context) error {
 			log.Printf("daemon: sandbox stop %s: %v", sessID, stopErr)
 		}
 	}
+}
 
+// downRuntime brings the runtime provider down. Errors are logged, not
+// returned, because they do not block daemon exit.
+func (d *Daemon) downRuntime(shutCtx context.Context) {
 	if downErr := d.runtime.Down(shutCtx); downErr != nil {
 		log.Printf("daemon: runtime down: %v", downErr)
 	}
+}
 
+// closeAndCleanup closes the store and removes any socket files the daemon
+// created. Final phase — nothing runs after this.
+func (d *Daemon) closeAndCleanup() {
 	d.store.Close()
 	os.Remove(d.config.SocketPath)
 	if d.config.WorkspaceSockPath != "" {
 		os.Remove(d.config.WorkspaceSockPath)
 	}
-	return err
 }
 
 // sessionSandbox caches the driver (resolved from sandbox.mode per session)
@@ -471,7 +613,7 @@ const bridgeStopTimeout = 10 * time.Second
 // is finished and its sandbox can be torn down.
 func isTerminalSessionStatus(status string) bool {
 	switch status {
-	case "complete", "blocked", "failed", "cancelled", "needs_human_review":
+	case "complete", "blocked", "failed", "cancelled", "needs_human_review", "stalled":
 		return true
 	}
 	return false
@@ -479,8 +621,41 @@ func isTerminalSessionStatus(status string) bool {
 
 // --- HTTP handlers ---
 
+// healthCapabilities is the static capabilities block returned by GET /health.
+// Extracted as a package-level var so tests can read it without parsing JSON.
+var healthCapabilities = struct {
+	SearchPredicates []string `json:"search_predicates"`
+	ArchiveHTTP      bool     `json:"archive_http"`
+	SSEControlFrames []string `json:"sse_control_frames"`
+}{
+	SearchPredicates: []string{"q", "session", "type_prefix", "agent", "after", "before"},
+	ArchiveHTTP:      true,
+	SSEControlFrames: []string{"daemon_hello", "daemon_draining"},
+}
+
+type healthResponse struct {
+	Status           string `json:"status"`
+	SchemaVersion    string `json:"schema_version"`
+	DaemonInstanceID string `json:"daemon_instance_id"`
+	Draining         bool   `json:"draining"`
+	Capabilities     any    `json:"capabilities"`
+}
+
 func (d *Daemon) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	draining := d.draining.Load()
+	status := "ok"
+	code := http.StatusOK
+	if draining {
+		status = "draining"
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, healthResponse{
+		Status:           status,
+		SchemaVersion:    "belayer-log/v1",
+		DaemonInstanceID: d.daemonInstanceID,
+		Draining:         draining,
+		Capabilities:     healthCapabilities,
+	})
 }
 
 // sessionAPIResponse is the JSON-serializable session type returned by the API.
@@ -492,6 +667,7 @@ type sessionAPIResponse struct {
 	Template     string            `json:"Template"`
 	Repos        map[string]string `json:"Repos"`
 	WorkspaceDir string            `json:"WorkspaceDir"`
+	LogLevel     string            `json:"LogLevel"`
 	CreatedAt    time.Time         `json:"CreatedAt"`
 	UpdatedAt    time.Time         `json:"UpdatedAt"`
 }
@@ -510,6 +686,7 @@ func sessionToAPIResponse(s store.Session) sessionAPIResponse {
 		Template:     s.Template,
 		Repos:        repos,
 		WorkspaceDir: s.WorkspaceDir,
+		LogLevel:     s.LogLevel,
 		CreatedAt:    s.CreatedAt,
 		UpdatedAt:    s.UpdatedAt,
 	}
@@ -520,9 +697,16 @@ type createSessionRequest struct {
 	Template     string            `json:"template,omitempty"`
 	Repos        map[string]string `json:"repos,omitempty"`
 	WorkspaceDir string            `json:"workspace_dir,omitempty"`
+	LogLevel     string            `json:"log_level,omitempty"`
 }
 
 func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	// Reject session creation during shutdown: a session created after DrainAll
+	// snapshots the session list would never be archived.
+	if d.draining.Load() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon draining"})
+		return
+	}
 	var req createSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -530,6 +714,12 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name is required"})
+		return
+	}
+
+	logLevel, err := ResolveLogLevel(req.LogLevel, d.config.DefaultLogLevel)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -549,6 +739,7 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Status:       "pending",
 		Repos:        reposJSON,
 		WorkspaceDir: req.WorkspaceDir,
+		LogLevel:     logLevel,
 	}
 	id, err := d.store.CreateSession(sess)
 	if err != nil {
@@ -626,7 +817,12 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 			Data:      mustJSON(map[string]string{"status": req.Status}),
 		})
 		if isTerminalSessionStatus(req.Status) {
+			// Drain bridges first so any final events land in the store before
+			// the archiver snapshots it; archive before sandbox teardown so the
+			// archiver reads session state before any teardown side-effects can
+			// perturb the session row.
 			d.stopAllBridgeAgents(id, "session status changed to "+req.Status)
+			d.archiver.ArchiveTerminal(id)
 			d.terminateSandbox(r.Context(), id)
 		}
 	}
@@ -648,13 +844,13 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	afterID, waitFor, err := parseEventCursor(r)
+	afterID, waitFor, beforeID, limit, err := parseEventCursor(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
-	events, err := d.querySessionEvents(r.Context(), id, afterID, waitFor)
+	events, err := d.querySessionEvents(r.Context(), id, afterID, waitFor, beforeID, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -716,21 +912,51 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	afterID, waitFor, err := parseEventCursor(r)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if strings.TrimSpace(r.URL.Query().Get("after")) == "" {
-		existing, err := d.store.QueryEventsForSessionsAfter(filtered, 0)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	// Determine afterID. Precedence: Last-Event-ID header > ?after= param > default.
+	var afterID int64
+	lastEventIDHeader := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	afterParam := strings.TrimSpace(r.URL.Query().Get("after"))
+
+	if lastEventIDHeader != "" {
+		parsed, err := strconv.ParseInt(lastEventIDHeader, 10, 64)
+		if err != nil || parsed < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Last-Event-ID must be a non-negative integer"})
 			return
 		}
-		if len(existing) > 0 {
-			afterID = existing[len(existing)-1].ID
+		afterID = parsed
+	} else if afterParam != "" {
+		parsed, err := strconv.ParseInt(afterParam, 10, 64)
+		if err != nil || parsed < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "after must be a non-negative integer"})
+			return
 		}
+		afterID = parsed
 	}
+
+	// Parse the optional wait parameter.
+	var waitFor time.Duration
+	if waitRaw := strings.TrimSpace(r.URL.Query().Get("wait")); waitRaw != "" {
+		parsed, err := time.ParseDuration(waitRaw)
+		if err != nil || parsed < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "wait must be a valid non-negative duration"})
+			return
+		}
+		waitFor = parsed
+	}
+
+	// Compute helloLastID: the global max event ID at connect time. This is
+	// what daemon_hello advertises as the high-water mark so consumers can
+	// persist it as their epoch cursor. It is computed independently of
+	// afterID so both can be set correctly at once.
+	helloLastID, err := d.store.MaxEventID()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Default: afterID = 0 so the consumer receives the full backlog from the
+	// beginning (LOG_FORMAT.md §4). Consumers wanting "stream from now" MUST
+	// explicitly pass ?after=<helloLastID> (or Last-Event-ID) from daemon_hello.
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -738,15 +964,44 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Register subscriber inside sseMu so it is totally ordered with respect
+	// to announceDraining's snapshot. If draining is already true (Swap
+	// happened in Shutdown Phase a before we took the lock), reject the
+	// connection immediately so no subscriber is ever registered without
+	// receiving a daemon_draining frame.
+	sub := &sseSubscriber{drain: make(chan struct{})}
+	d.sseMu.Lock()
+	if d.draining.Load() {
+		d.sseMu.Unlock()
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon draining"})
+		return
+	}
+	d.sseSubscribers[sub] = struct{}{}
+	d.sseMu.Unlock()
+	defer func() {
+		d.sseMu.Lock()
+		delete(d.sseSubscribers, sub)
+		d.sseMu.Unlock()
+	}()
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
+	// Emit daemon_hello as the FIRST frame. No id: line (control frame invariant).
+	helloData, _ := json.Marshal(map[string]any{
+		"daemon_instance_id": d.daemonInstanceID,
+		"schema_version":     "belayer-log/v1",
+		"last_id":            helloLastID,
+	})
+	fmt.Fprintf(w, "event: daemon_hello\ndata: %s\n\n", helloData)
+	flusher.Flush()
 
 	enc := json.NewEncoder(w)
 	lastID := afterID
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	keepalive := time.NewTicker(15 * time.Second)
+	keepalive := time.NewTicker(d.sseKeepaliveInterval)
 	defer keepalive.Stop()
 
 	deadline := time.Time{}
@@ -764,7 +1019,12 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(events) > 0 {
 			for _, evt := range events {
-				fmt.Fprint(w, "event: session_event\ndata: ")
+				// Domain frames carry id: lines (spec §4 A8).
+				// emit event: <type> per LOG_FORMAT.md §4 (A2). Sanitize the type
+				// so malformed event types inserted via POST /sessions/{id}/events
+				// cannot inject additional SSE frames by embedding newlines or null bytes.
+				evtType := sanitizeSSEEventType(evt.Type)
+				fmt.Fprintf(w, "id: %d\nevent: %s\ndata: ", evt.ID, evtType)
 				if err := enc.Encode(evt); err != nil {
 					return
 				}
@@ -783,6 +1043,16 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-sub.drain:
+			// Shutdown has begun. Emit daemon_draining (no id: line) and exit.
+			totalGraceMS := int64((d.shutdownHTTPTimeout + d.archiveDrainTimeout) / time.Millisecond)
+			drainingData, _ := json.Marshal(map[string]any{
+				"reason":     "shutdown",
+				"timeout_ms": totalGraceMS,
+			})
+			fmt.Fprintf(w, "event: daemon_draining\ndata: %s\n\n", drainingData)
+			flusher.Flush()
+			return
 		case <-ticker.C:
 		case <-keepalive.C:
 			fmt.Fprint(w, ": keep-alive\n\n")
@@ -791,53 +1061,68 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func parseEventCursor(r *http.Request) (int64, time.Duration, error) {
+// parseEventCursor parses ?after=, ?wait=, ?before=, and ?limit= query params
+// from a GET /sessions/{id}/events request.
+// Returns afterID, waitFor, beforeID, limit (raw, not capped) and any parse error.
+// Negative values for after, before, and limit are rejected with an error.
+func parseEventCursor(r *http.Request) (afterID int64, waitFor time.Duration, beforeID int64, limit int, err error) {
 	afterRaw := strings.TrimSpace(r.URL.Query().Get("after"))
 	waitRaw := strings.TrimSpace(r.URL.Query().Get("wait"))
+	beforeRaw := strings.TrimSpace(r.URL.Query().Get("before"))
+	limitRaw := strings.TrimSpace(r.URL.Query().Get("limit"))
 
-	var afterID int64
 	if afterRaw != "" {
-		parsed, err := strconv.ParseInt(afterRaw, 10, 64)
-		if err != nil || parsed < 0 {
-			return 0, 0, fmt.Errorf("after must be a non-negative integer")
+		parsed, parseErr := strconv.ParseInt(afterRaw, 10, 64)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, 0, 0, fmt.Errorf("after must be a non-negative integer")
 		}
 		afterID = parsed
 	}
 
-	var waitFor time.Duration
 	if waitRaw != "" {
-		parsed, err := time.ParseDuration(waitRaw)
-		if err != nil || parsed < 0 {
-			return 0, 0, fmt.Errorf("wait must be a valid non-negative duration")
+		parsed, parseErr := time.ParseDuration(waitRaw)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, 0, 0, fmt.Errorf("wait must be a valid non-negative duration")
 		}
 		waitFor = parsed
 	}
 
-	return afterID, waitFor, nil
-}
-
-func (d *Daemon) querySessionEvents(ctx context.Context, sessionID string, afterID int64, waitFor time.Duration) ([]store.SessionEvent, error) {
-	if waitFor <= 0 {
-		if afterID > 0 {
-			return d.store.QueryEventsAfter(sessionID, afterID)
+	if beforeRaw != "" {
+		parsed, parseErr := strconv.ParseInt(beforeRaw, 10, 64)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, 0, 0, fmt.Errorf("before must be a non-negative integer")
 		}
-		return d.store.QueryEvents(sessionID)
+		beforeID = parsed
 	}
 
+	if limitRaw != "" {
+		parsed, parseErr := strconv.ParseInt(limitRaw, 10, 64)
+		if parseErr != nil || parsed < 0 {
+			return 0, 0, 0, 0, fmt.Errorf("limit must be a non-negative integer")
+		}
+		limit = int(parsed)
+	}
+
+	return afterID, waitFor, beforeID, limit, nil
+}
+
+// querySessionEvents fetches events for sessionID with optional windowing
+// (afterID, beforeID, limit) and optional long-poll (waitFor). The waitFor
+// behavior uses only the afterID lower bound for backwards-compat — window
+// params don't change wait semantics.
+func (d *Daemon) querySessionEvents(ctx context.Context, sessionID string, afterID int64, waitFor time.Duration, beforeID int64, limit int) ([]store.SessionEvent, error) {
+	if waitFor <= 0 {
+		return d.store.QueryEventsWindow(sessionID, afterID, beforeID, limit)
+	}
+
+	// Long-poll: wait until at least one event arrives after afterID.
+	// beforeID/limit apply to each poll result.
 	deadline := time.Now().Add(waitFor)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
-		var (
-			events []store.SessionEvent
-			err    error
-		)
-		if afterID > 0 {
-			events, err = d.store.QueryEventsAfter(sessionID, afterID)
-		} else {
-			events, err = d.store.QueryEvents(sessionID)
-		}
+		events, err := d.store.QueryEventsWindow(sessionID, afterID, beforeID, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -856,18 +1141,234 @@ func (d *Daemon) querySessionEvents(ctx context.Context, sessionID string, after
 	}
 }
 
-func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query().Get("q")
-	if q == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "q is required"})
+// archiveDir returns the on-disk archive directory for a session, or a non-nil
+// error response that has already been written to w if something is wrong.
+// Callers should return immediately on a non-empty errorSent=true.
+//
+// Resolution rules (in order):
+//  1. Session not found → 404 {"error":"session not found"}
+//  2. Session has no workspace → 404 {"error":"no archive (session has no workspace)"}
+//  3. Archive dir missing → 404 {"error":"no archive"}
+func (d *Daemon) resolveArchiveDir(w http.ResponseWriter, r *http.Request) (dir string, ok bool) {
+	id := r.PathValue("id")
+	sess, err := d.store.GetSession(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+			return "", false
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return "", false
+	}
+	if sess.WorkspaceDir == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no archive (session has no workspace)"})
+		return "", false
+	}
+	archDir := filepath.Join(sess.WorkspaceDir, ".belayer", "archive", id)
+	if _, err := os.Stat(archDir); os.IsNotExist(err) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no archive"})
+		return "", false
+	} else if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return "", false
+	}
+	return archDir, true
+}
+
+// serveArchiveFile streams a single archive file to w with the given content type.
+// Returns false and writes an error response if the file is missing or unreadable.
+func serveArchiveFile(w http.ResponseWriter, path, contentType string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no archive"})
+			return false
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return false
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", contentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, f)
+	return true
+}
+
+// handleArchiveNDJSON serves GET /sessions/{id}/archive.ndjson.
+// Streams <workspace>/.belayer/archive/<id>/events.ndjson with no in-memory buffering.
+func (d *Daemon) handleArchiveNDJSON(w http.ResponseWriter, r *http.Request) {
+	archDir, ok := d.resolveArchiveDir(w, r)
+	if !ok {
 		return
 	}
-	events, err := d.store.SearchEvents(q)
+	serveArchiveFile(w, filepath.Join(archDir, "events.ndjson"), "application/x-ndjson")
+}
+
+// handleArchiveManifest serves GET /sessions/{id}/archive/manifest.json.
+func (d *Daemon) handleArchiveManifest(w http.ResponseWriter, r *http.Request) {
+	archDir, ok := d.resolveArchiveDir(w, r)
+	if !ok {
+		return
+	}
+	serveArchiveFile(w, filepath.Join(archDir, "manifest.json"), "application/json")
+}
+
+// handleArchiveTarGz serves GET /sessions/{id}/archive.tar.gz.
+// Streams a gzip-compressed tar containing events.ndjson + manifest.json directly
+// to w without buffering either file in memory.
+func (d *Daemon) handleArchiveTarGz(w http.ResponseWriter, r *http.Request) {
+	archDir, ok := d.resolveArchiveDir(w, r)
+	if !ok {
+		return
+	}
+
+	// Verify both files exist before touching response headers.
+	ndjsonPath := filepath.Join(archDir, "events.ndjson")
+	manifestPath := filepath.Join(archDir, "manifest.json")
+	for _, p := range []string{ndjsonPath, manifestPath} {
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "no archive"})
+			return
+		} else if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	sessionID := r.PathValue("id")
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.tar.gz"`, sessionID))
+	w.WriteHeader(http.StatusOK)
+
+	gw := gzip.NewWriter(w)
+	tw := tar.NewWriter(gw)
+
+	for _, entry := range []struct {
+		name string
+		path string
+	}{
+		{"events.ndjson", ndjsonPath},
+		{"manifest.json", manifestPath},
+	} {
+		fi, err := os.Stat(entry.path)
+		if err != nil {
+			// Headers already sent; can't send a JSON error — just stop.
+			log.Printf("archive tar.gz: stat %s: %v", entry.path, err)
+			return
+		}
+		hdr := &tar.Header{
+			Name:    entry.name,
+			Mode:    0o644,
+			Size:    fi.Size(),
+			ModTime: fi.ModTime(),
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			log.Printf("archive tar.gz: write header %s: %v", entry.name, err)
+			return
+		}
+		f, err := os.Open(entry.path)
+		if err != nil {
+			log.Printf("archive tar.gz: open %s: %v", entry.path, err)
+			return
+		}
+		if _, err := io.Copy(tw, f); err != nil {
+			f.Close()
+			log.Printf("archive tar.gz: copy %s: %v", entry.name, err)
+			return
+		}
+		f.Close()
+	}
+	_ = tw.Close()
+	_ = gw.Close()
+}
+
+func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
+	preds, err := parseSearchQuery(r)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	events, err := d.store.SearchEventsV1(ctx, preds)
+	if err != nil {
+		status, msg := classifySearchError(err)
+		writeJSON(w, status, map[string]string{"error": msg})
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
+}
+
+const searchQLenCap = 4096
+
+// parseSearchQuery extracts and validates SearchPredicates from r.URL.Query().
+// Returns an error if validation fails (caller emits HTTP 400).
+func parseSearchQuery(r *http.Request) (store.SearchPredicates, error) {
+	q := r.URL.Query()
+	noParams := r.URL.RawQuery == ""
+
+	var p store.SearchPredicates
+	p.DescOrder = noParams // no-params: return most-recent DESC
+	p.Limit = 1000
+
+	raw := strings.TrimSpace(q.Get("q"))
+	if len(raw) > searchQLenCap {
+		return p, fmt.Errorf("q too long: max %d bytes", searchQLenCap)
+	}
+	p.Q = raw
+
+	p.SessionID = q.Get("session")
+	p.TypePrefix = q.Get("type_prefix")
+	p.Agent = q.Get("agent")
+
+	if afterStr := q.Get("after"); afterStr != "" {
+		v, err := strconv.ParseInt(afterStr, 10, 64)
+		if err != nil || v < 0 {
+			return p, fmt.Errorf("after must be a non-negative integer")
+		}
+		p.AfterID = v
+	}
+
+	if beforeStr := q.Get("before"); beforeStr != "" {
+		v, err := strconv.ParseInt(beforeStr, 10, 64)
+		if err != nil || v < 0 {
+			return p, fmt.Errorf("before must be a non-negative integer")
+		}
+		p.BeforeID = v
+	}
+
+	return p, nil
+}
+
+// classifySearchError maps a store error to an HTTP status + operator-clean
+// message. Never leaks raw SQL or stack frames.
+func classifySearchError(err error) (int, string) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout, "search timed out (limit 2s)"
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "fts5: syntax error"),
+		strings.Contains(lower, "malformed match expression"),
+		strings.Contains(lower, "no such column"),
+		strings.Contains(lower, "unknown special query"),
+		strings.Contains(lower, "unterminated string"),
+		strings.Contains(lower, "unmatched parenthesis"),
+		strings.Contains(lower, "fts5: parse error"):
+		return http.StatusBadRequest, "invalid q: " + sanitizeFTS5Error(msg)
+	}
+	log.Printf("search: unexpected error: %v", err)
+	return http.StatusInternalServerError, "search failed"
+}
+
+// sanitizeFTS5Error strips SQL-driver prefixes so the consumer sees a clean
+// human message.
+func sanitizeFTS5Error(msg string) string {
+	for _, prefix := range []string{"SQL logic error: ", "SQL logic error (SQLITE_ERROR): "} {
+		msg = strings.TrimPrefix(msg, prefix)
+	}
+	return msg
 }
 
 // --- helpers ---
@@ -881,6 +1382,26 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// sanitizeSSEEventType replaces any characters that would break SSE frame
+// parsing (\n, \r, \x00) with '_'. The event type is user-controlled (anything
+// posted via POST /sessions/{id}/events), so we must guard against SSE frame
+// injection before emitting the event: line.
+func sanitizeSSEEventType(t string) string {
+	if !strings.ContainsAny(t, "\n\r\x00") {
+		return t
+	}
+	var b strings.Builder
+	b.Grow(len(t))
+	for _, r := range t {
+		if r == '\n' || r == '\r' || r == 0 {
+			b.WriteByte('_')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // bridgeKey returns the map key for a bridge process given session and agent name.

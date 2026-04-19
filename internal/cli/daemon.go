@@ -28,6 +28,7 @@ func loadEnvFile(path string) {
 func newDaemonCmd() *cobra.Command {
 	var socketPath, dbPath, belayerRoot, workdir, tcpAddr, dockerGateway string
 	var bridgeAPIKey, bridgeBaseURL, bridgeProvider string
+	var logLevel string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -73,6 +74,9 @@ func newDaemonCmd() *cobra.Command {
 			}
 			if bridgeProvider != "" {
 				cfg.BridgeProvider = bridgeProvider
+			}
+			if logLevel != "" {
+				cfg.DefaultLogLevel = logLevel
 			}
 
 			wd := workdir
@@ -126,5 +130,6 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&bridgeAPIKey, "bridge-api-key", "", "LLM provider API key injected into bridge subprocesses (for clamshell where sandbox has no Hermes config)")
 	cmd.Flags().StringVar(&bridgeBaseURL, "bridge-base-url", "", "LLM provider base URL injected into bridge subprocesses (e.g. https://opencode.ai/zen/go/v1)")
 	cmd.Flags().StringVar(&bridgeProvider, "bridge-provider", "", "LLM provider name injected into bridge subprocesses (e.g. openai)")
+	cmd.Flags().StringVar(&logLevel, "log-level", "", "Default log level for new sessions (standard|verbose). Overridable per-run via `belayer run start --log-level`.")
 	return cmd
 }

@@ -1,8 +1,11 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -353,6 +356,221 @@ func TestSearchEvents_NoMatches(t *testing.T) {
 	}
 }
 
+// --- SearchEventsV1 tests ---
+
+func TestSearchEventsV1_QPredicateOnly(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "v1-q"})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "bridge:hello", Data: `{"msg":"found"}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "other:thing", Data: `{"msg":"not"}`})
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{Q: "found"})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Type != "bridge:hello" {
+		t.Errorf("unexpected type %q", results[0].Type)
+	}
+}
+
+func TestSearchEventsV1_SessionFilter(t *testing.T) {
+	s := openMemory(t)
+	idA, _ := s.CreateSession(Session{Name: "sess-a"})
+	idB, _ := s.CreateSession(Session{Name: "sess-b"})
+	s.LogEvent(SessionEvent{SessionID: idA, Type: "ev", Data: `{"x":"a"}`})
+	s.LogEvent(SessionEvent{SessionID: idA, Type: "ev", Data: `{"x":"a2"}`})
+	s.LogEvent(SessionEvent{SessionID: idB, Type: "ev", Data: `{"x":"b"}`})
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{SessionID: idA})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 events for session A, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.SessionID != idA {
+			t.Errorf("expected session %q, got %q", idA, r.SessionID)
+		}
+	}
+}
+
+func TestSearchEventsV1_TypePrefix(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "type-prefix"})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "bridge:foo", Data: `{}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "bridge:bar", Data: `{}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "other:baz", Data: `{}`})
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{TypePrefix: "bridge:"})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 bridge events, got %d", len(results))
+	}
+	for _, r := range results {
+		if !strings.HasPrefix(r.Type, "bridge:") {
+			t.Errorf("unexpected type %q", r.Type)
+		}
+	}
+}
+
+func TestSearchEventsV1_AgentFilter(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "agent-filter"})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{"agent":"sup"}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{"agent":"impl"}`})
+	s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{"agent":"sup"}`})
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{Agent: "sup"})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 sup events, got %d", len(results))
+	}
+}
+
+func TestSearchEventsV1_AfterBefore(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "after-before"})
+	for i := 0; i < 5; i++ {
+		s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{}`})
+	}
+	all, _ := s.QueryEvents(id)
+	if len(all) < 5 {
+		t.Fatalf("need 5 events, got %d", len(all))
+	}
+	afterID := all[1].ID  // skip first two
+	beforeID := all[4].ID // skip last one
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{AfterID: afterID, BeforeID: beforeID})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	// Should return events[2] and events[3] (between after and before exclusive)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 events in window, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.ID <= afterID || r.ID >= beforeID {
+			t.Errorf("event id %d out of window (%d, %d)", r.ID, afterID, beforeID)
+		}
+	}
+}
+
+func TestSearchEventsV1_LimitCap(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "limit-cap"})
+	for i := 0; i < 1200; i++ {
+		s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{}`})
+	}
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{DescOrder: true})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) != 1000 {
+		t.Fatalf("expected 1000 (cap), got %d", len(results))
+	}
+}
+
+func TestSearchEventsV1_DescOrder(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "desc-order"})
+	for i := 0; i < 5; i++ {
+		s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{}`})
+	}
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{DescOrder: true})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	for i := 1; i < len(results); i++ {
+		if results[i].ID > results[i-1].ID {
+			t.Errorf("results not in DESC order: [%d].id=%d > [%d].id=%d", i, results[i].ID, i-1, results[i-1].ID)
+		}
+	}
+}
+
+func TestSearchEventsV1_EmptyAllPredicates(t *testing.T) {
+	s := openMemory(t)
+	id, _ := s.CreateSession(Session{Name: "empty-preds"})
+	for i := 0; i < 5; i++ {
+		s.LogEvent(SessionEvent{SessionID: id, Type: "ev", Data: `{}`})
+	}
+
+	results, err := s.SearchEventsV1(context.Background(), SearchPredicates{DescOrder: true})
+	if err != nil {
+		t.Fatalf("SearchEventsV1: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results, got none")
+	}
+	// Verify DESC ordering.
+	for i := 1; i < len(results); i++ {
+		if results[i].ID > results[i-1].ID {
+			t.Errorf("not DESC: results[%d].ID=%d > results[%d].ID=%d", i, results[i].ID, i-1, results[i-1].ID)
+		}
+	}
+}
+
+func TestSearchEventsV1_ContextCancelled(t *testing.T) {
+	s := openMemory(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled
+
+	_, err := s.SearchEventsV1(ctx, SearchPredicates{})
+	if err == nil {
+		t.Fatal("expected error for cancelled context, got nil")
+	}
+}
+
+// TestMaxEventID_EmptyAndNonEmpty verifies that MaxEventID returns 0 for an
+// empty store and the correct max ID after events are written.
+func TestMaxEventID_EmptyAndNonEmpty(t *testing.T) {
+	s := openMemory(t)
+
+	// Empty store should return 0.
+	id, err := s.MaxEventID()
+	if err != nil {
+		t.Fatalf("MaxEventID on empty store: %v", err)
+	}
+	if id != 0 {
+		t.Errorf("empty store: expected 0, got %d", id)
+	}
+
+	// Create a session and write some events.
+	sessID, _ := s.CreateSession(Session{Name: "max-id-test"})
+	for _, typ := range []string{"a", "b", "c"} {
+		if err := s.LogEvent(SessionEvent{SessionID: sessID, Type: typ, Data: "{}"}); err != nil {
+			t.Fatalf("LogEvent(%s): %v", typ, err)
+		}
+	}
+
+	maxID, err := s.MaxEventID()
+	if err != nil {
+		t.Fatalf("MaxEventID after writes: %v", err)
+	}
+	if maxID <= 0 {
+		t.Fatalf("expected positive max ID, got %d", maxID)
+	}
+
+	// Verify it matches the last event.
+	events, err := s.QueryEvents(sessID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	lastEventID := events[len(events)-1].ID
+	if maxID != lastEventID {
+		t.Errorf("MaxEventID=%d != last event ID=%d", maxID, lastEventID)
+	}
+}
+
 // TestCreateSession_Template verifies that template is persisted and retrieved.
 func TestCreateSession_Template(t *testing.T) {
 	s := openMemory(t)
@@ -556,5 +774,110 @@ func TestPendingMessages_AfterID(t *testing.T) {
 	}
 	if pending[1].Content != "third" {
 		t.Errorf("pending[1]: got %q, want %q", pending[1].Content, "third")
+	}
+}
+
+// seedStoreEvents inserts n events into the store for sessionID and returns
+// the assigned IDs in ascending order.
+func seedStoreEvents(t *testing.T, s *Store, sessionID string, n int) []int64 {
+	t.Helper()
+	for i := 1; i <= n; i++ {
+		if err := s.LogEvent(SessionEvent{
+			SessionID: sessionID,
+			Type:      fmt.Sprintf("ev_%d", i),
+		}); err != nil {
+			t.Fatalf("LogEvent %d: %v", i, err)
+		}
+	}
+	events, err := s.QueryEvents(sessionID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	ids := make([]int64, len(events))
+	for i, e := range events {
+		ids[i] = e.ID
+	}
+	return ids
+}
+
+// TestQueryEventsWindow_AfterOnly verifies that afterID > 0 returns only events
+// with id > afterID.
+func TestQueryEventsWindow_AfterOnly(t *testing.T) {
+	s := openMemory(t)
+	sessID, err := s.CreateSession(Session{Name: "win-after"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	ids := seedStoreEvents(t, s, sessID, 10)
+	cutoff := ids[4] // events at ids[5..9] should be returned
+
+	got, err := s.QueryEventsWindow(sessID, cutoff, 0, 0)
+	if err != nil {
+		t.Fatalf("QueryEventsWindow: %v", err)
+	}
+	for _, e := range got {
+		if e.ID <= cutoff {
+			t.Errorf("event id=%d should be > cutoff=%d", e.ID, cutoff)
+		}
+	}
+	if len(got) != 5 {
+		t.Errorf("expected 5 events after ids[4], got %d", len(got))
+	}
+}
+
+// TestQueryEventsWindow_BeforeOnly verifies that beforeID > 0 returns only events
+// with id < beforeID.
+func TestQueryEventsWindow_BeforeOnly(t *testing.T) {
+	s := openMemory(t)
+	sessID, err := s.CreateSession(Session{Name: "win-before"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	ids := seedStoreEvents(t, s, sessID, 10)
+	cutoff := ids[5] // events at ids[0..4] should be returned
+
+	got, err := s.QueryEventsWindow(sessID, 0, cutoff, 0)
+	if err != nil {
+		t.Fatalf("QueryEventsWindow: %v", err)
+	}
+	for _, e := range got {
+		if e.ID >= cutoff {
+			t.Errorf("event id=%d should be < cutoff=%d", e.ID, cutoff)
+		}
+	}
+	if len(got) != 5 {
+		t.Errorf("expected 5 events before ids[5], got %d", len(got))
+	}
+}
+
+// TestQueryEventsWindow_AfterAndBefore verifies that both bounds work together.
+func TestQueryEventsWindow_AfterAndBefore(t *testing.T) {
+	s := openMemory(t)
+	sessID, err := s.CreateSession(Session{Name: "win-both"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	ids := seedStoreEvents(t, s, sessID, 10)
+	afterID := ids[2]  // exclusive lower bound
+	beforeID := ids[7] // exclusive upper bound
+	// Expected: ids[3..6] = 4 events
+
+	got, err := s.QueryEventsWindow(sessID, afterID, beforeID, 0)
+	if err != nil {
+		t.Fatalf("QueryEventsWindow: %v", err)
+	}
+	for _, e := range got {
+		if e.ID <= afterID {
+			t.Errorf("event id=%d should be > afterID=%d", e.ID, afterID)
+		}
+		if e.ID >= beforeID {
+			t.Errorf("event id=%d should be < beforeID=%d", e.ID, beforeID)
+		}
+	}
+	if len(got) != 4 {
+		t.Errorf("expected 4 events in window, got %d", len(got))
 	}
 }

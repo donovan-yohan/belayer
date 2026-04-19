@@ -156,6 +156,7 @@ func (d *Daemon) checkSessionStalled(sessionID string) {
 	}); err != nil {
 		log.Printf("WARNING: checkSessionStalled: session %s marked stalled but event log failed: %v", sessionID, err)
 	}
+	d.archiver.ArchiveTerminal(sessionID)
 	log.Printf("Session %s marked stalled: all agents exited without completion approval", sessionID)
 }
 
@@ -201,6 +202,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 			} else {
 				log.Printf("Session %s escalated to human review: supervisor reported incomplete", sessionID)
 				d.stopAllBridgeAgents(sessionID, "supervisor reported incomplete")
+				d.archiver.ArchiveTerminal(sessionID)
 				d.terminateSandbox(d.startCtx, sessionID)
 			}
 		}
@@ -509,7 +511,10 @@ func (d *Daemon) handleBridgeCompletionApproved(sessionID, agentName string, dat
 	// sandbox. Otherwise supervisor (and any other live agents) keeps running
 	// past approval, burns tokens, and can self-escalate the session back to
 	// needs_human_review despite completion having already been approved.
+	// Drain first so any final bridge events land in the store before the
+	// archiver snapshots it.
 	d.stopAllBridgeAgents(sessionID, "pm approved completion")
+	d.archiver.ArchiveTerminal(sessionID)
 	d.terminateSandbox(d.startCtx, sessionID)
 
 	log.Printf("Session %s marked complete (approved by %s)", sessionID, agentName)
@@ -537,16 +542,18 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		}
 	}
 
+	// rejectionCount is the count of prior bridge:completion_rejected events.
+	// The current rejection is rejectionCount+1 (spec §3.7 requires positive integers).
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
 		Type:      "completion_rejected",
 		Data: mustJSON(map[string]string{
 			"rejected_by": agentName,
-			"cycle":       fmt.Sprintf("%d/%d", rejectionCount, maxRejectionCycles),
+			"cycle":       fmt.Sprintf("%d/%d", rejectionCount+1, maxRejectionCycles),
 		}),
 	})
 
-	if rejectionCount > maxRejectionCycles {
+	if rejectionCount >= maxRejectionCycles {
 		log.Printf("Session %s hit max rejection cycles (%d), escalating to operator", sessionID, maxRejectionCycles)
 		_ = d.store.UpdateSessionStatus(sessionID, "needs_human_review")
 		_ = d.store.LogEvent(store.SessionEvent{
@@ -557,7 +564,10 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 				"rejections": fmt.Sprintf("%d", rejectionCount),
 			}),
 		})
+		// Drain live bridge processes before archiving so the archive snapshot
+		// sees any final events they emit. Sandbox teardown happens last.
 		d.stopAllBridgeAgents(sessionID, "max rejection cycles exceeded")
+		d.archiver.ArchiveTerminal(sessionID)
 		d.terminateSandbox(d.startCtx, sessionID)
 		// Notify supervisor of escalation.
 		msg := broker.Message{
@@ -586,7 +596,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 	// Send gap list to supervisor for remediation.
 	content := fmt.Sprintf(
 		"PM rejected completion (cycle %d/%d). Gaps found:\n\n%s\n\nAddress these gaps and call belayer_request_completion again when ready.",
-		rejectionCount, maxRejectionCycles, gapList,
+		rejectionCount+1, maxRejectionCycles, gapList,
 	)
 	msgID := uuid.New().String()
 	msg := broker.Message{
@@ -607,5 +617,5 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 
 	log.Printf("PM rejected completion for session %s (cycle %d/%d), gap list sent to supervisor",
-		sessionID, rejectionCount, maxRejectionCycles)
+		sessionID, rejectionCount+1, maxRejectionCycles)
 }

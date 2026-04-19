@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -18,6 +19,7 @@ type Session struct {
 	Template     string
 	Repos        string // JSON map: {"frontend": "/abs/path", "backend": "/abs/path"}
 	WorkspaceDir string
+	LogLevel     string // "standard" or "verbose"; frozen at creation time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -125,12 +127,15 @@ func (s *Store) CreateSession(session Session) (string, error) {
 	if session.Repos == "" {
 		session.Repos = "{}"
 	}
+	if session.LogLevel == "" {
+		session.LogLevel = "standard"
+	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, name, status, template, repos, workspace_dir, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (id, name, status, template, repos, workspace_dir, log_level, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.Name, session.Status, nullableString(session.Template),
-		session.Repos, session.WorkspaceDir,
+		session.Repos, session.WorkspaceDir, session.LogLevel,
 		session.CreatedAt, session.UpdatedAt,
 	)
 	if err != nil {
@@ -142,12 +147,12 @@ func (s *Store) CreateSession(session Session) (string, error) {
 // GetSession retrieves a session by ID. Returns a wrapped sql.ErrNoRows if not found.
 func (s *Store) GetSession(id string) (Session, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), created_at, updated_at
+		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), COALESCE(log_level,'standard'), created_at, updated_at
 		 FROM sessions WHERE id = ?`, id,
 	)
 	var sess Session
 	var createdAt, updatedAt string
-	err := row.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &createdAt, &updatedAt)
+	err := row.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &sess.LogLevel, &createdAt, &updatedAt)
 	if err != nil {
 		return Session{}, fmt.Errorf("store: get session: %w", err)
 	}
@@ -159,7 +164,7 @@ func (s *Store) GetSession(id string) (Session, error) {
 // ListSessions returns all sessions ordered by created_at DESC.
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), created_at, updated_at
+		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), COALESCE(log_level,'standard'), created_at, updated_at
 		 FROM sessions ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -171,7 +176,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 	for rows.Next() {
 		var sess Session
 		var createdAt, updatedAt string
-		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &sess.LogLevel, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: list sessions scan: %w", err)
 		}
 		sess.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
@@ -560,6 +565,44 @@ func (s *Store) QueryEventsAfter(sessionID string, afterID int64) ([]SessionEven
 	return scanEvents(rows)
 }
 
+// QueryEventsWindow returns events for a session with optional lower bound
+// (afterID), optional upper bound (beforeID), and a limit (capped at 1000).
+//
+//   - afterID=0  → no lower bound (start from the beginning).
+//   - beforeID=0 → no upper bound (return up to the end).
+//   - limit<=0   → default 1000; limit>1000 is capped to 1000.
+//
+// Events are returned ordered by id ASC.
+func (s *Store) QueryEventsWindow(sessionID string, afterID, beforeID int64, limit int) ([]SessionEvent, error) {
+	const maxLimit = 1000
+	effectiveLimit := limit
+	if effectiveLimit <= 0 || effectiveLimit > maxLimit {
+		effectiveLimit = maxLimit
+	}
+
+	var sb strings.Builder
+	sb.WriteString(`SELECT id, session_id, timestamp, type, data FROM events WHERE session_id = ?`)
+	args := []any{sessionID}
+
+	if afterID > 0 {
+		sb.WriteString(` AND id > ?`)
+		args = append(args, afterID)
+	}
+	if beforeID > 0 {
+		sb.WriteString(` AND id < ?`)
+		args = append(args, beforeID)
+	}
+	sb.WriteString(` ORDER BY id ASC LIMIT ?`)
+	args = append(args, effectiveLimit)
+
+	rows, err := s.db.Query(sb.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: query events window: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
 // QueryEventsForSessionsAfter returns all events for the provided session IDs
 // with IDs greater than afterID, ordered by ID ASC.
 func (s *Store) QueryEventsForSessionsAfter(sessionIDs []string, afterID int64) ([]SessionEvent, error) {
@@ -601,6 +644,99 @@ func (s *Store) SearchEvents(query string) ([]SessionEvent, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("store: search events: %w", err)
+	}
+	defer rows.Close()
+	return scanEvents(rows)
+}
+
+// MaxEventID returns the maximum event ID in the store, or 0 if the table is
+// empty. Used by the SSE handler to populate daemon_hello.last_id.
+func (s *Store) MaxEventID() (int64, error) {
+	var maxID int64
+	err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM events`).Scan(&maxID)
+	if err != nil {
+		return 0, fmt.Errorf("store: max event id: %w", err)
+	}
+	return maxID, nil
+}
+
+// SearchPredicates is the query shape for SearchEventsV1.
+// Zero-valued predicates are treated as "no filter".
+type SearchPredicates struct {
+	Q          string // FTS5 MATCH query (may be empty)
+	SessionID  string // exact session_id filter
+	TypePrefix string // events where type LIKE prefix||'%'
+	Agent      string // events where json_extract(data,'$.agent') == agent
+	AfterID    int64  // id > after (0 = no filter)
+	BeforeID   int64  // id < before (0 = no filter)
+	Limit      int    // cap 1000; if 0 use 1000
+	DescOrder  bool   // true when caller wants id DESC (no-params default)
+}
+
+const searchMaxLimit = 1000
+
+// SearchEventsV1 executes a bounded, predicated search. Accepts ctx so handlers
+// can enforce a timeout. Returns events sorted by id (ASC by default, DESC
+// when p.DescOrder is true). LIMIT is always applied (cap 1000).
+func (s *Store) SearchEventsV1(ctx context.Context, p SearchPredicates) ([]SessionEvent, error) {
+	limit := p.Limit
+	if limit <= 0 || limit > searchMaxLimit {
+		limit = searchMaxLimit
+	}
+
+	var sb strings.Builder
+	var args []any
+
+	if p.Q != "" {
+		// FTS5 INNER JOIN path.
+		sb.WriteString(`SELECT e.id, e.session_id, e.timestamp, e.type, e.data
+FROM events e
+JOIN events_fts f ON f.rowid = e.id
+WHERE events_fts MATCH ?`)
+		args = append(args, p.Q)
+	} else {
+		sb.WriteString(`SELECT e.id, e.session_id, e.timestamp, e.type, e.data
+FROM events e
+WHERE 1=1`)
+	}
+
+	if p.SessionID != "" {
+		sb.WriteString(` AND e.session_id = ?`)
+		args = append(args, p.SessionID)
+	}
+
+	if p.TypePrefix != "" {
+		// Escape LIKE special chars in the prefix so they match literally.
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(p.TypePrefix)
+		sb.WriteString(` AND e.type LIKE ? || '%' ESCAPE '\'`)
+		args = append(args, escaped)
+	}
+
+	if p.Agent != "" {
+		sb.WriteString(` AND json_extract(e.data, '$.agent') = ?`)
+		args = append(args, p.Agent)
+	}
+
+	if p.AfterID > 0 {
+		sb.WriteString(` AND e.id > ?`)
+		args = append(args, p.AfterID)
+	}
+
+	if p.BeforeID > 0 {
+		sb.WriteString(` AND e.id < ?`)
+		args = append(args, p.BeforeID)
+	}
+
+	order := "ASC"
+	if p.DescOrder {
+		order = "DESC"
+	}
+	sb.WriteString(` ORDER BY e.id ` + order + ` LIMIT ?`)
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, err
 	}
 	defer rows.Close()
 	return scanEvents(rows)

@@ -15,6 +15,7 @@ func Migrate(db *sql.DB) error {
 			template      TEXT,
 			repos         TEXT NOT NULL DEFAULT '{}',
 			workspace_dir TEXT NOT NULL DEFAULT '',
+			log_level     TEXT NOT NULL DEFAULT 'standard',
 			created_at    DATETIME NOT NULL,
 			updated_at    DATETIME NOT NULL
 		)`,
@@ -103,6 +104,9 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfNotExists(db, "sessions", "workspace_dir", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfNotExists(db, "sessions", "log_level", "TEXT NOT NULL DEFAULT 'standard'"); err != nil {
 		return err
 	}
 	if err := addColumnIfNotExists(db, "agent_runs", "hermes_session_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
