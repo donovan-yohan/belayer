@@ -14,6 +14,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
+	"github.com/donovan-yohan/belayer/internal/daemon/bridgelog"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
@@ -386,14 +387,14 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
-	// Set up stdout/stderr log files.
-	stdoutLog, err := os.OpenFile(filepath.Join(runDir, "bridge-stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// Rotate and open per-spawn stdout/stderr logs (keeps last 3 spawns).
+	stdoutLog, err := bridgelog.RotateAndOpen(filepath.Join(runDir, "bridge-stdout.log"), 3)
 	if err != nil {
 		stdinR.Close()
 		stdinW.Close()
 		return nil, fmt.Errorf("open stdout log: %w", err)
 	}
-	stderrLog, err := os.OpenFile(filepath.Join(runDir, "bridge-stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	stderrLog, err := bridgelog.RotateAndOpen(filepath.Join(runDir, "bridge-stderr.log"), 3)
 	if err != nil {
 		stdinR.Close()
 		stdinW.Close()

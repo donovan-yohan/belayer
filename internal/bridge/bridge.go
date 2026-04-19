@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/donovan-yohan/belayer/internal/daemon/bridgelog"
 )
 
 // defaultPythonCmd returns the command used to launch the bridge subprocess.
@@ -223,13 +225,14 @@ func Spawn(cfg Config) (*Process, error) {
 		return nil, fmt.Errorf("bridge: create stdin pipe: %w", err)
 	}
 
-	// Log stdout and stderr to files in RunDir.
-	stdoutLog, err := os.OpenFile(filepath.Join(cfg.RunDir, "bridge-stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// Rotate and open per-spawn stdout/stderr logs under RunDir. Rotation keeps
+	// the previous 3 spawns' output so operators can diff runs after a crash.
+	stdoutLog, err := bridgelog.RotateAndOpen(filepath.Join(cfg.RunDir, "bridge-stdout.log"), 3)
 	if err != nil {
 		stdinPipe.Close()
 		return nil, fmt.Errorf("bridge: open stdout log: %w", err)
 	}
-	stderrLog, err := os.OpenFile(filepath.Join(cfg.RunDir, "bridge-stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	stderrLog, err := bridgelog.RotateAndOpen(filepath.Join(cfg.RunDir, "bridge-stderr.log"), 3)
 	if err != nil {
 		stdinPipe.Close()
 		stdoutLog.Close()
