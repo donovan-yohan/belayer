@@ -839,6 +839,13 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 			d.stopAllBridgeAgents(id, "session status changed to "+req.Status)
 			d.archiver.ArchiveTerminal(id)
 			d.terminateSandbox(r.Context(), id)
+		} else {
+			// Non-terminal transition (e.g. reopening a previously terminated
+			// session back to running). Clear any shutdown tombstone so fresh
+			// spawns for this session are no longer rejected by the guard.
+			d.bridgeMu.Lock()
+			delete(d.bridgeShuttingDownSessions, id)
+			d.bridgeMu.Unlock()
 		}
 	}
 

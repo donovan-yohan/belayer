@@ -538,3 +538,36 @@ func TestBridgeLaunch_AbortsWhenShuttingDown(t *testing.T) {
 	}
 	d.bridgeMu.RUnlock()
 }
+
+// TestHandleUpdateSession_ClearsShutdownTombstoneOnReopen verifies that a
+// session transitioning from terminal back to a non-terminal status clears
+// its bridge-shutdown tombstone, so fresh spawns are accepted again.
+func TestHandleUpdateSession_ClearsShutdownTombstoneOnReopen(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create a session.
+	sessRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "reopen-test"})
+	if sessRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d %s", sessRR.Code, sessRR.Body.String())
+	}
+	sess := decodeJSON[sessionAPIResponse](t, sessRR)
+
+	// Mark it shutting down (as stopAllBridgeAgents would).
+	d.bridgeMu.Lock()
+	d.bridgeShuttingDownSessions[sess.ID] = true
+	d.bridgeMu.Unlock()
+
+	// PATCH the session back to "running" — a legitimate reopen.
+	rr := doRequest(t, d, "PATCH", "/sessions/"+sess.ID, updateSessionRequest{Status: "running"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// Tombstone must be cleared.
+	d.bridgeMu.RLock()
+	tomb := d.bridgeShuttingDownSessions[sess.ID]
+	d.bridgeMu.RUnlock()
+	if tomb {
+		t.Fatal("tombstone should be cleared after reopen")
+	}
+}
