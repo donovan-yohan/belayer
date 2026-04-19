@@ -441,6 +441,50 @@ func TestWrite_TranscriptDirMissingIsNotError(t *testing.T) {
 	}
 }
 
+func TestWrite_ManifestLogLevelRoundtrip(t *testing.T) {
+	readSession := func(t *testing.T, destDir string) map[string]any {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(destDir, "manifest.json"))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("parse manifest: %v", err)
+		}
+		sess, ok := m["session"].(map[string]any)
+		if !ok {
+			t.Fatalf("manifest.session not an object")
+		}
+		return sess
+	}
+
+	t.Run("verbose_is_serialized", func(t *testing.T) {
+		destDir := filepath.Join(t.TempDir(), "archive", "sess-verbose")
+		meta := fullMeta()
+		meta.Session.LogLevel = "verbose"
+		if _, err := Write(destDir, meta, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		sess := readSession(t, destDir)
+		if got := sess["log_level"]; got != "verbose" {
+			t.Errorf("session.log_level: got %v, want %q", got, "verbose")
+		}
+	})
+
+	t.Run("empty_is_omitted", func(t *testing.T) {
+		destDir := filepath.Join(t.TempDir(), "archive", "sess-empty")
+		meta := fullMeta() // LogLevel unset
+		if _, err := Write(destDir, meta, nil); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		sess := readSession(t, destDir)
+		if _, present := sess["log_level"]; present {
+			t.Errorf("session.log_level should be omitted when empty, got %v", sess["log_level"])
+		}
+	})
+}
+
 func TestWrite_EventIDGapsPreserved(t *testing.T) {
 	dir := t.TempDir()
 	events := []Event{

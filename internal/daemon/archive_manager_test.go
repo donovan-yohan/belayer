@@ -320,3 +320,101 @@ func TestArchiveTerminal_WorksAfterDedupeEviction(t *testing.T) {
 		t.Errorf("expected event_count >= 2 after re-archive, got %v", count)
 	}
 }
+
+// TestArchiveManager_VerboseIncludesTranscripts verifies the end-to-end
+// capture-at-level contract: a session created with LogLevel="verbose"
+// whose transcript files live under <workspace>/.belayer/runs/<id>/transcripts/
+// gets both manifest.session.log_level=="verbose" AND the transcript files
+// copied into <archive>/transcripts/ with verbatim content.
+func TestArchiveManager_VerboseIncludesTranscripts(t *testing.T) {
+	ws := t.TempDir()
+	st := openTestStore(t)
+
+	id, err := st.CreateSession(store.Session{
+		Name:         "verbose-sess",
+		Status:       "running",
+		WorkspaceDir: ws,
+		LogLevel:     "verbose",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	logTestEvent(t, st, id, "session_created")
+
+	// Stage a transcript file at the daemon-anchored path.
+	transcriptsDir := filepath.Join(ws, ".belayer", "runs", id, "transcripts")
+	if err := os.MkdirAll(transcriptsDir, 0o700); err != nil {
+		t.Fatalf("mkdir transcripts: %v", err)
+	}
+	transcriptContent := `{"ts":"2026-04-19T12:00:00Z","agent":"supervisor","kind":"reasoning","turn":1,"text":"thinking out loud"}` + "\n"
+	transcriptPath := filepath.Join(transcriptsDir, "supervisor.jsonl")
+	if err := os.WriteFile(transcriptPath, []byte(transcriptContent), 0o600); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+
+	if err := st.UpdateSessionStatus(id, "complete"); err != nil {
+		t.Fatalf("UpdateSessionStatus: %v", err)
+	}
+
+	m := newArchiveManager(st, "test-instance")
+	m.ArchiveTerminal(id)
+	m.inflight.Wait()
+
+	manifest := waitForManifest(t, ws, id, 2*time.Second)
+	sess, ok := manifest["session"].(map[string]any)
+	if !ok {
+		t.Fatalf("manifest.session not an object")
+	}
+	if got := sess["log_level"]; got != "verbose" {
+		t.Errorf("manifest.session.log_level: got %v, want %q", got, "verbose")
+	}
+
+	// Transcript must be copied verbatim into the archive.
+	archivedTranscript := filepath.Join(ws, ".belayer", "archive", id, "transcripts", "supervisor.jsonl")
+	got, err := os.ReadFile(archivedTranscript)
+	if err != nil {
+		t.Fatalf("archived transcript missing: %v", err)
+	}
+	if string(got) != transcriptContent {
+		t.Errorf("archived transcript content mismatch:\ngot:  %q\nwant: %q", string(got), transcriptContent)
+	}
+}
+
+// TestArchiveManager_StandardOmitsTranscripts verifies that a standard-level
+// session produces an archive whose manifest omits session.log_level (the
+// default) and does NOT materialize a transcripts/ directory.
+func TestArchiveManager_StandardOmitsTranscripts(t *testing.T) {
+	ws := t.TempDir()
+	st := openTestStore(t)
+
+	id, err := st.CreateSession(store.Session{
+		Name:         "standard-sess",
+		Status:       "complete",
+		WorkspaceDir: ws,
+		LogLevel:     "standard",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	logTestEvent(t, st, id, "session_created")
+
+	m := newArchiveManager(st, "test-instance")
+	m.ArchiveTerminal(id)
+	m.inflight.Wait()
+
+	manifest := waitForManifest(t, ws, id, 2*time.Second)
+	sess, ok := manifest["session"].(map[string]any)
+	if !ok {
+		t.Fatalf("manifest.session not an object")
+	}
+	// "standard" must be serialized so readers can disambiguate from older
+	// archives that predate the column. Only empty/unset log_level is omitted.
+	if got := sess["log_level"]; got != "standard" {
+		t.Errorf("manifest.session.log_level: got %v, want %q", got, "standard")
+	}
+
+	transcriptsDir := filepath.Join(ws, ".belayer", "archive", id, "transcripts")
+	if _, err := os.Stat(transcriptsDir); err == nil {
+		t.Errorf("transcripts/ should not exist for standard-level session, but does")
+	}
+}
