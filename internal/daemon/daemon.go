@@ -905,6 +905,13 @@ func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	if r.URL.Query().Get("format") == "compact" {
+		d.writeEventHeaders(w, id, len(events))
+		writeCompactTSV(w, events)
+		return
+	}
+
 	d.writeEventHeaders(w, id, len(events))
 	writeJSON(w, http.StatusOK, events)
 }
@@ -1445,6 +1452,13 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": msg})
 		return
 	}
+
+	if r.URL.Query().Get("format") == "compact" {
+		d.writeEventHeaders(w, preds.SessionID, len(events))
+		writeCompactTSV(w, events)
+		return
+	}
+
 	d.writeEventHeaders(w, preds.SessionID, len(events))
 	writeJSON(w, http.StatusOK, events)
 }

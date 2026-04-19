@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/donovan-yohan/belayer/internal/store"
 )
 
 // writeEventHeaders sets the standard Belayer response headers on event-returning
@@ -46,4 +49,47 @@ func (d *Daemon) rosterCSV(sessionID string) (string, error) {
 		names = append(names, r.Name)
 	}
 	return strings.Join(names, ","), nil
+}
+
+// writeCompactTSV writes events as a compact TSV response (one line per event).
+// Format: <id>\t<agent>\t<type>\t<summary>\n
+// summary is the first 120 chars of Data with literal \n → \\n and \t → \\t.
+// Content-Type: text/tab-separated-values; charset=utf-8
+func writeCompactTSV(w http.ResponseWriter, events []store.SessionEvent) {
+	w.Header().Set("Content-Type", "text/tab-separated-values; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	for _, evt := range events {
+		agent := extractAgentName(evt.Data)
+		if agent == "unknown" {
+			agent = ""
+		}
+		summary := compactSummary(evt.Data)
+		line := fmt.Sprintf("%d\t%s\t%s\t%s\n",
+			evt.ID,
+			escapeTSVField(agent),
+			escapeTSVField(evt.Type),
+			escapeTSVField(summary),
+		)
+		fmt.Fprint(w, line)
+	}
+}
+
+// compactSummary returns the first 120 characters of data with embedded newlines
+// and tabs escaped, and trailing whitespace trimmed.
+func compactSummary(data string) string {
+	runes := []rune(data)
+	if len(runes) > 120 {
+		runes = runes[:120]
+	}
+	s := string(runes)
+	s = strings.TrimRight(s, " \t\n\r")
+	return s
+}
+
+// escapeTSVField replaces literal newlines and tabs in a TSV field value so the
+// output remains valid tab-separated format.
+func escapeTSVField(s string) string {
+	s = strings.ReplaceAll(s, "\t", `\t`)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	return s
 }

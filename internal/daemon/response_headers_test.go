@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -128,4 +129,91 @@ func TestResponseHeaders_UnknownSession(t *testing.T) {
 	}
 
 	// X-Session-Status and X-Log-Level may be absent for unknown session — no assertion.
+}
+
+// TestCompactTSV_GetEvents verifies ?format=compact produces valid TSV output.
+func TestCompactTSV_GetEvents(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create a session.
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{
+		Name:     "tsv-test",
+		LogLevel: "standard",
+	})
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create session: got %d, body=%s", createRR.Code, createRR.Body.String())
+	}
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+	id := sess.ID
+
+	// Seed 2 explicit events — one with newline in data to test escaping.
+	doRequest(t, d, "POST", "/sessions/"+id+"/events", logEventRequest{
+		Type: "test:plain",
+		Data: `{"agent":"tester","msg":"hello"}`,
+	})
+	doRequest(t, d, "POST", "/sessions/"+id+"/events", logEventRequest{
+		Type: "test:newline",
+		Data: "{\"agent\":\"tester\",\"msg\":\"line1\nline2\ttabbed\"}",
+	})
+
+	// GET /events?format=compact
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events?format=compact", nil)
+	d.server.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Content-Type must be TSV.
+	ct := rr.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/tab-separated-values") {
+		t.Errorf("Content-Type: expected TSV, got %q", ct)
+	}
+
+	// Parse lines.
+	var lines []string
+	scanner := bufio.NewScanner(strings.NewReader(rr.Body.String()))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	// Expect at least 3 lines: 1 session_created + 2 test events.
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 TSV lines, got %d:\n%s", len(lines), rr.Body.String())
+	}
+
+	// Verify structure: each line must have exactly 4 tab-separated fields.
+	for i, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 4 {
+			t.Errorf("line %d: expected 4 tab-separated fields, got %d: %q", i, len(fields), line)
+		}
+		// First field must be a positive integer (event ID).
+		if _, err := strconv.ParseInt(fields[0], 10, 64); err != nil {
+			t.Errorf("line %d: field[0] not integer: %q", i, fields[0])
+		}
+	}
+
+	// Verify escape behavior: the test:newline event should have escaped newlines in summary.
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "test:newline") {
+			found = true
+			// Summary must not contain a literal newline or tab.
+			if strings.Count(line, "\n") > 0 {
+				t.Errorf("test:newline summary contains literal newline: %q", line)
+			}
+			// It should contain escaped versions.
+			if !strings.Contains(line, `\n`) && !strings.Contains(line, `\t`) {
+				t.Errorf("test:newline summary missing escape sequences: %q", line)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("test:newline event not found in TSV output:\n%s", rr.Body.String())
+	}
 }
