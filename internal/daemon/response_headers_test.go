@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestResponseHeaders_OnGetEvents verifies that all 6 standard Belayer response
@@ -276,6 +277,71 @@ func TestSince_RepeatCallReturnsOnlyNew(t *testing.T) {
 	second := decodeJSON[[]map[string]interface{}](t, rr2)
 	if len(second) != 2 {
 		t.Errorf("second call: expected 2 new events, got %d", len(second))
+	}
+}
+
+// TestSince_EmptyPollRefreshesTTL verifies that a reader polling an idle
+// session refreshes its cursor timestamp on every ?since= read — including
+// empty pages. This is what keeps a long-lived reader alive past the 24h TTL
+// during quiescent periods (the scenario that previously silently rewound to 0).
+func TestSince_EmptyPollRefreshesTTL(t *testing.T) {
+	d := testDaemon(t)
+
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "idle-reader"})
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d", createRR.Code)
+	}
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+	id := sess.ID
+
+	// First read establishes the cursor row and consumes session_created.
+	rr1 := httptest.NewRecorder()
+	d.server.Handler.ServeHTTP(rr1,
+		httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events?since=idle-r1", nil))
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first since call: %d %s", rr1.Code, rr1.Body.String())
+	}
+
+	// Capture updated_at after the first read.
+	var before string
+	if err := d.store.DB().QueryRow(
+		`SELECT updated_at FROM reader_cursors WHERE reader_id = ?`, "idle-r1",
+	).Scan(&before); err != nil {
+		t.Fatalf("read cursor row after first: %v", err)
+	}
+
+	// Sleep enough that an RFC3339-nano timestamp change is observable.
+	time.Sleep(10 * time.Millisecond)
+
+	// Second read — no new events — must bump updated_at even on empty page.
+	rr2 := httptest.NewRecorder()
+	d.server.Handler.ServeHTTP(rr2,
+		httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events?since=idle-r1", nil))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("idle since call: %d %s", rr2.Code, rr2.Body.String())
+	}
+	empty := decodeJSON[[]map[string]interface{}](t, rr2)
+	if len(empty) != 0 {
+		t.Fatalf("expected empty page on idle read, got %d events", len(empty))
+	}
+
+	var after string
+	if err := d.store.DB().QueryRow(
+		`SELECT updated_at FROM reader_cursors WHERE reader_id = ?`, "idle-r1",
+	).Scan(&after); err != nil {
+		t.Fatalf("read cursor row after second: %v", err)
+	}
+
+	tBefore, err := time.Parse(time.RFC3339Nano, before)
+	if err != nil {
+		t.Fatalf("parse before %q: %v", before, err)
+	}
+	tAfter, err := time.Parse(time.RFC3339Nano, after)
+	if err != nil {
+		t.Fatalf("parse after %q: %v", after, err)
+	}
+	if !tAfter.After(tBefore) {
+		t.Fatalf("updated_at did not advance on empty poll: before=%s after=%s", tBefore, tAfter)
 	}
 }
 

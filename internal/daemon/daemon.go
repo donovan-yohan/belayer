@@ -1009,11 +1009,15 @@ func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the cursor to the max event ID in this response so the next call
-	// with ?since= continues from here.
-	if sinceRaw != "" && len(events) > 0 {
-		maxID := events[len(events)-1].ID
-		if updateErr := d.store.UpdateCursor(sinceRaw, id, maxID); updateErr != nil {
+	// Upsert the cursor on every ?since= read — including empty pages — so
+	// an actively polling reader on an idle session refreshes its TTL and
+	// does not silently rewind to 0 after 24h.
+	if sinceRaw != "" {
+		newCursorID := afterID
+		if len(events) > 0 {
+			newCursorID = events[len(events)-1].ID
+		}
+		if updateErr := d.store.UpdateCursor(sinceRaw, id, newCursorID); updateErr != nil {
 			log.Printf("daemon: update cursor %s/%s: %v", sinceRaw, id, updateErr)
 		}
 	}
