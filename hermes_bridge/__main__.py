@@ -330,7 +330,12 @@ def main() -> None:
     transcript_writer = make_transcript_writer(transcript_path, agent_id)
 
     # --- Wire callbacks ----------------------------------------------------
-    callbacks = make_callbacks(agent_id, session_id, socket_path, transcript_writer=transcript_writer)
+    log_level = os.environ.get("BELAYER_LOG_LEVEL", "standard")
+    callbacks = make_callbacks(
+        agent_id, session_id, socket_path,
+        transcript_writer=transcript_writer,
+        log_level=log_level,
+    )
     for attr, fn in callbacks.items():
         setattr(agent, attr, fn)
 
