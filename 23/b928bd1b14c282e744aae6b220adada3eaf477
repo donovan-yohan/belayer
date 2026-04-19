@@ -1,0 +1,23 @@
+internal/cli/init_test.go
+  4c067aa639d39a6e 291-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "23b928bd1b14c282e744aae6b220adada3eaf477",
+  "prompts": {
+    "4c067aa639d39a6e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "41896406-4e67-4114-926d-30b9c34514fe",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 4,
+      "total_deletions": 1,
+      "accepted_lines": 4,
+      "overriden_lines": 0
+    }
+  }
+}
