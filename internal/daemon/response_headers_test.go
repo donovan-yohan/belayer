@@ -304,3 +304,102 @@ func TestSince_RejectsInvalidReaderID(t *testing.T) {
 		}
 	}
 }
+
+// TestLinkNextHeader_FullPage verifies Link rel=next is emitted when page is full.
+func TestLinkNextHeader_FullPage(t *testing.T) {
+	d := testDaemon(t)
+
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "pagination-test"})
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d", createRR.Code)
+	}
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+	id := sess.ID
+
+	// Seed 5 explicit events (plus 1 session_created = 6 total, but we test relative).
+	for i := 0; i < 5; i++ {
+		rr := doRequest(t, d, "POST", "/sessions/"+id+"/events", logEventRequest{
+			Type: "ev:page",
+			Data: `{"agent":"tester"}`,
+		})
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("seed event %d: %d", i, rr.Code)
+		}
+	}
+
+	// GET /events?limit=3 — page is full, should have Link header.
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events?limit=3", nil)
+	d.server.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	linkHdr := rr.Header().Get("Link")
+	if linkHdr == "" {
+		t.Fatal("Link header missing on full page")
+	}
+	if !strings.Contains(linkHdr, `rel="next"`) {
+		t.Errorf("Link header missing rel=next: %q", linkHdr)
+	}
+	// The next URL should have after= param and limit=3.
+	if !strings.Contains(linkHdr, "after=") {
+		t.Errorf("Link header missing after= param: %q", linkHdr)
+	}
+	if !strings.Contains(linkHdr, "limit=3") {
+		t.Errorf("Link header missing limit=3: %q", linkHdr)
+	}
+
+	// Verify the events in the body are 3.
+	events := decodeJSON[[]map[string]interface{}](t, rr)
+	if len(events) != 3 {
+		t.Errorf("expected 3 events in body, got %d", len(events))
+	}
+
+	// Extract after= value from Link header and verify it equals ID of 3rd event.
+	// Link: </sessions/<id>/events?after=<lastID>&limit=3>; rel="next"
+	thirdEventID := events[2]["id"]
+	thirdIDStr := ""
+	if f, ok := thirdEventID.(float64); ok {
+		thirdIDStr = strconv.FormatInt(int64(f), 10)
+	}
+	if thirdIDStr != "" && !strings.Contains(linkHdr, "after="+thirdIDStr) {
+		t.Errorf("Link after= value expected %s, not found in: %q", thirdIDStr, linkHdr)
+	}
+}
+
+// TestLinkNextHeader_PartialPage verifies Link rel=next is absent when page is partial.
+func TestLinkNextHeader_PartialPage(t *testing.T) {
+	d := testDaemon(t)
+
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "pagination-partial"})
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d", createRR.Code)
+	}
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+	id := sess.ID
+
+	// Seed only 2 events.
+	for i := 0; i < 2; i++ {
+		rr := doRequest(t, d, "POST", "/sessions/"+id+"/events", logEventRequest{
+			Type: "ev:partial",
+			Data: `{"agent":"tester"}`,
+		})
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("seed event %d: %d", i, rr.Code)
+		}
+	}
+
+	// GET /events?limit=10 — fewer events than limit, no Link header.
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events?limit=10", nil)
+	d.server.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	linkHdr := rr.Header().Get("Link")
+	if linkHdr != "" {
+		t.Errorf("Link header should be absent on partial page, got %q", linkHdr)
+	}
+}

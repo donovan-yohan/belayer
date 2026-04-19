@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -973,6 +974,15 @@ func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Emit Link: rel=next when limit was specified and the page is full
+	// (i.e., exactly N events returned — indicates there may be more).
+	// Preserve tier, agent, format, and since query params in the next URL.
+	if limit > 0 && len(events) == limit {
+		lastID := events[len(events)-1].ID
+		nextURL := buildNextPageURL(r, id, lastID, limit)
+		w.Header().Set("Link", fmt.Sprintf(`<%s>; rel="next"`, nextURL))
+	}
+
 	if r.URL.Query().Get("format") == "compact" {
 		d.writeEventHeaders(w, id, len(events))
 		writeCompactTSV(w, events)
@@ -981,6 +991,21 @@ func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 
 	d.writeEventHeaders(w, id, len(events))
 	writeJSON(w, http.StatusOK, events)
+}
+
+// buildNextPageURL constructs the Link rel=next URL preserving relevant query
+// params (tier, agent, format, since) from the original request.
+func buildNextPageURL(r *http.Request, sessionID string, lastID int64, limit int) string {
+	q := make(url.Values)
+	q.Set("after", strconv.FormatInt(lastID, 10))
+	q.Set("limit", strconv.Itoa(limit))
+	// Preserve passthrough params.
+	for _, param := range []string{"tier", "agent", "format", "since"} {
+		if v := r.URL.Query().Get(param); v != "" {
+			q.Set(param, v)
+		}
+	}
+	return fmt.Sprintf("/sessions/%s/events?%s", sessionID, q.Encode())
 }
 
 type logEventRequest struct {
