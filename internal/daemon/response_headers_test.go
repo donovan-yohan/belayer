@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -215,5 +216,91 @@ func TestCompactTSV_GetEvents(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("test:newline event not found in TSV output:\n%s", rr.Body.String())
+	}
+}
+
+// TestSince_RepeatCallReturnsOnlyNew verifies per-reader cursor behaviour.
+func TestSince_RepeatCallReturnsOnlyNew(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create a session.
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "since-test"})
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d", createRR.Code)
+	}
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+	id := sess.ID
+
+	// Seed 3 events.
+	for i := 0; i < 3; i++ {
+		rr := doRequest(t, d, "POST", "/sessions/"+id+"/events", logEventRequest{
+			Type: "ev:seed",
+			Data: `{"agent":"tester"}`,
+		})
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("seed event %d: %d", i, rr.Code)
+		}
+	}
+
+	// First call with ?since=r1 — should return all events (session_created + 3 seeds).
+	rr1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events?since=r1", nil)
+	d.server.Handler.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first since call: %d %s", rr1.Code, rr1.Body.String())
+	}
+	first := decodeJSON[[]map[string]interface{}](t, rr1)
+	if len(first) < 4 {
+		// session_created + 3 seed events = 4 minimum
+		t.Fatalf("first call: expected >= 4 events, got %d", len(first))
+	}
+
+	// Seed 2 more events after the first read.
+	for i := 0; i < 2; i++ {
+		rr := doRequest(t, d, "POST", "/sessions/"+id+"/events", logEventRequest{
+			Type: "ev:new",
+			Data: `{"agent":"tester"}`,
+		})
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("new event %d: %d", i, rr.Code)
+		}
+	}
+
+	// Second call with ?since=r1 — should return only the 2 new events.
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events?since=r1", nil)
+	d.server.Handler.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second since call: %d %s", rr2.Code, rr2.Body.String())
+	}
+	second := decodeJSON[[]map[string]interface{}](t, rr2)
+	if len(second) != 2 {
+		t.Errorf("second call: expected 2 new events, got %d", len(second))
+	}
+}
+
+// TestSince_RejectsInvalidReaderID verifies that malformed reader IDs return 400.
+func TestSince_RejectsInvalidReaderID(t *testing.T) {
+	d := testDaemon(t)
+
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "since-invalid"})
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d", createRR.Code)
+	}
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+	id := sess.ID
+
+	invalidIDs := []string{"../foo", "foo bar", strings.Repeat("a", 65), "foo/bar"}
+	for _, rid := range invalidIDs {
+		rr := httptest.NewRecorder()
+		// URL-encode the since parameter so httptest.NewRequest doesn't panic on
+		// illegal characters (e.g. spaces, slashes) while still sending the raw
+		// value to the handler via r.URL.Query().Get("since").
+		rawURL := "/sessions/" + id + "/events?since=" + url.QueryEscape(rid)
+		req := httptest.NewRequest(http.MethodGet, rawURL, nil)
+		d.server.Handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("since=%q: expected 400, got %d (body=%s)", rid, rr.Code, rr.Body.String())
+		}
 	}
 }

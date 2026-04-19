@@ -51,6 +51,7 @@ func testDaemon(t *testing.T) *Daemon {
 		archiveDrainTimeout:  30 * time.Second,
 		shutdownHTTPTimeout:  5 * time.Second,
 		sseKeepaliveInterval: 15 * time.Second,
+		cursorSweepStop:      make(chan struct{}),
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }

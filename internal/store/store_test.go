@@ -1125,3 +1125,99 @@ func TestInsertEventWithSpill_NullWhenFragmentEmpty(t *testing.T) {
 		t.Errorf("trace_length: expected NULL, got %d", traceLength.Int64)
 	}
 }
+
+// TestCursor_RoundTrip verifies Lookup returns 0 for a missing cursor, and returns
+// the value set by UpdateCursor.
+func TestCursor_RoundTrip(t *testing.T) {
+	s := openMemory(t)
+
+	// Lookup on empty → 0.
+	got, err := s.LookupCursor("reader1", "session1")
+	if err != nil {
+		t.Fatalf("LookupCursor (empty): %v", err)
+	}
+	if got != 0 {
+		t.Errorf("LookupCursor (empty): expected 0, got %d", got)
+	}
+
+	// Set the cursor.
+	if err := s.UpdateCursor("reader1", "session1", 42); err != nil {
+		t.Fatalf("UpdateCursor: %v", err)
+	}
+
+	// Lookup returns the set value.
+	got, err = s.LookupCursor("reader1", "session1")
+	if err != nil {
+		t.Fatalf("LookupCursor after update: %v", err)
+	}
+	if got != 42 {
+		t.Errorf("LookupCursor after update: expected 42, got %d", got)
+	}
+
+	// Update to new value — upsert must work.
+	if err := s.UpdateCursor("reader1", "session1", 99); err != nil {
+		t.Fatalf("UpdateCursor (upsert): %v", err)
+	}
+	got, err = s.LookupCursor("reader1", "session1")
+	if err != nil {
+		t.Fatalf("LookupCursor after upsert: %v", err)
+	}
+	if got != 99 {
+		t.Errorf("LookupCursor after upsert: expected 99, got %d", got)
+	}
+
+	// Different reader/session pair must be independent.
+	got2, err := s.LookupCursor("reader2", "session1")
+	if err != nil {
+		t.Fatalf("LookupCursor (other reader): %v", err)
+	}
+	if got2 != 0 {
+		t.Errorf("LookupCursor (other reader): expected 0, got %d", got2)
+	}
+}
+
+// TestCursor_Sweep verifies that SweepExpiredCursors removes rows older than ttl.
+func TestCursor_Sweep(t *testing.T) {
+	s := openMemory(t)
+
+	// Insert a cursor with an ancient updated_at directly via SQL.
+	ancient := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().Exec(
+		`INSERT INTO reader_cursors(reader_id, session_id, last_id, updated_at) VALUES ('old','sess1',7,?)`,
+		ancient,
+	); err != nil {
+		t.Fatalf("insert old cursor: %v", err)
+	}
+
+	// Insert a fresh cursor.
+	if err := s.UpdateCursor("fresh", "sess1", 10); err != nil {
+		t.Fatalf("UpdateCursor fresh: %v", err)
+	}
+
+	// Sweep with 24h TTL — only old row should be deleted.
+	n, err := s.SweepExpiredCursors(24 * time.Hour)
+	if err != nil {
+		t.Fatalf("SweepExpiredCursors: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("SweepExpiredCursors: expected 1 deleted, got %d", n)
+	}
+
+	// Old cursor must be gone (LookupCursor returns 0).
+	got, err := s.LookupCursor("old", "sess1")
+	if err != nil {
+		t.Fatalf("LookupCursor after sweep: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("old cursor still visible after sweep: last_id=%d", got)
+	}
+
+	// Fresh cursor must survive.
+	got, err = s.LookupCursor("fresh", "sess1")
+	if err != nil {
+		t.Fatalf("LookupCursor fresh after sweep: %v", err)
+	}
+	if got != 10 {
+		t.Errorf("fresh cursor lost after sweep: expected 10, got %d", got)
+	}
+}

@@ -931,3 +931,64 @@ func nullableString(s string) any {
 	}
 	return s
 }
+
+// LookupCursor returns the last_id for a reader+session cursor pair. Returns 0
+// if no row exists or if the row is expired (updated_at < now - ttl). A ttl of
+// 0 disables the expiry check.
+func (s *Store) LookupCursor(readerID, sessionID string) (int64, error) {
+	var lastID int64
+	var updatedAt string
+	err := s.db.QueryRow(
+		`SELECT last_id, updated_at FROM reader_cursors WHERE reader_id = ? AND session_id = ?`,
+		readerID, sessionID,
+	).Scan(&lastID, &updatedAt)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("store: lookup cursor: %w", err)
+	}
+	// Check expiry: row is expired if updated_at < now - 24h.
+	t, _ := time.Parse(time.RFC3339Nano, updatedAt)
+	if t.IsZero() {
+		// Try SQLite default CURRENT_TIMESTAMP format.
+		t, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	}
+	if !t.IsZero() && time.Since(t) > 24*time.Hour {
+		return 0, nil
+	}
+	return lastID, nil
+}
+
+// UpdateCursor upserts the last_id for a reader+session cursor pair.
+func (s *Store) UpdateCursor(readerID, sessionID string, lastID int64) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(
+		`INSERT INTO reader_cursors (reader_id, session_id, last_id, updated_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(reader_id, session_id) DO UPDATE SET last_id=excluded.last_id, updated_at=excluded.updated_at`,
+		readerID, sessionID, lastID, now,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update cursor: %w", err)
+	}
+	return nil
+}
+
+// SweepExpiredCursors deletes reader_cursors rows where updated_at is older
+// than now-ttl. Returns the number of rows deleted.
+func (s *Store) SweepExpiredCursors(ttl time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-ttl).Format(time.RFC3339Nano)
+	result, err := s.db.Exec(
+		`DELETE FROM reader_cursors WHERE updated_at < ?`,
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("store: sweep expired cursors: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: sweep expired cursors rows affected: %w", err)
+	}
+	return n, nil
+}

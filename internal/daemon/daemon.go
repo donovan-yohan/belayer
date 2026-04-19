@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -174,6 +175,10 @@ type Daemon struct {
 	// announceDraining on Shutdown. Protected by sseMu.
 	sseMu          sync.Mutex
 	sseSubscribers map[*sseSubscriber]struct{}
+
+	// cursorSweepStop is closed when the daemon shuts down to stop the hourly
+	// SweepExpiredCursors goroutine started in New.
+	cursorSweepStop chan struct{}
 }
 
 // New creates a Daemon with the given config. Call Start to begin serving.
@@ -212,8 +217,15 @@ func New(cfg Config) (*Daemon, error) {
 		archiveDrainTimeout:  30 * time.Second,
 		shutdownHTTPTimeout:  5 * time.Second,
 		sseKeepaliveInterval: keepaliveInterval,
+		cursorSweepStop:      make(chan struct{}),
 	}
 	d.archiver = newArchiveManager(st, d.daemonInstanceID)
+
+	// Sweep expired reader cursors on startup and then hourly.
+	if _, sweepErr := st.SweepExpiredCursors(24 * time.Hour); sweepErr != nil {
+		log.Printf("daemon: initial cursor sweep: %v", sweepErr)
+	}
+	go d.cursorSweepLoop(time.Hour)
 
 	traceBase := filepath.Join(filepath.Dir(cfg.DBPath), "traces")
 	tw, err := trace.NewWriter(traceBase)
@@ -514,6 +526,15 @@ func (d *Daemon) downRuntime(shutCtx context.Context) {
 // closeAndCleanup closes the store and removes any socket files the daemon
 // created. Final phase — nothing runs after this.
 func (d *Daemon) closeAndCleanup() {
+	// Stop the cursor sweep goroutine.
+	if d.cursorSweepStop != nil {
+		select {
+		case <-d.cursorSweepStop:
+			// already closed
+		default:
+			close(d.cursorSweepStop)
+		}
+	}
 	if d.traceWriter != nil {
 		if err := d.traceWriter.Close(); err != nil {
 			log.Printf("daemon: trace writer close: %v", err)
@@ -523,6 +544,23 @@ func (d *Daemon) closeAndCleanup() {
 	os.Remove(d.config.SocketPath)
 	if d.config.WorkspaceSockPath != "" {
 		os.Remove(d.config.WorkspaceSockPath)
+	}
+}
+
+// cursorSweepLoop runs SweepExpiredCursors on the given interval until
+// cursorSweepStop is closed.
+func (d *Daemon) cursorSweepLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-d.cursorSweepStop:
+			return
+		case <-ticker.C:
+			if _, err := d.store.SweepExpiredCursors(24 * time.Hour); err != nil {
+				log.Printf("daemon: cursor sweep: %v", err)
+			}
+		}
 	}
 }
 
@@ -892,6 +930,9 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sessionToAPIResponse(sess))
 }
 
+// readerIDPattern is the allowed character set for ?since= reader IDs.
+var readerIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
 func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	afterID, waitFor, beforeID, limit, err := parseEventCursor(r)
@@ -900,10 +941,36 @@ func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?since=<reader_id>: per-reader cursor. Overrides ?after= when both are
+	// present (explicit cursor wins over positional parameter).
+	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
+	if sinceRaw != "" {
+		if !readerIDPattern.MatchString(sinceRaw) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "since: invalid reader_id (must be 1-64 chars, [A-Za-z0-9_-])"})
+			return
+		}
+		cursorID, lookupErr := d.store.LookupCursor(sinceRaw, id)
+		if lookupErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": lookupErr.Error()})
+			return
+		}
+		// Cursor overrides ?after= (explicit cursor wins).
+		afterID = cursorID
+	}
+
 	events, err := d.querySessionEvents(r.Context(), id, afterID, waitFor, beforeID, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+
+	// Update the cursor to the max event ID in this response so the next call
+	// with ?since= continues from here.
+	if sinceRaw != "" && len(events) > 0 {
+		maxID := events[len(events)-1].ID
+		if updateErr := d.store.UpdateCursor(sinceRaw, id, maxID); updateErr != nil {
+			log.Printf("daemon: update cursor %s/%s: %v", sinceRaw, id, updateErr)
+		}
 	}
 
 	if r.URL.Query().Get("format") == "compact" {
