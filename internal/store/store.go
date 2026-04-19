@@ -19,6 +19,7 @@ type Session struct {
 	Template     string
 	Repos        string // JSON map: {"frontend": "/abs/path", "backend": "/abs/path"}
 	WorkspaceDir string
+	LogLevel     string // "standard" or "verbose"; frozen at creation time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -126,12 +127,15 @@ func (s *Store) CreateSession(session Session) (string, error) {
 	if session.Repos == "" {
 		session.Repos = "{}"
 	}
+	if session.LogLevel == "" {
+		session.LogLevel = "standard"
+	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO sessions (id, name, status, template, repos, workspace_dir, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (id, name, status, template, repos, workspace_dir, log_level, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.Name, session.Status, nullableString(session.Template),
-		session.Repos, session.WorkspaceDir,
+		session.Repos, session.WorkspaceDir, session.LogLevel,
 		session.CreatedAt, session.UpdatedAt,
 	)
 	if err != nil {
@@ -143,12 +147,12 @@ func (s *Store) CreateSession(session Session) (string, error) {
 // GetSession retrieves a session by ID. Returns a wrapped sql.ErrNoRows if not found.
 func (s *Store) GetSession(id string) (Session, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), created_at, updated_at
+		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), COALESCE(log_level,'standard'), created_at, updated_at
 		 FROM sessions WHERE id = ?`, id,
 	)
 	var sess Session
 	var createdAt, updatedAt string
-	err := row.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &createdAt, &updatedAt)
+	err := row.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &sess.LogLevel, &createdAt, &updatedAt)
 	if err != nil {
 		return Session{}, fmt.Errorf("store: get session: %w", err)
 	}
@@ -160,7 +164,7 @@ func (s *Store) GetSession(id string) (Session, error) {
 // ListSessions returns all sessions ordered by created_at DESC.
 func (s *Store) ListSessions() ([]Session, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), created_at, updated_at
+		`SELECT id, name, status, COALESCE(template,''), COALESCE(repos,'{}'), COALESCE(workspace_dir,''), COALESCE(log_level,'standard'), created_at, updated_at
 		 FROM sessions ORDER BY created_at DESC`,
 	)
 	if err != nil {
@@ -172,7 +176,7 @@ func (s *Store) ListSessions() ([]Session, error) {
 	for rows.Next() {
 		var sess Session
 		var createdAt, updatedAt string
-		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&sess.ID, &sess.Name, &sess.Status, &sess.Template, &sess.Repos, &sess.WorkspaceDir, &sess.LogLevel, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("store: list sessions scan: %w", err)
 		}
 		sess.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)

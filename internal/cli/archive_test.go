@@ -79,7 +79,7 @@ func TestArchiveCmd_Success(t *testing.T) {
 	c := NewClient(sock)
 
 	// Create a session with a workspace dir.
-	sess, err := c.CreateSession("archive-test", "implement", nil, outDir)
+	sess, err := c.CreateSession("archive-test", "implement", nil, outDir, "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestArchiveCmd_ManifestHasDaemonInstanceID(t *testing.T) {
 	outDir := t.TempDir()
 	c := NewClient(sock)
 
-	sess, err := c.CreateSession("epoch-test", "implement", nil, outDir)
+	sess, err := c.CreateSession("epoch-test", "implement", nil, outDir, "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestArchiveCmd_OutputOverride(t *testing.T) {
 	sock := startTestDaemon(t)
 	c := NewClient(sock)
 
-	sess, err := c.CreateSession("output-override-test", "implement", nil, "")
+	sess, err := c.CreateSession("output-override-test", "implement", nil, "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestArchiveCmd_EmptyWorkspaceNoOutput(t *testing.T) {
 	c := NewClient(sock)
 
 	// Session with no workspace dir.
-	sess, err := c.CreateSession("no-workspace", "implement", nil, "")
+	sess, err := c.CreateSession("no-workspace", "implement", nil, "", "")
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}

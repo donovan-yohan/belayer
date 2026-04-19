@@ -68,6 +68,10 @@ type Config struct {
 	BridgeBaseURL string
 	BridgeProvider string
 
+	// DefaultLogLevel is the default log_level for new sessions when POST
+	// /sessions does not specify one. Empty = 'standard'.
+	DefaultLogLevel string
+
 	// SSEKeepaliveInterval is how often the SSE handler emits a ": keep-alive"
 	// comment to prevent idle-connection timeouts. Defaults to 15s in New().
 	// Tests can set a small value (e.g., 50ms) to verify keepalive behaviour
@@ -655,6 +659,7 @@ type sessionAPIResponse struct {
 	Template     string            `json:"Template"`
 	Repos        map[string]string `json:"Repos"`
 	WorkspaceDir string            `json:"WorkspaceDir"`
+	LogLevel     string            `json:"LogLevel"`
 	CreatedAt    time.Time         `json:"CreatedAt"`
 	UpdatedAt    time.Time         `json:"UpdatedAt"`
 }
@@ -673,6 +678,7 @@ func sessionToAPIResponse(s store.Session) sessionAPIResponse {
 		Template:     s.Template,
 		Repos:        repos,
 		WorkspaceDir: s.WorkspaceDir,
+		LogLevel:     s.LogLevel,
 		CreatedAt:    s.CreatedAt,
 		UpdatedAt:    s.UpdatedAt,
 	}
@@ -683,6 +689,7 @@ type createSessionRequest struct {
 	Template     string            `json:"template,omitempty"`
 	Repos        map[string]string `json:"repos,omitempty"`
 	WorkspaceDir string            `json:"workspace_dir,omitempty"`
+	LogLevel     string            `json:"log_level,omitempty"`
 }
 
 func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -702,6 +709,12 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logLevel, err := ResolveLogLevel(req.LogLevel, d.config.DefaultLogLevel)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
 	reposJSON := "{}"
 	if len(req.Repos) > 0 {
 		b, err := json.Marshal(req.Repos)
@@ -718,6 +731,7 @@ func (d *Daemon) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Status:       "pending",
 		Repos:        reposJSON,
 		WorkspaceDir: req.WorkspaceDir,
+		LogLevel:     logLevel,
 	}
 	id, err := d.store.CreateSession(sess)
 	if err != nil {

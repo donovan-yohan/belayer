@@ -99,6 +99,7 @@ type sessionResponse struct {
 	Template     string            `json:"Template"`
 	Repos        map[string]string `json:"Repos"`
 	WorkspaceDir string            `json:"WorkspaceDir"`
+	LogLevel     string            `json:"LogLevel"`
 	CreatedAt    time.Time         `json:"CreatedAt"`
 	UpdatedAt    time.Time         `json:"UpdatedAt"`
 }
@@ -111,14 +112,19 @@ type eventResponse struct {
 	Data      string    `json:"Data"`
 }
 
-// CreateSession creates a new session via the daemon.
-func (c *Client) CreateSession(name, template string, repos map[string]string, workspaceDir string) (sessionResponse, error) {
-	resp, err := c.do("POST", "/sessions", map[string]any{
+// CreateSession creates a new session via the daemon. logLevel is optional;
+// pass an empty string to let the daemon apply its configured default.
+func (c *Client) CreateSession(name, template string, repos map[string]string, workspaceDir, logLevel string) (sessionResponse, error) {
+	body := map[string]any{
 		"name":          name,
 		"template":      template,
 		"repos":         repos,
 		"workspace_dir": workspaceDir,
-	})
+	}
+	if logLevel != "" {
+		body["log_level"] = logLevel
+	}
+	resp, err := c.do("POST", "/sessions", body)
 	if err != nil {
 		return sessionResponse{}, err
 	}

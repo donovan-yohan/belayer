@@ -22,6 +22,7 @@ func newRunCmd() *cobra.Command {
 func newRunStartCmd() *cobra.Command {
 	var socket, name, task, supervisorProfile, workdir, reposFlag string
 	var exitConditions []string
+	var logLevel string
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Create a run, spawn supervisor, and deliver the initial task",
@@ -82,7 +83,7 @@ func newRunStartCmd() *cobra.Command {
 
 			// Create session with baseDir as workspace so the daemon can resolve
 			// sandbox settings (.belayer/config.yaml) even when no repos are given.
-			sess, err := c.CreateSession(sessionName, "nightshift", repos, baseDir)
+			sess, err := c.CreateSession(sessionName, "nightshift", repos, baseDir, logLevel)
 			if err != nil {
 				return fmt.Errorf("create session: %w", err)
 			}
@@ -141,6 +142,7 @@ func newRunStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
 	cmd.Flags().StringArrayVar(&exitConditions, "exit-condition", nil, "Override .belayer/config.yaml#exit_conditions for this run. Repeatable. When present, these replace the file's list entirely.")
+	cmd.Flags().StringVar(&logLevel, "log-level", "", "Override daemon default log level for this run (standard|verbose).")
 	return cmd
 }
 
