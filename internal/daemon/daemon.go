@@ -288,6 +288,10 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("GET /sessions/{id}/tool-calls", d.handleToolCalls)
 	mux.HandleFunc("GET /sessions/{id}/conversation", d.handleConversation)
 	mux.HandleFunc("GET /sessions/{id}/phase", d.handlePhase)
+	mux.HandleFunc("GET /sessions/{id}/artifacts/{artifact_id}", d.handleGetArtifactBytes)
+	mux.HandleFunc("GET /sessions/{id}/transcripts", d.handleListTranscripts)
+	mux.HandleFunc("GET /sessions/{id}/transcripts/{agent}", d.handleTranscriptContent)
+	mux.HandleFunc("GET /sessions/{id}/traces", d.handleListTraces)
 
 	d.server = &http.Server{Handler: mux}
 	return d, nil
