@@ -387,6 +387,15 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
+	// Drain any still-live bridge process for this (session, agent) before
+	// rotating its log files. bridgelog.Rotate is unsafe while a writer holds
+	// the file open — the kernel will keep writing the renamed inode, so
+	// post-rotate bytes would land in .log.1 instead of the new .log.
+	if existing := d.takeExistingBridge(req.SessionID, req.Name); existing != nil {
+		_ = existing.Stop(5 * time.Second)
+		<-existing.Done()
+	}
+
 	// Rotate and open per-spawn stdout/stderr logs (keeps last 3 spawns).
 	stdoutLog, err := bridgelog.RotateAndOpen(filepath.Join(runDir, "bridge-stdout.log"), 3)
 	if err != nil {
@@ -598,6 +607,21 @@ func (d *Daemon) interruptBridgeAgent(sessionID, agentName, from, content string
 		return fmt.Errorf("no bridge process for %s/%s", sessionID, agentName)
 	}
 	return proc.Interrupt(from, content)
+}
+
+// takeExistingBridge atomically removes and returns any bridge process
+// tracked for (sessionID, agentName). Returns nil if no process is tracked.
+// Caller is responsible for stopping/waiting on the returned process; the
+// map entry is gone either way, so the replacement spawn can proceed.
+func (d *Daemon) takeExistingBridge(sessionID, agentName string) *bridge.Process {
+	key := bridgeKey(sessionID, agentName)
+	d.bridgeMu.Lock()
+	proc := d.bridgeProcs[key]
+	if proc != nil {
+		delete(d.bridgeProcs, key)
+	}
+	d.bridgeMu.Unlock()
+	return proc
 }
 
 // spawnAgentInternal handles the core agent spawn logic without HTTP.

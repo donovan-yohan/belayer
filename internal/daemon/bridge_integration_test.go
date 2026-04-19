@@ -443,3 +443,38 @@ func TestBridgeIntegration_RosterReflectsSpawnedAgents(t *testing.T) {
 		t.Fatalf("expected supervisor and api in roster, got %v", names)
 	}
 }
+
+// TestTakeExistingBridge_RemovesAndReturnsLiveProc is a unit test for the
+// rotation-race guard. Before rotating bridge-stdout.log on respawn, the
+// daemon must atomically remove and stop any still-live bridge process for
+// the same (session, agent) key.
+func TestTakeExistingBridge_RemovesAndReturnsLiveProc(t *testing.T) {
+	d := testDaemon(t)
+
+	// Spawn a mock-idle bridge and register it.
+	proc := spawnMockBridge(t, "s1", "sup", "mock-idle")
+	key := bridgeKey("s1", "sup")
+	d.bridgeMu.Lock()
+	d.bridgeProcs[key] = proc
+	d.bridgeMu.Unlock()
+
+	// takeExistingBridge returns it and removes the map entry.
+	got := d.takeExistingBridge("s1", "sup")
+	if got == nil {
+		t.Fatal("takeExistingBridge returned nil for registered proc")
+	}
+	if got != proc {
+		t.Fatal("takeExistingBridge returned a different process")
+	}
+	d.bridgeMu.RLock()
+	_, still := d.bridgeProcs[key]
+	d.bridgeMu.RUnlock()
+	if still {
+		t.Fatal("takeExistingBridge left a stale map entry")
+	}
+
+	// Second call returns nil (idempotent).
+	if again := d.takeExistingBridge("s1", "sup"); again != nil {
+		t.Fatal("second takeExistingBridge should return nil")
+	}
+}
