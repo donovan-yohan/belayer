@@ -416,10 +416,16 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("ensure sandbox handle: %w", err)
 	}
 
-	// Allocate per-agent transcript path for verbose sessions.
+	// Allocate per-agent transcript path for verbose sessions. Anchored to
+	// sess.WorkspaceDir (not the agent's workdir, which may be a per-branch
+	// worktree) so the archive manager's single read path under
+	// sess.WorkspaceDir/.belayer/runs/<session>/transcripts/ finds every
+	// agent's file, including branch-based specialists. If sess.WorkspaceDir
+	// is empty, the session is never archived anyway (archive_manager.doArchive
+	// skips), so there's no point writing transcripts.
 	var transcriptPath string
-	if sess.LogLevel == "verbose" {
-		transcriptsDir := filepath.Join(workdir, ".belayer", "runs", req.SessionID, "transcripts")
+	if sess.LogLevel == "verbose" && sess.WorkspaceDir != "" {
+		transcriptsDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", req.SessionID, "transcripts")
 		if mkErr := os.MkdirAll(transcriptsDir, 0o700); mkErr != nil {
 			log.Printf("spawn %s: create transcripts dir failed (continuing without transcript): %v", req.Name, mkErr)
 		} else {
