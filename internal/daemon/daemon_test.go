@@ -449,7 +449,7 @@ func TestStreamEventsSSE_EmitsMultiplexedEvents(t *testing.T) {
 		if !strings.Contains(payload, "event: streamed") {
 			t.Fatalf("expected SSE event header, got %q", payload)
 		}
-		if !strings.Contains(payload, `"Type":"streamed"`) {
+		if !strings.Contains(payload, `"type":"streamed"`) {
 			t.Fatalf("expected streamed event payload, got %q", payload)
 		}
 		if !strings.Contains(payload, sess2.ID) {

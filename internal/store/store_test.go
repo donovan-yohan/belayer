@@ -924,7 +924,7 @@ func TestQueryEventsWindow_AfterAndBefore(t *testing.T) {
 
 // TestInsertEventWithSpill_SetsFragmentColumns verifies that InsertEventWithSpill
 // populates trace_file, trace_offset, and trace_length when a non-zero Fragment is
-// provided.
+// provided, and that QueryEvents returns the same values in the SessionEvent struct.
 func TestInsertEventWithSpill_SetsFragmentColumns(t *testing.T) {
 	s := openMemory(t)
 
@@ -966,6 +966,31 @@ func TestInsertEventWithSpill_SetsFragmentColumns(t *testing.T) {
 	}
 	if !traceLength.Valid || traceLength.Int64 != frag.Length {
 		t.Errorf("trace_length: got %v, want %d", traceLength, frag.Length)
+	}
+
+	// Also verify the columns are returned via QueryEvents (not just raw DB).
+	events, err := s.QueryEvents(sessID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("QueryEvents: expected 1 event, got %d", len(events))
+	}
+	got := events[0]
+
+	if got.TraceFile != frag.Path {
+		t.Errorf("QueryEvents TraceFile: got %q, want %q", got.TraceFile, frag.Path)
+	}
+	if got.TraceOffset != frag.Offset {
+		t.Errorf("QueryEvents TraceOffset: got %d, want %d", got.TraceOffset, frag.Offset)
+	}
+	if got.TraceLength != frag.Length {
+		t.Errorf("QueryEvents TraceLength: got %d, want %d", got.TraceLength, frag.Length)
+	}
+	// TraceFragment should be derived from the basename without extensions.
+	wantFragment := "0001"
+	if got.TraceFragment != wantFragment {
+		t.Errorf("QueryEvents TraceFragment: got %q, want %q", got.TraceFragment, wantFragment)
 	}
 }
 

@@ -25,9 +25,13 @@ func testDaemonWithTraceAndSlice(t *testing.T) (*Daemon, string) {
 	return d, dir
 }
 
-// TestTraceE2E_TraceSessionCapturesAndServesFragments verifies the full round-trip:
-// large payloads spill to disk, event rows carry the sentinel + trace columns,
-// and the slice HTTP endpoint returns the correct bytes.
+// TestTraceE2E_TraceSessionCapturesAndServesFragments verifies the full round-trip
+// via HTTP-visible metadata:
+//  1. Create session, POST 5 large payloads.
+//  2. GET /sessions/{id}/events — assert each event has trace_file, trace_offset,
+//     trace_length, and trace_fragment populated.
+//  3. Use those values to issue GET /sessions/{id}/trace/{agent}/{fragment}?offset=X&length=Y
+//     and assert the body contains the scrubbed marker.
 func TestTraceE2E_TraceSessionCapturesAndServesFragments(t *testing.T) {
 	d, dir := testDaemonWithTraceAndSlice(t)
 
@@ -61,7 +65,7 @@ func TestTraceE2E_TraceSessionCapturesAndServesFragments(t *testing.T) {
 		}
 	}
 
-	// Fragment file should exist at <dir>/traces/<sessID>/<agentName>/0001.jsonl
+	// Fragment file should still exist at <dir>/traces/<sessID>/<agentName>/0001.jsonl.
 	fragDir := filepath.Join(dir, "traces", sessID, agentName)
 	fragPath := filepath.Join(fragDir, "0001.jsonl")
 	fileData, err := os.ReadFile(fragPath)
@@ -75,23 +79,20 @@ func TestTraceE2E_TraceSessionCapturesAndServesFragments(t *testing.T) {
 		}
 	}
 
-	// Read event rows and verify sentinel + trace columns.
-	events, err := d.store.QueryEvents(sessID)
-	if err != nil {
-		t.Fatalf("QueryEvents: %v", err)
+	// --- Step 2: GET /sessions/{id}/events via HTTP and parse JSON response. ---
+	rrGet := doRequest(t, d, "GET", "/sessions/"+sessID+"/events", nil)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET events: expected 200, got %d: %s", rrGet.Code, rrGet.Body.String())
 	}
-	if len(events) != numPayloads {
-		t.Fatalf("expected %d events, got %d", numPayloads, len(events))
+	var httpEvents []store.SessionEvent
+	if err := json.NewDecoder(rrGet.Body).Decode(&httpEvents); err != nil {
+		t.Fatalf("decode events response: %v", err)
+	}
+	if len(httpEvents) != numPayloads {
+		t.Fatalf("expected %d events from HTTP, got %d", numPayloads, len(httpEvents))
 	}
 
-	type traceRow struct {
-		traceFile   string
-		traceOffset int64
-		traceLength int64
-	}
-	rows := make([]traceRow, numPayloads)
-
-	for i, evt := range events {
+	for i, evt := range httpEvents {
 		// Sentinel JSON check.
 		var sentinel struct {
 			Agent string `json:"agent"`
@@ -107,42 +108,25 @@ func TestTraceE2E_TraceSessionCapturesAndServesFragments(t *testing.T) {
 			t.Errorf("event[%d]: sentinel _trace expected true", i)
 		}
 
-		// Trace columns.
-		var traceFileNull, traceOffsetNull, traceLengthNull bool
-		var tf string
-		var to, tl int64
-		row := d.store.DB().QueryRow(
-			`SELECT trace_file IS NULL, trace_offset IS NULL, trace_length IS NULL,
-			        COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0)
-			 FROM events WHERE id = ?`,
-			evt.ID,
-		)
-		if err := row.Scan(&traceFileNull, &traceOffsetNull, &traceLengthNull, &tf, &to, &tl); err != nil {
-			t.Fatalf("event[%d]: scan trace columns: %v", i, err)
+		// Trace metadata must be present in the HTTP response.
+		if evt.TraceFile == "" {
+			t.Errorf("event[%d]: trace_file empty in HTTP response", i)
 		}
-		if traceFileNull {
-			t.Fatalf("event[%d]: trace_file is NULL", i)
+		if evt.TraceLength == 0 {
+			t.Errorf("event[%d]: trace_length is 0 in HTTP response", i)
 		}
-		if traceOffsetNull {
-			t.Errorf("event[%d]: trace_offset is NULL", i)
+		if evt.TraceFragment == "" {
+			t.Errorf("event[%d]: trace_fragment empty in HTTP response", i)
 		}
-		if traceLengthNull {
-			t.Errorf("event[%d]: trace_length is NULL", i)
-		}
-		rows[i] = traceRow{traceFile: tf, traceOffset: to, traceLength: tl}
 	}
 
-	// For each event, issue GET /sessions/{id}/trace/{agent}/{fragment}?offset=X&length=Y
-	// and verify the body contains the marker.
-	for i := range events {
-		tr := rows[i]
-		// Derive fragment ID from the file path (basename without .jsonl).
-		base := filepath.Base(tr.traceFile)
-		fragID := strings.TrimSuffix(base, ".jsonl")
-		fragID = strings.TrimSuffix(fragID, ".jsonl.zst")
-
+	// --- Step 3: Use HTTP metadata to issue slice requests and verify content. ---
+	for i, evt := range httpEvents {
+		if evt.TraceFile == "" {
+			continue // already errored above
+		}
 		url := fmt.Sprintf("/sessions/%s/trace/%s/%s?offset=%d&length=%d",
-			sessID, agentName, fragID, tr.traceOffset, tr.traceLength)
+			sessID, agentName, evt.TraceFragment, evt.TraceOffset, evt.TraceLength)
 		rr := doRequest(t, d, "GET", url, nil)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("event[%d]: slice GET %s: expected 200, got %d: %s",
@@ -228,7 +212,9 @@ func TestTraceE2E_TraceSessionCapturesAndServesFragments_Sealed(t *testing.T) {
 }
 
 // TestTraceE2E_StandardTierNoFragments verifies that standard-tier sessions do
-// not produce fragment files and every event row has null trace_*.
+// not produce fragment files, every event has null trace_* columns in the DB,
+// and the HTTP response returns no trace metadata. Data fields are structured
+// JSON sentinel objects (not raw truncated strings).
 func TestTraceE2E_StandardTierNoFragments(t *testing.T) {
 	d, dir := testDaemonWithTraceAndSlice(t)
 
@@ -262,25 +248,48 @@ func TestTraceE2E_StandardTierNoFragments(t *testing.T) {
 		t.Errorf("expected no trace dir for standard-tier session, but %s exists", tracePath)
 	}
 
-	// Every event row should have null trace_* columns and data should be truncated.
-	events, err := d.store.QueryEvents(sessID)
-	if err != nil {
-		t.Fatalf("QueryEvents: %v", err)
+	// GET events via HTTP and verify: no trace metadata, structured JSON sentinel as data.
+	rrGet := doRequest(t, d, "GET", "/sessions/"+sessID+"/events", nil)
+	if rrGet.Code != http.StatusOK {
+		t.Fatalf("GET events: expected 200, got %d: %s", rrGet.Code, rrGet.Body.String())
 	}
-	if len(events) != numPayloads {
-		t.Fatalf("expected %d events, got %d", numPayloads, len(events))
+	var httpEvents []store.SessionEvent
+	if err := json.NewDecoder(rrGet.Body).Decode(&httpEvents); err != nil {
+		t.Fatalf("decode events response: %v", err)
+	}
+	if len(httpEvents) != numPayloads {
+		t.Fatalf("expected %d events from HTTP, got %d", numPayloads, len(httpEvents))
 	}
 
-	const truncSuffix = "…(truncated; upgrade to trace tier to capture)"
-	for i, evt := range events {
-		if !strings.HasSuffix(evt.Data, truncSuffix) {
-			tail := evt.Data
-			if len(tail) > 80 {
-				tail = "..." + tail[len(tail)-80:]
-			}
-			t.Errorf("event[%d]: expected truncation suffix, got tail: %q", i, tail)
+	for i, evt := range httpEvents {
+		// Data must be a valid structured JSON sentinel.
+		var sentinel struct {
+			Truncated bool   `json:"_truncated"`
+			Tier      string `json:"tier"`
+			Reason    string `json:"reason"`
+		}
+		if err := json.Unmarshal([]byte(evt.Data), &sentinel); err != nil {
+			t.Fatalf("event[%d]: data is not valid JSON: %v\ndata: %s", i, err, evt.Data)
+		}
+		if !sentinel.Truncated {
+			t.Errorf("event[%d]: sentinel._truncated: expected true", i)
+		}
+		if sentinel.Tier != "standard" {
+			t.Errorf("event[%d]: sentinel.tier: got %q, want %q", i, sentinel.Tier, "standard")
+		}
+		if sentinel.Reason == "" {
+			t.Errorf("event[%d]: sentinel.reason: expected non-empty", i)
 		}
 
+		// No trace metadata should appear in the HTTP response.
+		if evt.TraceFile != "" {
+			t.Errorf("event[%d]: trace_file should be absent for standard tier, got %q", i, evt.TraceFile)
+		}
+		if evt.TraceFragment != "" {
+			t.Errorf("event[%d]: trace_fragment should be absent for standard tier, got %q", i, evt.TraceFragment)
+		}
+
+		// Verify raw DB columns are still NULL.
 		var traceFileNull, traceOffsetNull, traceLengthNull bool
 		row := d.store.DB().QueryRow(
 			`SELECT trace_file IS NULL, trace_offset IS NULL, trace_length IS NULL

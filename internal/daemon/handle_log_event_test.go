@@ -211,7 +211,9 @@ func TestHandleLogEvent_TraceSpill(t *testing.T) {
 }
 
 // TestHandleLogEvent_StandardTruncate verifies that a ≥64 KB payload at
-// standard tier is truncated (not spilled) and trace columns remain NULL.
+// standard tier is truncated (not spilled), stored as a structured JSON sentinel,
+// and trace columns remain NULL.
+// This is also TestHandleLogEvent_StandardSentinelIsValidJSON.
 func TestHandleLogEvent_StandardTruncate(t *testing.T) {
 	d, _ := testDaemonWithTrace(t)
 
@@ -244,16 +246,30 @@ func TestHandleLogEvent_StandardTruncate(t *testing.T) {
 	}
 	evt := events[0]
 
-	const truncSuffix = "…(truncated; upgrade to trace tier to capture)"
-	if !strings.HasSuffix(evt.Data, truncSuffix) {
-		tail := evt.Data
-		if len(tail) > 80 {
-			tail = "..." + tail[len(tail)-80:]
-		}
-		t.Errorf("expected data to have truncation suffix; got last 80 chars: %q", tail)
+	// Data must be valid parseable JSON sentinel (not a prose string).
+	var sentinel struct {
+		Truncated    bool   `json:"_truncated"`
+		Tier         string `json:"tier"`
+		OriginalSize int    `json:"original_size"`
+		Reason       string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(evt.Data), &sentinel); err != nil {
+		t.Fatalf("event data is not valid JSON: %v\ndata: %s", err, evt.Data)
+	}
+	if !sentinel.Truncated {
+		t.Errorf("sentinel._truncated: expected true, got false")
+	}
+	if sentinel.Tier != "standard" {
+		t.Errorf("sentinel.tier: got %q, want %q", sentinel.Tier, "standard")
+	}
+	if sentinel.OriginalSize <= 65536 {
+		t.Errorf("sentinel.original_size: got %d, expected > 65536", sentinel.OriginalSize)
+	}
+	if sentinel.Reason == "" {
+		t.Errorf("sentinel.reason: expected non-empty")
 	}
 
-	// Trace columns must be NULL.
+	// Trace columns must be NULL (no spill for standard tier).
 	var traceFileNull, traceOffsetNull, traceLengthNull bool
 	row := d.store.DB().QueryRow(
 		`SELECT trace_file IS NULL, trace_offset IS NULL, trace_length IS NULL
@@ -272,4 +288,178 @@ func TestHandleLogEvent_StandardTruncate(t *testing.T) {
 	if !traceLengthNull {
 		t.Errorf("trace_length: expected NULL for standard tier")
 	}
+}
+
+// TestHandleLogEvent_TraceScrubsEveryPayload verifies that a sub-64KB trace-tier
+// payload containing a secret is scrubbed before storage.
+func TestHandleLogEvent_TraceScrubsEveryPayload(t *testing.T) {
+	d, _ := testDaemonWithTrace(t)
+
+	sessID, err := d.store.CreateSession(store.Session{
+		Name:     "scrub-small-session",
+		LogLevel: LogLevelTrace,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// ~1 KB payload containing a secret — well below the 65536 spill threshold.
+	secret := "secret123"
+	payload := fmt.Sprintf(`{"agent":"supervisor","api_key":%q,"filler":%q}`, secret, strings.Repeat("x", 900))
+
+	rr := doRequest(t, d, "POST", "/sessions/"+sessID+"/events", logEventRequest{
+		Type: "tool_call",
+		Data: payload,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	events, err := d.store.QueryEvents(sessID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	evt := events[0]
+
+	if strings.Contains(evt.Data, secret) {
+		t.Errorf("stored event data still contains secret %q; scrubbing failed.\ndata: %s", secret, evt.Data[:min(200, len(evt.Data))])
+	}
+	if !strings.Contains(evt.Data, "<redacted>") {
+		t.Errorf("expected <redacted> in scrubbed data but not found.\ndata: %s", evt.Data[:min(200, len(evt.Data))])
+	}
+}
+
+// TestHandleLogEvent_RejectsPathTraversalAgent verifies that a trace-tier payload
+// with a path-traversal agent name (../../etc/passwd) is not spilled to disk.
+// The event is stored with a structured truncation sentinel instead.
+func TestHandleLogEvent_RejectsPathTraversalAgent(t *testing.T) {
+	d, dir := testDaemonWithTrace(t)
+
+	sessID, err := d.store.CreateSession(store.Session{
+		Name:     "traversal-session",
+		LogLevel: LogLevelTrace,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Build a ≥65536 byte payload with a path-traversal agent name.
+	filler := strings.Repeat("T", 70*1024)
+	payload := fmt.Sprintf(`{"agent":"../../etc/passwd","filler":%q}`, filler)
+
+	rr := doRequest(t, d, "POST", "/sessions/"+sessID+"/events", logEventRequest{
+		Type: "tool_call",
+		Data: payload,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// No trace directory should have been created under <dir>/traces/<sessID>/.
+	tracePath := filepath.Join(dir, "traces", sessID)
+	if _, err := os.Stat(tracePath); err == nil {
+		t.Errorf("expected no trace directory for path-traversal agent, but %s exists", tracePath)
+	}
+
+	events, err := d.store.QueryEvents(sessID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	evt := events[0]
+
+	// Data should be a structured truncation sentinel with reason "invalid agent id".
+	var sentinel struct {
+		Truncated bool   `json:"_truncated"`
+		Tier      string `json:"tier"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(evt.Data), &sentinel); err != nil {
+		t.Fatalf("event data is not valid JSON: %v\ndata: %s", err, evt.Data)
+	}
+	if !sentinel.Truncated {
+		t.Errorf("sentinel._truncated: expected true")
+	}
+	if sentinel.Tier != "trace" {
+		t.Errorf("sentinel.tier: got %q, want %q", sentinel.Tier, "trace")
+	}
+	if !strings.Contains(sentinel.Reason, "invalid agent id") {
+		t.Errorf("sentinel.reason: expected to contain %q, got %q", "invalid agent id", sentinel.Reason)
+	}
+
+	// Trace columns must be NULL (no spill happened).
+	var traceFileNull bool
+	row := d.store.DB().QueryRow(`SELECT trace_file IS NULL FROM events WHERE session_id = ? ORDER BY id DESC LIMIT 1`, sessID)
+	if err := row.Scan(&traceFileNull); err != nil {
+		t.Fatalf("scan trace_file null: %v", err)
+	}
+	if !traceFileNull {
+		t.Errorf("trace_file: expected NULL when agent validation fails")
+	}
+}
+
+// TestHandleLogEvent_RejectsPathTraversalSlash verifies that an agent name
+// containing '/' is rejected similarly to TestHandleLogEvent_RejectsPathTraversalAgent.
+func TestHandleLogEvent_RejectsPathTraversalSlash(t *testing.T) {
+	d, dir := testDaemonWithTrace(t)
+
+	sessID, err := d.store.CreateSession(store.Session{
+		Name:     "slash-traversal-session",
+		LogLevel: LogLevelTrace,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	filler := strings.Repeat("T", 70*1024)
+	payload := fmt.Sprintf(`{"agent":"foo/bar","filler":%q}`, filler)
+
+	rr := doRequest(t, d, "POST", "/sessions/"+sessID+"/events", logEventRequest{
+		Type: "tool_call",
+		Data: payload,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	tracePath := filepath.Join(dir, "traces", sessID)
+	if _, err := os.Stat(tracePath); err == nil {
+		t.Errorf("expected no trace directory for slash agent, but %s exists", tracePath)
+	}
+
+	events, err := d.store.QueryEvents(sessID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	evt := events[0]
+
+	var sentinel struct {
+		Truncated bool   `json:"_truncated"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(evt.Data), &sentinel); err != nil {
+		t.Fatalf("event data is not valid JSON: %v\ndata: %s", err, evt.Data)
+	}
+	if !sentinel.Truncated {
+		t.Errorf("sentinel._truncated: expected true")
+	}
+	if !strings.Contains(sentinel.Reason, "invalid agent id") {
+		t.Errorf("sentinel.reason: expected %q, got %q", "invalid agent id", sentinel.Reason)
+	}
+}
+
+// min returns the smaller of a and b (helper for test output truncation).
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -27,11 +28,21 @@ type Session struct {
 
 // SessionEvent represents a single event row associated with a session.
 type SessionEvent struct {
-	ID        int64
-	SessionID string
-	Timestamp time.Time
-	Type      string
-	Data      string
+	ID        int64     `json:"id"`
+	SessionID string    `json:"session_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Type      string    `json:"type"`
+	Data      string    `json:"data"`
+
+	// TraceFile is the absolute path to the fragment file for spilled events (omitted when NULL).
+	TraceFile string `json:"trace_file,omitempty"`
+	// TraceOffset is the byte offset within TraceFile where this event's payload begins.
+	TraceOffset int64 `json:"trace_offset,omitempty"`
+	// TraceLength is the byte length of this event's payload in TraceFile.
+	TraceLength int64 `json:"trace_length,omitempty"`
+	// TraceFragment is the fragment basename (e.g. "0001") derived from TraceFile,
+	// stripped of .jsonl and .jsonl.zst suffixes. Absent when TraceFile is empty.
+	TraceFragment string `json:"trace_fragment,omitempty"`
 }
 
 // AgentRun represents a launched agent/harness instance within a session.
@@ -573,7 +584,9 @@ func (s *Store) LogEvent(event SessionEvent) error {
 // QueryEvents returns all events for a session ordered by timestamp ASC.
 func (s *Store) QueryEvents(sessionID string) ([]SessionEvent, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, timestamp, type, data
+		`SELECT id, session_id, timestamp, type, data,
+		        COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0),
+		        trace_file IS NOT NULL
 		 FROM events WHERE session_id = ? ORDER BY timestamp ASC`, sessionID,
 	)
 	if err != nil {
@@ -587,7 +600,9 @@ func (s *Store) QueryEvents(sessionID string) ([]SessionEvent, error) {
 // ordered by ID ASC.
 func (s *Store) QueryEventsAfter(sessionID string, afterID int64) ([]SessionEvent, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, timestamp, type, data
+		`SELECT id, session_id, timestamp, type, data,
+		        COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0),
+		        trace_file IS NOT NULL
 		 FROM events
 		 WHERE session_id = ? AND id > ?
 		 ORDER BY id ASC`,
@@ -616,7 +631,10 @@ func (s *Store) QueryEventsWindow(sessionID string, afterID, beforeID int64, lim
 	}
 
 	var sb strings.Builder
-	sb.WriteString(`SELECT id, session_id, timestamp, type, data FROM events WHERE session_id = ?`)
+	sb.WriteString(`SELECT id, session_id, timestamp, type, data,
+	        COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0),
+	        trace_file IS NOT NULL
+	 FROM events WHERE session_id = ?`)
 	args := []any{sessionID}
 
 	if afterID > 0 {
@@ -654,7 +672,9 @@ func (s *Store) QueryEventsForSessionsAfter(sessionIDs []string, afterID int64) 
 	args = append(args, afterID)
 
 	rows, err := s.db.Query(
-		fmt.Sprintf(`SELECT id, session_id, timestamp, type, data
+		fmt.Sprintf(`SELECT id, session_id, timestamp, type, data,
+		        COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0),
+		        trace_file IS NOT NULL
 		 FROM events
 		 WHERE session_id IN (%s) AND id > ?
 		 ORDER BY id ASC`, strings.Join(placeholders, ",")),
@@ -671,7 +691,9 @@ func (s *Store) QueryEventsForSessionsAfter(sessionIDs []string, afterID int64) 
 // Returns matching events ordered by rowid (insertion order).
 func (s *Store) SearchEvents(query string) ([]SessionEvent, error) {
 	rows, err := s.db.Query(
-		`SELECT e.id, e.session_id, e.timestamp, e.type, e.data
+		`SELECT e.id, e.session_id, e.timestamp, e.type, e.data,
+		        COALESCE(e.trace_file,''), COALESCE(e.trace_offset,0), COALESCE(e.trace_length,0),
+		        e.trace_file IS NOT NULL
 		 FROM events e
 		 JOIN events_fts f ON f.rowid = e.id
 		 WHERE events_fts MATCH ?
@@ -724,13 +746,17 @@ func (s *Store) SearchEventsV1(ctx context.Context, p SearchPredicates) ([]Sessi
 
 	if p.Q != "" {
 		// FTS5 INNER JOIN path.
-		sb.WriteString(`SELECT e.id, e.session_id, e.timestamp, e.type, e.data
+		sb.WriteString(`SELECT e.id, e.session_id, e.timestamp, e.type, e.data,
+        COALESCE(e.trace_file,''), COALESCE(e.trace_offset,0), COALESCE(e.trace_length,0),
+        e.trace_file IS NOT NULL
 FROM events e
 JOIN events_fts f ON f.rowid = e.id
 WHERE events_fts MATCH ?`)
 		args = append(args, p.Q)
 	} else {
-		sb.WriteString(`SELECT e.id, e.session_id, e.timestamp, e.type, e.data
+		sb.WriteString(`SELECT e.id, e.session_id, e.timestamp, e.type, e.data,
+        COALESCE(e.trace_file,''), COALESCE(e.trace_offset,0), COALESCE(e.trace_length,0),
+        e.trace_file IS NOT NULL
 FROM events e
 WHERE 1=1`)
 	}
@@ -777,16 +803,39 @@ WHERE 1=1`)
 	return scanEvents(rows)
 }
 
-// scanEvents reads event rows into a slice.
+// scanEvents reads event rows into a slice. Each row must provide 9 columns:
+// id, session_id, timestamp, type, data,
+// COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0),
+// trace_file IS NOT NULL (boolean indicating whether trace columns are set).
 func scanEvents(rows *sql.Rows) ([]SessionEvent, error) {
 	var events []SessionEvent
 	for rows.Next() {
 		var evt SessionEvent
 		var ts string
-		if err := rows.Scan(&evt.ID, &evt.SessionID, &ts, &evt.Type, &evt.Data); err != nil {
+		var hasTrace bool
+		if err := rows.Scan(
+			&evt.ID, &evt.SessionID, &ts, &evt.Type, &evt.Data,
+			&evt.TraceFile, &evt.TraceOffset, &evt.TraceLength,
+			&hasTrace,
+		); err != nil {
 			return nil, fmt.Errorf("store: scan event: %w", err)
 		}
 		evt.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+		// If trace columns are not set, zero out the COALESCE'd defaults so
+		// omitempty JSON tags suppress them correctly.
+		if !hasTrace {
+			evt.TraceFile = ""
+			evt.TraceOffset = 0
+			evt.TraceLength = 0
+		} else {
+			// Derive TraceFragment from the basename of TraceFile, stripping
+			// .jsonl.zst and .jsonl suffixes so consumers get just the index
+			// (e.g. "0001") for use in trace-slice requests.
+			base := filepath.Base(evt.TraceFile)
+			base = strings.TrimSuffix(base, ".jsonl.zst")
+			base = strings.TrimSuffix(base, ".jsonl")
+			evt.TraceFragment = base
+		}
 		events = append(events, evt)
 	}
 	if err := rows.Err(); err != nil {

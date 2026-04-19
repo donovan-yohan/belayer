@@ -930,26 +930,51 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 
 	data := req.Data
 	var frag trace.Fragment
+
+	if sess.LogLevel == LogLevelTrace {
+		// Pre-scrub every trace event payload regardless of size, so secrets
+		// never reach disk (fragment files) or SQLite inline storage.
+		data = Scrub(data)
+	}
+
 	if len(data) >= 65536 {
-		// Scrub before truncation or spill so secrets don't reach disk either way.
-		scrubbed := Scrub(data)
-		agentName := extractAgentName(scrubbed)
 		switch sess.LogLevel {
 		case LogLevelTrace:
-			if d.traceWriter != nil {
-				f, werr := d.traceWriter.Append(id, agentName, []byte(scrubbed))
+			agentName := extractAgentName(data)
+			if !isValidAgentName(agentName) {
+				// Invalid agent name: do NOT spill (prevents path traversal).
+				// Truncate with a structured sentinel preserving the original size.
+				log.Printf("trace spill rejected for session %s: invalid agent name %q", id, agentName)
+				data = fmt.Sprintf(
+					`{"_truncated":true,"tier":"trace","original_size":%d,"reason":"invalid agent id"}`,
+					len(req.Data),
+				)
+			} else if d.traceWriter != nil {
+				f, werr := d.traceWriter.Append(id, agentName, []byte(data))
 				if werr != nil {
 					log.Printf("trace spill failed for session %s agent %s: %v; falling back to truncation", id, agentName, werr)
-					data = scrubbed[:65536] + "…(truncated; trace writer error)"
+					data = fmt.Sprintf(
+						`{"_truncated":true,"tier":"trace","original_size":%d,"reason":"trace writer error"}`,
+						len(req.Data),
+					)
 				} else {
 					frag = f
 					data = fmt.Sprintf(`{"agent":%q,"_trace":true}`, agentName)
 				}
 			} else {
-				data = scrubbed[:65536] + "…(truncated; trace writer error)"
+				data = fmt.Sprintf(
+					`{"_truncated":true,"tier":"trace","original_size":%d,"reason":"trace writer error"}`,
+					len(req.Data),
+				)
 			}
 		default:
-			data = scrubbed[:65536] + "…(truncated; upgrade to trace tier to capture)"
+			// Non-trace tiers: scrub then truncate with structured sentinel.
+			scrubbed := Scrub(req.Data)
+			data = fmt.Sprintf(
+				`{"_truncated":true,"tier":%q,"original_size":%d,"reason":"upgrade to trace tier to capture full payload"}`,
+				sess.LogLevel, len(req.Data),
+			)
+			_ = scrubbed // scrubbed but not stored (truncated entirely)
 		}
 	}
 
@@ -986,6 +1011,28 @@ func extractAgentName(data string) string {
 		return v.Agent
 	}
 	return "unknown"
+}
+
+// isValidAgentName returns true iff name is safe to use as a filesystem path
+// component for trace fragment directories. Rules:
+//   - Non-empty
+//   - Length ≤ 64 characters
+//   - Contains only [A-Za-z0-9_-] characters
+//   - Not "." or ".."
+//   - Does not contain '/' or '\'
+func isValidAgentName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if len(name) > 64 {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
