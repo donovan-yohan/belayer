@@ -87,7 +87,7 @@ func newRunStartCmd() *cobra.Command {
 
 			// Create session with baseDir as workspace so the daemon can resolve
 			// sandbox settings (.belayer/config.yaml) even when no repos are given.
-			sess, err := c.CreateSession(sessionName, "nightshift", repos, baseDir, logLevel)
+			sess, err := c.CreateSession(sessionName, "nightshift", repos, baseDir, resolveRunLogLevel(logLevel))
 			if err != nil {
 				return fmt.Errorf("create session: %w", err)
 			}
@@ -146,8 +146,19 @@ func newRunStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
 	cmd.Flags().StringArrayVar(&exitConditions, "exit-condition", nil, "Override .belayer/config.yaml#exit_conditions for this run. Repeatable. When present, these replace the file's list entirely.")
-	cmd.Flags().StringVar(&logLevel, "log-level", "", "Override daemon default log level for this run (standard|verbose).")
+	cmd.Flags().StringVar(&logLevel, "log-level", "", "Log tier for this run: standard|verbose|trace. Falls back to BELAYER_LOG_LEVEL, then daemon default.")
 	return cmd
+}
+
+// resolveRunLogLevel returns the log level for a run: the --log-level flag
+// value if non-empty, otherwise BELAYER_LOG_LEVEL, otherwise empty (daemon
+// applies its own default). Validation of the final string happens server-side
+// in ValidateLogLevel.
+func resolveRunLogLevel(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	return os.Getenv("BELAYER_LOG_LEVEL")
 }
 
 // parseRepos parses a --repos flag value like "frontend=/path/to/fe,backend=/path/to/be"
