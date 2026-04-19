@@ -20,6 +20,13 @@ _HEARTBEAT_INTERVAL = 30  # seconds
 _MUTATING_TOOLS = frozenset({"Write", "Edit", "NotebookEdit", "write_file", "edit_file", "create_file"})
 _SHELL_TOOLS = frozenset({"Bash", "run_shell", "bash"})
 _ENV_ALLOWLIST = frozenset({"PATH", "PWD", "HOME", "USER", "LANG", "TERM", "NODE_ENV", "CI"})
+_ENV_SECRET_VARS = frozenset({
+    "BELAYER_API_KEY",
+    "BELAYER_BASE_URL",
+    "BELAYER_PROVIDER",
+    "BELAYER_HTTP_PROXY",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+})
 
 
 def _fs_snapshot(path: str, phase: str) -> dict:
@@ -42,18 +49,28 @@ def _fs_snapshot(path: str, phase: str) -> dict:
 
 
 def _filtered_env() -> dict:
-    out = {k: v for k, v in os.environ.items() if k in _ENV_ALLOWLIST or k.startswith("BELAYER_")}
+    out = {
+        k: v for k, v in os.environ.items()
+        if k not in _ENV_SECRET_VARS and (k in _ENV_ALLOWLIST or k.startswith("BELAYER_"))
+    }
     return out
 
 
 def _coerce_plain(v):
     """Best-effort convert arbitrary tool payloads to JSON-friendly values.
 
-    If v is a dict/list/str/int/float/bool/None, return as-is.
-    Otherwise return str(v). JSON serialization happens inside post_event.
+    Recursively normalizes dicts, lists, and leaf values so that
+    json.dumps(_coerce_plain(x)) never raises.
     """
-    if v is None or isinstance(v, (dict, list, str, int, float, bool)):
+    if v is None or isinstance(v, (str, int, float, bool)):
         return v
+    if isinstance(v, dict):
+        return {k: _coerce_plain(val) for k, val in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_coerce_plain(item) for item in v]
+    if isinstance(v, bytes):
+        return v.decode("utf-8", errors="replace")
+    # pathlib.Path and any other type with no obvious JSON mapping
     return str(v)
 
 
