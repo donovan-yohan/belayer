@@ -108,6 +108,9 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB exposes the underlying *sql.DB for tests. Do not use in production code paths — go through Store methods.
+func (s *Store) DB() *sql.DB { return s.db }
+
 // CreateSession inserts a new session. If session.ID is empty a UUID is
 // generated. Returns the ID of the created session.
 func (s *Store) CreateSession(session Session) (string, error) {

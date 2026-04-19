@@ -777,6 +777,44 @@ func TestPendingMessages_AfterID(t *testing.T) {
 	}
 }
 
+func TestMigrate_TraceColumnsAndReaderCursors(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	rows, err := s.DB().Query("PRAGMA table_info(events)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = true
+	}
+	for _, c := range []string{"trace_file", "trace_offset", "trace_length"} {
+		if !cols[c] {
+			t.Errorf("events missing column %s", c)
+		}
+	}
+	if _, err := s.DB().Exec(`INSERT INTO reader_cursors(reader_id, session_id, last_id) VALUES ('r','s',0)`); err != nil {
+		t.Fatalf("reader_cursors insert: %v", err)
+	}
+	// Upsert semantics: PK (reader_id, session_id) means second insert with same pair must conflict.
+	_, err = s.DB().Exec(`INSERT INTO reader_cursors(reader_id, session_id, last_id) VALUES ('r','s',5)`)
+	if err == nil {
+		t.Fatal("expected PK conflict on duplicate (reader_id, session_id)")
+	}
+}
+
 // seedStoreEvents inserts n events into the store for sessionID and returns
 // the assigned IDs in ascending order.
 func seedStoreEvents(t *testing.T, s *Store, sessionID string, n int) []int64 {
