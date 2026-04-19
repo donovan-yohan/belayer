@@ -322,14 +322,17 @@ def main() -> None:
         post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
         sys.exit(1)
 
-    # --- Wire callbacks ----------------------------------------------------
-    callbacks = make_callbacks(agent_id, session_id, socket_path)
-    for attr, fn in callbacks.items():
-        setattr(agent, attr, fn)
-
     # --- Open transcript writer (verbose sessions only) --------------------
+    # Must be created before make_callbacks so the writer can be passed into
+    # the closure — reasoning_callback and interim_assistant_callback gate
+    # on transcript_writer being non-None.
     transcript_path = os.environ.get("BELAYER_TRANSCRIPT_PATH") or None
     transcript_writer = make_transcript_writer(transcript_path, agent_id)
+
+    # --- Wire callbacks ----------------------------------------------------
+    callbacks = make_callbacks(agent_id, session_id, socket_path, transcript_writer=transcript_writer)
+    for attr, fn in callbacks.items():
+        setattr(agent, attr, fn)
 
     # --- Start stdin reader ------------------------------------------------
     stdin_queue: queue.Queue = queue.Queue()

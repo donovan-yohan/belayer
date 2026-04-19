@@ -42,17 +42,22 @@ def post_event(socket_path: str, session_id: str, agent_id: str, event_type: str
             log.debug("post_event %s -> %d %s", event_type, status, body[:120])
 
 
-def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
+def make_callbacks(agent_id: str, session_id: str, socket_path: str, transcript_writer=None) -> dict:
     """Return a dict of callback_name -> callback_fn for AIAgent.
 
     Wire these onto the agent instance with setattr after construction:
 
-        callbacks = make_callbacks(agent_id, session_id, socket_path)
+        callbacks = make_callbacks(agent_id, session_id, socket_path, transcript_writer=writer)
         for attr, fn in callbacks.items():
             setattr(agent, attr, fn)
+
+    Pass transcript_writer (a _TranscriptWriter instance) to enable verbose
+    reasoning/narration capture. When None, reasoning_callback and
+    interim_assistant_callback are no-ops so there is zero overhead for
+    standard (non-verbose) runs.
     """
     # Mutable state captured in closure — avoids a class for a handful of callbacks.
-    state = {"step_count": 0, "last_heartbeat": 0.0, "tool_starts": {}}
+    state = {"step_count": 0, "last_heartbeat": 0.0, "tool_starts": {}, "reasoning_buffer": []}
 
     def _heartbeat_if_due() -> None:
         now = time.monotonic()
@@ -103,7 +108,30 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
             event_data,
         )
 
+    def reasoning_callback(text, **kwargs):
+        if transcript_writer is None:
+            return
+        if not text:
+            return
+        state["reasoning_buffer"].append(str(text))
+
     def step_callback(messages=None, **kwargs):
+        # Flush any buffered reasoning before incrementing step_count so the
+        # turn number matches the turn whose reasoning we are reporting.
+        if transcript_writer is not None and state["reasoning_buffer"]:
+            full_text = "".join(state["reasoning_buffer"])
+            state["reasoning_buffer"] = []
+            turn = state["step_count"] + 1  # this turn, not yet incremented
+            transcript_writer.write_turn({
+                "kind": "reasoning",
+                "turn": turn,
+                "text": full_text,
+            })
+            post_event(
+                socket_path, session_id, agent_id,
+                "bridge:agent_reasoning",
+                {"text": full_text, "turn": turn},
+            )
         state["step_count"] += 1
         post_event(
             socket_path, session_id, agent_id,
@@ -111,6 +139,23 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
             {"step": state["step_count"]},
         )
         _heartbeat_if_due()
+
+    def interim_assistant_callback(visible, already_streamed=False, **kwargs):
+        if transcript_writer is None:
+            return
+        if not visible:
+            return
+        text = str(visible)
+        transcript_writer.write_turn({
+            "kind": "narration",
+            "text": text,
+            "already_streamed": bool(already_streamed),
+        })
+        post_event(
+            socket_path, session_id, agent_id,
+            "bridge:agent_narration",
+            {"text": text, "already_streamed": bool(already_streamed)},
+        )
 
     def status_callback(status_type=None, **kwargs):
         post_event(
@@ -132,6 +177,8 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
         "step_callback": step_callback,
         "status_callback": status_callback,
         "clarify_callback": clarify_callback,
+        "reasoning_callback": reasoning_callback,
+        "interim_assistant_callback": interim_assistant_callback,
     }
 
 
