@@ -267,6 +267,10 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
 	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
 	mux.HandleFunc("GET /sessions/{id}/trace/{agent}/{fragment}", d.handleTraceSlice)
+	mux.HandleFunc("GET /sessions/{id}/outline", d.handleOutline)
+	mux.HandleFunc("GET /sessions/{id}/tool-calls", d.handleToolCalls)
+	mux.HandleFunc("GET /sessions/{id}/conversation", d.handleConversation)
+	mux.HandleFunc("GET /sessions/{id}/phase", d.handlePhase)
 
 	d.server = &http.Server{Handler: mux}
 	return d, nil
