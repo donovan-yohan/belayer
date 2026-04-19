@@ -254,16 +254,21 @@ func (c *Client) GetEventsAfter(sessionID string, afterID int64, waitFor time.Du
 	return events, nil
 }
 
-// BridgeStdoutStream opens a streaming GET against
-// /sessions/{id}/bridges/{agent}/stdout with follow=1 and copies bytes to w
-// starting at afterByte. Blocks until ctx is done or the server closes.
-func (c *Client) BridgeStdoutStream(ctx context.Context, sessionID, agent string, afterByte int64, w io.Writer) error {
+// BridgeStdoutStream opens a GET against /sessions/{id}/bridges/{agent}/stdout
+// and copies bytes to w. When follow is true, the request uses follow=1 and
+// after_byte is always sent (server interprets missing after_byte in follow
+// mode as "start at EOF", which would drop existing history). When follow is
+// false, the request is a one-shot full-file fetch.
+func (c *Client) BridgeStdoutStream(ctx context.Context, sessionID, agent string, afterByte int64, follow bool, w io.Writer) error {
 	query := url.Values{}
-	query.Set("follow", "1")
-	if afterByte > 0 {
+	if follow {
+		query.Set("follow", "1")
 		query.Set("after_byte", strconv.FormatInt(afterByte, 10))
 	}
-	path := "/sessions/" + url.PathEscape(sessionID) + "/bridges/" + url.PathEscape(agent) + "/stdout?" + query.Encode()
+	path := "/sessions/" + url.PathEscape(sessionID) + "/bridges/" + url.PathEscape(agent) + "/stdout"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", "http://daemon"+path, nil)
 	if err != nil {
 		return err

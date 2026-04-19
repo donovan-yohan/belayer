@@ -118,12 +118,15 @@ func newLogsCmd() *cobra.Command {
 				if agentName == "" {
 					return fmt.Errorf("--raw requires --agent <name>")
 				}
+				if since > 0 {
+					return fmt.Errorf("--raw cannot be combined with --since (raw mode serves bytes, not events)")
+				}
 				c := NewClient(resolveSocket(socket))
 				sessionID := args[0]
 				if resolved, err := lookupSessionID(c, sessionID); err == nil {
 					sessionID = resolved
 				}
-				return c.BridgeStdoutStream(cmd.Context(), sessionID, agentName, 0, cmd.OutOrStdout())
+				return c.BridgeStdoutStream(cmd.Context(), sessionID, agentName, 0, follow, cmd.OutOrStdout())
 			}
 
 			c := NewClient(resolveSocket(socket))
