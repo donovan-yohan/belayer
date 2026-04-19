@@ -181,6 +181,7 @@ func (m *archiveManager) doArchive(sessionID string, partial bool) error {
 			ID:        sess.ID,
 			Name:      sess.Name,
 			Workspace: sess.WorkspaceDir,
+			LogLevel:  sess.LogLevel,
 		},
 		AgentRoster: roster,
 		Artifacts:   artifacts,

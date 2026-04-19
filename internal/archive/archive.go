@@ -27,6 +27,7 @@ type SessionMeta struct {
 	ID        string
 	Name      string
 	Workspace string
+	LogLevel  string // "standard" or "verbose"; disambiguates presence/absence of transcripts/
 }
 
 // AgentInfo describes an agent in the roster.
@@ -312,6 +313,7 @@ type sessionManifest struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Workspace string `json:"workspace"`
+	LogLevel  string `json:"log_level,omitempty"`
 }
 
 type agentManifest struct {
@@ -378,6 +380,7 @@ func writeManifest(path string, meta Meta, count int, firstID, lastID int64) err
 			ID:        meta.Session.ID,
 			Name:      meta.Session.Name,
 			Workspace: meta.Session.Workspace,
+			LogLevel:  meta.Session.LogLevel,
 		},
 		AgentRoster:  roster,
 		Artifacts:    arts,

@@ -77,8 +77,12 @@ Source: `internal/store/store.go:SessionEvent`.
 | `bridge:completion_requested` | `agent`, `summary` (string), `spec_artifact` (string, optional) | Supervisor signalled work complete; triggers PM auto-spawn |
 | `bridge:completion_approved` | `agent`, `verification_report` (string) | PM approved; triggers `session_completed` |
 | `bridge:completion_rejected` | `agent`, `verification_report` (string), `gap_list` (string) | PM rejected; gap list sent to supervisor for remediation |
+| `bridge:agent_reasoning` | `agent`, `text` (string, untruncated), `turn` (int) | **Verbose-only.** Full extended-thinking text for the turn, flushed at turn end. Only emitted when the session's `log_level == "verbose"`. Consumers configured for `log_level == "standard"` MUST NOT expect these events |
+| `bridge:agent_narration` | `agent`, `text` (string, untruncated), `already_streamed` (bool) | **Verbose-only.** Mid-turn visible assistant commentary (e.g. "Let me read that file first..."). `already_streamed: true` means the text was delivered token-by-token elsewhere and emitting it is duplicative for streaming UIs; `false` means this event is the only delivery. Only emitted when `log_level == "verbose"` |
 
 `bridge:*` events are forwarded verbatim from the Python hermes_bridge subprocess. Additional fields may appear in `data`; consumers MUST ignore unknown fields.
+
+**Verbose-only events.** `bridge:agent_reasoning` and `bridge:agent_narration` are gated at the bridge on the session's `log_level`. Standard runs emit no such events — consumers that rely on reasoning capture MUST verify the session was created with `log_level: "verbose"` (see Section 6.5).
 
 ### 3.4 `message_*` — Inter-agent messaging
 
@@ -211,6 +215,17 @@ Written when a session reaches terminal status while the daemon is alive.
 ### `events.ndjson`
 
 One SessionEvent JSON object per line, in monotonic `id` order. Written atomically: the file is staged as `events.ndjson.tmp` then renamed. A consumer reading the archive directory MUST treat the file as either (a) complete, or (b) absent — never partially written.
+
+### `transcripts/<agent>.jsonl` (optional; verbose sessions only)
+
+For sessions created with `log_level: "verbose"`, the archive also contains a `transcripts/` subdirectory with one append-only JSONL file per agent (`transcripts/supervisor.jsonl`, `transcripts/web-dev.a.jsonl`, etc.). Each line is a JSON object:
+
+```json
+{"ts": <float unix>, "agent_id": "<string>", "kind": "reasoning", "turn": <int>, "text": "<untruncated>"}
+{"ts": <float unix>, "agent_id": "<string>", "kind": "narration", "text": "<untruncated>", "already_streamed": <bool>}
+```
+
+Transcripts are the durable complement to `bridge:agent_reasoning` / `bridge:agent_narration` events and carry identical payloads. Consumers MUST tolerate `kind` values they don't recognise (future `kind: "tool_turn"` etc. may appear additively within v1). The file may be absent when the session was created with `log_level: "standard"`, when the daemon failed to allocate the transcript path at spawn, or when no turns have flushed yet — treat absence as "no verbose capture available" rather than an error. Consumers SHOULD cross-check `manifest.session.log_level` (see below) to disambiguate.
 
 ### `manifest.json`
 
