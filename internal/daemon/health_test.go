@@ -2,13 +2,52 @@ package daemon
 
 // health_test.go covers eng-review test-plan items:
 //   T19 — daemon_instance_id changes across daemon restart (two New() calls)
+//   T1.4 — /health capabilities advertise supported log_levels
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 
 	"github.com/donovan-yohan/belayer/internal/store"
 )
+
+// TestHealth_AdvertisesLogLevels verifies that GET /health capabilities block
+// includes a "log_levels" field listing ["standard","verbose","trace"].
+//
+// Test-plan item: T1.4 — /health capabilities advertise supported log levels.
+func TestHealth_AdvertisesLogLevels(t *testing.T) {
+	d := testDaemon(t)
+	srv := httptest.NewServer(d.server.Handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var body struct {
+		Capabilities struct {
+			LogLevels []string `json:"log_levels"`
+		} `json:"capabilities"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"standard", "verbose", "trace"}
+	if len(body.Capabilities.LogLevels) != len(want) {
+		t.Fatalf("log_levels: got %v, want %v", body.Capabilities.LogLevels, want)
+	}
+	for i, v := range want {
+		if body.Capabilities.LogLevels[i] != v {
+			t.Fatalf("log_levels[%d]: got %q, want %q", i, body.Capabilities.LogLevels[i], v)
+		}
+	}
+}
 
 // TestHealth_T19_DaemonInstanceIDChangesAcrossRestart verifies that two
 // separate Daemon instances (simulating a daemon restart) produce different

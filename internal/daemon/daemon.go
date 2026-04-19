@@ -627,10 +627,12 @@ var healthCapabilities = struct {
 	SearchPredicates []string `json:"search_predicates"`
 	ArchiveHTTP      bool     `json:"archive_http"`
 	SSEControlFrames []string `json:"sse_control_frames"`
+	LogLevels        []string `json:"log_levels"`
 }{
 	SearchPredicates: []string{"q", "session", "type_prefix", "agent", "after", "before"},
 	ArchiveHTTP:      true,
 	SSEControlFrames: []string{"daemon_hello", "daemon_draining"},
+	LogLevels:        []string{"standard", "verbose", "trace"},
 }
 
 type healthResponse struct {

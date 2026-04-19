@@ -262,9 +262,9 @@ func newStatusCmd() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tNAME\tSTATUS\tTEMPLATE")
+			fmt.Fprintln(w, "ID\tNAME\tSTATUS\tTEMPLATE\tLOG")
 			for _, s := range sessions {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.ID[:8], s.Name, s.Status, s.Template)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.ID[:8], s.Name, s.Status, s.Template, s.LogLevel)
 			}
 			w.Flush()
 			return nil
