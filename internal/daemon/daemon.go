@@ -143,9 +143,14 @@ type Daemon struct {
 	spawnBridgeAgent func(req agentSpawnRequest) (*bridge.Process, error)
 
 	// Bridge process tracking: sessionID/agentName -> *bridge.Process
-	bridgeMu           sync.RWMutex
-	bridgeProcs        map[string]*bridge.Process
-	bridgeShuttingDown bool // set by stopAllBridgeAgents; bridgeLaunchAgent aborts registration if set
+	bridgeMu    sync.RWMutex
+	bridgeProcs map[string]*bridge.Process
+	// bridgeShuttingDownSessions tracks which sessionIDs are in mid-teardown.
+	// stopAllBridgeAgents sets the flag for its target session; the spawn
+	// registration path aborts if the session the spawn targets is marked.
+	// Entries stay set — a terminated session's agents must not respawn even
+	// after its teardown goroutine returns.
+	bridgeShuttingDownSessions map[string]bool
 
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
@@ -192,7 +197,8 @@ func New(cfg Config) (*Daemon, error) {
 		config:               cfg,
 		daemonInstanceID:     uuid.NewString(),
 		tools:                make(map[string][]agent.ToolSpec),
-		bridgeProcs:          make(map[string]*bridge.Process),
+		bridgeProcs:                make(map[string]*bridge.Process),
+		bridgeShuttingDownSessions: make(map[string]bool),
 		sessionSandboxes:     make(map[string]sessionSandbox),
 		sseSubscribers:       make(map[*sseSubscriber]struct{}),
 		startCtx:             context.Background(),
@@ -577,20 +583,22 @@ func (d *Daemon) terminateSandbox(ctx context.Context, sessionID string) {
 // exit does not delay the others.
 func (d *Daemon) stopAllBridgeAgents(sessionID, reason string) {
 	d.bridgeMu.Lock()
-	d.bridgeShuttingDown = true
+	d.bridgeShuttingDownSessions[sessionID] = true
 	var targets []*bridge.Process
 	var names []string
 	for key, proc := range d.bridgeProcs {
 		sid, name := parseBridgeKey(key)
-		if sid != sessionID || proc == nil {
+		if sid != sessionID {
 			continue
 		}
-		targets = append(targets, proc)
-		names = append(names, name)
+		if proc != nil {
+			targets = append(targets, proc)
+			names = append(names, name)
+		}
+		// Drop only this session's entries; leave other sessions' bridges
+		// untouched so interrupts/shutdown can still reach them.
+		delete(d.bridgeProcs, key)
 	}
-	// Clear the map so that any racing bridgeLaunchAgent that beats the flag
-	// check cannot find a stale entry later.
-	d.bridgeProcs = map[string]*bridge.Process{}
 	d.bridgeMu.Unlock()
 
 	if len(targets) == 0 {

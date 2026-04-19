@@ -159,7 +159,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	// Track the process (may be nil for test stubs).
 	if proc != nil {
 		d.bridgeMu.Lock()
-		if d.bridgeShuttingDown {
+		if d.bridgeShuttingDownSessions[sessionID] {
 			d.bridgeMu.Unlock()
 			_ = proc.Stop(2 * time.Second)
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon shutting down; bridge spawn cancelled"})
@@ -702,7 +702,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 
 	if proc != nil {
 		d.bridgeMu.Lock()
-		if d.bridgeShuttingDown {
+		if d.bridgeShuttingDownSessions[req.SessionID] {
 			d.bridgeMu.Unlock()
 			_ = proc.Stop(2 * time.Second)
 			return store.AgentRun{}, fmt.Errorf("daemon shutting down; bridge spawn cancelled")

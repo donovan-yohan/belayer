@@ -480,40 +480,61 @@ func TestTakeExistingBridge_RemovesAndReturnsLiveProc(t *testing.T) {
 }
 
 // TestBridgeLaunch_AbortsWhenShuttingDown verifies the shutdown-race guard:
-// if stopAllBridgeAgents has set the shutdown flag, a concurrent
-// bridgeLaunchAgent path must refuse to register the new proc.
+// if stopAllBridgeAgents has set the per-session shutdown flag, a concurrent
+// bridgeLaunchAgent path must refuse to register the new proc for that session
+// while leaving other sessions unaffected.
 func TestBridgeLaunch_AbortsWhenShuttingDown(t *testing.T) {
 	d := testDaemon(t)
 
-	// Simulate shutdown-in-progress.
+	// Mark session s1 as shutting down.
 	d.bridgeMu.Lock()
-	d.bridgeShuttingDown = true
+	d.bridgeShuttingDownSessions["s1"] = true
 	d.bridgeMu.Unlock()
 
-	// A caller that got past spawn but reaches the final registration must be
-	// rejected. We simulate that path by directly running the registration
-	// snippet — or better, just assert the flag is observable under lock.
+	// s1 is guarded.
 	d.bridgeMu.RLock()
-	if !d.bridgeShuttingDown {
-		t.Fatal("bridgeShuttingDown should be true after setter")
+	if !d.bridgeShuttingDownSessions["s1"] {
+		d.bridgeMu.RUnlock()
+		t.Fatal("s1 guard should be set")
+	}
+	// s2 must not be affected by s1's teardown.
+	if d.bridgeShuttingDownSessions["s2"] {
+		d.bridgeMu.RUnlock()
+		t.Fatal("s2 guard must not be set by s1 shutdown — scope leaked")
 	}
 	d.bridgeMu.RUnlock()
 
-	// Idempotency: a replacement spawn must not silently populate the map
-	// when shuttingDown is true.
-	key := bridgeKey("s1", "sup")
-	// Emulate the guarded registration: if shutting down, skip the write.
+	// Prove the registration guard pattern: if the target session is marked,
+	// the write is skipped; if not, the write goes through.
+	keyS1 := bridgeKey("s1", "sup")
 	d.bridgeMu.Lock()
-	if d.bridgeShuttingDown {
+	if d.bridgeShuttingDownSessions["s1"] {
 		d.bridgeMu.Unlock()
 	} else {
-		d.bridgeProcs[key] = nil
+		d.bridgeProcs[keyS1] = nil
 		d.bridgeMu.Unlock()
-		t.Fatal("registration must be skipped under shutdown")
+		t.Fatal("s1 registration must be skipped under shutdown")
 	}
+
+	// s2 is not marked, so a registration would succeed.
+	keyS2 := bridgeKey("s2", "worker")
+	d.bridgeMu.Lock()
+	if d.bridgeShuttingDownSessions["s2"] {
+		d.bridgeMu.Unlock()
+		t.Fatal("s2 should still accept registrations")
+	} else {
+		// (we don't actually store a nil to keep the map clean — just prove the branch)
+		d.bridgeMu.Unlock()
+	}
+
 	d.bridgeMu.RLock()
-	if _, exists := d.bridgeProcs[key]; exists {
-		t.Fatal("map must not contain registration during shutdown")
+	if _, exists := d.bridgeProcs[keyS1]; exists {
+		d.bridgeMu.RUnlock()
+		t.Fatal("s1 map entry must not exist during its shutdown")
+	}
+	if _, exists := d.bridgeProcs[keyS2]; exists {
+		d.bridgeMu.RUnlock()
+		t.Fatal("we did not store a s2 entry in this test")
 	}
 	d.bridgeMu.RUnlock()
 }
