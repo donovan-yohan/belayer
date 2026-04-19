@@ -101,93 +101,46 @@ func (p *osProcess) Kill() error {
 	return p.cmd.Process.Kill()
 }
 
-// Create provisions a clamshell sandbox. It validates provider config,
-// prepares the policy file locally, ensures the gateway is running, registers
-// any configured credential-broker providers, creates the sandbox with those
-// providers attached, and then discovers the backing Docker container so Exec
-// can target it.
-//
-// Ordering matters: purely-local work (validation, policy temp file) happens
-// first so a bad config never side-effects the shared clamshell gateway. Any
-// failure after providers are registered tears those registrations down; a
-// provider left in the gateway holds a live reference to the real secret, so
-// leaks here are both a secret-management and resource concern.
+// Create provisions a clamshell sandbox. It ensures the clamshell gateway is
+// up, merges runtime endpoints into the supplied policy, creates the sandbox,
+// and then discovers the backing Docker container so Exec can target it.
 func (c *Clamshell) Create(ctx context.Context, cfg Config) (Handle, error) {
-	// 1. Validate providers + check host env upfront. LoadSettings already
-	//    validated structurally, but re-checking here keeps Create safe for
-	//    callers that build Config directly (tests, future programmatic use).
-	//    Running this before any side-effect means a missing SecretEnv can't
-	//    pollute the gateway or leave stale temp files behind.
-	if err := c.prevalidateProviders(cfg.Providers); err != nil {
-		return Handle{}, err
+	// 1. Ensure the gateway is running. `clamshell gateway start` is expected
+	//    to be idempotent; surfacing errors here catches misconfigured workers.
+	if _, stderr, err := c.runner.Run(ctx, c.cli, "gateway", "start"); err != nil {
+		return Handle{}, fmt.Errorf("sandbox/clamshell: gateway start: %w (stderr: %s)", err, stderr)
 	}
 
 	// 2. Inject runtime endpoints into the policy's tcp_endpoints section and
 	//    write the merged copy to a temp file. The temp file lives for the
-	//    session — Stop cleans it up via handle.Meta["policyFile"]. Done
-	//    before any remote call so a YAML/disk failure doesn't leave providers
-	//    orphaned in the gateway.
+	//    session — Stop cleans it up via handle.Meta["policyFile"].
 	policyPath, err := c.preparePolicy(cfg.Policy, cfg.Endpoints)
 	if err != nil {
 		return Handle{}, err
 	}
 
-	// 3. Ensure the gateway is running. `clamshell gateway start` is expected
-	//    to be idempotent; surfacing errors here catches misconfigured workers.
-	if _, stderr, err := c.runner.Run(ctx, c.cli, "gateway", "start"); err != nil {
-		_ = os.Remove(policyPath)
-		return Handle{}, fmt.Errorf("sandbox/clamshell: gateway start: %w (stderr: %s)", err, stderr)
-	}
-
-	// 4. Register credential-broker providers with the gateway. Each provider
-	//    name is namespaced with the session id to avoid collisions across
-	//    concurrent sessions in the same clamshell gateway. upsertProviders
-	//    returns the names it actually registered so we can tear them down on
-	//    any downstream failure.
-	providerFlags, createdProviders, err := c.upsertProviders(ctx, cfg.Name, cfg.Providers)
-	if err != nil {
-		_ = os.Remove(policyPath)
-		return Handle{}, err
-	}
-
-	// rollbackProviders deletes every provider upsertProviders registered, so
-	// a Create failure after step 4 doesn't leave the gateway holding live
-	// secret references. Best-effort: clamshell CLI failures are appended to
-	// the primary cause, not swallowed, so operators can diagnose leaks.
-	rollbackProviders := func(cause error) error {
-		for _, name := range createdProviders {
-			if _, stderr, delErr := c.runner.Run(ctx, c.cli, "provider", "delete", "--name", name); delErr != nil {
-				cause = fmt.Errorf("%w; additionally, provider %q cleanup failed: %v (stderr: %s)", cause, name, delErr, stderr)
-			}
-		}
-		return cause
-	}
-
-	// 5. Create the sandbox, attaching any configured providers.
+	// 3. Create the sandbox.
 	createArgs := []string{"sandbox", "create",
 		"--name", cfg.Name,
 		"--policy", policyPath,
 		"--workspace", cfg.Workspace,
 	}
-	createArgs = append(createArgs, providerFlags...)
 	if _, stderr, err := c.runner.Run(ctx, c.cli, createArgs...); err != nil {
 		_ = os.Remove(policyPath)
-		return Handle{}, rollbackProviders(fmt.Errorf("sandbox/clamshell: create: %w (stderr: %s)", err, stderr))
+		return Handle{}, fmt.Errorf("sandbox/clamshell: create: %w (stderr: %s)", err, stderr)
 	}
 
 	// After this point the sandbox exists in clamshell. Any failure must tear
-	// it down AND roll back providers, otherwise we leak both a running
-	// sandbox and secret-bearing provider registrations on every bad discovery.
+	// it down, otherwise we leak a running sandbox on every bad discovery.
 	cleanupAfterCreate := func(cause error) error {
 		if _, stopStderr, stopErr := c.runner.Run(ctx, c.cli, "sandbox", "stop", cfg.Name); stopErr != nil {
 			cause = fmt.Errorf("%w; additionally, cleanup stop failed: %v (stderr: %s)", cause, stopErr, stopStderr)
 		}
-		cause = rollbackProviders(cause)
 		_ = os.Remove(policyPath)
 		return cause
 	}
 
-	// 6. Discover the container name so Exec can docker-exec into it. The
+	// 4. Discover the container name so Exec can docker-exec into it. The
 	//    --json form emits a structured response clamshell guarantees stable.
 	connectOut, stderr, err := c.runner.Run(ctx, c.cli, "--json", "sandbox", "connect", cfg.Name)
 	if err != nil {
@@ -409,122 +362,6 @@ func (c *Clamshell) Stop(ctx context.Context, h Handle) error {
 		return fmt.Errorf("sandbox/clamshell: stop: %w (stderr: %s)", err, stderr)
 	}
 	return nil
-}
-
-// prevalidateProviders checks every provider's structure and host env-var
-// presence before any side-effect (gateway start, provider upsert, policy
-// tempfile). Keeps a bad config from polluting shared clamshell state.
-func (c *Clamshell) prevalidateProviders(providers []ProviderConfig) error {
-	for _, p := range providers {
-		if err := p.Validate(); err != nil {
-			return fmt.Errorf("sandbox/clamshell: %w", err)
-		}
-		// --from-existing resolves the env var inside clamshell's process;
-		// the daemon's env is inherited through exec.CommandContext's default
-		// env, so `os.Getenv` here is the same lookup clamshell will do.
-		// Treating "" as unset matches a common .env-clobber mistake.
-		if os.Getenv(p.SecretEnv) == "" {
-			return fmt.Errorf("sandbox/clamshell: provider %q: %s is empty or unset in daemon env", p.Name, p.SecretEnv)
-		}
-	}
-	return nil
-}
-
-// clamshellProviderName namespaces a provider with the session id. Concurrent
-// sessions against one clamshell gateway (today: one-session-per-daemon, but
-// the memory doc calls out multi-session as the direction) would otherwise
-// race on identical provider names across delete-then-create.
-func clamshellProviderName(sessionID, providerName string) string {
-	return sessionID + "-" + providerName
-}
-
-// upsertProviders registers each configured apikey provider with the clamshell
-// gateway before sandbox attachment. Returns the --provider flags the caller
-// should append to the sandbox create argv, and the namespaced provider names
-// that were successfully created so the caller can roll them back on a
-// subsequent failure. Returns empty slices when no providers are configured.
-//
-// Each provider is delete-then-created so the gateway's provider store matches
-// the current session's config regardless of prior daemon runs. On any create
-// failure past the first one, the already-created providers are left for the
-// caller's rollback path — we do not swallow them here because the caller has
-// richer error context to attach.
-func (c *Clamshell) upsertProviders(ctx context.Context, sessionID string, providers []ProviderConfig) (flags []string, createdNames []string, err error) {
-	if len(providers) == 0 {
-		return nil, nil, nil
-	}
-	flags = make([]string, 0, 2*len(providers))
-	createdNames = make([]string, 0, len(providers))
-	for _, p := range providers {
-		name := clamshellProviderName(sessionID, p.Name)
-		if upErr := c.upsertProvider(ctx, name, p); upErr != nil {
-			return nil, createdNames, upErr
-		}
-		createdNames = append(createdNames, name)
-		flags = append(flags, "--provider", ProviderTypeAPIKey+"="+name)
-	}
-	return flags, createdNames, nil
-}
-
-// upsertProvider ensures the gateway has a provider matching p under the
-// supplied (already-namespaced) name. We delete any existing provider with
-// that name first and then create it fresh, so the gateway's stored config
-// stays in sync with the current session's settings across daemon restarts.
-//
-// Delete errors are treated as expected-missing and surfaced only when ctx
-// has already been cancelled (in which case the subsequent create would
-// misattribute a ctx error as a clamshell failure). Any substantive problem
-// with the gateway will fail the create below with a proper error.
-func (c *Clamshell) upsertProvider(ctx context.Context, name string, p ProviderConfig) error {
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("sandbox/clamshell: provider %q: %w", p.Name, err)
-	}
-	// Best-effort delete: "not found" is the common case on first create and
-	// clamshell's exit codes don't cleanly distinguish it. We do surface a
-	// cancelled context explicitly (above) so we don't blame the stale ctx
-	// on clamshell below.
-	_, _, _ = c.runner.Run(ctx, c.cli, "provider", "delete", "--name", name)
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("sandbox/clamshell: provider %q: %w", p.Name, err)
-	}
-
-	args := []string{
-		"provider", "create",
-		"--type", ProviderTypeAPIKey,
-		"--name", name,
-		"--from-existing", p.SecretEnv,
-		"--project", strings.Join(p.Project, ","),
-		"--endpoints", strings.Join(p.Endpoints, ","),
-	}
-	if p.AuthHeader != "" {
-		args = append(args, "--auth-header", p.AuthHeader)
-	}
-	// AuthSchemeSet distinguishes "omitted (use clamshell default)" from
-	// "explicitly empty (no prefix — e.g., x-api-key auth)". Only forward the
-	// flag when explicitly set so we don't overwrite clamshell's default with
-	// an empty string the user never configured.
-	if p.AuthSchemeSet {
-		args = append(args, "--auth-scheme", p.AuthScheme)
-	}
-	if _, stderr, err := c.runner.Run(ctx, c.cli, args...); err != nil {
-		// Scrub the resolved secret from stderr before forwarding it. clamshell
-		// doesn't echo secrets today, but an OS-level error path (ptrace, a
-		// strace-like tool, a debug-mode dump) could — we can't retroactively
-		// redact once the line is in our daemon log.
-		safeStderr := scrubSecret(stderr, p.SecretEnv)
-		return fmt.Errorf("sandbox/clamshell: provider %q create: %w (stderr: %s)", p.Name, err, safeStderr)
-	}
-	return nil
-}
-
-// scrubSecret replaces occurrences of the value of envVar in s with
-// "<REDACTED>". Returns s unchanged when envVar is unset or empty.
-func scrubSecret(s []byte, envVar string) []byte {
-	val := os.Getenv(envVar)
-	if val == "" {
-		return s
-	}
-	return bytes.ReplaceAll(s, []byte(val), []byte("<REDACTED>"))
 }
 
 // preparePolicy reads basePath (if set), appends endpoints to its
