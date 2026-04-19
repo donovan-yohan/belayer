@@ -484,6 +484,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		BelayerRoot:     d.config.BelayerRoot,
 		BelayerTools:    belayerTools,
 		TranscriptPath:  transcriptPath,
+		LogLevel:        sess.LogLevel,
 	}
 	// In clamshell mode the bridge runs inside the Docker container where the
 	// host hermes venv path doesn't exist; use the container's system python3.

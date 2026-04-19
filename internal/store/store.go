@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/trace"
 	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 )
@@ -518,6 +519,37 @@ func (s *Store) ListArtifacts(sessionID string) ([]Artifact, error) {
 		artifacts = append(artifacts, a)
 	}
 	return artifacts, rows.Err()
+}
+
+// InsertEventWithSpill inserts an event row with optional trace fragment refs.
+// If frag.Path is non-empty, trace_file/trace_offset/trace_length columns are
+// populated. Otherwise equivalent to LogEvent (trace_* columns remain NULL).
+func (s *Store) InsertEventWithSpill(event SessionEvent, frag trace.Fragment) error {
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
+	if event.Data == "" {
+		event.Data = "{}"
+	}
+
+	var traceFile sql.NullString
+	var traceOffset, traceLength sql.NullInt64
+	if frag.Path != "" {
+		traceFile = sql.NullString{String: frag.Path, Valid: true}
+		traceOffset = sql.NullInt64{Int64: frag.Offset, Valid: true}
+		traceLength = sql.NullInt64{Int64: frag.Length, Valid: true}
+	}
+
+	_, err := s.db.Exec(
+		`INSERT INTO events (session_id, timestamp, type, data, trace_file, trace_offset, trace_length)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		event.SessionID, event.Timestamp, event.Type, event.Data,
+		traceFile, traceOffset, traceLength,
+	)
+	if err != nil {
+		return fmt.Errorf("store: insert event with spill: %w", err)
+	}
+	return nil
 }
 
 // LogEvent inserts an event row for a session.

@@ -27,6 +27,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/runtime"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
+	"github.com/donovan-yohan/belayer/internal/trace"
 	"github.com/google/uuid"
 )
 
@@ -152,6 +153,9 @@ type Daemon struct {
 	// after its teardown goroutine returns.
 	bridgeShuttingDownSessions map[string]bool
 
+	// traceWriter spills large event payloads to fragment files at trace tier.
+	traceWriter trace.Writer
+
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
 	tools   map[string][]agent.ToolSpec
@@ -207,6 +211,14 @@ func New(cfg Config) (*Daemon, error) {
 		sseKeepaliveInterval: keepaliveInterval,
 	}
 	d.archiver = newArchiveManager(st, d.daemonInstanceID)
+
+	traceBase := filepath.Join(filepath.Dir(cfg.DBPath), "traces")
+	tw, err := trace.NewWriter(traceBase)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: init trace writer: %w", err)
+	}
+	d.traceWriter = tw
+
 	if cfg.SandboxDrivers != nil {
 		d.sandboxDrivers = cfg.SandboxDrivers
 	} else {
@@ -493,6 +505,11 @@ func (d *Daemon) downRuntime(shutCtx context.Context) {
 // closeAndCleanup closes the store and removes any socket files the daemon
 // created. Final phase — nothing runs after this.
 func (d *Daemon) closeAndCleanup() {
+	if d.traceWriter != nil {
+		if err := d.traceWriter.Close(); err != nil {
+			log.Printf("daemon: trace writer close: %v", err)
+		}
+	}
 	d.store.Close()
 	os.Remove(d.config.SocketPath)
 	if d.config.WorkspaceSockPath != "" {
@@ -899,12 +916,44 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up session to determine tier.
+	sess, err := d.store.GetSession(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	data := req.Data
+	var frag trace.Fragment
+	if len(data) >= 65536 {
+		// Scrub before truncation or spill so secrets don't reach disk either way.
+		scrubbed := Scrub(data)
+		agentName := extractAgentName(scrubbed)
+		switch sess.LogLevel {
+		case LogLevelTrace:
+			if d.traceWriter != nil {
+				f, werr := d.traceWriter.Append(id, agentName, []byte(scrubbed))
+				if werr != nil {
+					log.Printf("trace spill failed for session %s agent %s: %v; falling back to truncation", id, agentName, werr)
+					data = scrubbed[:65536] + "…(truncated; trace writer error)"
+				} else {
+					frag = f
+					data = fmt.Sprintf(`{"agent":%q,"_trace":true}`, agentName)
+				}
+			} else {
+				data = scrubbed[:65536] + "…(truncated; trace writer error)"
+			}
+		default:
+			data = scrubbed[:65536] + "…(truncated; upgrade to trace tier to capture)"
+		}
+	}
+
 	evt := store.SessionEvent{
 		SessionID: id,
 		Type:      req.Type,
-		Data:      req.Data,
+		Data:      data,
 	}
-	if err := d.store.LogEvent(evt); err != nil {
+	if err := d.store.InsertEventWithSpill(evt, frag); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -920,6 +969,18 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "logged"})
+}
+
+// extractAgentName tries to parse an "agent" field from a JSON string.
+// Returns "unknown" if parsing fails or the field is empty.
+func extractAgentName(data string) string {
+	var v struct {
+		Agent string `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(data), &v); err == nil && v.Agent != "" {
+		return v.Agent
+	}
+	return "unknown"
 }
 
 func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {

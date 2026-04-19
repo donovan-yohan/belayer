@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/donovan-yohan/belayer/internal/trace"
 )
 
 func openMemory(t *testing.T) *Store {
@@ -917,5 +919,92 @@ func TestQueryEventsWindow_AfterAndBefore(t *testing.T) {
 	}
 	if len(got) != 4 {
 		t.Errorf("expected 4 events in window, got %d", len(got))
+	}
+}
+
+// TestInsertEventWithSpill_SetsFragmentColumns verifies that InsertEventWithSpill
+// populates trace_file, trace_offset, and trace_length when a non-zero Fragment is
+// provided.
+func TestInsertEventWithSpill_SetsFragmentColumns(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "spill-test", LogLevel: "trace"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	frag := trace.Fragment{
+		Path:   "/tmp/traces/sess/agent/0001.jsonl",
+		Offset: 1234,
+		Length: 5678,
+	}
+	evt := SessionEvent{
+		SessionID: sessID,
+		Type:      "tool_call",
+		Data:      `{"agent":"implementer","_trace":true}`,
+	}
+	if err := s.InsertEventWithSpill(evt, frag); err != nil {
+		t.Fatalf("InsertEventWithSpill: %v", err)
+	}
+
+	// Read back the raw columns via s.DB().
+	var traceFile sql.NullString
+	var traceOffset, traceLength sql.NullInt64
+	row := s.DB().QueryRow(
+		`SELECT trace_file, trace_offset, trace_length FROM events WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+		sessID,
+	)
+	if err := row.Scan(&traceFile, &traceOffset, &traceLength); err != nil {
+		t.Fatalf("SELECT trace columns: %v", err)
+	}
+
+	if !traceFile.Valid || traceFile.String != frag.Path {
+		t.Errorf("trace_file: got %v, want %q", traceFile, frag.Path)
+	}
+	if !traceOffset.Valid || traceOffset.Int64 != frag.Offset {
+		t.Errorf("trace_offset: got %v, want %d", traceOffset, frag.Offset)
+	}
+	if !traceLength.Valid || traceLength.Int64 != frag.Length {
+		t.Errorf("trace_length: got %v, want %d", traceLength, frag.Length)
+	}
+}
+
+// TestInsertEventWithSpill_NullWhenFragmentEmpty verifies that InsertEventWithSpill
+// stores NULL trace columns when a zero Fragment (frag.Path == "") is provided.
+func TestInsertEventWithSpill_NullWhenFragmentEmpty(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "no-spill-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	evt := SessionEvent{
+		SessionID: sessID,
+		Type:      "tool_call",
+		Data:      `{"agent":"implementer","result":"ok"}`,
+	}
+	if err := s.InsertEventWithSpill(evt, trace.Fragment{}); err != nil {
+		t.Fatalf("InsertEventWithSpill (empty fragment): %v", err)
+	}
+
+	var traceFile sql.NullString
+	var traceOffset, traceLength sql.NullInt64
+	row := s.DB().QueryRow(
+		`SELECT trace_file, trace_offset, trace_length FROM events WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+		sessID,
+	)
+	if err := row.Scan(&traceFile, &traceOffset, &traceLength); err != nil {
+		t.Fatalf("SELECT trace columns: %v", err)
+	}
+
+	if traceFile.Valid {
+		t.Errorf("trace_file: expected NULL, got %q", traceFile.String)
+	}
+	if traceOffset.Valid {
+		t.Errorf("trace_offset: expected NULL, got %d", traceOffset.Int64)
+	}
+	if traceLength.Valid {
+		t.Errorf("trace_length: expected NULL, got %d", traceLength.Int64)
 	}
 }

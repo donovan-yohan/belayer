@@ -70,6 +70,7 @@ type Config struct {
 	Ephemeral       bool     // true = exit on task completion, false = stay alive for more work
 	BelayerTools    []string // role-specific belayer tools from agent.yaml
 	TranscriptPath  string   // absolute path to per-agent JSONL; empty = capture disabled (standard log level)
+	LogLevel        string   // "standard", "verbose", or "trace"; empty treated as "standard"
 
 	// Cmd overrides the default python3 -m hermes_bridge command.
 	// If nil, pythonCmd is used. Useful for testing.
@@ -180,6 +181,11 @@ func BuildEnv(cfg Config) []string {
 	if cfg.TranscriptPath != "" {
 		env = appendEnv(env, "BELAYER_TRANSCRIPT_PATH", cfg.TranscriptPath)
 	}
+	level := cfg.LogLevel
+	if level == "" {
+		level = "standard"
+	}
+	env = appendEnv(env, "BELAYER_LOG_LEVEL", level)
 	return env
 }
 
