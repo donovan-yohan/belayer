@@ -1,0 +1,44 @@
+internal/cli/root.go
+  edbf9f73c8916cfc 11-27
+internal/cli/daemon.go
+  edbf9f73c8916cfc 37
+internal/cli/session.go
+  edbf9f73c8916cfc 114
+internal/cli/bridges.go
+  edbf9f73c8916cfc 14
+internal/cli/root_test.go
+  edbf9f73c8916cfc 3-6,27-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "fd8c4a374264ee3c672484cf517bac60c1bd85ab",
+  "prompts": {
+    "edbf9f73c8916cfc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66974178-7e29-4b2f-a0fb-3d75c1178376",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 237,
+      "total_deletions": 27,
+      "accepted_lines": 2049,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
