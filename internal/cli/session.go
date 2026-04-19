@@ -105,6 +105,8 @@ func newLogsCmd() *cobra.Command {
 	var socket string
 	var follow bool
 	var since int
+	var rawMode bool
+	var agentName string
 
 	cmd := &cobra.Command{
 		Use:   "logs <session-id>",
@@ -112,6 +114,18 @@ func newLogsCmd() *cobra.Command {
 		Long:  "Show session events. Use --follow to tail in real-time.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if rawMode {
+				if agentName == "" {
+					return fmt.Errorf("--raw requires --agent <name>")
+				}
+				c := NewClient(resolveSocket(socket))
+				sessionID := args[0]
+				if resolved, err := lookupSessionID(c, sessionID); err == nil {
+					sessionID = resolved
+				}
+				return c.BridgeStdoutStream(cmd.Context(), sessionID, agentName, 0, cmd.OutOrStdout())
+			}
+
 			c := NewClient(resolveSocket(socket))
 			sessionID := args[0]
 
@@ -170,6 +184,8 @@ func newLogsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow events in real-time")
 	cmd.Flags().IntVar(&since, "since", 0, "Show events from the last N minutes")
+	cmd.Flags().BoolVar(&rawMode, "raw", false, "Tail raw bridge stdout file for --agent")
+	cmd.Flags().StringVar(&agentName, "agent", "", "Agent name (required when --raw)")
 	return cmd
 }
 

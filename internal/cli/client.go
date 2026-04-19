@@ -254,6 +254,43 @@ func (c *Client) GetEventsAfter(sessionID string, afterID int64, waitFor time.Du
 	return events, nil
 }
 
+// BridgeStdoutStream opens a streaming GET against
+// /sessions/{id}/bridges/{agent}/stdout with follow=1 and copies bytes to w
+// starting at afterByte. Blocks until ctx is done or the server closes.
+func (c *Client) BridgeStdoutStream(ctx context.Context, sessionID, agent string, afterByte int64, w io.Writer) error {
+	query := url.Values{}
+	query.Set("follow", "1")
+	if afterByte > 0 {
+		query.Set("after_byte", strconv.FormatInt(afterByte, 10))
+	}
+	path := "/sessions/" + url.PathEscape(sessionID) + "/bridges/" + url.PathEscape(agent) + "/stdout?" + query.Encode()
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://daemon"+path, nil)
+	if err != nil {
+		return err
+	}
+	streamClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", c.socketPath)
+			},
+		},
+	}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("bridge stdout stream: status %d: %s", resp.StatusCode, string(body))
+	}
+	_, err = io.Copy(w, resp.Body)
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}
+
 // WatchSessions streams multiplexed session events over the SSE endpoint until
 // the provided context is cancelled.
 func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID int64, onEvent func(eventResponse) error) error {
