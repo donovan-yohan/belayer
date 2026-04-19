@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"fmt"
 	"mime"
 	"net/http"
 	"os"
@@ -10,6 +11,58 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/store"
 )
+
+// resolveArtifactPath joins artifactPath onto workspaceDir (or uses
+// artifactPath as-is when absolute) and returns the cleaned absolute path
+// iff it lives inside workspaceDir. Escapes via "..", symlinks outside, or
+// absolute paths outside workspaceDir are rejected.
+func resolveArtifactPath(workspaceDir, artifactPath string) (string, error) {
+	if workspaceDir == "" {
+		return "", fmt.Errorf("session has no workspace_dir")
+	}
+	absRoot, err := filepath.Abs(workspaceDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace: %w", err)
+	}
+	absRoot = filepath.Clean(absRoot)
+
+	var joined string
+	if filepath.IsAbs(artifactPath) {
+		joined = artifactPath
+	} else {
+		joined = filepath.Join(absRoot, artifactPath)
+	}
+	abs, err := filepath.Abs(joined)
+	if err != nil {
+		return "", fmt.Errorf("resolve artifact path: %w", err)
+	}
+	abs = filepath.Clean(abs)
+
+	rootWithSep := absRoot + string(os.PathSeparator)
+	if abs != absRoot && !strings.HasPrefix(abs, rootWithSep) {
+		return "", fmt.Errorf("artifact path escapes workspace")
+	}
+	return abs, nil
+}
+
+// artifactInlineDisposition reports whether ct is safe to render inline in a
+// browser. The whitelist is intentionally narrow — text/html, text/xml, and
+// anything a user agent might sniff-upgrade to HTML are force-attachment.
+func artifactInlineDisposition(ct string) bool {
+	mediaType, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		mediaType = ct
+	}
+	mediaType = strings.ToLower(mediaType)
+	if strings.HasPrefix(mediaType, "image/") {
+		return true
+	}
+	switch mediaType {
+	case "application/json", "application/pdf", "text/plain":
+		return true
+	}
+	return false
+}
 
 type artifactCreateRequest struct {
 	Kind     string `json:"kind"`
@@ -70,22 +123,28 @@ func (d *Daemon) handleGetArtifactBytes(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Resolve content path.
-	var contentPath string
-	if filepath.IsAbs(artifact.Path) {
-		contentPath = artifact.Path
-	} else {
-		sess, err := d.store.GetSession(sessionID)
-		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
-			return
-		}
-		contentPath = filepath.Join(sess.WorkspaceDir, artifact.Path)
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+	contentPath, err := resolveArtifactPath(sess.WorkspaceDir, artifact.Path)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid artifact path: " + err.Error()})
+		return
 	}
 
 	fi, err := os.Stat(contentPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "artifact file missing"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "stat artifact: " + err.Error()})
+		return
+	}
+	if fi.IsDir() {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "artifact path is a directory"})
 		return
 	}
 
@@ -96,9 +155,11 @@ func (d *Daemon) handleGetArtifactBytes(w http.ResponseWriter, r *http.Request) 
 		ct = "application/octet-stream"
 	}
 
-	// Determine disposition.
+	// Determine disposition using a narrow inline whitelist. text/html and
+	// similar are force-attachment so an authenticated TCP consumer cannot
+	// serve XSS surfaces off the artifact endpoint.
 	var disposition string
-	if strings.HasPrefix(ct, "text/") || strings.HasPrefix(ct, "image/") || ct == "application/json" {
+	if artifactInlineDisposition(ct) {
 		disposition = "inline"
 	} else {
 		disposition = `attachment; filename="` + filepath.Base(contentPath) + `"`
@@ -106,6 +167,7 @@ func (d *Daemon) handleGetArtifactBytes(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Content-Disposition", disposition)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	f, err := os.Open(contentPath)
 	if err != nil {

@@ -173,6 +173,138 @@ func TestGetArtifactBytes_PathTraversal(t *testing.T) {
 	}
 }
 
+func TestGetArtifactBytes_DotDotEscape(t *testing.T) {
+	d := testDaemonWithArtifactBytes(t)
+
+	// Parent of workspace contains a secret.
+	outer := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outer, "secret.txt"), []byte("top-secret"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	workspace := filepath.Join(outer, "work")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	sessID, err := d.store.CreateSession(store.Session{Name: "escape-test", WorkspaceDir: workspace})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	artID, err := d.store.CreateArtifact(store.Artifact{
+		SessionID: sessID,
+		Kind:      "output",
+		Path:      "../secret.txt",
+		Producer:  "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateArtifact: %v", err)
+	}
+
+	rr := doRequest(t, d, "GET", "/sessions/"+sessID+"/artifacts/"+artID, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for escape, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "top-secret") {
+		t.Fatalf("leaked secret contents in error body")
+	}
+}
+
+func TestGetArtifactBytes_AbsoluteOutsideWorkspace(t *testing.T) {
+	d := testDaemonWithArtifactBytes(t)
+
+	outer := t.TempDir()
+	secret := filepath.Join(outer, "secret.txt")
+	if err := os.WriteFile(secret, []byte("classified"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	workspace := filepath.Join(outer, "work")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	sessID, err := d.store.CreateSession(store.Session{Name: "abs-outside", WorkspaceDir: workspace})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	artID, err := d.store.CreateArtifact(store.Artifact{
+		SessionID: sessID,
+		Kind:      "output",
+		Path:      secret, // absolute, outside workspace
+		Producer:  "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateArtifact: %v", err)
+	}
+
+	rr := doRequest(t, d, "GET", "/sessions/"+sessID+"/artifacts/"+artID, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for abs-outside, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "classified") {
+		t.Fatalf("leaked secret contents in error body")
+	}
+}
+
+func TestGetArtifactBytes_HTMLForcedAttachment(t *testing.T) {
+	d := testDaemonWithArtifactBytes(t)
+
+	workspace := t.TempDir()
+	artPath := filepath.Join(workspace, "page.html")
+	if err := os.WriteFile(artPath, []byte("<script>alert(1)</script>"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	sessID, err := d.store.CreateSession(store.Session{Name: "html-test", WorkspaceDir: workspace})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	artID, err := d.store.CreateArtifact(store.Artifact{
+		SessionID: sessID,
+		Kind:      "output",
+		Path:      "page.html",
+		Producer:  "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateArtifact: %v", err)
+	}
+
+	rr := doRequest(t, d, "GET", "/sessions/"+sessID+"/artifacts/"+artID, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	disp := rr.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(disp, "attachment;") {
+		t.Fatalf("expected attachment disposition for html, got %q", disp)
+	}
+	if ns := rr.Header().Get("X-Content-Type-Options"); ns != "nosniff" {
+		t.Fatalf("expected X-Content-Type-Options: nosniff, got %q", ns)
+	}
+}
+
+func TestGetArtifactBytes_MissingFile(t *testing.T) {
+	d := testDaemonWithArtifactBytes(t)
+
+	workspace := t.TempDir()
+	sessID, err := d.store.CreateSession(store.Session{Name: "missing-test", WorkspaceDir: workspace})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	artID, err := d.store.CreateArtifact(store.Artifact{
+		SessionID: sessID,
+		Kind:      "output",
+		Path:      "does-not-exist.txt",
+		Producer:  "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateArtifact: %v", err)
+	}
+
+	rr := doRequest(t, d, "GET", "/sessions/"+sessID+"/artifacts/"+artID, nil)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing file, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestGetArtifactBytes_AttachmentDisposition(t *testing.T) {
 	d := testDaemonWithArtifactBytes(t)
 
