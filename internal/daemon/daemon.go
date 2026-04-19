@@ -1314,11 +1314,15 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	// Write event headers for the first session listed (best-effort; SSE streams
-	// may span multiple sessions so X-Event-Count is set to 0 here and updated
-	// per-frame by the consumer if needed). Headers must be set before the first
-	// Write/Flush call that commits the status code.
-	if len(filtered) > 0 {
+	// Response headers reference a single session (X-Session-Status, X-Log-Level,
+	// X-Agent-Roster). For multi-session streams these are ambiguous — a header
+	// sourced from filtered[0] would misrepresent every other subscribed session.
+	// Single-session streams get the full header set; multi-session streams get
+	// only X-Belayer-Schema so headers cannot lie.
+	multiSession := len(filtered) > 1
+	if multiSession {
+		w.Header().Set("X-Belayer-Schema", "belayer-log/v1")
+	} else if len(filtered) == 1 {
 		d.writeEventHeaders(w, filtered[0], 0)
 	}
 
@@ -1345,9 +1349,15 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Digest counters: emit session_digest every 50 domain events OR every
 	// sseDigestInterval, whichever comes first. ?digest=0 disables entirely.
+	// Multi-session streams suppress digests — a single frame cannot honestly
+	// describe phase/agents across N sessions, and the global lastID would
+	// advance on events from any of them (conflating scopes).
 	const digestEventThreshold = 50
 	domainEventCount := 0
 	lastDigestAt := time.Now()
+	if multiSession {
+		digestEnabled = false
+	}
 
 	for {
 		events, err := d.store.QueryEventsForSessionsAfter(filtered, lastID)

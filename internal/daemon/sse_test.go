@@ -819,3 +819,72 @@ func TestSSE_DigestDisabled(t *testing.T) {
 		}
 	}
 }
+
+// TestSSE_MultiSessionSuppressesDigestAndPerSessionHeaders verifies that a
+// stream subscribing to >1 session emits only X-Belayer-Schema (no
+// X-Session-Status, X-Log-Level, or X-Agent-Roster — those reference a single
+// session and would misrepresent every other subscribed session) and that
+// session_digest control frames are suppressed (a single digest frame cannot
+// honestly describe phase/agents across N sessions, and the digest's "latest
+// event id" would advance on events from any subscribed session, conflating
+// scopes).
+//
+// Addresses codex review concern (phase 6): per-session headers and digests
+// on multi-session streams misrepresent the stream's scope.
+func TestSSE_MultiSessionSuppressesDigestAndPerSessionHeaders(t *testing.T) {
+	d := testDaemon(t)
+	d.sseDigestInterval = 10 * time.Hour
+
+	s1 := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "multi-a"}))
+	s2 := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "multi-b"}))
+
+	// Seed 55 events across both sessions so the count threshold would fire
+	// on a single-session stream.
+	for i := 0; i < 30; i++ {
+		doRequest(t, d, "POST", "/sessions/"+s1.ID+"/events", logEventRequest{
+			Type: fmt.Sprintf("a_%03d", i),
+			Data: `{"agent":"supervisor"}`,
+		})
+	}
+	for i := 0; i < 25; i++ {
+		doRequest(t, d, "POST", "/sessions/"+s2.ID+"/events", logEventRequest{
+			Type: fmt.Sprintf("b_%03d", i),
+			Data: `{"agent":"supervisor"}`,
+		})
+	}
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s,%s&after=0&digest=1", server.URL, s1.ID, s2.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Only X-Belayer-Schema is safe on a multi-session stream.
+	if got := resp.Header.Get("X-Belayer-Schema"); got != "belayer-log/v1" {
+		t.Errorf("X-Belayer-Schema: got %q, want %q", got, "belayer-log/v1")
+	}
+	for _, h := range []string{"X-Session-Status", "X-Log-Level", "X-Agent-Roster", "X-Last-Event-Id", "X-Event-Count"} {
+		if got := resp.Header.Get(h); got != "" {
+			t.Errorf("multi-session stream leaked %s=%q (must be omitted — refers to a single session)", h, got)
+		}
+	}
+
+	frames := readSSEFrames(t, resp.Body, 70, 4*time.Second)
+	for _, f := range frames {
+		if f.event == "session_digest" {
+			t.Error("session_digest appeared on multi-session stream (must be suppressed)")
+		}
+	}
+}
