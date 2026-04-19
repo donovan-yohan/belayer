@@ -104,6 +104,10 @@ func (d *Daemon) handleBridgeStdout(w http.ResponseWriter, r *http.Request) {
 		}
 		f, err := os.Open(logPath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "bridge log not found"})
+				return
+			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -128,6 +132,10 @@ func (d *Daemon) handleBridgeStdout(w http.ResponseWriter, r *http.Request) {
 func streamBridgeStdout(ctx context.Context, w http.ResponseWriter, logPath string, start int64) {
 	f, err := os.Open(logPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "bridge log not found"})
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
