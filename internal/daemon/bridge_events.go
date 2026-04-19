@@ -399,6 +399,37 @@ func (d *Daemon) handleBridgeCompletionApproved(sessionID, agentName string, dat
 		Summary:   report[:min(len(report), 500)],
 	})
 
+	// Before flipping session state, surface any agents that were still mid-
+	// work at approval time. This is a smell: the supervisor called
+	// belayer_request_completion while other agents were still running, so PM
+	// approval is about to kill unfinished work. Not fatal — the supervisor
+	// may have intentionally raced a long-running peer — but worth logging
+	// for post-mortems.
+	if runs, err := d.store.ListAgentRuns(sessionID); err == nil {
+		var busy []string
+		for _, r := range runs {
+			if r.Name == agentName || r.Name == "supervisor" {
+				continue
+			}
+			switch r.Status {
+			case "starting", "running", "pending_verification":
+				busy = append(busy, fmt.Sprintf("%s=%s", r.Name, r.Status))
+			}
+		}
+		if len(busy) > 0 {
+			log.Printf("WARNING: session %s approved for completion while %d agent(s) non-idle; their work will be discarded: %v",
+				sessionID, len(busy), busy)
+			_ = d.store.LogEvent(store.SessionEvent{
+				SessionID: sessionID,
+				Type:      "completion_approved_with_busy_agents",
+				Data: mustJSON(map[string]any{
+					"approved_by": agentName,
+					"busy_agents": busy,
+				}),
+			})
+		}
+	}
+
 	// Mark session as complete.
 	_ = d.store.UpdateSessionStatus(sessionID, "complete")
 	_ = d.store.LogEvent(store.SessionEvent{
@@ -409,6 +440,12 @@ func (d *Daemon) handleBridgeCompletionApproved(sessionID, agentName string, dat
 			"report":      report[:min(len(report), 1000)],
 		}),
 	})
+
+	// Shut down every bridge process in the session before tearing down the
+	// sandbox. Otherwise supervisor (and any other live agents) keeps running
+	// past approval, burns tokens, and can self-escalate the session back to
+	// needs_human_review despite completion having already been approved.
+	d.stopAllBridgeAgents(sessionID, "pm approved completion")
 	d.terminateSandbox(d.startCtx, sessionID)
 
 	log.Printf("Session %s marked complete (approved by %s)", sessionID, agentName)
@@ -456,6 +493,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 				"rejections": fmt.Sprintf("%d", rejectionCount),
 			}),
 		})
+		d.stopAllBridgeAgents(sessionID, "max rejection cycles exceeded")
 		d.terminateSandbox(d.startCtx, sessionID)
 		// Notify supervisor of escalation.
 		msg := broker.Message{

@@ -21,12 +21,35 @@ func newRunCmd() *cobra.Command {
 
 func newRunStartCmd() *cobra.Command {
 	var socket, name, task, supervisorProfile, workdir, reposFlag string
+	var exitConditions []string
 	cmd := &cobra.Command{
 		Use:   "start",
 		Short: "Create a run, spawn supervisor, and deliver the initial task",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(task) == "" {
 				return fmt.Errorf("--task is required")
+			}
+
+			// If --exit-condition was passed, render an override block that
+			// the supervisor (and later the PM) will see at the top of the
+			// initial task. This replaces config.yaml's exit_conditions for
+			// this run only; the file on disk is untouched.
+			if len(exitConditions) > 0 {
+				var b strings.Builder
+				b.WriteString("<exit_conditions_override>\n")
+				b.WriteString("These exit conditions replace .belayer/config.yaml#exit_conditions for this run. The PM must validate each one before marking the run complete.\n")
+				for _, c := range exitConditions {
+					c = strings.TrimSpace(c)
+					if c == "" {
+						continue
+					}
+					b.WriteString("- ")
+					b.WriteString(c)
+					b.WriteString("\n")
+				}
+				b.WriteString("</exit_conditions_override>\n\n")
+				b.WriteString(task)
+				task = b.String()
 			}
 			if strings.TrimSpace(supervisorProfile) == "" {
 				supervisorProfile = "default"
@@ -88,9 +111,10 @@ func newRunStartCmd() *cobra.Command {
 				return fmt.Errorf("deliver initial task: %w", err)
 			}
 			// Log the initial prompt as telemetry so post-mortems can see what started the run.
-			initData, _ := json.Marshal(map[string]string{
+			initData, _ := json.Marshal(map[string]any{
 				"task":               task,
 				"supervisor_profile": supervisorProfile,
+				"exit_conditions":    exitConditions,
 			})
 			_ = c.LogEvent(sess.ID, "run_initiated", string(initData))
 
@@ -116,6 +140,7 @@ func newRunStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", "default", "Hermes profile for the supervisor")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
+	cmd.Flags().StringArrayVar(&exitConditions, "exit-condition", nil, "Override .belayer/config.yaml#exit_conditions for this run. Repeatable. When present, these replace the file's list entirely.")
 	return cmd
 }
 
