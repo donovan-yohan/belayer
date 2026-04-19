@@ -41,20 +41,18 @@ func (w *Writer) Close() error {
 	return w.f.Close()
 }
 
-// Rotate renames path -> path.1 -> path.2 ... dropping anything past .keep.
-// Missing source files are skipped without error.
+// Rotate shifts the log history: path -> path.1 -> path.2 ... -> path.keep,
+// atomically dropping anything that would fall past path.keep via rename
+// overwrites. Missing source files are skipped.
+//
+// Contract: the caller MUST ensure no *Writer is open on path when Rotate
+// runs. Rotating a live fd leaks appended bytes into the archive (the kernel
+// keeps writing to the renamed inode). Use RotateAndOpen for the typical
+// "rotate, then reopen" pattern.
 func Rotate(path string, keep int) error {
 	if keep < 1 {
 		return nil
 	}
-	// Drop the oldest if at or past the keep limit.
-	oldest := fmt.Sprintf("%s.%d", path, keep)
-	if _, err := os.Stat(oldest); err == nil {
-		if err := os.Remove(oldest); err != nil {
-			return err
-		}
-	}
-	// Shift: .log.(keep-1) -> .log.keep, ..., .log.1 -> .log.2, .log -> .log.1
 	for i := keep - 1; i >= 0; i-- {
 		src := path
 		if i > 0 {
@@ -69,6 +67,16 @@ func Rotate(path string, keep int) error {
 		}
 	}
 	return nil
+}
+
+// RotateAndOpen rotates path (as Rotate does) and then opens a fresh Writer
+// on path. This is the safe composition for callers that own the file's
+// lifecycle.
+func RotateAndOpen(path string, keep int) (*Writer, error) {
+	if err := Rotate(path, keep); err != nil {
+		return nil, err
+	}
+	return New(path)
 }
 
 var _ io.WriteCloser = (*Writer)(nil)
