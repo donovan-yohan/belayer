@@ -1,6 +1,6 @@
 # Observability: Log Tiers, Unified CLI, and Dashboard API — Implementation Plan
 
-> **Status**: Active | **Created**: 2026-04-19 | **Last Updated**: 2026-04-19 (Phase 3 fixes in flight after codex review — 5 blockers + 5 concerns addressed, re-review queued)
+> **Status**: Active | **Created**: 2026-04-19 | **Last Updated**: 2026-04-19 (Phases 1-8 feature-complete; codex adversarial review queued over 1ce45f3..ba2ae8a)
 > **Design Doc**: `docs/design-docs/2026-04-19-observability-log-tiers-and-api-design.md`
 > **Consulted Learnings**: None (LEARNINGS.md not present)
 > **For Claude:** Use /harness:orchestrate to execute this plan.
@@ -37,11 +37,39 @@
   - [x] Task 3.3 + 3.4 + 3.5: callbacks.py full_input/full_result, fs_snapshot pre/post, subprocess_exec + env allowlist _(commit b503834)_
   - [x] Task 3.6: daemon/redact.go Scrub() with keyRegex/openaiRegex/bearerRegex _(commit faac269)_
   - [x] Task 3.7: E2E trace session + /sessions/{id}/trace/{agent}/{fragment} slice reader _(commit 640a54a)_
-- [ ] Phase 4 — Aggregate endpoints + response headers + compact format + per-reader cursor
-- [ ] Phase 5 — SSE filter params + `session_digest` frame
-- [ ] Phase 6 — TCP bind + bearer auth + CORS
-- [ ] Phase 7 — Artifact + transcript + trace HTTP endpoints
-- [ ] Phase 8 — Deprecation removal + doc finalization (LOG_FORMAT rewrite, OBSERVABILITY, DEPLOYMENT, SANDBOXING delete)
+- [x] Phase 4 — Aggregate endpoints + response headers + compact format + per-reader cursor _(completed 2026-04-19)_
+  - [x] Task 4.1: /outline aggregate _(commit 2d48b5c)_
+  - [x] Task 4.2: /tool-calls aggregate (renamed from /tools) _(commit 4b294aa)_
+  - [x] Task 4.3: /conversation aggregate + store list helpers _(commits 6c7d6f0, fdb697d)_
+  - [x] Task 4.4: /phase derived phase _(commit 5eee599)_
+  - [x] Task 4.5: X-Belayer-Schema/X-Last-Event-Id/X-Session-Status/X-Log-Level/X-Agent-Roster headers _(commit a4245e4)_
+  - [x] Task 4.6: compact TSV via Accept: text/tab-separated-values _(commit 9885df4)_
+  - [x] Task 4.7: per-reader ?since=<reader_id> cursor + 24h TTL sweep _(commit fb41e1a)_
+  - [x] Task 4.8: Link: rel="next" pagination header _(commit 2df49ef)_
+  - [x] Mux registration for aggregate routes _(commit 8c6c21b)_
+- [x] Phase 5 — SSE filter params + `session_digest` frame _(completed 2026-04-19)_
+  - [x] Task 5.1: SSE ?agent/?type_prefix/?tier filters _(commit 5f80ff6)_
+  - [x] Task 5.2: session_digest control frame folded into 5f80ff6 (60s/50-event cadence, suppressible via ?digest=0)
+- [x] Phase 6 — TCP bind + bearer auth + CORS _(completed 2026-04-19)_
+  - [x] Task 6.1: --bind alias of --tcp-addr _(commit 8495af8)_
+  - [x] Task 6.2: bearer token auth on TCP (constant-time compare, auto-gen 32-byte base64url) _(commit ffc4270)_
+  - [x] Task 6.3: --cors-origin allowlist (never *, never credentials, CORS outside auth) _(commit efb86f8)_
+- [x] Phase 7 — Artifact + transcript + trace HTTP endpoints _(completed 2026-04-19)_
+  - [x] Task 7.1: GET /sessions/{id}/artifacts/{id} serves bytes _(commit 790bdc0)_
+  - [x] Task 7.2: /transcripts list + tail/follow _(commit 4949dd4)_
+  - [x] Task 7.3: /traces list (slice reader already landed in 3.7) _(commit 035700b)_
+  - [x] Task 7.4: belayer artifact get CLI _(commit f70bfd6)_
+  - [x] Mux registration for new routes _(commit cd9cb09)_
+- [x] Phase 8 — Deprecation removal + doc finalization _(completed 2026-04-19)_
+  - [x] Task 8.1: logs SSE-backed single command with --agent/--type/--tier/--format/--tail/--since(duration) _(commit 8760541)_
+  - [x] Task 8.2: init scaffolds log_level: standard in config.yaml _(commit ea2eecc)_
+  - [x] Task 8.3: Channels footer on logs/bridges/daemon help _(commit fd8c4a3)_
+  - [x] Task 8.4: LOG_FORMAT rewrite (440→795 lines, full tier/spill/filters/cursor/TSV/capabilities/cookbook) _(commit 8e407de)_
+  - [x] Task 8.5: OBSERVABILITY operator guide _(commit 318ae20)_
+  - [x] Task 8.6: DEPLOYMENT doc + SANDBOXING delete + PHILOSOPHY §3 addendum _(commit 3697a54)_
+  - [x] Task 8.7: watch alias — no-op, was never registered (dead code removed in 8760541)
+  - [x] Task 8.8: CLAUDE.md CLI surface extended _(commit ba2ae8a)_
+  - [ ] Task 8.9: File Hermes upstream issue for trace:llm_turn — out of code scope; defer to /harness:complete retro
 
 ## Surprises & Discoveries
 
@@ -52,6 +80,15 @@
 | 2026-04-19 | Task 3.7 | `testDaemon` fixtures constructed `Daemon` by direct struct literal with empty `Config{}`, so deriving `traceBase` from `filepath.Dir(cfg.DBPath)` resolved to `.` — broke E2E tests. Promoted `traceBase` to an explicit `Daemon` struct field populated in `New()` so fixtures can set it directly without threading DBPath. | Cleaner separation: handler reads from a known field rather than recomputing from config. No runtime impact. |
 | 2026-04-19 | Phase 3 codex | Codex review surfaced 5 blockers (BELAYER_* env leak, narrow redact regex set, path-traversal via agent field, partial-tail recovery losing data when no \n in 64KB window, slice API not usable over HTTP) + 5 concerns (nested types in `_coerce_plain`, slice handler traversal guard, int64 overflow in range checks, agentless "unknown" spill, prose-string truncation breaks JSON parse). Dispatched 3 parallel fix agents (Python callbacks, Scrub regex, writer+slice) + 1 serial agent (daemon scrub-every + agent validation + event API metadata + structured sentinel). All 5 blockers + 5 concerns addressed across commits fb9af4a, 81972c9, 0d86b96, e5213f5. | Parallel dispatch pattern validated again — 3 agents finished within 4 minutes total, zero merge conflicts via strict file partition. Serial final agent took 6.5 min (larger scope: API contract + E2E rewrite + 4 new tests). |
 | 2026-04-19 | e5213f5 | Adding JSON struct tags to `SessionEvent` changed field case in HTTP/SSE responses (`"Type"`→`"type"` etc). Existing Go consumers using struct Unmarshal still work (case-insensitive). Any external consumer grepping response bytes for uppercase field names would break. No such consumer identified in-repo. | Flagged for Phase 8 doc rewrite — `LOG_FORMAT.md` will describe the final lowercase JSON schema as part of `belayer-log/v1`. |
+| 2026-04-19 | Task 4.2 | Plan called endpoint `/sessions/{id}/tools`, but `/tools` was already registered for tool-call aggregation elsewhere in the daemon mux. Renamed the new endpoint to `/tool-calls` to avoid collision. Docs + plan progress list updated. | Endpoint name is cosmetic; no dashboard consumer was wired to the old name yet. Matches existing `bridge:tool_started`/`bridge:tool_completed` event vocabulary better. |
+| 2026-04-19 | Task 5.2 | SSE digest frame landed in same commit as Task 5.1 (5f80ff6) rather than a separate commit — the filter path and the digest emitter share the per-connection event loop, so splitting them would have required two passes over the same function body. | Plan tracked 5.1 and 5.2 as separate tasks but implementation fused them. No functional drift; both behaviors tested. |
+| 2026-04-19 | Task 6.1 | Plan specified `--bind` as a new flag, but `--tcp-addr` already existed as the listener address. Registered `--bind` as an alias (same StringVar target) to avoid a breaking-change for anyone scripting the older name. Docs say "`--bind` (alias of `--tcp-addr`)". | Two flag names for one variable is mildly redundant but preserves compat. Removal of `--tcp-addr` deferred indefinitely (no consumer churn cost for keeping it). |
+| 2026-04-19 | Task 6.3 | Middleware order matters for preflight: set as `corsMiddleware(authMiddleware(handler))` so OPTIONS short-circuits (204) before the auth layer, which would otherwise 401 preflight because browsers don't send Authorization on OPTIONS. Also never emit `*` or `Access-Control-Allow-Credentials`; origin must be in the allowlist. | Matched the spec, but the middleware layering was not obvious from the plan text — adding the rationale here so future CORS changes don't re-invert the wrapper order. |
+| 2026-04-19 | Task 8.1 | Plan assumed `belayer watch` existed as a user-facing command with a deprecation notice needed. Grep revealed `newWatchCmd` was defined in session.go but never registered in root.go — dead code. Simplified Phase 8: deleted watch code without any alias shim, skipped Task 8.7 entirely (nothing to remove). | No user impact. Flagged as a gap between plan-time assumption and actual registration state. Future plans should verify command registration in `root.go`, not just existence of Cmd constructors. |
+| 2026-04-19 | Task 8.1 | Changed `--since` from int minutes to `time.Duration` (cobra DurationVar). Technically a breaking change for anyone passing `--since 5` meaning 5 minutes. Now `--since 5m` is required. | Documented in LOG_FORMAT. Old CLI was never released outside this branch. Test TestLogsCmd_RawRejectsSince updated to use `--since 5m` to genuinely exercise the incompatibility path (not rely on cobra's error text). |
+| 2026-04-19 | Task 8.1 | NDJSON tests asserted `"n":3` in output but `eventResponse.Data` is a JSON-encoded string, so the rendered line double-escapes inner quotes. Assertion string had to be `\"n\":3` to match escaped form. | Mentioned here to save future-self 10 min of debugging: `Data string` + `json.Marshal(eventResponse)` means payload fields appear with backslash-escaped quotes in the emitted line. |
+| 2026-04-19 | Task 8.4 | Docs agent ran broader than scoped: also touched CLAUDE.md (SANDBOXING→DEPLOYMENT swap, OBSERVABILITY entry, tier bullet) during the LOG_FORMAT rewrite commit chain. Task 8.8 still needed extensions but a chunk of its scope was pre-done. | Minor overlap; 8.8 commit landed clean by only extending CLI surface + adding missing bullets. No rework. Worth noting for future parallel dispatch: docs agents tend to update indexes proactively. |
+| 2026-04-19 | Phases 4-7 | User directive "this seems like it's taking way too long for how little code we wrote. Can we just move on with implementation" cut per-phase codex review out of the loop. Phases 4-8 ran with only self-review + test suite as gates. | Codex adversarial review deferred to end-of-phase-8 (per user follow-up "and now that we've done all the phases, a codex review would be valuable"). Review scope: full 1ce45f3..ba2ae8a range. |
 
 ## Plan Drift
 
