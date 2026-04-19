@@ -296,13 +296,38 @@ func (c *Client) BridgeStdoutStream(ctx context.Context, sessionID, agent string
 	return err
 }
 
-// WatchSessions streams multiplexed session events over the SSE endpoint until
-// the provided context is cancelled.
-func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID int64, onEvent func(eventResponse) error) error {
+// EventFilters are the optional server-side output filters applied to an SSE
+// subscription. The daemon still advances lastID across filtered-out events so
+// a consumer that reconnects with a different filter does not re-see history.
+type EventFilters struct {
+	Agent       string // exact match on data.agent
+	TypePrefix  string // type starts with this prefix
+	Tier        string // drops events above this tier
+	AfterID     int64  // resume from this id
+	DisableDigest bool // suppress session_digest control frame
+}
+
+// SubscribeEvents streams a single session's events over SSE with optional
+// filter params. onEvent is invoked per payload frame; control frames are
+// dropped. The helper returns when the context is cancelled or the server
+// closes the connection.
+func (c *Client) SubscribeEvents(ctx context.Context, sessionID string, f EventFilters, onEvent func(eventResponse) error) error {
 	query := url.Values{}
-	query.Set("sessions", strings.Join(sessionIDs, ","))
-	if afterID > 0 {
-		query.Set("after", strconv.FormatInt(afterID, 10))
+	query.Set("sessions", sessionID)
+	if f.AfterID > 0 {
+		query.Set("after", strconv.FormatInt(f.AfterID, 10))
+	}
+	if f.Agent != "" {
+		query.Set("agent", f.Agent)
+	}
+	if f.TypePrefix != "" {
+		query.Set("type_prefix", f.TypePrefix)
+	}
+	if f.Tier != "" {
+		query.Set("tier", f.Tier)
+	}
+	if f.DisableDigest {
+		query.Set("digest", "0")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", "http://daemon/events/stream?"+query.Encode(), nil)
@@ -325,7 +350,7 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("watch sessions: status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("subscribe events: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -344,7 +369,7 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 		}
 		if line == "" && payload.Len() > 0 {
 			switch eventType {
-			case "error", "daemon_hello", "daemon_draining":
+			case "error", "daemon_hello", "daemon_draining", "session_digest":
 				// Control frames and error frames are not session events; drop.
 				payload.Reset()
 				eventType = ""
@@ -364,7 +389,7 @@ func (c *Client) WatchSessions(ctx context.Context, sessionIDs []string, afterID
 		}
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("watch sessions: %w", err)
+		return fmt.Errorf("subscribe events: %w", err)
 	}
 	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
 		return err

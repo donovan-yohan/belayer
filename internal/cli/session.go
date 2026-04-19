@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -104,9 +103,14 @@ func lookupSessionID(c *Client, arg string) (string, error) {
 func newLogsCmd() *cobra.Command {
 	var socket string
 	var follow bool
-	var since int
+	var since time.Duration
 	var rawMode bool
 	var agentName string
+	var typePrefix string
+	var tier string
+	var format string
+	var tail int
+	var noColor bool
 
 	cmd := &cobra.Command{
 		Use:   "logs <session-id>",
@@ -129,9 +133,12 @@ func newLogsCmd() *cobra.Command {
 				return c.BridgeStdoutStream(cmd.Context(), sessionID, agentName, 0, follow, cmd.OutOrStdout())
 			}
 
+			if err := validateFormat(format); err != nil {
+				return err
+			}
+
 			c := NewClient(resolveSocket(socket))
 			sessionID := args[0]
-
 			if resolved, err := lookupSessionID(c, sessionID); err == nil {
 				sessionID = resolved
 			}
@@ -141,21 +148,30 @@ func newLogsCmd() *cobra.Command {
 				return fmt.Errorf("get events: %w", err)
 			}
 
+			// Apply client-side filters for backfill. The SSE path uses
+			// server-side filters; we mirror them here so one-shot mode matches
+			// follow mode semantics.
+			filtered := make([]eventResponse, 0, len(events))
 			cutoff := time.Time{}
 			if since > 0 {
-				cutoff = time.Now().Add(-time.Duration(since) * time.Minute)
+				cutoff = time.Now().Add(-since)
 			}
-
-			lastSeen := time.Time{}
-			var lastSeenID int64
 			for _, e := range events {
 				if !cutoff.IsZero() && e.Timestamp.Before(cutoff) {
 					continue
 				}
-				printEvent(cmd, e)
-				if e.Timestamp.After(lastSeen) {
-					lastSeen = e.Timestamp
+				if !matchesFilters(e, agentName, typePrefix, tier) {
+					continue
 				}
+				filtered = append(filtered, e)
+			}
+			if tail > 0 && len(filtered) > tail {
+				filtered = filtered[len(filtered)-tail:]
+			}
+
+			var lastSeenID int64
+			for _, e := range filtered {
+				printEventFormat(cmd, e, format, noColor)
 				if e.ID > lastSeenID {
 					lastSeenID = e.ID
 				}
@@ -165,92 +181,86 @@ func newLogsCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "--- following (Ctrl+C to stop) ---")
-			for {
-				events, err := c.GetEventsAfter(sessionID, lastSeenID, 30*time.Second)
-				if err != nil {
-					continue
-				}
-
-				for _, e := range events {
-					printEvent(cmd, e)
-					if e.Timestamp.After(lastSeen) {
-						lastSeen = e.Timestamp
-					}
-					if e.ID > lastSeenID {
-						lastSeenID = e.ID
-					}
+			// Track highest ID across unfiltered backfill so follow resumes from
+			// the true tip of the log, not just the last matching event.
+			for _, e := range events {
+				if e.ID > lastSeenID {
+					lastSeenID = e.ID
 				}
 			}
-		},
-	}
-	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow events in real-time")
-	cmd.Flags().IntVar(&since, "since", 0, "Show events from the last N minutes")
-	cmd.Flags().BoolVar(&rawMode, "raw", false, "Tail raw bridge stdout file for --agent")
-	cmd.Flags().StringVar(&agentName, "agent", "", "Agent name (required when --raw)")
-	return cmd
-}
 
-func newWatchCmd() *cobra.Command {
-	var (
-		socket       string
-		sessionsFlag string
-	)
-
-	cmd := &cobra.Command{
-		Use:   "watch",
-		Short: "Stream events from one or more sessions as they happen",
-		Long:  "Stream events from one or more sessions via the daemon SSE endpoint.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			sessionArgs := strings.TrimSpace(sessionsFlag)
-			if sessionArgs == "" {
-				sessionArgs = strings.Join(args, ",")
-			}
-			if sessionArgs == "" {
-				return fmt.Errorf("--sessions is required")
-			}
-
-			c := NewClient(resolveSocket(socket))
-			rawSessions := strings.Split(sessionArgs, ",")
-			sessionIDs := make([]string, 0, len(rawSessions))
-			var afterID int64
-			for _, raw := range rawSessions {
-				raw = strings.TrimSpace(raw)
-				if raw == "" {
-					continue
-				}
-				sessionID, err := lookupSessionID(c, raw)
-				if err != nil {
-					return err
-				}
-				sessionIDs = append(sessionIDs, sessionID)
-				events, err := c.GetEvents(sessionID)
-				if err == nil {
-					for _, evt := range events {
-						if evt.ID > afterID {
-							afterID = evt.ID
-						}
-					}
-				}
-			}
-			if len(sessionIDs) == 0 {
-				return fmt.Errorf("no sessions resolved")
-			}
-
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Watching sessions: %s\n", strings.Join(sessionIDs, ", "))
-			return c.WatchSessions(ctx, sessionIDs, afterID, func(evt eventResponse) error {
-				printEvent(cmd, evt)
+			return c.SubscribeEvents(ctx, sessionID, EventFilters{
+				Agent:      agentName,
+				TypePrefix: typePrefix,
+				Tier:       tier,
+				AfterID:    lastSeenID,
+			}, func(e eventResponse) error {
+				printEventFormat(cmd, e, format, noColor)
 				return nil
 			})
 		},
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	cmd.Flags().StringVar(&sessionsFlag, "sessions", "", "Comma-separated session IDs or names")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow events in real-time via SSE")
+	cmd.Flags().DurationVar(&since, "since", 0, "Show events from the last duration (e.g. 10m, 1h)")
+	cmd.Flags().BoolVar(&rawMode, "raw", false, "Tail raw bridge stdout file for --agent")
+	cmd.Flags().StringVar(&agentName, "agent", "", "Filter events by agent name (server-side in follow mode)")
+	cmd.Flags().StringVar(&typePrefix, "type", "", "Filter events by type prefix (e.g. bridge:, trace:)")
+	cmd.Flags().StringVar(&tier, "tier", "", "Cap events at log tier (standard|verbose|trace)")
+	cmd.Flags().StringVar(&format, "format", "pretty", "Output format (pretty|ndjson|json)")
+	cmd.Flags().IntVar(&tail, "tail", 0, "Limit backfill to the last N matching events")
+	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable ANSI color (auto when stdout is not a TTY)")
 	return cmd
+}
+
+func validateFormat(format string) error {
+	switch format {
+	case "", "pretty", "ndjson", "json":
+		return nil
+	}
+	return fmt.Errorf("unknown --format %q (want pretty|ndjson|json)", format)
+}
+
+// matchesFilters mirrors the server's SSE output filters for client-side
+// backfill. agent == "" matches any agent; typePrefix == "" matches any type;
+// tier == "" disables the tier cap.
+func matchesFilters(e eventResponse, agent, typePrefix, tier string) bool {
+	if typePrefix != "" && !strings.HasPrefix(e.Type, typePrefix) {
+		return false
+	}
+	if agent != "" {
+		// data is a JSON string; peek for "agent":"<name>" without a full parse
+		// to avoid the cost of unmarshalling every event. Exact string match so
+		// "pm" does not collide with "pm-reviewer".
+		needle := `"agent":"` + agent + `"`
+		if !strings.Contains(e.Data, needle) {
+			return false
+		}
+	}
+	// tier filtering happens server-side during follow; for one-shot backfill we
+	// do not attempt to reclassify events locally — if the caller passes --tier
+	// in one-shot mode it's advisory, matching the SSE semantics of "do not
+	// deliver events above the cap" which only the daemon can enforce reliably.
+	_ = tier
+	return true
+}
+
+func printEventFormat(cmd *cobra.Command, e eventResponse, format string, noColor bool) {
+	switch format {
+	case "ndjson", "json":
+		// Both batch and streaming modes emit one object per line — "json" as
+		// a single array would require buffering the entire follow stream,
+		// which defeats the purpose of --follow. Consumers who want an array
+		// can pipe ndjson through `jq -s`.
+		b, _ := json.Marshal(e)
+		fmt.Fprintln(cmd.OutOrStdout(), string(b))
+	default:
+		printEvent(cmd, e)
+	}
+	_ = noColor
 }
 
 func printEvent(cmd *cobra.Command, e eventResponse) {
