@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,13 +62,21 @@ func (d *Daemon) handleBridgeStdout(w http.ResponseWriter, r *http.Request) {
 	agentName := r.PathValue("agent")
 	run, err := d.store.GetAgentRun(sessionID, agentName)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found in session"})
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found in session"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	logPath := bridgeLogPathFor(run.Workdir, sessionID, agentName)
 	info, err := os.Stat(logPath)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bridge log not found"})
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "bridge log not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
