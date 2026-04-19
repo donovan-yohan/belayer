@@ -233,6 +233,50 @@ func TestLogsCmd_FilterByAgent(t *testing.T) {
 	}
 }
 
+// TestLogsCmd_TierFiltersBackfill verifies --tier caps backfill the same way
+// SSE does. Seeds a mix of standard/verbose/trace-tier events and asserts
+// --tier standard drops verbose and trace events on one-shot backfill.
+func TestLogsCmd_TierFiltersBackfill(t *testing.T) {
+	sock := startTestDaemon(t)
+	c := NewClient(sock)
+	sess, err := c.CreateSession("logs-tier", "nightshift", nil, "", "trace")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	// Standard tier: plain type.
+	if err := c.LogEvent(sess.ID, "plain_event", mustJSON(map[string]string{"x": "s"})); err != nil {
+		t.Fatalf("LogEvent plain: %v", err)
+	}
+	// Verbose tier: type prefix bridge:.
+	if err := c.LogEvent(sess.ID, "bridge:note", mustJSON(map[string]string{"x": "v"})); err != nil {
+		t.Fatalf("LogEvent bridge: %v", err)
+	}
+	// Trace tier: type prefix trace:.
+	if err := c.LogEvent(sess.ID, "trace:step", mustJSON(map[string]string{"x": "t"})); err != nil {
+		t.Fatalf("LogEvent trace: %v", err)
+	}
+
+	cmd := newLogsCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--socket", sock, "--tier", "standard", "--format", "ndjson", sess.ID})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+
+	body := out.String()
+	if strings.Contains(body, "bridge:note") {
+		t.Fatalf("tier=standard should drop bridge: events, got:\n%s", body)
+	}
+	if strings.Contains(body, "trace:step") {
+		t.Fatalf("tier=standard should drop trace: events, got:\n%s", body)
+	}
+	if !strings.Contains(body, "plain_event") {
+		t.Fatalf("tier=standard should include standard events, got:\n%s", body)
+	}
+}
+
 // TestLogsCmd_TailLimits verifies --tail N returns only the last N matching events.
 func TestLogsCmd_TailLimits(t *testing.T) {
 	sock := startTestDaemon(t)

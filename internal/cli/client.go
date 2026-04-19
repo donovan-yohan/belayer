@@ -110,6 +110,10 @@ type eventResponse struct {
 	Timestamp time.Time `json:"Timestamp"`
 	Type      string    `json:"Type"`
 	Data      string    `json:"Data"`
+
+	// TraceFile is populated when the event payload was spilled to a trace
+	// fragment. Used by client-side tier classification.
+	TraceFile string `json:"trace_file,omitempty"`
 }
 
 // CreateSession creates a new session via the daemon. logLevel is optional;

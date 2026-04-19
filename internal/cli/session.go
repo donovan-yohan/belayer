@@ -240,12 +240,48 @@ func matchesFilters(e eventResponse, agent, typePrefix, tier string) bool {
 			return false
 		}
 	}
-	// tier filtering happens server-side during follow; for one-shot backfill we
-	// do not attempt to reclassify events locally — if the caller passes --tier
-	// in one-shot mode it's advisory, matching the SSE semantics of "do not
-	// deliver events above the cap" which only the daemon can enforce reliably.
-	_ = tier
+	if tier != "" {
+		cap := tierRank(tier)
+		if cap < 0 {
+			// Unknown tier name — behave as "no cap" to match SSE which rejects
+			// bad values at the HTTP layer; backfill is best-effort here.
+			return true
+		}
+		if tierRank(eventTier(e)) > cap {
+			return false
+		}
+	}
 	return true
+}
+
+// eventTier mirrors the server's classification (internal/daemon.eventTier) so
+// --tier filtering is consistent between one-shot backfill and --follow.
+func eventTier(e eventResponse) string {
+	if e.TraceFile != "" ||
+		strings.HasPrefix(e.Type, "trace:") ||
+		strings.Contains(e.Data, `"full_input":`) ||
+		strings.Contains(e.Data, `"full_result":`) {
+		return "trace"
+	}
+	if strings.HasPrefix(e.Type, "verbose:") ||
+		strings.HasPrefix(e.Type, "agent_status:") ||
+		strings.HasPrefix(e.Type, "bridge:") {
+		return "verbose"
+	}
+	return "standard"
+}
+
+// tierRank matches internal/daemon.tierRank. Returns -1 for unknown names.
+func tierRank(tier string) int {
+	switch tier {
+	case "standard":
+		return 0
+	case "verbose":
+		return 1
+	case "trace":
+		return 2
+	}
+	return -1
 }
 
 func printEventFormat(cmd *cobra.Command, e eventResponse, format string, noColor bool) {
