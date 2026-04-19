@@ -20,9 +20,17 @@ coverage.out
 state/
 .tmp/
 
+# Local env (secrets, port assignments)
+.env
+.env.local
+
 # Python
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+# uv.lock IS committed for reproducible test runs; do not add it here.
 
 # Tool config (local)
 .claude/
