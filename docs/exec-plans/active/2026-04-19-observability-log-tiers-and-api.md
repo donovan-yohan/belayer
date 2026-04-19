@@ -1,6 +1,6 @@
 # Observability: Log Tiers, Unified CLI, and Dashboard API — Implementation Plan
 
-> **Status**: Active | **Created**: 2026-04-19 | **Last Updated**: 2026-04-19 (Phase 3 complete, pending codex review)
+> **Status**: Active | **Created**: 2026-04-19 | **Last Updated**: 2026-04-19 (Phase 3 fixes in flight after codex review — 5 blockers + 5 concerns addressed, re-review queued)
 > **Design Doc**: `docs/design-docs/2026-04-19-observability-log-tiers-and-api-design.md`
 > **Consulted Learnings**: None (LEARNINGS.md not present)
 > **For Claude:** Use /harness:orchestrate to execute this plan.
@@ -31,7 +31,7 @@
   - [x] Task 2.3: GET /sessions/{id}/bridges + /stdout tail/follow _(commits f7512fa, 13fbac6, 0cfd765)_
   - [x] Task 2.4: belayer logs --raw --agent tails bridge stdout _(commits 10dbad1, 5f58c56)_
   - [x] Task 2.5: belayer bridges tail shorthand _(commit 0f374e7)_
-- [x] Phase 3 — Trace writer, spill, `full_input`/`full_result`, `trace:fs_snapshot`, `trace:subprocess_exec` _(pending codex review)_
+- [ ] Phase 3 — Trace writer, spill, `full_input`/`full_result`, `trace:fs_snapshot`, `trace:subprocess_exec` _(codex surfaced 5 blockers + 5 concerns; fix batch in flight)_
   - [x] Task 3.1: internal/trace/ writer pkg (Fragment, Append, rotate, zstd) _(commit 1ce45f3)_
   - [x] Task 3.2: Store.InsertEventWithSpill + handleLogEvent scrub/spill/truncate + BELAYER_LOG_LEVEL env _(commit 35727fe)_
   - [x] Task 3.3 + 3.4 + 3.5: callbacks.py full_input/full_result, fs_snapshot pre/post, subprocess_exec + env allowlist _(commit b503834)_
@@ -50,6 +50,8 @@
 | 2026-04-19 | Tasks 3.1-3.6 | Executed in parallel via 3 background sonnet subagents after user directive "kick off any parallel phases that you can". File-scope partitioning prevented merge conflicts: Agent A (3.2) → internal/store, internal/daemon/daemon.go, internal/bridge, internal/daemon/agents.go; Agent B (3.3-5) → hermes_bridge/*.py; Agent C (3.6) → internal/daemon/redact*. Agent C scoped intentionally to create-only so Agent A owned all bridge_events.go edits. | Confirmed intra-phase parallelism safe when file partition is strict; worth applying to Phases 4/5/7 where endpoints cluster by file. |
 | 2026-04-19 | Task 3.7 | Fragment filenames use `.jsonl` / `.jsonl.zst` extensions — plan assumed bare `0001` paths. Slice handler resolves by stripping both `.zst` and `.jsonl` from input then normalising to 4-digit padded form. | Matches writer's real on-disk layout. Slice URL accepts raw int, padded, or either suffix. |
 | 2026-04-19 | Task 3.7 | `testDaemon` fixtures constructed `Daemon` by direct struct literal with empty `Config{}`, so deriving `traceBase` from `filepath.Dir(cfg.DBPath)` resolved to `.` — broke E2E tests. Promoted `traceBase` to an explicit `Daemon` struct field populated in `New()` so fixtures can set it directly without threading DBPath. | Cleaner separation: handler reads from a known field rather than recomputing from config. No runtime impact. |
+| 2026-04-19 | Phase 3 codex | Codex review surfaced 5 blockers (BELAYER_* env leak, narrow redact regex set, path-traversal via agent field, partial-tail recovery losing data when no \n in 64KB window, slice API not usable over HTTP) + 5 concerns (nested types in `_coerce_plain`, slice handler traversal guard, int64 overflow in range checks, agentless "unknown" spill, prose-string truncation breaks JSON parse). Dispatched 3 parallel fix agents (Python callbacks, Scrub regex, writer+slice) + 1 serial agent (daemon scrub-every + agent validation + event API metadata + structured sentinel). All 5 blockers + 5 concerns addressed across commits fb9af4a, 81972c9, 0d86b96, e5213f5. | Parallel dispatch pattern validated again — 3 agents finished within 4 minutes total, zero merge conflicts via strict file partition. Serial final agent took 6.5 min (larger scope: API contract + E2E rewrite + 4 new tests). |
+| 2026-04-19 | e5213f5 | Adding JSON struct tags to `SessionEvent` changed field case in HTTP/SSE responses (`"Type"`→`"type"` etc). Existing Go consumers using struct Unmarshal still work (case-insensitive). Any external consumer grepping response bytes for uppercase field names would break. No such consumer identified in-repo. | Flagged for Phase 8 doc rewrite — `LOG_FORMAT.md` will describe the final lowercase JSON schema as part of `belayer-log/v1`. |
 
 ## Plan Drift
 
