@@ -1185,6 +1185,20 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		waitFor = parsed
 	}
 
+	// Parse filter params: ?agent=, ?type_prefix=, ?tier=.
+	// All filters are AND-combined. Control frames always pass regardless of filters.
+	filterAgent := strings.TrimSpace(r.URL.Query().Get("agent"))
+	filterTypePrefix := strings.TrimSpace(r.URL.Query().Get("type_prefix"))
+	filterTierRaw := strings.TrimSpace(r.URL.Query().Get("tier"))
+	filterTierRank := -1 // -1 means no tier filter
+	if filterTierRaw != "" {
+		filterTierRank = tierRank(filterTierRaw)
+		if filterTierRank < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tier must be one of: standard, verbose, trace"})
+			return
+		}
+	}
+
 	// Compute helloLastID: the global max event ID at connect time. This is
 	// what daemon_hello advertises as the high-water mark so consumers can
 	// persist it as their epoch cursor. It is computed independently of
@@ -1267,6 +1281,23 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(events) > 0 {
 			for _, evt := range events {
+				// Always advance lastID so we don't re-scan the same events;
+				// filtering is output-side only.
+				lastID = evt.ID
+
+				// Apply output filters. All must pass to emit. Filters are only
+				// applied to domain events; control frames (emitted outside this
+				// loop) always pass.
+				if filterAgent != "" && extractAgentName(evt.Data) != filterAgent {
+					continue
+				}
+				if filterTypePrefix != "" && !strings.HasPrefix(evt.Type, filterTypePrefix) {
+					continue
+				}
+				if filterTierRank >= 0 && tierRank(eventTier(evt)) > filterTierRank {
+					continue
+				}
+
 				// Domain frames carry id: lines (spec §4 A8).
 				// emit event: <type> per LOG_FORMAT.md §4 (A2). Sanitize the type
 				// so malformed event types inserted via POST /sessions/{id}/events
@@ -1277,7 +1308,6 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				fmt.Fprint(w, "\n")
-				lastID = evt.ID
 			}
 			flusher.Flush()
 		}
@@ -1638,6 +1668,48 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// eventTier classifies a store.SessionEvent into one of three tiers:
+//
+//	"trace"    — highest verbosity; spilled events (TraceFile non-empty), type
+//	             starts with "trace:", or data contains "full_input:" / "full_result:".
+//	"verbose"  — type starts with "verbose:", OR (not trace AND type starts with
+//	             "agent_status:" or "bridge:").
+//	"standard" — everything else.
+//
+// Tiers are monotonically inclusive: standard ⊂ verbose ⊂ trace.
+// Tier rank ordering: standard=0, verbose=1, trace=2.
+// To filter: emit event if tierRank(event) <= tierRank(requested).
+func eventTier(evt store.SessionEvent) string {
+	// Trace tier: spilled, type prefix, or data markers.
+	if evt.TraceFile != "" ||
+		strings.HasPrefix(evt.Type, "trace:") ||
+		strings.Contains(evt.Data, `"full_input":`) ||
+		strings.Contains(evt.Data, `"full_result":`) {
+		return "trace"
+	}
+	// Verbose tier: verbose: prefix, or bridge:/agent_status: that aren't trace.
+	if strings.HasPrefix(evt.Type, "verbose:") ||
+		strings.HasPrefix(evt.Type, "agent_status:") ||
+		strings.HasPrefix(evt.Type, "bridge:") {
+		return "verbose"
+	}
+	return "standard"
+}
+
+// tierRank converts a tier name to its numeric rank (standard=0, verbose=1, trace=2).
+// Returns -1 for unrecognised names.
+func tierRank(tier string) int {
+	switch tier {
+	case "standard":
+		return 0
+	case "verbose":
+		return 1
+	case "trace":
+		return 2
+	}
+	return -1
 }
 
 // sanitizeSSEEventType replaces any characters that would break SSE frame

@@ -467,3 +467,238 @@ func TestSSE_TA1_Corner_MidStreamSubscriptionLosesHistory(t *testing.T) {
 	t.Log("CORNER DOCUMENTED: C_historical is lost because consumer reconnected with after=cursorAfterAB; " +
 		"cragd avoids this by subscribing per-session so the per-session cursor is always correct")
 }
+
+// --- Task 5.1: filter param tests ---
+
+// TestSSE_AgentFilter verifies that ?agent=<name> filters events so only those
+// from the specified agent are emitted. Three events are seeded: two from
+// "supervisor" and one from "backend-dev". Only the backend-dev event must appear.
+func TestSSE_AgentFilter(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "agent-filter-test"}))
+
+	// Seed events: two from supervisor, one from backend-dev.
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{
+		Type: "tool_call",
+		Data: `{"agent":"supervisor","msg":"sup-1"}`,
+	})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{
+		Type: "tool_call",
+		Data: `{"agent":"backend-dev","msg":"be-1"}`,
+	})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{
+		Type: "tool_call",
+		Data: `{"agent":"supervisor","msg":"sup-2"}`,
+	})
+
+	// Snapshot maxID so we can request backlog only.
+	maxID, _ := d.store.MaxEventID()
+	_ = maxID
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	// Connect with after=0 and agent=backend-dev filter.
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=0&agent=backend-dev", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Expect: daemon_hello + session_created(filtered out) + 1 backend-dev event.
+	// session_created has no agent field so it will be filtered out.
+	// We read 2 frames: hello + the backend-dev event.
+	frames := readSSEFrames(t, resp.Body, 2, 3*time.Second)
+	if len(frames) == 0 {
+		t.Fatal("no frames received")
+	}
+	if frames[0].event != "daemon_hello" {
+		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
+	}
+
+	// Collect domain events received.
+	var domainFrames []sseFrame
+	for _, f := range frames[1:] {
+		if isSSEControlFrame(f.event) {
+			continue
+		}
+		domainFrames = append(domainFrames, f)
+	}
+
+	// Must have exactly one domain event (the backend-dev one).
+	if len(domainFrames) != 1 {
+		t.Fatalf("expected 1 domain event for agent=backend-dev, got %d", len(domainFrames))
+	}
+	if !strings.Contains(domainFrames[0].data, "backend-dev") {
+		t.Errorf("expected backend-dev event, got data: %s", domainFrames[0].data)
+	}
+	if strings.Contains(domainFrames[0].data, "supervisor") {
+		t.Errorf("supervisor event leaked through agent filter: %s", domainFrames[0].data)
+	}
+}
+
+// TestSSE_TypePrefixFilter verifies that ?type_prefix=<prefix> filters events so
+// only those whose Type starts with the prefix are emitted.
+func TestSSE_TypePrefixFilter(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "type-prefix-test"}))
+
+	// Seed events of various types.
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "bridge:tool_started"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "bridge:tool_completed"})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{Type: "agent_status:planning"})
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	// Connect filtering for only bridge: events.
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=0&type_prefix=bridge:", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Expect: daemon_hello + 2 bridge: events (session_created and agent_status:planning filtered out).
+	frames := readSSEFrames(t, resp.Body, 3, 3*time.Second)
+	if len(frames) == 0 {
+		t.Fatal("no frames received")
+	}
+	if frames[0].event != "daemon_hello" {
+		t.Fatalf("first frame must be daemon_hello, got %q", frames[0].event)
+	}
+
+	var domainFrames []sseFrame
+	for _, f := range frames[1:] {
+		if isSSEControlFrame(f.event) {
+			continue
+		}
+		domainFrames = append(domainFrames, f)
+	}
+
+	if len(domainFrames) != 2 {
+		t.Fatalf("expected 2 domain events for type_prefix=bridge:, got %d", len(domainFrames))
+	}
+	for _, f := range domainFrames {
+		if !strings.HasPrefix(f.event, "bridge:") {
+			t.Errorf("non-bridge event leaked through type_prefix filter: event=%q", f.event)
+		}
+	}
+}
+
+// TestSSE_TierFilter verifies that ?tier=standard returns only standard events,
+// while ?tier=trace returns both standard and trace events.
+func TestSSE_TierFilter(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "tier-filter-test"}))
+
+	// Seed one standard event and one trace-tier event (type starts with trace:).
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{
+		Type: "tool_call",
+		Data: `{"agent":"supervisor"}`,
+	})
+	doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{
+		Type: "trace:fs_snapshot",
+		Data: `{"agent":"supervisor"}`,
+	})
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	// --- tier=standard: should receive session_created + tool_call, NOT trace:fs_snapshot ---
+	func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+
+		req, _ := http.NewRequestWithContext(ctx, "GET",
+			fmt.Sprintf("%s/events/stream?sessions=%s&after=0&tier=standard", server.URL, sess.ID), nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("tier=standard: GET /events/stream: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("tier=standard: expected 200, got %d", resp.StatusCode)
+		}
+
+		// hello + session_created + tool_call = 3 frames.
+		frames := readSSEFrames(t, resp.Body, 3, 3*time.Second)
+
+		for _, f := range frames[1:] {
+			if isSSEControlFrame(f.event) {
+				continue
+			}
+			if strings.HasPrefix(f.event, "trace:") {
+				t.Errorf("tier=standard: trace event leaked through: event=%q", f.event)
+			}
+		}
+	}()
+
+	// --- tier=trace: should receive all events including trace:fs_snapshot ---
+	func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+
+		req, _ := http.NewRequestWithContext(ctx, "GET",
+			fmt.Sprintf("%s/events/stream?sessions=%s&after=0&tier=trace", server.URL, sess.ID), nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("tier=trace: GET /events/stream: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("tier=trace: expected 200, got %d", resp.StatusCode)
+		}
+
+		// hello + session_created + tool_call + trace:fs_snapshot = 4 frames.
+		frames := readSSEFrames(t, resp.Body, 4, 3*time.Second)
+
+		seen := map[string]bool{}
+		for _, f := range frames[1:] {
+			if !isSSEControlFrame(f.event) {
+				seen[f.event] = true
+			}
+		}
+		if !seen["tool_call"] {
+			t.Error("tier=trace: tool_call event not received")
+		}
+		if !seen["trace:fs_snapshot"] {
+			t.Error("tier=trace: trace:fs_snapshot event not received")
+		}
+	}()
+}
+
+// TestSSE_InvalidTier verifies that ?tier=bogus returns 400.
+func TestSSE_InvalidTier(t *testing.T) {
+	d := testDaemon(t)
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "invalid-tier-test"}))
+
+	// Use doRequest (httptest.ResponseRecorder) to check the 400 before streaming.
+	rr := doRequest(t, d, "GET", fmt.Sprintf("/events/stream?sessions=%s&tier=bogus", sess.ID), nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for ?tier=bogus, got %d: %s", rr.Code, rr.Body.String())
+	}
+	resp := decodeJSON[map[string]string](t, rr)
+	if resp["error"] == "" {
+		t.Error("expected non-empty error message for invalid tier")
+	}
+}
