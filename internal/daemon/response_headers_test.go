@@ -220,6 +220,66 @@ func TestCompactTSV_GetEvents(t *testing.T) {
 	}
 }
 
+// TestCompactTSV_AcceptHeader verifies Accept: text/tab-separated-values
+// negotiates compact TSV responses without needing ?format=compact. Also
+// verifies the ?format=json override wins when both are present.
+func TestCompactTSV_AcceptHeader(t *testing.T) {
+	d := testDaemon(t)
+
+	createRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "accept-tsv"})
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d", createRR.Code)
+	}
+	sess := decodeJSON[sessionAPIResponse](t, createRR)
+	id := sess.ID
+
+	t.Run("accept header triggers TSV", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events", nil)
+		req.Header.Set("Accept", "text/tab-separated-values")
+		d.server.Handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		ct := rr.Header().Get("Content-Type")
+		if !strings.HasPrefix(ct, "text/tab-separated-values") {
+			t.Errorf("want TSV, got %q body=%s", ct, rr.Body.String())
+		}
+	})
+
+	t.Run("accept with q params and other types", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events", nil)
+		req.Header.Set("Accept", "application/json;q=0.5, text/tab-separated-values;q=0.9")
+		d.server.Handler.ServeHTTP(rr, req)
+		ct := rr.Header().Get("Content-Type")
+		if !strings.HasPrefix(ct, "text/tab-separated-values") {
+			t.Errorf("want TSV (multi-accept), got %q", ct)
+		}
+	})
+
+	t.Run("query param format=json overrides accept", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events?format=json", nil)
+		req.Header.Set("Accept", "text/tab-separated-values")
+		d.server.Handler.ServeHTTP(rr, req)
+		ct := rr.Header().Get("Content-Type")
+		if strings.HasPrefix(ct, "text/tab-separated-values") {
+			t.Errorf("?format=json should force JSON even with TSV Accept, got %q", ct)
+		}
+	})
+
+	t.Run("no accept, no format → json", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/sessions/"+id+"/events", nil)
+		d.server.Handler.ServeHTTP(rr, req)
+		ct := rr.Header().Get("Content-Type")
+		if strings.HasPrefix(ct, "text/tab-separated-values") {
+			t.Errorf("default should be JSON, got TSV")
+		}
+	})
+}
+
 // TestSince_RepeatCallReturnsOnlyNew verifies per-reader cursor behaviour.
 func TestSince_RepeatCallReturnsOnlyNew(t *testing.T) {
 	d := testDaemon(t)

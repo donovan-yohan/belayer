@@ -1031,7 +1031,7 @@ func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Link", fmt.Sprintf(`<%s>; rel="next"`, nextURL))
 	}
 
-	if r.URL.Query().Get("format") == "compact" {
+	if wantsCompactTSV(r) {
 		d.writeEventHeaders(w, id, len(events))
 		writeCompactTSV(w, events)
 		return
@@ -1714,7 +1714,7 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.URL.Query().Get("format") == "compact" {
+	if wantsCompactTSV(r) {
 		d.writeEventHeaders(w, preds.SessionID, len(events))
 		writeCompactTSV(w, events)
 		return

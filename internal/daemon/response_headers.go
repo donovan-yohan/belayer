@@ -51,6 +51,36 @@ func (d *Daemon) rosterCSV(sessionID string) (string, error) {
 	return strings.Join(names, ","), nil
 }
 
+// wantsCompactTSV reports whether the request should be served in compact
+// TSV form. ?format=compact always wins (query-param precedence); otherwise
+// we accept an Accept header that includes text/tab-separated-values. Any
+// other value (including an explicit ?format=json) forces JSON.
+func wantsCompactTSV(r *http.Request) bool {
+	switch r.URL.Query().Get("format") {
+	case "compact":
+		return true
+	case "":
+		// fall through to Accept negotiation
+	default:
+		return false
+	}
+	accept := r.Header.Get("Accept")
+	if accept == "" {
+		return false
+	}
+	for _, part := range strings.Split(accept, ",") {
+		// Strip q= and other parameters.
+		mediaType := strings.TrimSpace(part)
+		if semi := strings.Index(mediaType, ";"); semi >= 0 {
+			mediaType = strings.TrimSpace(mediaType[:semi])
+		}
+		if strings.EqualFold(mediaType, "text/tab-separated-values") {
+			return true
+		}
+	}
+	return false
+}
+
 // writeCompactTSV writes events as a compact TSV response (one line per event).
 // Format: <id>\t<agent>\t<type>\t<summary>\n
 // summary is the first 120 chars of Data with literal \n → \\n and \t → \\t.
