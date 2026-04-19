@@ -171,6 +171,7 @@ type Daemon struct {
 	archiveDrainTimeout    time.Duration // max time Phase 3 archive drain may run
 	shutdownHTTPTimeout    time.Duration // max time HTTP servers get to drain in-flight requests
 	sseKeepaliveInterval   time.Duration // interval for SSE ": keep-alive" comments (default 15s)
+	sseDigestInterval      time.Duration // interval for session_digest control frames (default 60s)
 
 	// SSE subscriber registry. Populated by handleStreamEvents; drained by
 	// announceDraining on Shutdown. Protected by sseMu.
@@ -205,6 +206,8 @@ func New(cfg Config) (*Daemon, error) {
 		keepaliveInterval = 15 * time.Second
 	}
 
+	digestInterval := 60 * time.Second
+
 	d := &Daemon{
 		store:                st,
 		config:               cfg,
@@ -218,6 +221,7 @@ func New(cfg Config) (*Daemon, error) {
 		archiveDrainTimeout:  30 * time.Second,
 		shutdownHTTPTimeout:  5 * time.Second,
 		sseKeepaliveInterval: keepaliveInterval,
+		sseDigestInterval:    digestInterval,
 		cursorSweepStop:      make(chan struct{}),
 	}
 	d.archiver = newArchiveManager(st, d.daemonInstanceID)
@@ -1199,6 +1203,9 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Parse ?digest= param. Default (absent or any value other than "0"): enabled.
+	digestEnabled := r.URL.Query().Get("digest") != "0"
+
 	// Compute helloLastID: the global max event ID at connect time. This is
 	// what daemon_hello advertises as the high-water mark so consumers can
 	// persist it as their epoch cursor. It is computed independently of
@@ -1271,6 +1278,12 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		deadline = time.Now().Add(waitFor)
 	}
 
+	// Digest counters: emit session_digest every 50 domain events OR every
+	// sseDigestInterval, whichever comes first. ?digest=0 disables entirely.
+	const digestEventThreshold = 50
+	domainEventCount := 0
+	lastDigestAt := time.Now()
+
 	for {
 		events, err := d.store.QueryEventsForSessionsAfter(filtered, lastID)
 		if err != nil {
@@ -1284,6 +1297,8 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 				// Always advance lastID so we don't re-scan the same events;
 				// filtering is output-side only.
 				lastID = evt.ID
+				// Count every domain event regardless of filter for digest trigger.
+				domainEventCount++
 
 				// Apply output filters. All must pass to emit. Filters are only
 				// applied to domain events; control frames (emitted outside this
@@ -1310,6 +1325,13 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprint(w, "\n")
 			}
 			flusher.Flush()
+
+			// Check digest thresholds after processing a batch.
+			if digestEnabled && domainEventCount >= digestEventThreshold {
+				d.emitSessionDigest(w, flusher, filtered[0], lastID)
+				domainEventCount = 0
+				lastDigestAt = time.Now()
+			}
 		}
 
 		if !deadline.IsZero() && time.Now().After(deadline) {
@@ -1332,11 +1354,84 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			return
 		case <-ticker.C:
+			// Check time-based digest trigger on each poll tick.
+			if digestEnabled && time.Since(lastDigestAt) >= d.sseDigestInterval {
+				d.emitSessionDigest(w, flusher, filtered[0], lastID)
+				domainEventCount = 0
+				lastDigestAt = time.Now()
+			}
 		case <-keepalive.C:
 			fmt.Fprint(w, ": keep-alive\n\n")
 			flusher.Flush()
 		}
 	}
+}
+
+// emitSessionDigest builds and emits a session_digest control frame.
+//
+// The frame has no id: line (control frame invariant). Fields:
+//   - at: current max event ID (atID).
+//   - agents: map of agent → {last_activity, tool_calls} derived from store events.
+//   - phase: current phase derived from most recent phase event.
+//
+// sessionID is used to fetch events for agent/phase derivation. If the store
+// query fails, the digest is skipped silently (best-effort).
+func (d *Daemon) emitSessionDigest(w http.ResponseWriter, flusher http.Flusher, sessionID string, atID int64) {
+	events, err := d.store.QueryEvents(sessionID)
+	if err != nil {
+		return // best-effort: skip digest on store error
+	}
+
+	// Derive agent activity: last_activity timestamp and tool_calls count.
+	type agentInfo struct {
+		LastActivity time.Time `json:"last_activity"`
+		ToolCalls    int       `json:"tool_calls"`
+	}
+	agentMap := map[string]*agentInfo{}
+
+	phase := "unknown"
+	for _, evt := range events {
+		// Track per-agent last activity and tool call count.
+		agent := extractAgentName(evt.Data)
+		if agent != "unknown" && agent != "" {
+			info, ok := agentMap[agent]
+			if !ok {
+				info = &agentInfo{}
+				agentMap[agent] = info
+			}
+			if evt.Timestamp.After(info.LastActivity) {
+				info.LastActivity = evt.Timestamp
+			}
+			if evt.Type == "bridge:tool_started" {
+				info.ToolCalls++
+			}
+		}
+		// Track latest phase.
+		if p, ok := derivePhase(evt.Type); ok {
+			phase = p
+		}
+	}
+
+	// Convert agent map to JSON-serialisable form with RFC3339 timestamps.
+	type agentDigestEntry struct {
+		LastActivity string `json:"last_activity"`
+		ToolCalls    int    `json:"tool_calls"`
+	}
+	agentDigest := map[string]agentDigestEntry{}
+	for name, info := range agentMap {
+		agentDigest[name] = agentDigestEntry{
+			LastActivity: info.LastActivity.UTC().Format(time.RFC3339),
+			ToolCalls:    info.ToolCalls,
+		}
+	}
+
+	digestData, _ := json.Marshal(map[string]any{
+		"at":     atID,
+		"agents": agentDigest,
+		"phase":  phase,
+	})
+	fmt.Fprintf(w, "event: session_digest\ndata: %s\n\n", digestData)
+	flusher.Flush()
 }
 
 // parseEventCursor parses ?after=, ?wait=, ?before=, and ?limit= query params

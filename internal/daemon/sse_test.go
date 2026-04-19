@@ -702,3 +702,120 @@ func TestSSE_InvalidTier(t *testing.T) {
 		t.Error("expected non-empty error message for invalid tier")
 	}
 }
+
+// --- Task 5.2: session_digest control frame tests ---
+
+// TestSSE_DigestAfter50Events verifies that a session_digest control frame is
+// emitted after 50 domain events have been seen in a streaming session.
+// It overrides sseDigestInterval to a large value so only the count trigger fires.
+func TestSSE_DigestAfter50Events(t *testing.T) {
+	d := testDaemon(t)
+	// Set a very long digest interval so only the 50-event count triggers a digest.
+	d.sseDigestInterval = 10 * time.Hour
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "digest-count-test"}))
+
+	// Seed 55 events so the count threshold (50) is crossed.
+	for i := 0; i < 55; i++ {
+		doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{
+			Type: fmt.Sprintf("ev_%03d", i),
+			Data: `{"agent":"supervisor"}`,
+		})
+	}
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Connect with after=0 to receive backlog including session_digest.
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=0", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Read: hello + session_created + 55 domain events + at least 1 session_digest.
+	// We request enough frames to get past the 50-event threshold.
+	frames := readSSEFrames(t, resp.Body, 60, 4*time.Second)
+
+	var foundDigest bool
+	for _, f := range frames {
+		if f.event == "session_digest" {
+			foundDigest = true
+			// Validate digest has no id: line (control frame invariant).
+			for _, line := range f.lines {
+				if strings.HasPrefix(line, "id:") {
+					t.Errorf("session_digest must not carry id: line, got: %q", line)
+				}
+			}
+			// Validate required fields present in data.
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(f.data), &payload); err != nil {
+				t.Fatalf("parse session_digest data: %v", err)
+			}
+			if _, ok := payload["at"]; !ok {
+				t.Error("session_digest missing 'at' field")
+			}
+			if _, ok := payload["agents"]; !ok {
+				t.Error("session_digest missing 'agents' field")
+			}
+			if _, ok := payload["phase"]; !ok {
+				t.Error("session_digest missing 'phase' field")
+			}
+			break
+		}
+	}
+	if !foundDigest {
+		t.Error("no session_digest frame received after 55 domain events")
+	}
+}
+
+// TestSSE_DigestDisabled verifies that ?digest=0 suppresses session_digest frames
+// even when 55 domain events are streamed.
+func TestSSE_DigestDisabled(t *testing.T) {
+	d := testDaemon(t)
+	// Set a very long interval so only count could trigger — but we disable it.
+	d.sseDigestInterval = 10 * time.Hour
+	sess := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "digest-disabled-test"}))
+
+	// Seed 55 events.
+	for i := 0; i < 55; i++ {
+		doRequest(t, d, "POST", "/sessions/"+sess.ID+"/events", logEventRequest{
+			Type: fmt.Sprintf("ev_%03d", i),
+			Data: `{"agent":"supervisor"}`,
+		})
+	}
+
+	server := httptest.NewServer(d.server.Handler)
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s/events/stream?sessions=%s&after=0&digest=0", server.URL, sess.ID), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Read enough frames to cover backlog. Digest must NOT appear.
+	frames := readSSEFrames(t, resp.Body, 60, 4*time.Second)
+	for _, f := range frames {
+		if f.event == "session_digest" {
+			t.Error("session_digest appeared despite ?digest=0")
+		}
+	}
+}

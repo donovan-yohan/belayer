@@ -29,6 +29,21 @@ func ValidateLogLevel(s string) (string, error) {
 	}
 }
 
+// logLevelRank returns a numeric rank for log levels: 0=standard, 1=verbose,
+// 2=trace. Unknown values map to -1.
+func logLevelRank(lvl string) int {
+	switch lvl {
+	case LogLevelStandard:
+		return 0
+	case LogLevelVerbose:
+		return 1
+	case LogLevelTrace:
+		return 2
+	default:
+		return -1
+	}
+}
+
 // ResolveLogLevel applies the three-tier resolution order:
 //  1. explicit (from POST /sessions body) — validated and returned if non-empty.
 //  2. configDefault (from Config.DefaultLogLevel) — validated and returned if non-empty.
