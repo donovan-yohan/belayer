@@ -126,6 +126,7 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&belayerRoot, "belayer-root", "", "Path to belayer repo root (for hermes_bridge PYTHONPATH)")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Workspace directory (for .belayer/config.yaml lookup; default cwd)")
 	cmd.Flags().StringVar(&tcpAddr, "tcp-addr", "", "Also bind a TCP listener (e.g. 0.0.0.0:7523) for clamshell container access")
+	cmd.Flags().StringVar(&tcpAddr, "bind", "", "Alias of --tcp-addr: also bind a TCP listener (e.g. 0.0.0.0:7523)")
 	cmd.Flags().StringVar(&dockerGateway, "docker-gateway", "", "Docker host gateway IP for clamshell bridge access (default 172.17.0.1)")
 	cmd.Flags().StringVar(&bridgeAPIKey, "bridge-api-key", "", "LLM provider API key injected into bridge subprocesses (for clamshell where sandbox has no Hermes config)")
 	cmd.Flags().StringVar(&bridgeBaseURL, "bridge-base-url", "", "LLM provider base URL injected into bridge subprocesses (e.g. https://opencode.ai/zen/go/v1)")
