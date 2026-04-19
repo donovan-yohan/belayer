@@ -368,7 +368,10 @@ func (d *Daemon) Start(ctx context.Context) error {
 			return fmt.Errorf("daemon: listen tcp %s: %w", d.config.TCPAddr, err)
 		}
 		d.tcpPort = tcpLn.Addr().(*net.TCPAddr).Port
-		tcpHandler := d.authMiddleware(d.server.Handler)
+		// Middleware chain (outermost first):
+		//   corsMiddleware → authMiddleware → handler
+		// CORS is outermost so OPTIONS preflight short-circuits before auth runs.
+		tcpHandler := d.corsMiddleware(d.authMiddleware(d.server.Handler))
 		d.tcpListener = &http.Server{Handler: tcpHandler}
 		go func() {
 			if serveErr := d.tcpListener.Serve(tcpLn); serveErr != nil && serveErr != http.ErrServerClosed {
