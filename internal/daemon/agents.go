@@ -159,6 +159,12 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	// Track the process (may be nil for test stubs).
 	if proc != nil {
 		d.bridgeMu.Lock()
+		if d.bridgeShuttingDown {
+			d.bridgeMu.Unlock()
+			_ = proc.Stop(2 * time.Second)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon shutting down; bridge spawn cancelled"})
+			return
+		}
 		d.bridgeProcs[bridgeKey(sessionID, req.Name)] = proc
 		d.bridgeMu.Unlock()
 	}
@@ -392,8 +398,18 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// the file open — the kernel will keep writing the renamed inode, so
 	// post-rotate bytes would land in .log.1 instead of the new .log.
 	if existing := d.takeExistingBridge(req.SessionID, req.Name); existing != nil {
-		_ = existing.Stop(5 * time.Second)
-		<-existing.Done()
+		if err := existing.Stop(5 * time.Second); err != nil {
+			log.Printf("spawn %s: stop prior bridge: %v (continuing)", req.Name, err)
+		}
+		// Bound the drain: if Stop failed to reach the process (e.g. Kill
+		// returned an error and Done() never closes), we still need to
+		// rotate its logs. The risk of a few bytes leaking into .log.1 is
+		// strictly smaller than hanging the respawn forever.
+		select {
+		case <-existing.Done():
+		case <-time.After(5 * time.Second):
+			log.Printf("spawn %s: prior bridge did not drain within 5s, proceeding with rotation", req.Name)
+		}
 	}
 
 	// Rotate and open per-spawn stdout/stderr logs (keeps last 3 spawns).
@@ -686,6 +702,11 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 
 	if proc != nil {
 		d.bridgeMu.Lock()
+		if d.bridgeShuttingDown {
+			d.bridgeMu.Unlock()
+			_ = proc.Stop(2 * time.Second)
+			return store.AgentRun{}, fmt.Errorf("daemon shutting down; bridge spawn cancelled")
+		}
 		d.bridgeProcs[bridgeKey(req.SessionID, req.Name)] = proc
 		d.bridgeMu.Unlock()
 	}

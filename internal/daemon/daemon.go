@@ -143,8 +143,9 @@ type Daemon struct {
 	spawnBridgeAgent func(req agentSpawnRequest) (*bridge.Process, error)
 
 	// Bridge process tracking: sessionID/agentName -> *bridge.Process
-	bridgeMu    sync.RWMutex
-	bridgeProcs map[string]*bridge.Process
+	bridgeMu           sync.RWMutex
+	bridgeProcs        map[string]*bridge.Process
+	bridgeShuttingDown bool // set by stopAllBridgeAgents; bridgeLaunchAgent aborts registration if set
 
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
@@ -575,7 +576,8 @@ func (d *Daemon) terminateSandbox(ctx context.Context, sessionID string) {
 // processes; each bridge is stopped in its own goroutine so a single slow
 // exit does not delay the others.
 func (d *Daemon) stopAllBridgeAgents(sessionID, reason string) {
-	d.bridgeMu.RLock()
+	d.bridgeMu.Lock()
+	d.bridgeShuttingDown = true
 	var targets []*bridge.Process
 	var names []string
 	for key, proc := range d.bridgeProcs {
@@ -586,7 +588,10 @@ func (d *Daemon) stopAllBridgeAgents(sessionID, reason string) {
 		targets = append(targets, proc)
 		names = append(names, name)
 	}
-	d.bridgeMu.RUnlock()
+	// Clear the map so that any racing bridgeLaunchAgent that beats the flag
+	// check cannot find a stale entry later.
+	d.bridgeProcs = map[string]*bridge.Process{}
+	d.bridgeMu.Unlock()
 
 	if len(targets) == 0 {
 		return
