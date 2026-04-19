@@ -5,6 +5,7 @@ session bus can track agent progress without polling.
 """
 
 import json
+import os
 import time
 import logging
 import threading
@@ -132,6 +133,55 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str) -> dict:
         "status_callback": status_callback,
         "clarify_callback": clarify_callback,
     }
+
+
+class _TranscriptWriter:
+    """Append-only JSONL transcript for a single agent.
+
+    Thread-safe; one line per write_turn call with the supplied dict merged
+    with timestamp and agent_id. Flush-on-every-write so a bridge crash
+    doesn't lose the most recent turn.
+    """
+
+    def __init__(self, path: str, agent_id: str):
+        self._path = path
+        self._agent_id = agent_id
+        self._lock = threading.Lock()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        self._fh = open(path, "a", encoding="utf-8")
+
+    def write_turn(self, data: dict) -> None:
+        payload = {
+            "ts": time.time(),
+            "agent_id": self._agent_id,
+            **data,
+        }
+        line = json.dumps(payload, ensure_ascii=False)
+        with self._lock:
+            self._fh.write(line)
+            self._fh.write("\n")
+            self._fh.flush()
+
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self._fh.close()
+            except Exception:
+                pass
+
+
+def make_transcript_writer(path: str | None, agent_id: str):
+    """Return a _TranscriptWriter, or None if path is falsy.
+
+    Call sites should gate on the return value: `if writer: writer.write_turn(...)`.
+    """
+    if not path:
+        return None
+    try:
+        return _TranscriptWriter(path, agent_id)
+    except OSError as exc:
+        log.warning("transcript writer init failed for %s: %s", path, exc)
+        return None
 
 
 def start_heartbeat_thread(socket_path: str, session_id: str, agent_id: str, interval: int = 30) -> threading.Event:

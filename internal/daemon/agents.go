@@ -416,6 +416,17 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("ensure sandbox handle: %w", err)
 	}
 
+	// Allocate per-agent transcript path for verbose sessions.
+	var transcriptPath string
+	if sess.LogLevel == "verbose" {
+		transcriptsDir := filepath.Join(workdir, ".belayer", "runs", req.SessionID, "transcripts")
+		if mkErr := os.MkdirAll(transcriptsDir, 0o700); mkErr != nil {
+			log.Printf("spawn %s: create transcripts dir failed (continuing without transcript): %v", req.Name, mkErr)
+		} else {
+			transcriptPath = filepath.Join(transcriptsDir, req.Name+".jsonl")
+		}
+	}
+
 	socketPath := bridgeSocketPath(ss.mode, d.config.SocketPath, d.config.DockerHostGateway, d.tcpPort, d.config.WorkspaceSockPath)
 	log.Printf("spawn %s: mode=%q socketPath=%q tcpPort=%d gateway=%q", req.Name, ss.mode, socketPath, d.tcpPort, d.config.DockerHostGateway)
 	cfg := bridge.Config{
@@ -436,6 +447,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		RunDir:          runDir,
 		BelayerRoot:     d.config.BelayerRoot,
 		BelayerTools:    belayerTools,
+		TranscriptPath:  transcriptPath,
 	}
 	// In clamshell mode the bridge runs inside the Docker container where the
 	// host hermes venv path doesn't exist; use the container's system python3.

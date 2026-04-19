@@ -173,6 +173,7 @@ func (m *archiveManager) doArchive(sessionID string, partial bool) error {
 	}
 
 	destDir := filepath.Join(sess.WorkspaceDir, ".belayer", "archive", sessionID)
+	transcriptsDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", sessionID, "transcripts")
 	meta := archive.Meta{
 		SchemaVersion:    "belayer-log/v1",
 		DaemonInstanceID: m.daemonInstanceID,
@@ -187,6 +188,6 @@ func (m *archiveManager) doArchive(sessionID string, partial bool) error {
 		Partial:     partial,
 		ArchivedAt:  time.Now().UTC(),
 	}
-	_, err = archive.Write(destDir, meta, events)
+	_, err = archive.Write(destDir, meta, events, archive.WithTranscriptDir(transcriptsDir))
 	return err
 }

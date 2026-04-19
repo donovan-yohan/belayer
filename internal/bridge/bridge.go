@@ -67,6 +67,7 @@ type Config struct {
 	BelayerRoot     string   // directory containing hermes_bridge/ package (for PYTHONPATH)
 	Ephemeral       bool     // true = exit on task completion, false = stay alive for more work
 	BelayerTools    []string // role-specific belayer tools from agent.yaml
+	TranscriptPath  string   // absolute path to per-agent JSONL; empty = capture disabled (standard log level)
 
 	// Cmd overrides the default python3 -m hermes_bridge command.
 	// If nil, pythonCmd is used. Useful for testing.
@@ -173,6 +174,9 @@ func BuildEnv(cfg Config) []string {
 	}
 	if len(cfg.BelayerTools) > 0 {
 		env = appendEnv(env, "BELAYER_TOOLS", strings.Join(cfg.BelayerTools, ","))
+	}
+	if cfg.TranscriptPath != "" {
+		env = appendEnv(env, "BELAYER_TRANSCRIPT_PATH", cfg.TranscriptPath)
 	}
 	return env
 }

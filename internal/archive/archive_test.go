@@ -377,6 +377,70 @@ func TestExtractArtifacts_SkipCounter(t *testing.T) {
 	}
 }
 
+func TestWrite_IncludesTranscripts(t *testing.T) {
+	// Create a source transcripts directory with two agent JSONL files.
+	srcDir := t.TempDir()
+	supervisorContent := `{"ts":1,"agent_id":"supervisor","foo":"bar"}` + "\n"
+	implementerContent := `{"ts":2,"agent_id":"implementer","foo":"baz"}` + "\n"
+	if err := os.WriteFile(filepath.Join(srcDir, "supervisor.jsonl"), []byte(supervisorContent), 0o644); err != nil {
+		t.Fatalf("write supervisor.jsonl: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "implementer.jsonl"), []byte(implementerContent), 0o644); err != nil {
+		t.Fatalf("write implementer.jsonl: %v", err)
+	}
+
+	destDir := filepath.Join(t.TempDir(), "archive", "sess-transcript-test")
+	events := []Event{makeEvent(1, "sess1", "session_created", json.RawMessage(`{"name":"test"}`))}
+
+	res, err := Write(destDir, fullMeta(), events, WithTranscriptDir(srcDir))
+	if err != nil {
+		t.Fatalf("Write with transcripts: %v", err)
+	}
+
+	// Assert transcript files exist with verbatim content.
+	for _, tc := range []struct {
+		file    string
+		content string
+	}{
+		{"supervisor.jsonl", supervisorContent},
+		{"implementer.jsonl", implementerContent},
+	} {
+		path := filepath.Join(destDir, "transcripts", tc.file)
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("transcript %s missing: %v", tc.file, err)
+			continue
+		}
+		if string(got) != tc.content {
+			t.Errorf("transcript %s content mismatch:\ngot:  %q\nwant: %q", tc.file, string(got), tc.content)
+		}
+	}
+
+	// Assert events.ndjson and manifest.json are still written (no regression).
+	if _, err := os.Stat(res.EventsNDJSON); err != nil {
+		t.Errorf("events.ndjson missing after transcript write: %v", err)
+	}
+	if _, err := os.Stat(res.ManifestJSON); err != nil {
+		t.Errorf("manifest.json missing after transcript write: %v", err)
+	}
+}
+
+func TestWrite_TranscriptDirMissingIsNotError(t *testing.T) {
+	destDir := filepath.Join(t.TempDir(), "archive", "sess-no-transcripts")
+	events := []Event{makeEvent(1, "s", "t", json.RawMessage(`{}`))}
+
+	_, err := Write(destDir, fullMeta(), events, WithTranscriptDir("/nonexistent/path/to/transcripts"))
+	if err != nil {
+		t.Fatalf("expected no error when transcript dir is missing, got: %v", err)
+	}
+
+	// Assert no transcripts subdir was created.
+	transcriptsPath := filepath.Join(destDir, "transcripts")
+	if _, statErr := os.Stat(transcriptsPath); statErr == nil {
+		t.Errorf("transcripts/ dir should not exist when srcDir is missing, but it does")
+	}
+}
+
 func TestWrite_EventIDGapsPreserved(t *testing.T) {
 	dir := t.TempDir()
 	events := []Event{

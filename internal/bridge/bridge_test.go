@@ -429,6 +429,7 @@ func TestBuildEnvContainsBelayerVars(t *testing.T) {
 		SystemPrompt:    "you are helpful",
 		HermesSessionID: "hermes-build-789",
 		BelayerTools:    []string{"tool_a", "tool_b"},
+		TranscriptPath:  "/tmp/transcripts/agent-build.jsonl",
 	}
 
 	env := BuildEnv(cfg)
@@ -451,6 +452,7 @@ func TestBuildEnvContainsBelayerVars(t *testing.T) {
 		"BELAYER_SYSTEM_PROMPT":     "you are helpful",
 		"BELAYER_HERMES_SESSION_ID": "hermes-build-789",
 		"BELAYER_TOOLS":             "tool_a,tool_b",
+		"BELAYER_TRANSCRIPT_PATH":   "/tmp/transcripts/agent-build.jsonl",
 	}
 	for key, want := range checks {
 		if got, ok := envMap[key]; !ok {
@@ -544,8 +546,8 @@ func TestBuildEnvPYTHONPATHHasNoEmptySegments(t *testing.T) {
 }
 
 // TestBuildEnvOmitsOptionalVars verifies that empty optional fields (Model,
-// Message, SystemPrompt, HermesSessionID, BelayerTools) are not added to the
-// environment.
+// Message, SystemPrompt, HermesSessionID, BelayerTools, TranscriptPath) are
+// not added to the environment.
 func TestBuildEnvOmitsOptionalVars(t *testing.T) {
 	cfg := Config{
 		SessionID:  "sess-omit",
@@ -554,7 +556,7 @@ func TestBuildEnvOmitsOptionalVars(t *testing.T) {
 		Profile:    "nightshift",
 		SocketPath: "/tmp/omit.sock",
 		RunDir:     t.TempDir(),
-		// Model, Message, SystemPrompt, HermesSessionID, BelayerTools all zero-value
+		// Model, Message, SystemPrompt, HermesSessionID, BelayerTools, TranscriptPath all zero-value
 	}
 
 	env := BuildEnv(cfg)
@@ -571,6 +573,7 @@ func TestBuildEnvOmitsOptionalVars(t *testing.T) {
 		"BELAYER_SYSTEM_PROMPT",
 		"BELAYER_HERMES_SESSION_ID",
 		"BELAYER_TOOLS",
+		"BELAYER_TRANSCRIPT_PATH",
 	} {
 		if _, ok := envMap[key]; ok {
 			t.Errorf("expected %s to be absent from env, but it was set", key)

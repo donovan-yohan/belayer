@@ -3,6 +3,7 @@ package archive
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -52,6 +53,24 @@ type Event struct {
 	Data      json.RawMessage // verbatim; may be a JSON-encoded string or an object
 }
 
+// WriteOption is a functional option for Write.
+type WriteOption func(*writeConfig)
+
+// writeConfig holds the resolved options for a Write call.
+type writeConfig struct {
+	transcriptSrc string // source directory of per-agent JSONL files; empty = skip
+}
+
+// WithTranscriptDir returns a WriteOption that copies per-agent transcript
+// files from srcDir into <destDir>/transcripts/ as part of the atomic archive.
+// If srcDir does not exist Write proceeds normally — no transcripts subdir is
+// created in the output.
+func WithTranscriptDir(srcDir string) WriteOption {
+	return func(cfg *writeConfig) {
+		cfg.transcriptSrc = srcDir
+	}
+}
+
 // WriteResult holds metadata about the archive that was written.
 type WriteResult struct {
 	EventCount   int
@@ -66,7 +85,16 @@ type WriteResult struct {
 // then the staging directory is renamed to destDir. Directory rename is atomic on
 // POSIX, so a consumer of destDir either sees both files or sees no directory at all.
 // Events are sorted by ID ascending. Returns WriteResult with counts and paths.
-func Write(destDir string, meta Meta, events []Event) (WriteResult, error) {
+//
+// Optional WriteOptions may be passed (e.g. WithTranscriptDir) to include
+// additional content in the archive. Existing callers passing no options are
+// unaffected.
+func Write(destDir string, meta Meta, events []Event, opts ...WriteOption) (WriteResult, error) {
+	var wcfg writeConfig
+	for _, o := range opts {
+		o(&wcfg)
+	}
+
 	parent := filepath.Dir(destDir)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return WriteResult{}, fmt.Errorf("archive: mkdir parent %s: %w", parent, err)
@@ -101,6 +129,20 @@ func Write(destDir string, meta Meta, events []Event) (WriteResult, error) {
 		return WriteResult{}, err
 	}
 
+	// Copy transcript files into <staging>/transcripts/ if a source dir was
+	// provided and exists. Errors are propagated so the caller knows the
+	// archive is incomplete.
+	if wcfg.transcriptSrc != "" {
+		if info, statErr := os.Stat(wcfg.transcriptSrc); statErr == nil && info.IsDir() {
+			if err := copyTranscripts(wcfg.transcriptSrc, filepath.Join(staging, "transcripts")); err != nil {
+				cleanup()
+				return WriteResult{}, err
+			}
+		}
+		// If transcriptSrc does not exist, proceed silently — standard-level
+		// sessions never create the transcripts directory.
+	}
+
 	// If destDir already exists (re-archive), remove it first — rename over an
 	// existing directory is not portable across filesystems.
 	if _, err := os.Stat(destDir); err == nil {
@@ -122,6 +164,47 @@ func Write(destDir string, meta Meta, events []Event) (WriteResult, error) {
 		EventsNDJSON: filepath.Join(destDir, "events.ndjson"),
 		ManifestJSON: filepath.Join(destDir, "manifest.json"),
 	}, nil
+}
+
+// copyTranscripts walks srcDir and copies each regular file to
+// <destDir>/<relpath>, creating parent directories as needed.
+// Each destination file is fsynced before proceeding.
+func copyTranscripts(srcDir, destDir string) error {
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("archive: walk transcripts %s: %w", path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		relPath, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return fmt.Errorf("archive: rel path for transcript %s: %w", path, err)
+		}
+		destPath := filepath.Join(destDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+			return fmt.Errorf("archive: mkdir transcript dest parent: %w", err)
+		}
+		src, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("archive: open transcript src %s: %w", path, err)
+		}
+		defer src.Close()
+
+		dst, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		if err != nil {
+			return fmt.Errorf("archive: create transcript dest %s: %w", destPath, err)
+		}
+		defer dst.Close()
+
+		if _, err := io.Copy(dst, src); err != nil {
+			return fmt.Errorf("archive: copy transcript %s: %w", relPath, err)
+		}
+		if err := dst.Sync(); err != nil {
+			return fmt.Errorf("archive: fsync transcript %s: %w", relPath, err)
+		}
+		return nil
+	})
 }
 
 // ndJsonLine is the shape of each line in events.ndjson per LOG_FORMAT.md §2.

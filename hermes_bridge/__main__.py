@@ -29,7 +29,7 @@ except ImportError:
     sys.exit(1)
 
 from hermes_bridge.tools import register_belayer_tools
-from hermes_bridge.callbacks import make_callbacks, post_event, start_heartbeat_thread
+from hermes_bridge.callbacks import make_callbacks, make_transcript_writer, post_event, start_heartbeat_thread
 from hermes_bridge.stdin_reader import StdinReader
 from hermes_bridge.http_client import unix_get
 
@@ -327,6 +327,10 @@ def main() -> None:
     for attr, fn in callbacks.items():
         setattr(agent, attr, fn)
 
+    # --- Open transcript writer (verbose sessions only) --------------------
+    transcript_path = os.environ.get("BELAYER_TRANSCRIPT_PATH") or None
+    transcript_writer = make_transcript_writer(transcript_path, agent_id)
+
     # --- Start stdin reader ------------------------------------------------
     stdin_queue: queue.Queue = queue.Queue()
     stdin_reader = StdinReader(agent, stdin_queue)
@@ -590,6 +594,8 @@ def main() -> None:
         post_event(socket_path, session_id, agent_id, "bridge:session_usage", session_usage)
 
     heartbeat_stop.set()
+    if transcript_writer:
+        transcript_writer.close()
     stdin_reader.stop()
     log.info("Bridge exiting for agent=%s session=%s", agent_id, session_id)
 
