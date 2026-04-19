@@ -196,6 +196,49 @@ func TestCloseAgent_CompressesFragments(t *testing.T) {
 	}
 }
 
+// TestCrashRecovery_TruncatesWhenNoNewlineIn64KB verifies that when a fragment
+// file contains a single partial record larger than 64 KB (i.e. no newline in
+// the first lookback window), the recovery loop scans all the way to BOF and
+// truncates the entire file to 0, then the newly appended payload is the only
+// content.
+func TestCrashRecovery_TruncatesWhenNoNewlineIn64KB(t *testing.T) {
+	dir := t.TempDir()
+	agentDir := filepath.Join(dir, "sess", "agent")
+	if err := os.MkdirAll(agentDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fragPath := filepath.Join(agentDir, "0001.jsonl")
+
+	// Write 200KB of non-newline bytes — a 200KB partial record.
+	junk := bytes.Repeat([]byte("x"), 200*1024)
+	if err := os.WriteFile(fragPath, junk, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := NewWriter(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { w.Close() })
+
+	// Trigger recovery by appending something.
+	_, err = w.Append("sess", "agent", []byte(`{"ok":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(fragPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// After recovery, file contains only the newly appended payload + newline.
+	// The 200KB of junk must be GONE, not preserved.
+	wantMaxSize := int64(64) // {"ok":true}\n is 12 bytes — generous upper bound
+	if info.Size() > wantMaxSize {
+		t.Errorf("file still holds %d bytes; partial tail not fully truncated", info.Size())
+	}
+}
+
 // TestCrashRecovery_TruncatesPartialTail verifies that when an existing
 // fragment file has a partial (unterminated) last record, opening a Writer
 // and appending strips the partial record and appends cleanly after the last

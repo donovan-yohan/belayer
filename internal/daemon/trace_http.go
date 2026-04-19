@@ -13,6 +13,25 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// isSafePathComponent returns true iff s is a non-empty string that contains
+// no path separator and is not a dot-traversal component. It rejects:
+//   - empty string
+//   - "." or ".."
+//   - any string containing os.PathSeparator ('/')
+//   - any string starting with '/' (absolute-path injection)
+func isSafePathComponent(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	if strings.ContainsRune(s, os.PathSeparator) {
+		return false
+	}
+	if strings.HasPrefix(s, "/") {
+		return false
+	}
+	return true
+}
+
 // handleTraceSlice serves a byte-range slice of a trace fragment file.
 //
 // GET /sessions/{id}/trace/{agent}/{fragment}?offset=N&length=M
@@ -25,6 +44,14 @@ func (d *Daemon) handleTraceSlice(w http.ResponseWriter, r *http.Request) {
 	sessID := r.PathValue("id")
 	agentName := r.PathValue("agent")
 	fragmentParam := r.PathValue("fragment")
+
+	// Reject path components that could enable directory traversal. PathValue
+	// decodes percent-encoding, so %2F → '/' and %2E%2E → '..' arrive here
+	// as their decoded forms.
+	if !isSafePathComponent(sessID) || !isSafePathComponent(agentName) || !isSafePathComponent(fragmentParam) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path component"})
+		return
+	}
 
 	// Parse query params.
 	offsetStr := r.URL.Query().Get("offset")
@@ -61,6 +88,14 @@ func (d *Daemon) handleTraceSlice(w http.ResponseWriter, r *http.Request) {
 	// Resolve fragmentParam to an actual file path. We try multiple candidate
 	// names to accept zero-padded index, plain int, and optional .zst suffix.
 	plainPath, zstPath := resolveFragmentPaths(fragDir, fragmentParam)
+
+	// Enforce that the resolved paths stay under traceBase to guard against any
+	// remaining traversal vector (e.g. symlinks or future router changes).
+	safeBase := filepath.Clean(d.traceBase) + string(os.PathSeparator)
+	if !strings.HasPrefix(filepath.Clean(plainPath), safeBase) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path component"})
+		return
+	}
 
 	// Check which file exists; prefer the plain (open) file over the sealed .zst.
 	var resolvedPath string
@@ -101,12 +136,19 @@ func (d *Daemon) handleTraceSlice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data := buf.Bytes()
+		size := int64(len(data))
 
-		end := offset + length
-		if end > int64(len(data)) {
+		// Overflow-safe range validation: check offset and length against size
+		// without computing offset+length (which could wrap on large values).
+		if offset > size {
 			writeJSON(w, http.StatusRequestedRangeNotSatisfiable, map[string]string{"error": "range out of bounds"})
 			return
 		}
+		if length > size-offset {
+			writeJSON(w, http.StatusRequestedRangeNotSatisfiable, map[string]string{"error": "range out of bounds"})
+			return
+		}
+		end := offset + length
 		w.WriteHeader(http.StatusOK)
 		w.Write(data[offset:end]) //nolint:errcheck
 		return
@@ -125,7 +167,14 @@ func (d *Daemon) handleTraceSlice(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("stat fragment: %v", err)})
 		return
 	}
-	if offset+length > fi.Size() {
+	size := fi.Size()
+	// Overflow-safe range validation: check offset and length against size
+	// without computing offset+length (which could wrap on large values).
+	if offset > size {
+		writeJSON(w, http.StatusRequestedRangeNotSatisfiable, map[string]string{"error": "range out of bounds"})
+		return
+	}
+	if length > size-offset {
 		writeJSON(w, http.StatusRequestedRangeNotSatisfiable, map[string]string{"error": "range out of bounds"})
 		return
 	}

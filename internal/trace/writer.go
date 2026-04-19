@@ -1,6 +1,7 @@
 package trace
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -137,8 +138,12 @@ func openOrCreateFragment(dir string, index int) (*agentFragment, error) {
 // partialTailTruncate inspects f for an incomplete (unterminated) last record,
 // truncates up to and including the last '\n', and returns the resulting file
 // size. The file must be opened for read+write.
+//
+// Recovery scans backward through the file in 64 KB chunks until a newline is
+// found or BOF is reached. If no newline exists in the entire file the file is
+// truncated to 0 (one giant partial record).
 func partialTailTruncate(f *os.File) (int64, error) {
-	const lookback = 64 * 1024 // 64 KB
+	const chunk = 64 * 1024 // 64 KB
 
 	fileSize, err := f.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -148,73 +153,47 @@ func partialTailTruncate(f *os.File) (int64, error) {
 		return 0, nil
 	}
 
-	// Determine how far back to scan.
-	start := fileSize - lookback
-	if start < 0 {
-		start = 0
-	}
-	scanLen := fileSize - start
-
-	buf := make([]byte, scanLen)
-	if _, err := f.ReadAt(buf, start); err != nil {
-		return 0, err
-	}
-
-	// Find the last '\n' in the scanned window.
-	lastNL := int64(-1)
-	for i := int64(len(buf)) - 1; i >= 0; i-- {
-		if buf[i] == '\n' {
-			lastNL = start + i
-			break
+	// Scan backward in chunk-sized windows until we find a '\n' or reach BOF.
+	pos := fileSize
+	for pos > 0 {
+		readFrom := pos - chunk
+		if readFrom < 0 {
+			readFrom = 0
 		}
-	}
+		buf := make([]byte, pos-readFrom)
+		if _, err := f.ReadAt(buf, readFrom); err != nil {
+			return 0, err
+		}
 
-	if lastNL < 0 {
-		// No newline found in the entire scan window.
-		if start == 0 {
-			// Pathological: entire file has no newline. Truncate to 0.
-			if err := f.Truncate(0); err != nil {
+		if idx := bytes.LastIndexByte(buf, '\n'); idx >= 0 {
+			keepTo := readFrom + int64(idx) + 1
+			if keepTo == fileSize {
+				// File ends exactly on a newline — nothing to truncate.
+				if _, err := f.Seek(0, io.SeekEnd); err != nil {
+					return 0, err
+				}
+				return fileSize, nil
+			}
+			if err := f.Truncate(keepTo); err != nil {
 				return 0, err
 			}
-			if _, err := f.Seek(0, io.SeekStart); err != nil {
+			if _, err := f.Seek(0, io.SeekEnd); err != nil {
 				return 0, err
 			}
-			return 0, nil
+			return keepTo, nil
 		}
-		// The file has data before our scan window ending in a newline — trust it.
-		// Treat start as the safe truncation point (keep everything up to scan start).
-		// Actually: if start > 0, there may be a newline earlier; but we can't
-		// scan beyond 64 KB. Safe choice: keep all bytes up to `start` (they must
-		// end cleanly since we only ever write complete records). We can also just
-		// truncate to fileSize (no change) if we can't find a NL — but that would
-		// leave the partial tail. The safest approach: scan the full file if ≤64 KB,
-		// otherwise truncate to start (conservatively drops the partial last chunk).
-		if err := f.Truncate(start); err != nil {
-			return 0, err
-		}
-		if _, err := f.Seek(0, io.SeekEnd); err != nil {
-			return 0, err
-		}
-		return start, nil
+
+		pos = readFrom
 	}
 
-	// Keep bytes [0, lastNL+1) — i.e. truncate anything after the last newline.
-	keepTo := lastNL + 1
-	if keepTo == fileSize {
-		// File ends exactly on a newline — nothing to truncate.
-		if _, err := f.Seek(0, io.SeekEnd); err != nil {
-			return 0, err
-		}
-		return fileSize, nil
-	}
-
-	if err := f.Truncate(keepTo); err != nil {
+	// No newline found in the entire file — one giant partial record. Truncate to 0.
+	if err := f.Truncate(0); err != nil {
 		return 0, err
 	}
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
-	return keepTo, nil
+	return 0, nil
 }
 
 // getOrCreateAgentFragment returns the agentFragment for (sessionID, agentName),
