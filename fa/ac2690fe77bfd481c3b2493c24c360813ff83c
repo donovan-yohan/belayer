@@ -1,0 +1,51 @@
+internal/daemon/redact.go
+  edbf9f73c8916cfc 1-32
+internal/daemon/redact_test.go
+  edbf9f73c8916cfc 1-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "faac2690fe77bfd481c3b2493c24c360813ff83c",
+  "prompts": {
+    "96b5398469a8b716": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d15e234-c6ba-481d-8ffc-a1f696c1ae2d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 439,
+      "overriden_lines": 0
+    },
+    "e60f91125c38ff79": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b7eb3196-ca11-457d-861f-81749b224258",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 12,
+      "overriden_lines": 0
+    },
+    "edbf9f73c8916cfc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66974178-7e29-4b2f-a0fb-3d75c1178376",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 90,
+      "total_deletions": 0,
+      "accepted_lines": 1992,
+      "overriden_lines": 0
+    }
+  }
+}
