@@ -69,6 +69,8 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("POST /sessions/{id}/agents", d.handleSpawnAgent)
 	mux.HandleFunc("GET /sessions/{id}/agents", d.handleListAgents)
 	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
+	mux.HandleFunc("GET /sessions/{id}/bridges", d.handleListBridges)
+	mux.HandleFunc("GET /sessions/{id}/bridges/{agent}/stdout", d.handleBridgeStdout)
 	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
 	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
 	mux.HandleFunc("GET /sessions/{id}/archive.ndjson", d.handleArchiveNDJSON)
