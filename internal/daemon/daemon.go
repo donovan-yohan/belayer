@@ -270,6 +270,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 			if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
 				log.Printf("daemon: chmod workspace sock %s: %v (best-effort; socket still functional for same-UID peers)", d.config.WorkspaceSockPath, err)
 			} else {
+				_ = wsLn.Close()
 				cleanupExtraListeners()
 				ln.Close()
 				return fmt.Errorf("daemon: chmod workspace sock %s: %w", d.config.WorkspaceSockPath, err)
