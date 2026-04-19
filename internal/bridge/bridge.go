@@ -37,7 +37,7 @@ func defaultPythonCmd() []string {
 // builds can relocate the install off the user home, then falls back to
 // $HOME/.hermes/hermes-agent for dev machines.
 func hermesAgentRoot() string {
-	if p := os.Getenv("HERMES_AGENT_PATH"); p != "" {
+	if p := strings.TrimSpace(os.Getenv("HERMES_AGENT_PATH")); p != "" {
 		return p
 	}
 	home, err := os.UserHomeDir()

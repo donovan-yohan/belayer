@@ -738,9 +738,9 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
         blocker = args.get("blocker", "")
         what_tried = args.get("what_tried", [])
 
-        if not reason or not reason.strip():
+        if not isinstance(reason, str) or not reason.strip():
             return "[System] 'reason' is required and must be a non-empty string."
-        if not blocker or not blocker.strip():
+        if not isinstance(blocker, str) or not blocker.strip():
             return "[System] 'blocker' is required and must be a non-empty string."
         if not isinstance(what_tried, list) or len(what_tried) < 3:
             return "[System] 'what_tried' must be a list of at least 3 strings documenting prior attempts (matches the 3-attempt guardrail in the tool description)."

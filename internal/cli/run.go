@@ -33,16 +33,20 @@ func newRunStartCmd() *cobra.Command {
 			// If --exit-condition was passed, render an override block that
 			// the supervisor (and later the PM) will see at the top of the
 			// initial task. This replaces config.yaml's exit_conditions for
-			// this run only; the file on disk is untouched.
-			if len(exitConditions) > 0 {
+			// this run only; the file on disk is untouched. Normalize first so
+			// blank values (e.g. `--exit-condition ""`) fall through to the
+			// project config instead of injecting an authoritative empty list.
+			normalizedExitConditions := make([]string, 0, len(exitConditions))
+			for _, c := range exitConditions {
+				if c = strings.TrimSpace(c); c != "" {
+					normalizedExitConditions = append(normalizedExitConditions, c)
+				}
+			}
+			if len(normalizedExitConditions) > 0 {
 				var b strings.Builder
 				b.WriteString("<exit_conditions_override>\n")
 				b.WriteString("These exit conditions replace .belayer/config.yaml#exit_conditions for this run. The PM must validate each one before marking the run complete.\n")
-				for _, c := range exitConditions {
-					c = strings.TrimSpace(c)
-					if c == "" {
-						continue
-					}
+				for _, c := range normalizedExitConditions {
 					b.WriteString("- ")
 					b.WriteString(c)
 					b.WriteString("\n")
@@ -114,7 +118,7 @@ func newRunStartCmd() *cobra.Command {
 			initData, _ := json.Marshal(map[string]any{
 				"task":               task,
 				"supervisor_profile": supervisorProfile,
-				"exit_conditions":    exitConditions,
+				"exit_conditions":    normalizedExitConditions,
 			})
 			_ = c.LogEvent(sess.ID, "run_initiated", string(initData))
 

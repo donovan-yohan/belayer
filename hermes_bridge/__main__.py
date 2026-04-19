@@ -524,12 +524,13 @@ def main() -> None:
                     # Active = anything the daemon considers not-yet-terminal.
                     # The daemon emits "starting" during sandbox boot / hermes
                     # warm-up, then flips to "running" once the bridge reports
-                    # in; both count as active so we don't idle-timeout a
-                    # supervisor while a slow-booting peer is still coming
-                    # online.
+                    # in, and "pending_verification" while the PM adjudicates;
+                    # all three count as active so we don't idle-timeout a
+                    # supervisor while a peer is booting, executing, or awaiting
+                    # verification.
                     active_peers = [
                         r for r in peers
-                        if r.get("Status") in ("starting", "running")
+                        if r.get("Status") in ("starting", "running", "pending_verification")
                     ]
                     peers_still_active = len(active_peers) > 0
 

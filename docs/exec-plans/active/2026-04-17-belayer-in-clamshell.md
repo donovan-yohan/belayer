@@ -487,7 +487,7 @@ cmd_setup() {
   emit "$CLAMSHELL provider create \
     --type apikey \
     --name $provider_name \
-    --credential $credential_env \
+    --from-existing $credential_env \
     --project $project_key \
     --endpoints $endpoint 2>&1 | tee /tmp/belayer-host-provider-create.log \
   || grep -q 'already exists' /tmp/belayer-host-provider-create.log"
@@ -1136,10 +1136,10 @@ the run-as-trust-unit decision."
 _Filled by /harness:complete when work is done._
 
 **What worked:**
--
+- TBD
 
 **What didn't:**
--
+- TBD
 
 **Learnings to codify:**
--
+- TBD

@@ -48,4 +48,4 @@ When `belayer_request_completion` returns a rejection, read the rejection reason
 
 ## Before calling `belayer_request_completion`
 
-Check the roster. If any peer agent other than you is still in `starting`, `running`, or `pending_verification` — either wait for them to finish or explicitly stop them first. PM approval is terminal: the daemon shuts down every live bridge when the session is marked complete, so approving while a peer is mid-work discards their partial output and emits a `completion_approved_with_busy_agents` warning. If you are genuinely done, the roster should be quiet.
+Check the roster. If any peer agent other than you is still in `starting`, `running`, or `pending_verification`, wait for them to finish or message them for a final report; if they appear hung, escalate rather than requesting completion. PM approval is terminal: the daemon shuts down every live bridge when the session is marked complete, so approving while a peer is mid-work discards their partial output and emits a `completion_approved_with_busy_agents` warning. If you are genuinely done, the roster should be quiet.

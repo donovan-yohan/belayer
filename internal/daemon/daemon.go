@@ -625,6 +625,7 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 			Data:      mustJSON(map[string]string{"status": req.Status}),
 		})
 		if isTerminalSessionStatus(req.Status) {
+			d.stopAllBridgeAgents(id, "session status changed to "+req.Status)
 			d.terminateSandbox(r.Context(), id)
 		}
 	}
