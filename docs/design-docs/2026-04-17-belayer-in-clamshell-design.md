@@ -41,7 +41,7 @@ Under the decision recorded below — "the whole run is one trust unit" — per-
 
 ### Topology
 
-```
+```text
 macOS host
 └── Colima VM (Linux, Docker, iptables REDIRECT)
     │
@@ -80,7 +80,7 @@ macOS host
 4. Bridge sees real secret in `/proc/self/environ`.
 
 **After:**
-1. On host: operator (or `belayer host-init`) runs `clamshell provider create --type apikey --name opencode --credential OPENCODE_GO_API_KEY --project OPENCODE_GO_API_KEY --endpoints opencode.ai`. Real secret lands in clamshell's `ProviderStore` (once).
+1. On host: operator (or `belayer host-init`) runs `clamshell provider create --type apikey --name opencode --from-existing OPENCODE_GO_API_KEY --project OPENCODE_GO_API_KEY --endpoints opencode.ai`. Real secret lands in clamshell's `ProviderStore` (once).
 2. Belayer launcher script on host runs `clamshell sandbox create belayer-run-<id> --provider apikey=opencode --image belayer:<ver> --workspace ~/Documents/Programs/personal/arielcharts`. Clamshell mints `clak_xxx`, writes attachment record, starts container with `OPENCODE_GO_API_KEY=clak_xxx` in env.
 3. Belayer daemon inside container sees `OPENCODE_GO_API_KEY=clak_xxx`. Spawns bridges as subprocesses; they inherit env and also see the handle.
 4. Bridge makes `POST https://opencode.ai/zen/go/v1/...` with `Authorization: Bearer clak_xxx` via `HTTPS_PROXY`.
@@ -191,7 +191,7 @@ This is a thin shim. It does not replace the per-session clamshell driver we're 
 Six-step acceptance loop; each step has an unambiguous pass/fail.
 
 1. **Image builds.** `docker build -t belayer-clamshell:e2e -f dockerfiles/belayer-clamshell.Dockerfile .` on the Colima VM succeeds. Binary, node, pnpm, corepack present.
-2. **Provider registration persists.** `clamshell provider create --type apikey --name opencode --credential OPENCODE_GO_API_KEY --project OPENCODE_GO_API_KEY --endpoints opencode.ai` on the Colima VM writes a provider record. `clamshell provider list` shows `opencode (apikey)`.
+2. **Provider registration persists.** `clamshell provider create --type apikey --name opencode --from-existing OPENCODE_GO_API_KEY --project OPENCODE_GO_API_KEY --endpoints opencode.ai` on the Colima VM writes a provider record. `clamshell provider list` shows `opencode (apikey)`.
 3. **Sandbox boot, handle projected.** `clamshell sandbox create belayer-e2e --provider apikey=opencode --image belayer-clamshell:e2e --workspace <arielcharts> --policy <policy>` brings up the container + proxy; ports come up next via `clamshell forward start 3000 belayer-e2e --remote-port 3000 --background` (and the same for 4000) — clamshell has no `--publish` on create. `docker exec clamshell-belayer-e2e env | grep OPENCODE_GO_API_KEY` returns `clak_*`, not the real key.
 4. **Daemon reaches bridge idle.** Inside the container, `belayer run start --task "say hi"` produces a supervisor that completes ≥2 LLM round-trips end-to-end (proxy logs show `Authorization: Bearer clak_...` rewritten to `Bearer <real>`, opencode.ai returns 200, session reaches `bridge:idle`).
 5. **Agent edits arielcharts.** A supervisor task "add a comment to apps/web/src/main.tsx explaining what it does" results in a file diff visible from the macOS host (because `/workspace` is bind-mounted to `~/Documents/Programs/personal/arielcharts`).

@@ -502,10 +502,9 @@ func TestBuildEnvHermesAgentPathOverridesPYTHONPATH(t *testing.T) {
 	}
 }
 
-// TestBuildEnvPYTHONPATHHasNoEmptySegments verifies that when neither
-// HERMES_AGENT_PATH nor HOME is resolvable, BuildEnv doesn't emit a PYTHONPATH
-// with leading/trailing/interior empty segments (which Python would interpret
-// as cwd).
+// TestBuildEnvPYTHONPATHHasNoEmptySegments verifies that when the
+// hermes-agent fallback is unresolvable, BuildEnv doesn't emit a PYTHONPATH
+// with leading/trailing empty segments (which Python would interpret as cwd).
 func TestBuildEnvPYTHONPATHHasNoEmptySegments(t *testing.T) {
 	t.Setenv("HERMES_AGENT_PATH", "")
 	t.Setenv("HOME", "")
@@ -532,16 +531,91 @@ func TestBuildEnvPYTHONPATHHasNoEmptySegments(t *testing.T) {
 		t.Fatal("PYTHONPATH not set")
 	}
 	sep := string(os.PathListSeparator)
-	for _, seg := range strings.Split(pyPath, sep) {
-		if seg == "" {
-			t.Errorf("PYTHONPATH = %q contains empty segment (Python would interpret as cwd)", pyPath)
-		}
+	segs := strings.Split(pyPath, sep)
+	if segs[0] == "" {
+		t.Errorf("PYTHONPATH = %q starts with empty segment (Python would interpret as cwd)", pyPath)
+	}
+	if segs[len(segs)-1] == "" {
+		t.Errorf("PYTHONPATH = %q ends with empty segment (Python would interpret as cwd)", pyPath)
 	}
 	if !strings.Contains(pyPath, "/opt/belayer") {
 		t.Errorf("PYTHONPATH = %q, want to contain BelayerRoot", pyPath)
 	}
 	if !strings.Contains(pyPath, "/pre/existing") {
 		t.Errorf("PYTHONPATH = %q, want to preserve existing PYTHONPATH", pyPath)
+	}
+}
+
+// TestBuildEnvHermesAgentPathTrimmed verifies that whitespace-only
+// HERMES_AGENT_PATH values are treated as unset (parity with
+// sandbox.ModeOrDefault's BELAYER_SANDBOX_MODE trimming).
+func TestBuildEnvHermesAgentPathTrimmed(t *testing.T) {
+	t.Setenv("HERMES_AGENT_PATH", "   \n\t  ")
+	t.Setenv("HOME", "/opt/dev-home")
+	t.Setenv("PYTHONPATH", "")
+
+	cfg := Config{
+		SessionID:   "sess-ws",
+		AgentID:     "agent-ws",
+		Role:        "implementer",
+		Profile:     "default",
+		SocketPath:  "/tmp/ws.sock",
+		RunDir:      t.TempDir(),
+		BelayerRoot: "/opt/belayer",
+	}
+	env := BuildEnv(cfg)
+
+	var pyPath string
+	for _, e := range env {
+		if strings.HasPrefix(e, "PYTHONPATH=") {
+			pyPath = strings.TrimPrefix(e, "PYTHONPATH=")
+		}
+	}
+	if pyPath == "" {
+		t.Fatal("PYTHONPATH not set")
+	}
+	// Whitespace-only override should fall back to $HOME/.hermes/hermes-agent.
+	wantFallback := "/opt/dev-home/.hermes/hermes-agent"
+	if !strings.Contains(pyPath, wantFallback) {
+		t.Errorf("PYTHONPATH = %q, want whitespace HERMES_AGENT_PATH to fall back to %q", pyPath, wantFallback)
+	}
+	// And should not carry the whitespace literally.
+	if strings.Contains(pyPath, "   ") {
+		t.Errorf("PYTHONPATH = %q leaked whitespace from HERMES_AGENT_PATH", pyPath)
+	}
+}
+
+// TestBuildEnvPYTHONPATHInteriorEmptySegmentsPassedThrough documents current
+// behavior: BuildEnv does not normalize interior empty segments supplied in
+// the caller's PYTHONPATH. Callers with cwd-sensitive environments must
+// sanitize upstream; BuildEnv only guarantees it does not introduce new
+// empty segments of its own.
+func TestBuildEnvPYTHONPATHInteriorEmptySegmentsPassedThrough(t *testing.T) {
+	t.Setenv("HERMES_AGENT_PATH", "")
+	t.Setenv("HOME", "")
+	sep := string(os.PathListSeparator)
+	interior := "/a" + sep + sep + "/b"
+	t.Setenv("PYTHONPATH", interior)
+
+	cfg := Config{
+		SessionID:   "sess-int",
+		AgentID:     "agent-int",
+		Role:        "implementer",
+		Profile:     "default",
+		SocketPath:  "/tmp/int.sock",
+		RunDir:      t.TempDir(),
+		BelayerRoot: "/opt/belayer",
+	}
+	env := BuildEnv(cfg)
+
+	var pyPath string
+	for _, e := range env {
+		if strings.HasPrefix(e, "PYTHONPATH=") {
+			pyPath = strings.TrimPrefix(e, "PYTHONPATH=")
+		}
+	}
+	if !strings.Contains(pyPath, interior) {
+		t.Errorf("PYTHONPATH = %q, want to preserve interior-empty-segment input %q verbatim", pyPath, interior)
 	}
 }
 

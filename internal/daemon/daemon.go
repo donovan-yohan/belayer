@@ -325,6 +325,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 			if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
 				log.Printf("daemon: chmod workspace sock %s: %v (best-effort; socket still functional for same-UID peers)", d.config.WorkspaceSockPath, err)
 			} else {
+				_ = wsLn.Close()
 				cleanupExtraListeners()
 				ln.Close()
 				return fmt.Errorf("daemon: chmod workspace sock %s: %w", d.config.WorkspaceSockPath, err)
@@ -809,8 +810,11 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 			Data:      mustJSON(map[string]string{"status": req.Status}),
 		})
 		if isTerminalSessionStatus(req.Status) {
-			// Archive before sandbox teardown so the archiver reads session
-			// state before any teardown side-effects can perturb the session row.
+			// Drain bridges first so any final events land in the store before
+			// the archiver snapshots it; archive before sandbox teardown so the
+			// archiver reads session state before any teardown side-effects can
+			// perturb the session row.
+			d.stopAllBridgeAgents(id, "session status changed to "+req.Status)
 			d.archiver.ArchiveTerminal(id)
 			d.terminateSandbox(r.Context(), id)
 		}

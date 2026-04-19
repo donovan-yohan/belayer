@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/broker"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/google/uuid"
+	"go.yaml.in/yaml/v3"
 )
 
 const maxRejectionCycles = 3
@@ -198,6 +201,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 				log.Printf("ERROR: processAgentStatusEvent: failed to escalate session %s to needs_human_review: %v", sessionID, err)
 			} else {
 				log.Printf("Session %s escalated to human review: supervisor reported incomplete", sessionID)
+				d.stopAllBridgeAgents(sessionID, "supervisor reported incomplete")
 				d.archiver.ArchiveTerminal(sessionID)
 				d.terminateSandbox(d.startCtx, sessionID)
 			}
@@ -286,6 +290,46 @@ func (d *Daemon) handleBridgeClarification(sessionID, agentName string, data map
 	_ = d.broker.Send(sessionID, "supervisor", msg)
 }
 
+// resolveExitConditions returns the authoritative exit-condition list for the
+// session plus the source it came from ("override" for a --exit-condition flag
+// at run start, "config" for .belayer/config.yaml, or "none"). The PM gate
+// validates these before marking the run complete; making them explicit in the
+// spawn message keeps the PM from having to scan session history to find them.
+func (d *Daemon) resolveExitConditions(sessionID string) ([]string, string) {
+	// First: check run_initiated event for a per-run override.
+	events, _ := d.store.QueryEvents(sessionID)
+	for _, ev := range events {
+		if ev.Type != "run_initiated" || ev.Data == "" {
+			continue
+		}
+		var payload struct {
+			ExitConditions []string `json:"exit_conditions"`
+		}
+		if err := json.Unmarshal([]byte(ev.Data), &payload); err == nil && len(payload.ExitConditions) > 0 {
+			return payload.ExitConditions, "override"
+		}
+		break // only the first run_initiated event is authoritative
+	}
+
+	// Fallback: read .belayer/config.yaml from the session's workspace.
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil || sess.WorkspaceDir == "" {
+		return nil, "none"
+	}
+	cfgPath := filepath.Join(sess.WorkspaceDir, ".belayer", "config.yaml")
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return nil, "none"
+	}
+	var file struct {
+		ExitConditions []string `yaml:"exit_conditions"`
+	}
+	if err := yaml.Unmarshal(raw, &file); err != nil || len(file.ExitConditions) == 0 {
+		return nil, "none"
+	}
+	return file.ExitConditions, "config"
+}
+
 func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, data map[string]any) {
 	summary, _ := data["summary"].(string)
 	specArtifact, _ := data["spec_artifact"].(string)
@@ -322,6 +366,24 @@ func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, da
 		specLine = specArtifact
 	}
 
+	// Resolve exit conditions now so the PM receives them as an explicit
+	// section instead of having to scan session history or reparse the config.
+	exitConditions, exitSource := d.resolveExitConditions(sessionID)
+	var exitBlock string
+	switch exitSource {
+	case "override":
+		exitBlock = "Exit conditions for this run (per-run override, authoritative):\n"
+	case "config":
+		exitBlock = "Exit conditions for this run (from .belayer/config.yaml):\n"
+	default:
+		exitBlock = "Exit conditions for this run: none declared. Validate the spec only.\n"
+	}
+	if len(exitConditions) > 0 {
+		for _, c := range exitConditions {
+			exitBlock += "- " + c + "\n"
+		}
+	}
+
 	// Build PM initial message with full context.
 	pmMessage := fmt.Sprintf(
 		`[System] The supervisor has signaled that all implementation work is complete. Your job is to verify.
@@ -334,16 +396,18 @@ Spec artifact: %s
 Registered artifacts:
 %s
 
+%s
 Instructions:
 1. Read the spec artifact (or find the spec in the workspace if none was registered).
 2. Use git diff to see what changed during this run.
 3. Walk through the spec section by section. For each requirement, find evidence in the code.
-4. Check for deferred work: TODO comments, placeholder implementations, empty test bodies.
-5. Produce a structured verification report (Passed / Failed / Deferred).
+4. For each exit condition listed above, demand concrete evidence it holds.
+5. Check for deferred work: TODO comments, placeholder implementations, empty test bodies.
+6. Produce a structured verification report (Passed / Failed / Deferred).
 
-If ALL spec items are satisfied: call belayer_approve_completion with your verification report.
+If ALL spec items and exit conditions are satisfied: call belayer_approve_completion with your verification report.
 If gaps exist: call belayer_reject_completion with the specific gaps so the supervisor can fix them.`,
-		summary, specLine, artifactSummary,
+		summary, specLine, artifactSummary, exitBlock,
 	)
 
 	// Auto-spawn the PM agent.
@@ -442,6 +506,7 @@ func (d *Daemon) handleBridgeCompletionApproved(sessionID, agentName string, dat
 			"report":      report[:min(len(report), 1000)],
 		}),
 	})
+
 	// Shut down every bridge process in the session before tearing down the
 	// sandbox. Otherwise supervisor (and any other live agents) keeps running
 	// past approval, burns tokens, and can self-escalate the session back to
