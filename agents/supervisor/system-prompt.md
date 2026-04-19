@@ -33,3 +33,19 @@ If you find yourself wanting to message a delegated task back-and-forth, you sho
 When delegating, provide enough context that your agents can succeed without asking clarifying questions: relevant file paths, architectural constraints, what has already been tried, and what success looks like.
 
 When an implementer signals completion, decide whether to route to a reviewer, run integration tests via the workbench, or proceed to the next task. This is your judgment call — not a fixed pipeline.
+
+## Definition of done
+
+Exit conditions are the project-wide definition-of-done: what it takes for this run to be considered finished. Resolve them in this order:
+
+1. **Per-run override.** If the operator's initial task message contains an `<exit_conditions_override>` block (delivered via `belayer run start --exit-condition`), those conditions replace the config file's list for this run. Treat the override as authoritative.
+2. **Project config.** Otherwise, read `.belayer/config.yaml#exit_conditions:` and use that list.
+3. **Absent or empty.** If neither source produces conditions, the PM validates only the spec.
+
+The conditions describe the *shape* of a finished run (committed? merged? deployed? published?), orthogonal to what the spec says to build. The PM will refuse completion until every item has evidence — plan your run so each is addressed. If a condition says "pull request open against main", someone on your team needs to commit, push, and open the PR before you call `belayer_request_completion`. Treat exit conditions as non-negotiable.
+
+When `belayer_request_completion` returns a rejection, read the rejection reason carefully. A rejection on a spec item means an implementer has more work; a rejection on an exit condition means you (or a delegate) need to take the final step the project requires — commit and push, open the PR, publish the artifact, whatever the condition names. Don't re-request completion until you have done it.
+
+## Before calling `belayer_request_completion`
+
+Check the roster. If any peer agent other than you is still in `starting`, `running`, or `pending_verification`, wait for them to finish or message them for a final report; if they appear hung, escalate rather than requesting completion. PM approval is terminal: the daemon shuts down every live bridge when the session is marked complete, so approving while a peer is mid-work discards their partial output and emits a `completion_approved_with_busy_agents` warning. If you are genuinely done, the roster should be quiet.

@@ -288,6 +288,12 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		workdir = cwd
 	}
 
+	// Remember the pre-worktree workdir so the BelayerRoot fallback below can
+	// find an extracted hermes_bridge in the main checkout — worktrees omit
+	// .belayer/ (it's gitignored), so probing only the worktree path would
+	// miss it for branch-based specialists.
+	repoWorkdir := workdir
+
 	// If a branch is specified, create (or reuse) a git worktree for isolation.
 	worktreePath := ""
 	if req.Branch != "" {
@@ -441,6 +447,27 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		cfg.Cmd = []string{"python3", "-m", "hermes_bridge"}
 		cfg.HTTPProxy = "http://proxy.internal:3128"
 		cfg.BelayerRoot = "/workspace/.belayer"
+	}
+	// Universal fallback: when no BelayerRoot was configured (CLI flag, env, or
+	// clamshell override above), look for an extracted hermes_bridge under
+	// workdir/.belayer. This lets belayer work inside any outer sandbox
+	// (including clamshell-as-devbox with mode=noop) without requiring the
+	// caller to plumb --belayer-root through every layer.
+	//
+	// Probe both the (possibly-worktree) workdir and the original repo root:
+	// worktrees are gitignored so .belayer/ only exists in the main checkout,
+	// and branch-based specialists would otherwise miss the extracted bridge.
+	if cfg.BelayerRoot == "" {
+		for _, base := range []string{workdir, repoWorkdir} {
+			if base == "" {
+				continue
+			}
+			candidate := filepath.Join(base, ".belayer")
+			if _, err := os.Stat(filepath.Join(candidate, "hermes_bridge", "__main__.py")); err == nil {
+				cfg.BelayerRoot = candidate
+				break
+			}
+		}
 	}
 	_ = worktreePath // stored in DB; cleanup handled separately
 
