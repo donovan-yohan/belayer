@@ -1,0 +1,38 @@
+internal/daemon/daemon.go
+  edbf9f73c8916cfc 1188-1201,1284-1300,1673-1714
+internal/daemon/sse_test.go
+  edbf9f73c8916cfc 470-704
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "5f80ff601e7829d8aba351002cae52f36e245d18",
+  "prompts": {
+    "edbf9f73c8916cfc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66974178-7e29-4b2f-a0fb-3d75c1178376",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 591,
+      "total_deletions": 2,
+      "accepted_lines": 1320,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
