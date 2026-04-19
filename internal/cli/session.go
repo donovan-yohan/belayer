@@ -86,18 +86,40 @@ func newSessionStopCmd() *cobra.Command {
 	return cmd
 }
 
-// lookupSessionID resolves a session name, ID prefix, or full ID to a full session ID.
+// lookupSessionID resolves a session name, ID prefix, or full ID to a full
+// session ID. Exact full-ID or exact name matches always win. Otherwise we
+// require exactly one prefix match — ambiguous prefixes are rejected so
+// commands do not silently address the wrong session.
 func lookupSessionID(c *Client, arg string) (string, error) {
 	sessions, err := c.ListSessions()
 	if err != nil {
 		return arg, nil
 	}
+	return resolveSessionArg(sessions, arg)
+}
+
+// resolveSessionArg applies the name/ID/prefix resolution rules to an
+// in-memory session slice. Extracted so tests can exercise the ambiguity
+// branch without a live daemon.
+func resolveSessionArg(sessions []sessionResponse, arg string) (string, error) {
+	var prefixMatches []string
 	for _, s := range sessions {
-		if strings.HasPrefix(s.ID, arg) || s.Name == arg {
+		if s.ID == arg || s.Name == arg {
 			return s.ID, nil
 		}
+		if strings.HasPrefix(s.ID, arg) {
+			prefixMatches = append(prefixMatches, s.ID)
+		}
 	}
-	return "", fmt.Errorf("no session found matching %q", arg)
+	switch len(prefixMatches) {
+	case 0:
+		return "", fmt.Errorf("no session found matching %q", arg)
+	case 1:
+		return prefixMatches[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous session identifier %q (matches %d sessions: %s)",
+			arg, len(prefixMatches), strings.Join(prefixMatches, ", "))
+	}
 }
 
 func newLogsCmd() *cobra.Command {

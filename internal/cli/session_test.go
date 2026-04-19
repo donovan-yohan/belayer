@@ -310,3 +310,48 @@ func TestLogsCmd_TailLimits(t *testing.T) {
 		t.Fatalf("unexpected tail events: %q", out.String())
 	}
 }
+
+// TestResolveSessionArg covers the name/ID/prefix resolution rules including
+// ambiguity rejection. Uses deterministic in-memory sessions rather than a
+// live daemon so we can construct a guaranteed prefix collision.
+func TestResolveSessionArg(t *testing.T) {
+	sessions := []sessionResponse{
+		{ID: "abc123-alpha", Name: "alpha"},
+		{ID: "abc456-beta", Name: "beta"},
+		{ID: "xyz789-gamma", Name: "gamma"},
+	}
+
+	tests := []struct {
+		name    string
+		arg     string
+		wantID  string
+		wantErr string
+	}{
+		{"exact full ID", "abc123-alpha", "abc123-alpha", ""},
+		{"exact name", "alpha", "abc123-alpha", ""},
+		{"unique prefix", "xyz", "xyz789-gamma", ""},
+		{"ambiguous prefix", "abc", "", "ambiguous"},
+		{"ambiguous prefix longer", "abc1", "abc123-alpha", ""},
+		{"no match", "nope", "", "no session found"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveSessionArg(sessions, tc.arg)
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("want error %q, got id=%q nil", tc.wantErr, got)
+				}
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.wantID {
+				t.Fatalf("got %q, want %q", got, tc.wantID)
+			}
+		})
+	}
+}
