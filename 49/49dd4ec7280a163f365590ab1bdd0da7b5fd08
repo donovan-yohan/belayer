@@ -1,0 +1,46 @@
+internal/daemon/daemon_test.go
+  edbf9f73c8916cfc 54
+internal/daemon/transcripts_http.go
+  edbf9f73c8916cfc 1-244
+internal/daemon/transcripts_http_test.go
+  edbf9f73c8916cfc 1-20,25-220
+internal/daemon/sse_test.go
+  edbf9f73c8916cfc 705-821
+internal/daemon/daemon.go
+  edbf9f73c8916cfc 174,209-210,224,1206-1208,1281-1286,1300-1301,1328-1334,1357-1362,1370-1436
+internal/daemon/loglevel.go
+  edbf9f73c8916cfc 32-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "4949dd4ec7280a163f365590ab1bdd0da7b5fd08",
+  "prompts": {
+    "edbf9f73c8916cfc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66974178-7e29-4b2f-a0fb-3d75c1178376",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 575,
+      "total_deletions": 3,
+      "accepted_lines": 1418,
+      "overriden_lines": 2
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}
