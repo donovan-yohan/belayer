@@ -8,6 +8,10 @@ const LogLevelStandard = "standard"
 // LogLevelVerbose enables verbose logging for a session.
 const LogLevelVerbose = "verbose"
 
+// LogLevelTrace is the highest log tier: superset of verbose, includes
+// untruncated tool payloads and trace:* event types.
+const LogLevelTrace = "trace"
+
 // DefaultLogLevel is the fallback when no explicit level is provided.
 const DefaultLogLevel = LogLevelStandard
 
@@ -18,10 +22,10 @@ func ValidateLogLevel(s string) (string, error) {
 	switch s {
 	case "":
 		return DefaultLogLevel, nil
-	case LogLevelStandard, LogLevelVerbose:
+	case LogLevelStandard, LogLevelVerbose, LogLevelTrace:
 		return s, nil
 	default:
-		return "", fmt.Errorf("invalid log_level %q: must be one of [standard, verbose]", s)
+		return "", fmt.Errorf("invalid log_level %q: must be one of [standard, verbose, trace]", s)
 	}
 }
 
