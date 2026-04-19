@@ -71,6 +71,17 @@ type Config struct {
 	BridgeBaseURL string
 	BridgeProvider string
 
+	// AuthToken, if non-empty, is the bearer token required on all TCP requests
+	// except GET /health. If TCPAddr is set and AuthToken is empty, New()
+	// auto-generates a 32-byte random token and logs it.
+	AuthToken string
+
+	// CORSOrigins is the allowlist of Origin header values that the TCP listener
+	// will reflect back as Access-Control-Allow-Origin. Empty = CORS disabled
+	// (all requests without a matching Origin header pass through un-annotated;
+	// requests with a non-allowlisted Origin are rejected 403).
+	CORSOrigins []string
+
 	// DefaultLogLevel is the default log_level for new sessions when POST
 	// /sessions does not specify one. Empty = 'standard'.
 	DefaultLogLevel string
@@ -130,6 +141,10 @@ type Daemon struct {
 	// Nil when config.TCPAddr is empty.
 	tcpListener *http.Server
 	tcpPort     int
+
+	// authToken is the bearer token required on all TCP requests except /health.
+	// Set from config.AuthToken or auto-generated in New when TCPAddr is set.
+	authToken string
 
 	// workspaceSockListener is an optional Unix socket inside the workspace
 	// directory so clamshell bridge subprocesses can reach the daemon via a
@@ -293,6 +308,20 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("GET /sessions/{id}/transcripts/{agent}", d.handleTranscriptContent)
 	mux.HandleFunc("GET /sessions/{id}/traces", d.handleListTraces)
 
+	// Set up auth token for TCP listener. Use the configured token, or
+	// auto-generate one when TCPAddr is set without an explicit token.
+	if cfg.TCPAddr != "" {
+		if cfg.AuthToken != "" {
+			d.authToken = cfg.AuthToken
+		} else {
+			token, genErr := generateToken()
+			if genErr != nil {
+				return nil, fmt.Errorf("daemon: generate auth token: %w", genErr)
+			}
+			d.authToken = token
+		}
+	}
+
 	d.server = &http.Server{Handler: mux}
 	return d, nil
 }
@@ -339,13 +368,17 @@ func (d *Daemon) Start(ctx context.Context) error {
 			return fmt.Errorf("daemon: listen tcp %s: %w", d.config.TCPAddr, err)
 		}
 		d.tcpPort = tcpLn.Addr().(*net.TCPAddr).Port
-		d.tcpListener = &http.Server{Handler: d.server.Handler}
+		tcpHandler := d.authMiddleware(d.server.Handler)
+		d.tcpListener = &http.Server{Handler: tcpHandler}
 		go func() {
 			if serveErr := d.tcpListener.Serve(tcpLn); serveErr != nil && serveErr != http.ErrServerClosed {
 				log.Printf("daemon: tcp serve: %v", serveErr)
 			}
 		}()
 		log.Printf("daemon: TCP listener on %s (port %d)", d.config.TCPAddr, d.tcpPort)
+		if d.authToken != "" {
+			log.Printf("daemon: TCP auth token: %s (keep this secret)", d.authToken)
+		}
 	}
 
 	// Optional workspace Unix socket for clamshell container bridge access.

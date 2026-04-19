@@ -28,7 +28,8 @@ func loadEnvFile(path string) {
 func newDaemonCmd() *cobra.Command {
 	var socketPath, dbPath, belayerRoot, workdir, tcpAddr, dockerGateway string
 	var bridgeAPIKey, bridgeBaseURL, bridgeProvider string
-	var logLevel string
+	var logLevel, authToken string
+	var corsOrigins []string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -77,6 +78,12 @@ func newDaemonCmd() *cobra.Command {
 			}
 			if logLevel != "" {
 				cfg.DefaultLogLevel = logLevel
+			}
+			if authToken != "" {
+				cfg.AuthToken = authToken
+			}
+			if len(corsOrigins) > 0 {
+				cfg.CORSOrigins = corsOrigins
 			}
 
 			wd := workdir
@@ -132,5 +139,7 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&bridgeBaseURL, "bridge-base-url", "", "LLM provider base URL injected into bridge subprocesses (e.g. https://opencode.ai/zen/go/v1)")
 	cmd.Flags().StringVar(&bridgeProvider, "bridge-provider", "", "LLM provider name injected into bridge subprocesses (e.g. openai)")
 	cmd.Flags().StringVar(&logLevel, "log-level", "", "Default log level for new sessions (standard|verbose|trace). Overridable per-run via `belayer run start --log-level` or BELAYER_LOG_LEVEL.")
+	cmd.Flags().StringVar(&authToken, "auth-token", "", "Bearer token required for TCP listener requests (auto-generated if --tcp-addr/--bind is set and this flag is not)")
+	cmd.Flags().StringSliceVar(&corsOrigins, "cors-origin", nil, "Allowed CORS origin (repeatable, e.g. --cors-origin https://app.example)")
 	return cmd
 }
