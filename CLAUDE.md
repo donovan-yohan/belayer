@@ -31,15 +31,20 @@ Agents coordinate through the daemon:
 ## CLI surface
 
 ```
-belayer daemon              # start the daemon
-belayer run start           # create session, spawn supervisor via bridge
-belayer spawn               # spawn an agent mid-session
-belayer finish              # signal work complete (triggers PM gate for supervisor)
-belayer roster              # list active agents
+belayer daemon [--bind addr] [--auth-token tok] [--cors-origin url] [--log-level L]
+belayer run start                   # create session, spawn supervisor via bridge
+belayer spawn                       # spawn an agent mid-session
+belayer finish                      # signal work complete (triggers PM gate)
+belayer roster                      # list active agents
 belayer message send/broadcast/list
-belayer request-completion  # explicit PM gate trigger
-belayer logs                # session event stream
-belayer status              # running sessions overview
+belayer request-completion          # explicit PM gate trigger
+belayer logs <sid> [-f] [--agent a] [--type p] [--tier t] [--format fmt] [--tail N] [--since d]
+belayer logs --raw --agent <a> <sid>  # raw bridge stdout tail
+belayer bridges tail <sid> <agent>  # shorthand for the raw tail above
+belayer artifact get <sid> <id>     # download artifact bytes
+belayer status                      # running sessions overview
+belayer archive <sid>               # write archive bundle to disk
+belayer init                        # scaffold .belayer/ with log_level: standard
 ```
 
 ## Agent identity
