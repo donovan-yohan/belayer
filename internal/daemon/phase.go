@@ -49,6 +49,8 @@ func (d *Daemon) handlePhase(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		ts := ev.Timestamp
+		// X-Event-Count=0 for aggregate endpoints — phase is derived, not a raw event list.
+		d.writeEventHeaders(w, id, 0)
 		writeJSON(w, http.StatusOK, phaseResponse{
 			Phase: phase,
 			Since: &ts,
@@ -57,6 +59,8 @@ func (d *Daemon) handlePhase(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// No phase event found.
+	// X-Event-Count=0 for aggregate endpoints — phase is derived, not a raw event list.
+	d.writeEventHeaders(w, id, 0)
 	writeJSON(w, http.StatusOK, phaseResponse{Phase: "unknown"})
 }
 

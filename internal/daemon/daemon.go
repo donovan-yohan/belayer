@@ -905,6 +905,7 @@ func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	d.writeEventHeaders(w, id, len(events))
 	writeJSON(w, http.StatusOK, events)
 }
 
@@ -1128,6 +1129,13 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Write event headers for the first session listed (best-effort; SSE streams
+	// may span multiple sessions so X-Event-Count is set to 0 here and updated
+	// per-frame by the consumer if needed). Headers must be set before the first
+	// Write/Flush call that commits the status code.
+	if len(filtered) > 0 {
+		d.writeEventHeaders(w, filtered[0], 0)
+	}
 
 	// Emit daemon_hello as the FIRST frame. No id: line (control frame invariant).
 	helloData, _ := json.Marshal(map[string]any{
@@ -1437,6 +1445,7 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": msg})
 		return
 	}
+	d.writeEventHeaders(w, preds.SessionID, len(events))
 	writeJSON(w, http.StatusOK, events)
 }
 

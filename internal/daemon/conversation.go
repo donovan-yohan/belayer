@@ -77,5 +77,7 @@ func (d *Daemon) handleConversation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// X-Event-Count=0 for aggregate endpoints — conversation is a message list, not a raw event list.
+	d.writeEventHeaders(w, sessionID, 0)
 	writeJSON(w, http.StatusOK, msgs)
 }

@@ -207,5 +207,7 @@ func (d *Daemon) handleToolCalls(w http.ResponseWriter, r *http.Request) {
 		result = append(result, entry)
 	}
 
+	// X-Event-Count=0 for aggregate endpoints — tool-calls is a derived view, not a raw event list.
+	d.writeEventHeaders(w, id, 0)
 	writeJSON(w, http.StatusOK, result)
 }

@@ -212,6 +212,9 @@ func (d *Daemon) handleOutline(w http.ResponseWriter, r *http.Request) {
 		FinalStatus: sess.Status,
 	}
 
+	// X-Event-Count=0 for aggregate endpoints — outline does not return a raw
+	// event list; other headers are still populated for cache/client awareness.
+	d.writeEventHeaders(w, id, 0)
 	writeJSON(w, http.StatusOK, resp)
 }
 
