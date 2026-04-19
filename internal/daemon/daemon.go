@@ -155,6 +155,9 @@ type Daemon struct {
 
 	// traceWriter spills large event payloads to fragment files at trace tier.
 	traceWriter trace.Writer
+	// traceBase is the root directory for trace fragment files (<sessionID>/<agent>/<NNNN>.jsonl).
+	// Populated by New() as filepath.Join(filepath.Dir(cfg.DBPath), "traces").
+	traceBase string
 
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
@@ -218,6 +221,7 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("daemon: init trace writer: %w", err)
 	}
 	d.traceWriter = tw
+	d.traceBase = traceBase
 
 	if cfg.SandboxDrivers != nil {
 		d.sandboxDrivers = cfg.SandboxDrivers
@@ -262,6 +266,7 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
 	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
+	mux.HandleFunc("GET /sessions/{id}/trace/{agent}/{fragment}", d.handleTraceSlice)
 
 	d.server = &http.Server{Handler: mux}
 	return d, nil

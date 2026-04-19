@@ -42,7 +42,7 @@ func testDaemonWithTrace(t *testing.T) (*Daemon, string) {
 	reg.Register(sandbox.DefaultMode, &sandbox.Noop{})
 	d := &Daemon{
 		store:                      st,
-		config:                     Config{},
+		config:                     Config{DBPath: dbPath},
 		daemonInstanceID:           "test-daemon-trace",
 		tools:                      make(map[string][]agent.ToolSpec),
 		bridgeProcs:                make(map[string]*bridge.Process),
@@ -57,6 +57,7 @@ func testDaemonWithTrace(t *testing.T) (*Daemon, string) {
 		shutdownHTTPTimeout:        5 * time.Second,
 		sseKeepaliveInterval:       15 * time.Second,
 		traceWriter:                tw,
+		traceBase:                  traceBase,
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }
