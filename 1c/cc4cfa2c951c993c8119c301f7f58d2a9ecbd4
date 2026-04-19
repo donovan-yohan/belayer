@@ -1,0 +1,27 @@
+hermes_bridge/callbacks.py
+  37238b64ac0d5a34 45,50,53-57,60,111-117,119-134,143-159,180-181
+hermes_bridge/__main__.py
+  37238b64ac0d5a34 326-328,332-335
+hermes_bridge/tests/test_callbacks_reasoning.py
+  37238b64ac0d5a34 1-188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "1ccc4cfa2c951c993c8119c301f7f58d2a9ecbd4",
+  "prompts": {
+    "37238b64ac0d5a34": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "85c03206-a5e6-43f5-b159-aae4882c50da",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 246,
+      "total_deletions": 8,
+      "accepted_lines": 246,
+      "overriden_lines": 0
+    }
+  }
+}
