@@ -3,6 +3,9 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/url"
+	"os"
 	"text/tabwriter"
 
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -11,7 +14,7 @@ import (
 
 func newArtifactCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "artifact", Short: "Create and inspect run artifacts"}
-	cmd.AddCommand(newArtifactCreateCmd(), newArtifactListCmd())
+	cmd.AddCommand(newArtifactCreateCmd(), newArtifactListCmd(), newArtifactGetCmd())
 	return cmd
 }
 
@@ -78,6 +81,45 @@ func newArtifactListCmd() *cobra.Command {
 	return cmd
 }
 
+func newArtifactGetCmd() *cobra.Command {
+	var socket, output string
+	cmd := &cobra.Command{
+		Use:   "get <session> <artifact_id>",
+		Short: "Download an artifact's raw bytes",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionArg := args[0]
+			artifactID := args[1]
+
+			c := NewClient(resolveSocket(socket))
+
+			// Attempt to resolve session name -> ID, but fall through on error.
+			sessionID := sessionArg
+			if resolved, err := lookupSessionID(c, sessionArg); err == nil {
+				sessionID = resolved
+			}
+
+			data, err := c.GetArtifactBytes(sessionID, artifactID)
+			if err != nil {
+				return fmt.Errorf("get artifact: %w", err)
+			}
+
+			if output != "" {
+				if err := os.WriteFile(output, data, 0o666); err != nil {
+					return fmt.Errorf("write output file: %w", err)
+				}
+				return nil
+			}
+
+			_, err = cmd.OutOrStdout().Write(data)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "Write bytes to this file instead of stdout")
+	return cmd
+}
+
 type artifactCreateCLIRequest struct {
 	Kind     string `json:"kind"`
 	Path     string `json:"path"`
@@ -115,4 +157,19 @@ func (c *Client) ListArtifacts(sessionID string) ([]store.Artifact, error) {
 		return nil, fmt.Errorf("decode artifacts: %w", err)
 	}
 	return artifacts, nil
+}
+
+// GetArtifactBytes downloads the raw bytes of an artifact from the daemon.
+func (c *Client) GetArtifactBytes(sessionID, artifactID string) ([]byte, error) {
+	path := "/sessions/" + url.PathEscape(sessionID) + "/artifacts/" + url.PathEscape(artifactID)
+	resp, err := c.do("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+	return io.ReadAll(resp.Body)
 }
