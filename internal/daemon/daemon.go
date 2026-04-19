@@ -746,16 +746,37 @@ func isTerminalSessionStatus(status string) bool {
 // --- HTTP handlers ---
 
 // healthCapabilities is the static capabilities block returned by GET /health.
+// This is the authoritative feature manifest — anything dashboards negotiate
+// against (SSE filters, cursor semantics, compact TSV, aggregates, transcripts,
+// traces, artifact bytes, pagination) must appear here. Keep in sync with
+// docs/LOG_FORMAT.md § "Capability negotiation".
+//
 // Extracted as a package-level var so tests can read it without parsing JSON.
 var healthCapabilities = struct {
 	SearchPredicates []string `json:"search_predicates"`
 	ArchiveHTTP      bool     `json:"archive_http"`
 	SSEControlFrames []string `json:"sse_control_frames"`
+	SSEFilters       []string `json:"sse_filters"`
+	CursorReaderID   bool     `json:"cursor_reader_id"`
+	CompactTSV       bool     `json:"compact_tsv"`
+	Aggregates       bool     `json:"aggregates"`
+	Transcripts      bool     `json:"transcripts"`
+	Traces           bool     `json:"traces"`
+	ArtifactsBytes   bool     `json:"artifacts_bytes"`
+	LinkNext         bool     `json:"link_next"`
 	LogLevels        []string `json:"log_levels"`
 }{
 	SearchPredicates: []string{"q", "session", "type_prefix", "agent", "after", "before"},
 	ArchiveHTTP:      true,
-	SSEControlFrames: []string{"daemon_hello", "daemon_draining"},
+	SSEControlFrames: []string{"daemon_hello", "daemon_draining", "session_digest"},
+	SSEFilters:       []string{"agent", "type_prefix", "tier", "digest"},
+	CursorReaderID:   true,
+	CompactTSV:       true,
+	Aggregates:       true,
+	Transcripts:      true,
+	Traces:           true,
+	ArtifactsBytes:   true,
+	LinkNext:         true,
 	LogLevels:        []string{"standard", "verbose", "trace"},
 }
 
