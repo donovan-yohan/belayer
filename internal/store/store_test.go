@@ -994,6 +994,98 @@ func TestInsertEventWithSpill_SetsFragmentColumns(t *testing.T) {
 	}
 }
 
+// TestListMessagesInSession verifies that ListMessagesInSession returns all messages
+// for a session in ascending created_at order.
+func TestListMessagesInSession(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "list-msgs-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	base := time.Now().UTC()
+	for i, content := range []string{"first", "second", "third"} {
+		if _, err := s.CreateMessage(Message{
+			SessionID:   sessID,
+			SenderID:    "sup",
+			RecipientID: "dev",
+			Content:     content,
+			CreatedAt:   base.Add(time.Duration(i) * time.Second),
+		}); err != nil {
+			t.Fatalf("CreateMessage %q: %v", content, err)
+		}
+	}
+
+	msgs, err := s.ListMessagesInSession(sessID)
+	if err != nil {
+		t.Fatalf("ListMessagesInSession: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+	if msgs[0].Content != "first" {
+		t.Errorf("msgs[0].Content = %q, want %q", msgs[0].Content, "first")
+	}
+	if msgs[1].Content != "second" {
+		t.Errorf("msgs[1].Content = %q, want %q", msgs[1].Content, "second")
+	}
+	if msgs[2].Content != "third" {
+		t.Errorf("msgs[2].Content = %q, want %q", msgs[2].Content, "third")
+	}
+	// Verify ascending order by created_at.
+	for i := 1; i < len(msgs); i++ {
+		if msgs[i].CreatedAt.Before(msgs[i-1].CreatedAt) {
+			t.Errorf("messages not in ascending order: msgs[%d].CreatedAt=%v < msgs[%d].CreatedAt=%v",
+				i, msgs[i].CreatedAt, i-1, msgs[i-1].CreatedAt)
+		}
+	}
+}
+
+// TestListMessagesBetween verifies that ListMessagesBetween returns only messages
+// in either direction between agentA and agentB, ordered by created_at ASC.
+func TestListMessagesBetween(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "between-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	base := time.Now().UTC()
+	// Seed: a→b, b→a, a→c, c→b
+	messages := []Message{
+		{SessionID: sessID, SenderID: "a", RecipientID: "b", Content: "a-to-b", CreatedAt: base},
+		{SessionID: sessID, SenderID: "b", RecipientID: "a", Content: "b-to-a", CreatedAt: base.Add(time.Second)},
+		{SessionID: sessID, SenderID: "a", RecipientID: "c", Content: "a-to-c", CreatedAt: base.Add(2 * time.Second)},
+		{SessionID: sessID, SenderID: "c", RecipientID: "b", Content: "c-to-b", CreatedAt: base.Add(3 * time.Second)},
+	}
+	for _, msg := range messages {
+		if _, err := s.CreateMessage(msg); err != nil {
+			t.Fatalf("CreateMessage %q: %v", msg.Content, err)
+		}
+	}
+
+	// Between a and b should return only the first two.
+	msgs, err := s.ListMessagesBetween(sessID, "a", "b")
+	if err != nil {
+		t.Fatalf("ListMessagesBetween: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages between a and b, got %d", len(msgs))
+	}
+	if msgs[0].Content != "a-to-b" {
+		t.Errorf("msgs[0].Content = %q, want %q", msgs[0].Content, "a-to-b")
+	}
+	if msgs[1].Content != "b-to-a" {
+		t.Errorf("msgs[1].Content = %q, want %q", msgs[1].Content, "b-to-a")
+	}
+	// Verify ascending order.
+	if msgs[1].CreatedAt.Before(msgs[0].CreatedAt) {
+		t.Errorf("messages not in ascending order")
+	}
+}
+
 // TestInsertEventWithSpill_NullWhenFragmentEmpty verifies that InsertEventWithSpill
 // stores NULL trace columns when a zero Fragment (frag.Path == "") is provided.
 func TestInsertEventWithSpill_NullWhenFragmentEmpty(t *testing.T) {

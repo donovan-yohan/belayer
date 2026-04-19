@@ -847,6 +847,83 @@ func scanEvents(rows *sql.Rows) ([]SessionEvent, error) {
 	return events, nil
 }
 
+// ListMessagesInSession returns all messages for a session ordered by created_at ASC.
+func (s *Store) ListMessagesInSession(sessionID string) ([]Message, error) {
+	rows, err := s.db.Query(
+		`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at
+		 FROM messages
+		 WHERE session_id = ?
+		 ORDER BY created_at ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: list messages in session: %w", err)
+	}
+	defer rows.Close()
+
+	msgs := []Message{}
+	for rows.Next() {
+		var m Message
+		var createdAt string
+		var urgent, delivered int
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.SenderID, &m.RecipientID, &m.Type, &m.Content, &urgent, &delivered, &createdAt); err != nil {
+			return nil, fmt.Errorf("store: list messages in session scan: %w", err)
+		}
+		m.Urgent = urgent != 0
+		m.Delivered = delivered != 0
+		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if msgs == nil {
+		msgs = []Message{}
+	}
+	return msgs, nil
+}
+
+// ListMessagesBetween returns messages where (sender_id, recipient_id) is either
+// (agentA, agentB) or (agentB, agentA), ordered by created_at ASC.
+func (s *Store) ListMessagesBetween(sessionID, agentA, agentB string) ([]Message, error) {
+	rows, err := s.db.Query(
+		`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at
+		 FROM messages
+		 WHERE session_id = ?
+		   AND (
+		     (sender_id = ? AND recipient_id = ?)
+		     OR (sender_id = ? AND recipient_id = ?)
+		   )
+		 ORDER BY created_at ASC`,
+		sessionID, agentA, agentB, agentB, agentA,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: list messages between: %w", err)
+	}
+	defer rows.Close()
+
+	msgs := []Message{}
+	for rows.Next() {
+		var m Message
+		var createdAt string
+		var urgent, delivered int
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.SenderID, &m.RecipientID, &m.Type, &m.Content, &urgent, &delivered, &createdAt); err != nil {
+			return nil, fmt.Errorf("store: list messages between scan: %w", err)
+		}
+		m.Urgent = urgent != 0
+		m.Delivered = delivered != 0
+		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if msgs == nil {
+		msgs = []Message{}
+	}
+	return msgs, nil
+}
+
 // nullableString returns nil for empty strings (stores NULL in SQLite).
 func nullableString(s string) any {
 	if s == "" {
