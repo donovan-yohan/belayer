@@ -38,6 +38,20 @@ const defaultConfigYAML = `# .belayer/config.yaml — runtime + sandbox configur
 #   endpoints:
 #     - name: api
 #       url: http://localhost:8080
+
+# Exit conditions — natural-language assertions the PM validates before a run
+# is marked complete. These are the project-wide definition-of-done: the PM
+# rejects completion until every condition has evidence. Edit to fit your
+# workflow — PR-based teams, artifact-publishing teams, deploy-green teams,
+# etc. Leave empty and the PM validates only the spec you pass at run start.
+#
+# The supervisor reads this list at session start and plans toward it. The PM
+# reads it during verification and will refuse completion with a specific gap
+# for any condition lacking evidence.
+exit_conditions:
+  - "All spec acceptance criteria are implemented and verifiable in the repo"
+  - "Changes are committed to a feature branch with descriptive messages"
+  - "A pull request is open against the default branch"
 `
 
 // defaultPolicyYAML is a minimal placeholder so .belayer/policies/ is not

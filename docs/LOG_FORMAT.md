@@ -103,12 +103,13 @@ Source: `internal/store/store.go:SessionEvent`.
 | `tool_registered` | `tool` (string), `target` (string) — `target` ∈ `{"agent","workbench","infra","host"}` |
 | `tool_executed` | `tool`, `target`, `input` (object), `exit_code` (int), `duration_ms` (int), `output` (string, ≤4096 chars), `calling_agent` (string, optional), `timestamp` (RFC3339) |
 
-### 3.7 `completion_escalated` / `completion_rejected` — PM gate flow
+### 3.7 `completion_escalated` / `completion_rejected` / `completion_approved_with_busy_agents` — PM gate flow
 
 | Type | Required `data` fields |
 |------|------------------------|
 | `completion_rejected` | `rejected_by` (string), `cycle` (string in the exact form `"<attempt>/<max>"` where both are positive integers, e.g. `"1/3"`; regex `^\d+/\d+$`) |
 | `completion_escalated` | `reason` (string), `rejections` (string) — emitted when `maxRejectionCycles` (3) is exceeded; session transitions to `needs_human_review` |
+| `completion_approved_with_busy_agents` | `approved_by` (string), `busy_agents` (array of strings in the form `"<agent_name>=<status>"`, e.g. `["web-dev.a=running"]`) — emitted when PM approves completion while non-supervisor agents are still in `starting`/`running`/`pending_verification`; their in-flight work will be discarded by the subsequent bridge drain. Advisory event for post-mortems; does NOT transition session status. |
 
 ### 3.8 `pm_*` — PM agent errors
 

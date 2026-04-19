@@ -553,6 +553,51 @@ func (d *Daemon) terminateSandbox(ctx context.Context, sessionID string) {
 	}
 }
 
+// stopAllBridgeAgents sends a graceful stop to every bridge process in the
+// session, force-killing any that do not exit within bridgeStopTimeout. Used
+// when a session reaches a terminal status (PM approval, max rejections,
+// operator cancel) — without it, bridge subprocesses such as the supervisor
+// keep running past session completion, burn tokens, and can self-escalate
+// back to human review.
+//
+// Safe to call for sessions with no live bridges. Does not block on missing
+// processes; each bridge is stopped in its own goroutine so a single slow
+// exit does not delay the others.
+func (d *Daemon) stopAllBridgeAgents(sessionID, reason string) {
+	d.bridgeMu.RLock()
+	var targets []*bridge.Process
+	var names []string
+	for key, proc := range d.bridgeProcs {
+		sid, name := parseBridgeKey(key)
+		if sid != sessionID || proc == nil {
+			continue
+		}
+		targets = append(targets, proc)
+		names = append(names, name)
+	}
+	d.bridgeMu.RUnlock()
+
+	if len(targets) == 0 {
+		return
+	}
+
+	log.Printf("daemon: stopping %d bridge agent(s) in session %s (%s): %v", len(targets), sessionID, reason, names)
+
+	var wg sync.WaitGroup
+	for i, proc := range targets {
+		wg.Add(1)
+		go func(p *bridge.Process, name string) {
+			defer wg.Done()
+			if err := p.Stop(bridgeStopTimeout); err != nil {
+				log.Printf("daemon: bridge stop %s/%s: %v", sessionID, name, err)
+			}
+		}(proc, names[i])
+	}
+	wg.Wait()
+}
+
+const bridgeStopTimeout = 10 * time.Second
+
 // isTerminalSessionStatus reports whether a session status means the session
 // is finished and its sandbox can be torn down.
 func isTerminalSessionStatus(status string) bool {
@@ -1338,6 +1383,16 @@ func sanitizeSSEEventType(t string) string {
 // bridgeKey returns the map key for a bridge process given session and agent name.
 func bridgeKey(sessionID, agentName string) string {
 	return sessionID + "/" + agentName
+}
+
+// parseBridgeKey splits a bridgeKey back into (sessionID, agentName). Inverse
+// of bridgeKey. Returns empty strings if key is malformed.
+func parseBridgeKey(key string) (string, string) {
+	idx := strings.Index(key, "/")
+	if idx < 0 {
+		return "", ""
+	}
+	return key[:idx], key[idx+1:]
 }
 
 // runtimeEndpointsToSandbox converts provider endpoints into the sandbox's
