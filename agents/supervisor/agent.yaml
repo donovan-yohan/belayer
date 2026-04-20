@@ -1,7 +1,7 @@
 schema_version: "1"
 description: "Supervisor — orchestrates implementation across repos"
-vendor: claude
-model: opus
+vendor: codex
+model: gpt-5.4
 max_turns: 200
 max_duration: "4h"
 ephemeral: false
