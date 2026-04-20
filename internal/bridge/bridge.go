@@ -94,6 +94,12 @@ type Process struct {
 	done    chan struct{} // closed when process exits
 	exitErr error         // set before done is closed
 	mu      sync.Mutex
+
+	// firstEvent is closed the first time the bridge posts an event to the daemon.
+	// Used by spawn callers to distinguish a live bridge from one that crashes
+	// during startup (Gap 14).
+	firstEvent     chan struct{}
+	firstEventOnce sync.Once
 }
 
 // BuildCmd returns the argv slice to use when launching the bridge subprocess.
@@ -195,9 +201,10 @@ func BuildEnv(cfg Config) []string {
 // stdio pumps so the caller can close log writers after Done fires.
 func NewProcess(handle ProcessHandle, stdin io.WriteCloser) *Process {
 	p := &Process{
-		handle: handle,
-		stdin:  stdin,
-		done:   make(chan struct{}),
+		handle:     handle,
+		stdin:      stdin,
+		done:       make(chan struct{}),
+		firstEvent: make(chan struct{}),
 	}
 	go func() {
 		waitErr := handle.Wait()
@@ -256,9 +263,10 @@ func Spawn(cfg Config) (*Process, error) {
 	}
 
 	p := &Process{
-		cmd:   cmd,
-		stdin: stdinPipe,
-		done:  make(chan struct{}),
+		cmd:        cmd,
+		stdin:      stdinPipe,
+		done:       make(chan struct{}),
+		firstEvent: make(chan struct{}),
 	}
 
 	go func() {
@@ -356,6 +364,19 @@ func (p *Process) ExitErr() error {
 	defer p.mu.Unlock()
 	return p.exitErr
 }
+
+// MarkLive signals that the bridge has posted its first event to the daemon.
+// It is idempotent; subsequent calls are no-ops. The daemon calls this from
+// handleLogEvent the first time any bridge:* event arrives for this process,
+// so spawn callers can distinguish a healthy startup from an immediate crash.
+func (p *Process) MarkLive() {
+	p.firstEventOnce.Do(func() { close(p.firstEvent) })
+}
+
+// FirstEvent returns a channel that is closed after the first bridge event is
+// received by the daemon. Use in a select alongside Done() and time.After to
+// detect startup failures before watchBridgeExit fires.
+func (p *Process) FirstEvent() <-chan struct{} { return p.firstEvent }
 
 // appendEnv appends KEY=VALUE to env, replacing any existing entry for KEY.
 func appendEnv(env []string, key, value string) []string {

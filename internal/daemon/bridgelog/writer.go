@@ -2,6 +2,7 @@
 package bridgelog
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -80,3 +81,36 @@ func RotateAndOpen(path string, keep int) (*Writer, error) {
 }
 
 var _ io.WriteCloser = (*Writer)(nil)
+
+// TailLines reads the last n lines from the file at path. If the file does not
+// exist or cannot be read, an empty string is returned. If the file has fewer
+// than n lines, all lines are returned. The result is newline-joined.
+func TailLines(path string, n int) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	// Collect all lines via a scanner; keep only the last n.
+	var lines []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		lines = append(lines, sc.Text())
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	start := len(lines) - n
+	if start < 0 {
+		start = 0
+	}
+	result := ""
+	for i, l := range lines[start:] {
+		if i > 0 {
+			result += "\n"
+		}
+		result += l
+	}
+	return result
+}

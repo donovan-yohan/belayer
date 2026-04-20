@@ -1163,6 +1163,18 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 
 	// Process bridge events for side effects (status updates, supervisor notifications).
 	if strings.HasPrefix(req.Type, "bridge:") {
+		// Signal the spawn caller that the bridge is alive — the first bridge:*
+		// event proves the subprocess started cleanly. This unblocks the 500ms
+		// startup-wait in spawnAgentInternal / handleSpawnAgent (Gap 14).
+		agentNameForLive := extractAgentName(req.Data)
+		if agentNameForLive != "unknown" {
+			d.bridgeMu.RLock()
+			liveProc := d.bridgeProcs[bridgeKey(id, agentNameForLive)]
+			d.bridgeMu.RUnlock()
+			if liveProc != nil {
+				liveProc.MarkLive()
+			}
+		}
 		d.processBridgeEvent(id, req.Type, req.Data)
 	}
 

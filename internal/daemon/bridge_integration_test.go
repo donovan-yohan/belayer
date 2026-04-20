@@ -51,27 +51,51 @@ func mockBridgeCmd(role string) []string {
 	}
 }
 
-// spawnMockBridge spawns a real bridge.Process whose subprocess runs
-// TestHelperProcess in the current test binary.
+// spawnMockBridge creates a *bridge.Process backed by a fake long-lived handle,
+// simulating a bridge subprocess that stays alive.  The process is immediately
+// marked live (simulating the bridge posting its first startup event), so the
+// 500ms startup-wait in handleSpawnAgent returns without blocking.
+//
+// For the rare tests that need real subprocess I/O, use spawnMockBridgeReal instead.
 func spawnMockBridge(t *testing.T, sessionID, agentID, role string) *bridge.Process {
+	t.Helper()
+	h := &fakeProcessHandle{exitCh: make(chan struct{})}
+	proc := bridge.NewProcess(h, fakeStdinPipe{})
+	// Mark live immediately so the spawn-startup-wait unblocks.
+	proc.MarkLive()
+	t.Cleanup(func() {
+		select {
+		case <-h.exitCh:
+		default:
+			close(h.exitCh)
+		}
+	})
+	return proc
+}
+
+// spawnMockBridgeReal spawns an actual OS subprocess running TestHelperProcess.
+// Only use when the test needs real stdin/stdout I/O with the subprocess.
+// Requires GO_WANT_HELPER_PROCESS=1 to be set in the environment for the mock to run.
+func spawnMockBridgeReal(t *testing.T, sessionID, agentID, role string) *bridge.Process {
 	t.Helper()
 	runDir := t.TempDir()
 	cfg := bridge.Config{
-		Cmd:       mockBridgeCmd(role),
-		SessionID: sessionID,
-		AgentID:   agentID,
-		Role:      role,
-		Profile:   "mock",
-		Workdir:   t.TempDir(),
+		Cmd:        mockBridgeCmd(role),
+		SessionID:  sessionID,
+		AgentID:    agentID,
+		Role:       role,
+		Profile:    "mock",
+		Workdir:    t.TempDir(),
 		SocketPath: "",
-		RunDir:    runDir,
+		RunDir:     runDir,
 	}
 	proc, err := bridge.Spawn(cfg)
 	if err != nil {
 		t.Fatalf("bridge.Spawn(%q): %v", role, err)
 	}
+	// Mark live immediately so the spawn-startup-wait unblocks.
+	proc.MarkLive()
 	t.Cleanup(func() {
-		// Best-effort stop; ignore errors on cleanup.
 		_ = proc.Stop(2 * time.Second)
 	})
 	return proc
@@ -259,7 +283,8 @@ func TestBridgeIntegration_InterruptDelivery(t *testing.T) {
 	// Capture the spawned process so we can inspect it later.
 	var capturedProc *bridge.Process
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
-		// mock-cat echoes stdin, so we can verify writes don't error.
+		// Use fake handle: the test only needs to verify that WriteStdin doesn't
+		// error, not that the subprocess echoes anything back.
 		proc := spawnMockBridge(t, req.SessionID, req.Name, "mock-cat")
 		capturedProc = proc
 		return proc, nil
@@ -335,9 +360,15 @@ func TestBridgeIntegration_BridgeProcessExitDetection(t *testing.T) {
 		t.Fatalf("create supervisor run: %v", err)
 	}
 
-	// Spawn an api agent that exits immediately.
+	// Spawn an api agent backed by a fake proc that we will manually exit after
+	// the spawn succeeds.  This simulates the watchBridgeExit path: the process
+	// starts cleanly (MarkLive fires), then exits unexpectedly mid-run.
+	var apiHandle *fakeProcessHandle
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
-		proc := spawnMockBridge(t, req.SessionID, req.Name, "mock-exit")
+		apiHandle = &fakeProcessHandle{exitCh: make(chan struct{}), waitErr: fmt.Errorf("exit status 1")}
+		proc := bridge.NewProcess(apiHandle, fakeStdinPipe{})
+		// Mark live so the 500ms startup-wait passes immediately.
+		proc.MarkLive()
 		return proc, nil
 	}
 
@@ -349,6 +380,11 @@ func TestBridgeIntegration_BridgeProcessExitDetection(t *testing.T) {
 	})
 	if agentRR.Code != http.StatusCreated {
 		t.Fatalf("spawn api: expected 201, got %d: %s", agentRR.Code, agentRR.Body.String())
+	}
+
+	// Trigger the unexpected exit after the spawn has returned.
+	if apiHandle != nil {
+		close(apiHandle.exitCh)
 	}
 
 	// Wait for watchBridgeExit to detect the exit and update status.
