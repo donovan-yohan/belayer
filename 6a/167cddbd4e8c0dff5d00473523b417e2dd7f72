@@ -1,0 +1,39 @@
+internal/bridge/config_test.go
+  292d8375836a3f59 1-104
+internal/daemon/agents.go
+  292d8375836a3f59 499-502
+docs/AGENT_ARCHITECTURE.md
+  292d8375836a3f59 424-448
+internal/cli/init.go
+  292d8375836a3f59 50-61,153,189-191,204,212-213,265-269,271,425-429
+internal/bridge/bridge.go
+  292d8375836a3f59 72-74,190-192
+internal/daemon/daemon.go
+  292d8375836a3f59 40-47,81-87
+internal/bridge/bridge_test.go
+  292d8375836a3f59 589-634
+internal/bridge/config.go
+  292d8375836a3f59 1-69
+internal/cli/daemon.go
+  292d8375836a3f59 11,65-77,124-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "6a167cddbd4e8c0dff5d00473523b417e2dd7f72",
+  "prompts": {
+    "292d8375836a3f59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63ba09df-2b2a-4f4b-ba9e-0a325bc7aeaf",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 8,
+      "total_deletions": 3,
+      "accepted_lines": 549,
+      "overriden_lines": 0
+    }
+  }
+}
