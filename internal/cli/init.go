@@ -58,6 +58,8 @@ log_level: standard
 # for any condition lacking evidence.
 exit_conditions:
   - "All spec acceptance criteria are implemented and verifiable in the repo"
+  - "Application has been booted and primary user paths verified against the spec, with per-criterion evidence registered as a durable artifact"
+  - "Code changes have been reviewed by an adversarial peer agent that returned a PASS verdict, with findings registered as a durable artifact"
   - "Changes are committed to a feature branch with descriptive messages"
   - "A pull request is open against the default branch"
 `

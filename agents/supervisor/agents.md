@@ -45,10 +45,6 @@ For one-shot subtasks (research, isolated lint fixes, focused refactors with no 
 belayer message send --to <agent> "instructions"
 belayer message broadcast "update for everyone"
 
-# Memory & observation
-belayer note "observation for reflection"
-belayer recall "search query"
-
 # Workbench (integration testing)
 belayer workbench up          # provision extend-api + extend-app + infra
 belayer workbench status      # check readiness + endpoints
@@ -75,11 +71,11 @@ When working across web-dev and backend-dev workspaces:
 When an implementer signals completion:
 
 1. Ask the implementer to summarize their changes (diff + rationale)
-2. Spawn a reviewer: `belayer spawn --name reviewer-1 --profile reviewer`
+2. Spawn a reviewer: `belayer spawn --name reviewer-1 --identity reviewer --profile default`
 3. Send the diff and context to the reviewer via `belayer message send`
-4. Reviewer returns structured findings (PASS/FAIL + per-finding severity, file:line, suggested fix)
+4. Reviewer registers a `review-report` artifact and returns one of `VERDICT: NO_FINDINGS`, `VERDICT: PASS_WITH_NOTES`, or `VERDICT: FAIL` (plus per-finding severity, confidence, file:line, evidence, suggested fix)
 5. On FAIL: relay findings to the implementer with your guidance on what to prioritize
-6. On PASS: proceed to next task or integration testing
+6. On NO_FINDINGS or PASS_WITH_NOTES: proceed to QA, then integration testing
 
 ## Session Management
 
