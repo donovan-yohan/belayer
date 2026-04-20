@@ -306,6 +306,94 @@ func TestMessageHistoryLoggedToStore(t *testing.T) {
 	}
 }
 
+func TestSendRejectsEmptyContent(t *testing.T) {
+	b := newTestBroker()
+	col := &collector{}
+	_ = b.Subscribe("sess1", "agent1", col.handler())
+
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"empty string", ""},
+		{"whitespace only", "   "},
+		{"tab only", "\t"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := Message{SessionID: "sess1", SenderID: "sender", Type: MessageInstruction, Content: tc.content}
+			err := b.Send("sess1", "agent1", msg)
+			if err == nil {
+				t.Fatalf("expected error for content %q, got nil", tc.content)
+			}
+		})
+	}
+
+	// Valid content must still succeed.
+	msg := Message{SessionID: "sess1", SenderID: "sender", Type: MessageInstruction, Content: "hello", Urgent: true}
+	if err := b.Send("sess1", "agent1", msg); err != nil {
+		t.Fatalf("expected no error for valid content, got: %v", err)
+	}
+}
+
+func TestBroadcastRejectsEmptyContent(t *testing.T) {
+	b := newTestBroker()
+	col := &collector{}
+	_ = b.Subscribe("sess1", "agent1", col.handler())
+
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"empty string", ""},
+		{"whitespace only", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := Message{SessionID: "sess1", SenderID: "sender2", Type: MessageStateChange, Content: tc.content}
+			err := b.Broadcast("sess1", msg)
+			if err == nil {
+				t.Fatalf("expected error for content %q, got nil", tc.content)
+			}
+		})
+	}
+
+	// Valid content must still succeed.
+	msg := Message{SessionID: "sess1", SenderID: "sender2", Type: MessageStateChange, Content: "state-update"}
+	if err := b.Broadcast("sess1", msg); err != nil {
+		t.Fatalf("expected no error for valid content, got: %v", err)
+	}
+}
+
+func TestInterruptRejectsEmptyContent(t *testing.T) {
+	b := newTestBroker()
+	col := &collector{}
+	_ = b.Subscribe("sess1", "agent1", col.handler())
+
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"empty string", ""},
+		{"whitespace only", "   "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := Message{SessionID: "sess1", SenderID: "sender", Type: MessageInstruction, Content: tc.content}
+			err := b.Interrupt("sess1", "agent1", msg)
+			if err == nil {
+				t.Fatalf("expected error for content %q, got nil", tc.content)
+			}
+		})
+	}
+
+	// Valid content must still succeed.
+	msg := Message{SessionID: "sess1", SenderID: "sender", Type: MessageInstruction, Content: "interrupt!"}
+	if err := b.Interrupt("sess1", "agent1", msg); err != nil {
+		t.Fatalf("expected no error for valid content, got: %v", err)
+	}
+}
+
 func TestConcurrentSendIsSafe(t *testing.T) {
 	b := newTestBroker()
 	var delivered int64

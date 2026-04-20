@@ -102,6 +102,34 @@ def format_messages(messages: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+def filter_and_format_messages(
+    messages: list[dict],
+    socket_path: str,
+    session_id: str,
+    agent_id: str,
+) -> str:
+    """Drop empty-content messages (post bridge:warning for each), format rest."""
+    valid = []
+    dropped = []
+    for msg in messages:
+        content = msg.get("content", "") or ""
+        if not content.strip():
+            dropped.append({
+                "sender": msg.get("sender_id") or "unknown",
+                "message_id": msg.get("id") or "",
+            })
+            continue
+        valid.append(msg)
+    if dropped:
+        post_event(
+            socket_path, session_id, agent_id,
+            "bridge:warning",
+            {"kind": "empty_message_dropped", "count": len(dropped), "dropped": dropped},
+        )
+        log.warning("Dropped %d empty message(s): %s", len(dropped), dropped)
+    return format_messages(valid)
+
+
 def extract_turn_usage(result: dict) -> dict:
     """Extract token usage fields from a run_conversation() result dict."""
     fields = (
@@ -382,7 +410,7 @@ def main() -> None:
     # Check for messages that were queued before this agent was spawned.
     pending = fetch_pending_messages(socket_path, session_id, agent_id)
     if pending:
-        queued = format_messages(pending)
+        queued = filter_and_format_messages(pending, socket_path, session_id, agent_id)
         user_message = f"{user_message}\n\n{queued}"
         log.info("Prepended %d pre-queued message(s) to initial turn", len(pending))
 
@@ -427,7 +455,7 @@ def main() -> None:
         # --- Check for non-urgent messages from other agents ---------------
         pending = fetch_pending_messages(socket_path, session_id, agent_id)
         if pending:
-            user_message = format_messages(pending)
+            user_message = filter_and_format_messages(pending, socket_path, session_id, agent_id)
             log.info("Continuing with %d pending message(s)", len(pending))
             continue
 
@@ -488,7 +516,16 @@ def main() -> None:
                         )
                         break
                     sender = interrupt_msg.get("from", "system")
-                    content = interrupt_msg.get("content", "")
+                    content = interrupt_msg.get("content", "") or ""
+                    if not content.strip():
+                        post_event(
+                            socket_path, session_id, agent_id,
+                            "bridge:warning",
+                            {"kind": "empty_message_dropped", "count": 1,
+                             "dropped": [{"sender": sender, "message_id": ""}]},
+                        )
+                        log.warning("Dropped empty idle-interrupt message from %s", sender)
+                        continue
                     user_message = (
                         "[System] You have been idle. An urgent message arrived. "
                         "Process it and continue coordinating.\n\n"
@@ -506,7 +543,7 @@ def main() -> None:
                         "[System] You have been idle waiting for specialist agents. "
                         "One or more have reported in. Process their updates and continue "
                         "coordinating the session (verify work, merge branches, spawn next agents, create PRs, etc.).\n\n"
-                        + format_messages(pending)
+                        + filter_and_format_messages(pending, socket_path, session_id, agent_id)
                     )
                     log.info("Resuming from idle with %d pending message(s)", len(pending))
                     break

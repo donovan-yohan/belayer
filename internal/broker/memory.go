@@ -3,6 +3,7 @@ package broker
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,6 +85,9 @@ func (b *MemoryBroker) Send(sessionID, agentID string, msg Message) error {
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now().UTC()
 	}
+	if strings.TrimSpace(msg.Content) == "" {
+		return fmt.Errorf("broker: refusing to send message with empty content (sender=%q recipient=%q)", msg.SenderID, agentID)
+	}
 
 	handler := b.lookupHandler(sessionID, agentID)
 	if handler == nil {
@@ -140,6 +144,9 @@ func (b *MemoryBroker) Broadcast(sessionID string, msg Message) error {
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now().UTC()
 	}
+	if strings.TrimSpace(msg.Content) == "" {
+		return fmt.Errorf("broker: refusing to broadcast message with empty content (sender=%q recipient=%q)", msg.SenderID, "<broadcast>")
+	}
 
 	b.mu.RLock()
 	agents := b.subscribers[sessionID]
@@ -170,6 +177,9 @@ func (b *MemoryBroker) Interrupt(sessionID, agentID string, msg Message) error {
 	}
 	if msg.Timestamp.IsZero() {
 		msg.Timestamp = time.Now().UTC()
+	}
+	if strings.TrimSpace(msg.Content) == "" {
+		return fmt.Errorf("broker: refusing to interrupt with empty content (sender=%q recipient=%q)", msg.SenderID, agentID)
 	}
 
 	handler := b.lookupHandler(sessionID, agentID)
