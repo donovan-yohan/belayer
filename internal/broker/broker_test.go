@@ -329,6 +329,11 @@ func TestSendRejectsEmptyContent(t *testing.T) {
 		})
 	}
 
+	// Nothing should have been delivered to the subscriber.
+	if col.count() != 0 {
+		t.Errorf("expected 0 delivered messages after empty-content sends, got %d", col.count())
+	}
+
 	// Valid content must still succeed.
 	msg := Message{SessionID: "sess1", SenderID: "sender", Type: MessageInstruction, Content: "hello", Urgent: true}
 	if err := b.Send("sess1", "agent1", msg); err != nil {
@@ -358,6 +363,11 @@ func TestBroadcastRejectsEmptyContent(t *testing.T) {
 		})
 	}
 
+	// Nothing should have been delivered to the subscriber.
+	if col.count() != 0 {
+		t.Errorf("expected 0 delivered messages after empty-content broadcasts, got %d", col.count())
+	}
+
 	// Valid content must still succeed.
 	msg := Message{SessionID: "sess1", SenderID: "sender2", Type: MessageStateChange, Content: "state-update"}
 	if err := b.Broadcast("sess1", msg); err != nil {
@@ -385,6 +395,11 @@ func TestInterruptRejectsEmptyContent(t *testing.T) {
 				t.Fatalf("expected error for content %q, got nil", tc.content)
 			}
 		})
+	}
+
+	// Nothing should have been delivered to the subscriber.
+	if col.count() != 0 {
+		t.Errorf("expected 0 delivered messages after empty-content interrupts, got %d", col.count())
 	}
 
 	// Valid content must still succeed.
