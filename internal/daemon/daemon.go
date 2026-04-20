@@ -78,6 +78,13 @@ type Config struct {
 	BridgeBaseURL string
 	BridgeProvider string
 
+	// SkipOpenRouterProbe, when true (the default when loaded from
+	// .belayer/config.yaml), injects HERMES_SKIP_OPENROUTER_PROBE=1 into every
+	// bridge subprocess so hermes-agent skips the openrouter metadata fetch at
+	// startup. Set false only when using a vendor that requires OpenRouter
+	// metadata. See bridge.Config.SkipOpenRouterProbe and docs/AGENT_ARCHITECTURE.md.
+	SkipOpenRouterProbe bool
+
 	// AuthToken, if non-empty, is the bearer token required on all TCP requests
 	// except GET /health. If TCPAddr is set and AuthToken is empty, New()
 	// auto-generates a 32-byte random token and logs it.

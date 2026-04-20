@@ -685,6 +685,52 @@ func TestBuildEnvHermesAgentPathTrimmed(t *testing.T) {
 	}
 }
 
+// TestBuildEnvSkipOpenRouterProbeInjected verifies that HERMES_SKIP_OPENROUTER_PROBE=1
+// is set when SkipOpenRouterProbe is true, and absent when false.
+func TestBuildEnvSkipOpenRouterProbeInjected(t *testing.T) {
+	base := Config{
+		SessionID:  "sess-probe",
+		AgentID:    "agent-probe",
+		Role:       "implementer",
+		Profile:    "default",
+		SocketPath: "/tmp/probe.sock",
+		RunDir:     t.TempDir(),
+	}
+
+	t.Run("true injects env var", func(t *testing.T) {
+		cfg := base
+		cfg.SkipOpenRouterProbe = true
+		env := BuildEnv(cfg)
+		envMap := envToMap(env)
+		if got, ok := envMap["HERMES_SKIP_OPENROUTER_PROBE"]; !ok {
+			t.Error("expected HERMES_SKIP_OPENROUTER_PROBE to be set when SkipOpenRouterProbe=true")
+		} else if got != "1" {
+			t.Errorf("HERMES_SKIP_OPENROUTER_PROBE = %q, want \"1\"", got)
+		}
+	})
+
+	t.Run("false omits env var", func(t *testing.T) {
+		cfg := base
+		cfg.SkipOpenRouterProbe = false
+		env := BuildEnv(cfg)
+		envMap := envToMap(env)
+		if _, ok := envMap["HERMES_SKIP_OPENROUTER_PROBE"]; ok {
+			t.Error("expected HERMES_SKIP_OPENROUTER_PROBE to be absent when SkipOpenRouterProbe=false")
+		}
+	})
+}
+
+// envToMap converts a KEY=VALUE slice into a map for convenient test lookups.
+func envToMap(env []string) map[string]string {
+	m := make(map[string]string, len(env))
+	for _, e := range env {
+		if idx := strings.IndexByte(e, '='); idx >= 0 {
+			m[e[:idx]] = e[idx+1:]
+		}
+	}
+	return m
+}
+
 // TestBuildEnvPYTHONPATHInteriorEmptySegmentsPassedThrough documents current
 // behavior: BuildEnv does not normalize interior empty segments supplied in
 // the caller's PYTHONPATH. Callers with cwd-sensitive environments must

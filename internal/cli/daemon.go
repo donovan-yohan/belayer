@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/daemon"
 	"github.com/donovan-yohan/belayer/internal/runtime"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
@@ -125,6 +126,15 @@ func newDaemonCmd() *cobra.Command {
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "belayer runtime: command (loaded from %s/.belayer/config.yaml)\n", wd)
 			}
+			// Load bridge config (skip_openrouter_probe etc.) from .belayer/config.yaml.
+			// Default: SkipOpenRouterProbe=true — suppresses the openrouter metadata
+			// probe that causes proxy-denied CONNECTs on clamshell sandboxes.
+			bridgeCfg, err := bridge.LoadProjectConfig(wd)
+			if err != nil {
+				return fmt.Errorf("load bridge config: %w", err)
+			}
+			cfg.SkipOpenRouterProbe = bridgeCfg.SkipOpenRouterProbe
+
 			// If the workdir has a .belayer/ directory, also bind a Unix socket
 			// there so clamshell bridge subprocesses can reach the daemon via the
 			// bind-mounted workspace path (/workspace/.belayer/daemon.sock).
