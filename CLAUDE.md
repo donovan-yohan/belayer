@@ -47,6 +47,8 @@ Each directory contains:
 
 System prompts are loaded by the daemon at spawn time and injected via Hermes `ephemeral_system_prompt`. All agents use the `default` Hermes profile for now (see profile bootstrap TODO in AGENT_ARCHITECTURE.md).
 
+The `hermes_bridge` Python package lives in the daemon's runtime dir (default `$XDG_STATE_HOME/belayer/runtime`), not inside any workspace. This protects the module from workspace agent cleanup (`rm -rf .belayer/`).
+
 ## PM completion gate
 
 When the supervisor calls `belayer finish`, the daemon intercepts and auto-spawns a PM agent for adversarial spec-vs-reality verification. The PM approves or rejects (up to 3 cycles). See `docs/AGENT_ARCHITECTURE.md` for full details.

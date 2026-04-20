@@ -72,9 +72,6 @@ func TestInitScaffoldsPersistenceStrategyBlock(t *testing.T) {
 	if !strings.Contains(got, "\npersistence_strategy:\n") {
 		t.Fatalf("expected 'persistence_strategy:' block in config.yaml, got:\n%s", got)
 	}
-	// Each scaffolded bullet must be present — these are the contract with
-	// the supervisor prompt and the daemon intercept. If one is removed
-	// silently, operators lose the default persistence behavior.
 	for _, want := range []string{
 		"incomplete/<session-id>",
 		"Push the branch to origin",
@@ -117,7 +114,6 @@ func TestInitIdempotentReRun(t *testing.T) {
 		t.Fatalf("first init: %v", err)
 	}
 
-	// Edit config.yaml so we can prove the second run does not clobber it.
 	configPath := filepath.Join(dir, ".belayer", "config.yaml")
 	const userEdit = "# user customization\n"
 	if err := os.WriteFile(configPath, []byte(userEdit), 0o644); err != nil {
@@ -156,7 +152,6 @@ func TestInitForceRefreshesAgentsButPreservesConfig(t *testing.T) {
 		t.Fatalf("first init: %v", err)
 	}
 
-	// Mutate a shipped agent file and a user config file.
 	agentFile := filepath.Join(dir, ".belayer", "agents", "supervisor", "system-prompt.md")
 	if err := os.WriteFile(agentFile, []byte("local hack"), 0o644); err != nil {
 		t.Fatalf("mutate agent: %v", err)
@@ -206,10 +201,14 @@ func TestInitCreatesGitignoreWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
 	}
-	for _, want := range []string{"/.belayer/runs/", "/.belayer/worktrees/", "/.belayer/hermes_bridge/"} {
+	// hermes_bridge/ is no longer in the workspace; it lives in the runtime dir.
+	for _, want := range []string{"/.belayer/runs/", "/.belayer/worktrees/"} {
 		if !strings.Contains(string(got), want) {
 			t.Fatalf("expected %q in .gitignore, got: %s", want, string(got))
 		}
+	}
+	if strings.Contains(string(got), "/.belayer/hermes_bridge/") {
+		t.Fatalf("/.belayer/hermes_bridge/ entry should not appear in workspace .gitignore; got: %s", string(got))
 	}
 }
 
@@ -298,9 +297,7 @@ func TestAutoInitIfMissingScaffoldsAndAnnounces(t *testing.T) {
 		t.Fatalf("expected scaffolded supervisor prompt: %v", err)
 	}
 
-	// Second call must be silent — the bridge refresh is a hot-path no-op from
-	// the user's perspective (files may be rewritten byte-for-byte but the
-	// announce is suppressed).
+	// Second call must be silent.
 	out2 := &bytes.Buffer{}
 	if err := autoInitIfMissing(dir, out2); err != nil {
 		t.Fatalf("autoInit second call: %v", err)
@@ -310,7 +307,10 @@ func TestAutoInitIfMissingScaffoldsAndAnnounces(t *testing.T) {
 	}
 }
 
-func TestInitExtractsHermesBridge(t *testing.T) {
+// TestInitDoesNotExtractHermesBridgeToWorkspace verifies that 'belayer init'
+// no longer places hermes_bridge/ inside the workspace .belayer/ directory.
+// Bridge extraction now happens at daemon startup via extractBridgeToRuntimeDir.
+func TestInitDoesNotExtractHermesBridgeToWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	cmd := newInitCmd()
 	cmd.SetOut(&bytes.Buffer{})
@@ -321,21 +321,31 @@ func TestInitExtractsHermesBridge(t *testing.T) {
 	}
 
 	bridgeDir := filepath.Join(dir, ".belayer", "hermes_bridge")
-	// __main__.py is the package entry point; its absence is a hard failure.
+	if _, err := os.Stat(bridgeDir); err == nil {
+		t.Fatalf("hermes_bridge/ should not be in workspace .belayer/ after init; found at %s", bridgeDir)
+	}
+}
+
+// TestExtractBridgeToRuntimeDirExtractsPackage verifies that the runtime
+// extraction function places hermes_bridge/ at the correct location and
+// filters dev-only files.
+func TestExtractBridgeToRuntimeDirExtractsPackage(t *testing.T) {
+	runtimeDir := t.TempDir()
+	if err := extractBridgeToRuntimeDir(runtimeDir, ""); err != nil {
+		t.Fatalf("extractBridgeToRuntimeDir: %v", err)
+	}
+
+	bridgeDir := filepath.Join(runtimeDir, "hermes_bridge")
 	if _, err := os.Stat(filepath.Join(bridgeDir, "__main__.py")); err != nil {
 		t.Fatalf("expected hermes_bridge/__main__.py to exist: %v", err)
 	}
-	// __init__.py makes it an importable package.
 	if _, err := os.Stat(filepath.Join(bridgeDir, "__init__.py")); err != nil {
 		t.Fatalf("expected hermes_bridge/__init__.py to exist: %v", err)
 	}
-
-	// __pycache__ from the host build must never leak into the extracted copy.
 	if _, err := os.Stat(filepath.Join(bridgeDir, "__pycache__")); err == nil {
 		t.Fatalf("__pycache__ was extracted; expected it to be filtered")
 	}
 
-	// No *.pyc files at any depth, and no dev-only trees (tests/, *.md).
 	walkErr := filepath.Walk(bridgeDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -362,59 +372,89 @@ func TestInitExtractsHermesBridge(t *testing.T) {
 	}
 }
 
-func TestInitRefreshesBridgeOnReInit(t *testing.T) {
-	dir := t.TempDir()
+// TestExtractBridgeToRuntimeDirIsIdempotent verifies that re-extracting the
+// bridge restores drifted files without blowing up.
+func TestExtractBridgeToRuntimeDirIsIdempotent(t *testing.T) {
+	runtimeDir := t.TempDir()
 
-	first := newInitCmd()
-	first.SetOut(&bytes.Buffer{})
-	first.SetErr(&bytes.Buffer{})
-	first.SetArgs([]string{"--target", dir})
-	if err := first.Execute(); err != nil {
-		t.Fatalf("first init: %v", err)
+	if err := extractBridgeToRuntimeDir(runtimeDir, ""); err != nil {
+		t.Fatalf("first extract: %v", err)
 	}
 
-	mainPath := filepath.Join(dir, ".belayer", "hermes_bridge", "__main__.py")
+	mainPath := filepath.Join(runtimeDir, "hermes_bridge", "__main__.py")
 	originalBytes, err := os.ReadFile(mainPath)
 	if err != nil {
 		t.Fatalf("read extracted __main__.py: %v", err)
 	}
 
-	// Simulate drift: replace the extracted bridge file with garbage.
 	if err := os.WriteFile(mainPath, []byte("# drifted\n"), 0o644); err != nil {
 		t.Fatalf("seed drift: %v", err)
 	}
 
-	second := newInitCmd()
-	out := &bytes.Buffer{}
-	second.SetOut(out)
-	second.SetErr(out)
-	second.SetArgs([]string{"--target", dir})
-	if err := second.Execute(); err != nil {
-		t.Fatalf("second init: %v", err)
-	}
-
-	// Output must announce the bridge refresh.
-	if !strings.Contains(out.String(), "refreshed") {
-		t.Fatalf("expected re-init output to mention refreshed bridge files, got: %s", out.String())
+	if err := extractBridgeToRuntimeDir(runtimeDir, ""); err != nil {
+		t.Fatalf("second extract: %v", err)
 	}
 
 	got, err := os.ReadFile(mainPath)
 	if err != nil {
-		t.Fatalf("read bridge after re-init: %v", err)
+		t.Fatalf("read bridge after re-extract: %v", err)
 	}
 	if !bytes.Equal(got, originalBytes) {
-		t.Fatalf("re-init did not restore bridge __main__.py; drift persisted")
+		t.Fatalf("re-extract did not restore bridge __main__.py; drift persisted")
 	}
 }
 
-func TestInitGitignoreUpgradeAppendsMissingEntry(t *testing.T) {
+// TestExtractBridgeToRuntimeDirPrunesStaleFiles verifies that stale files
+// (present on disk but absent from the embedded bridge) are removed.
+func TestExtractBridgeToRuntimeDirPrunesStaleFiles(t *testing.T) {
+	runtimeDir := t.TempDir()
+
+	if err := extractBridgeToRuntimeDir(runtimeDir, ""); err != nil {
+		t.Fatalf("first extract: %v", err)
+	}
+
+	bridgeDir := filepath.Join(runtimeDir, "hermes_bridge")
+	stalePath := filepath.Join(bridgeDir, "stale_removed_module.py")
+	if err := os.WriteFile(stalePath, []byte("# stale\n"), 0o644); err != nil {
+		t.Fatalf("seed stale file: %v", err)
+	}
+	staleSubdir := filepath.Join(bridgeDir, "removed_subpackage")
+	if err := os.MkdirAll(staleSubdir, 0o755); err != nil {
+		t.Fatalf("seed stale subdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(staleSubdir, "__init__.py"), []byte(""), 0o644); err != nil {
+		t.Fatalf("seed stale subdir file: %v", err)
+	}
+
+	if err := extractBridgeToRuntimeDir(runtimeDir, ""); err != nil {
+		t.Fatalf("second extract: %v", err)
+	}
+
+	if _, err := os.Stat(stalePath); err == nil {
+		t.Fatalf("stale file survived re-extract: %s", stalePath)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat stale file: %v", err)
+	}
+	if _, err := os.Stat(staleSubdir); err == nil {
+		t.Fatalf("stale subdir survived re-extract: %s", staleSubdir)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat stale subdir: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(bridgeDir, "__main__.py")); err != nil {
+		t.Fatalf("expected __main__.py after prune: %v", err)
+	}
+}
+
+// TestInitGitignoreUpgradeIsNoOpWhenAllEntriesPresent verifies that init
+// does not append duplicate entries when all current entries are already
+// present.
+func TestInitGitignoreUpgradeIsNoOpWhenAllEntriesPresent(t *testing.T) {
 	dir := t.TempDir()
-	// Seed a .gitignore that looks like a project initialized under an older
-	// belayer version: it has the marker and the two historical entries but
-	// not /.belayer/hermes_bridge/.
-	legacy := gitignoreHeader + "\n/.belayer/runs/\n/.belayer/worktrees/\n"
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(legacy), 0o644); err != nil {
-		t.Fatalf("seed legacy gitignore: %v", err)
+	// Seed a .gitignore with the current header and both entries.
+	existing := gitignoreHeader + "\n/.belayer/runs/\n/.belayer/worktrees/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0o644); err != nil {
+		t.Fatalf("seed gitignore: %v", err)
 	}
 
 	cmd := newInitCmd()
@@ -429,124 +469,58 @@ func TestInitGitignoreUpgradeAppendsMissingEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read gitignore: %v", err)
 	}
-	gotStr := string(got)
-	if !strings.Contains(gotStr, "/.belayer/hermes_bridge/") {
-		t.Fatalf("expected missing entry to be appended, got:\n%s", gotStr)
+	if strings.Contains(string(got), gitignoreUpgradeHeader) {
+		t.Fatalf("upgrade header should not appear when all entries present:\n%s", string(got))
 	}
-	// Must not duplicate entries the user already had.
-	if strings.Count(gotStr, "/.belayer/runs/") != 1 {
-		t.Fatalf("existing /.belayer/runs/ entry should not be duplicated:\n%s", gotStr)
-	}
-	// Original marker should still appear exactly once — upgrade uses a
-	// separate labelled block.
-	if strings.Count(gotStr, gitignoreMarker) != 1 {
-		t.Fatalf("marker should appear exactly once; got:\n%s", gotStr)
-	}
-	// Upgrade header visible so users see where the new entry came from.
-	if !strings.Contains(gotStr, gitignoreUpgradeHeader) {
-		t.Fatalf("expected upgrade header in gitignore, got:\n%s", gotStr)
-	}
-
-	// Re-running should be a no-op now — all entries are present.
-	second := newInitCmd()
-	second.SetOut(&bytes.Buffer{})
-	second.SetErr(&bytes.Buffer{})
-	second.SetArgs([]string{"--target", dir})
-	if err := second.Execute(); err != nil {
-		t.Fatalf("second init: %v", err)
-	}
-	got2, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	if err != nil {
-		t.Fatalf("read gitignore #2: %v", err)
-	}
-	if !bytes.Equal(got, got2) {
-		t.Fatalf("second init mutated gitignore; before=%q after=%q", got, got2)
+	if strings.Count(string(got), "/.belayer/runs/") != 1 {
+		t.Fatalf("existing /.belayer/runs/ entry should not be duplicated:\n%s", string(got))
 	}
 }
 
-func TestInitPrunesStaleBridgeFiles(t *testing.T) {
-	dir := t.TempDir()
+// TestResolveRuntimeDirPrecedence verifies the env var and XDG resolution order.
+func TestResolveRuntimeDirPrecedence(t *testing.T) {
+	t.Setenv("BELAYER_RUNTIME_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "")
 
-	first := newInitCmd()
-	first.SetOut(&bytes.Buffer{})
-	first.SetErr(&bytes.Buffer{})
-	first.SetArgs([]string{"--target", dir})
-	if err := first.Execute(); err != nil {
-		t.Fatalf("first init: %v", err)
-	}
+	t.Run("env_var_wins", func(t *testing.T) {
+		t.Setenv("BELAYER_RUNTIME_DIR", "/custom/runtime")
+		got, err := resolveRuntimeDir("")
+		if err != nil {
+			t.Fatalf("resolveRuntimeDir: %v", err)
+		}
+		if got != "/custom/runtime" {
+			t.Fatalf("expected /custom/runtime, got %q", got)
+		}
+	})
 
-	// Simulate an upstream rename/deletion by planting a stale file in the
-	// extracted tree that doesn't exist in the embedded bridge.
-	bridgeDir := filepath.Join(dir, ".belayer", "hermes_bridge")
-	stalePath := filepath.Join(bridgeDir, "stale_removed_module.py")
-	if err := os.WriteFile(stalePath, []byte("# stale\n"), 0o644); err != nil {
-		t.Fatalf("seed stale file: %v", err)
-	}
-	staleSubdir := filepath.Join(bridgeDir, "removed_subpackage")
-	if err := os.MkdirAll(staleSubdir, 0o755); err != nil {
-		t.Fatalf("seed stale subdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(staleSubdir, "__init__.py"), []byte(""), 0o644); err != nil {
-		t.Fatalf("seed stale subdir file: %v", err)
-	}
+	t.Run("xdg_state_home", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", "/xdg/state")
+		got, err := resolveRuntimeDir("")
+		if err != nil {
+			t.Fatalf("resolveRuntimeDir: %v", err)
+		}
+		if got != "/xdg/state/belayer/runtime" {
+			t.Fatalf("expected /xdg/state/belayer/runtime, got %q", got)
+		}
+	})
 
-	second := newInitCmd()
-	second.SetOut(&bytes.Buffer{})
-	second.SetErr(&bytes.Buffer{})
-	second.SetArgs([]string{"--target", dir})
-	if err := second.Execute(); err != nil {
-		t.Fatalf("second init: %v", err)
-	}
+	t.Run("config_yaml_runtime_dir", func(t *testing.T) {
+		workspaceDir := t.TempDir()
+		belayerDir := filepath.Join(workspaceDir, ".belayer")
+		if err := os.MkdirAll(belayerDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		cfgContent := "log_level: standard\nruntime_dir: /from/config\n"
+		if err := os.WriteFile(filepath.Join(belayerDir, "config.yaml"), []byte(cfgContent), 0o644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
 
-	if _, err := os.Stat(stalePath); err == nil {
-		t.Fatalf("stale file survived re-init: %s", stalePath)
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("stat stale file: %v", err)
-	}
-	if _, err := os.Stat(staleSubdir); err == nil {
-		t.Fatalf("stale subdir survived re-init: %s", staleSubdir)
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("stat stale subdir: %v", err)
-	}
-
-	// The real bridge files must still be present.
-	if _, err := os.Stat(filepath.Join(bridgeDir, "__main__.py")); err != nil {
-		t.Fatalf("expected __main__.py after prune: %v", err)
-	}
-}
-
-func TestAutoInitRefreshesBridgeOnExistingProject(t *testing.T) {
-	dir := t.TempDir()
-
-	// First auto-init creates everything.
-	if err := autoInitIfMissing(dir, &bytes.Buffer{}); err != nil {
-		t.Fatalf("first autoInit: %v", err)
-	}
-
-	mainPath := filepath.Join(dir, ".belayer", "hermes_bridge", "__main__.py")
-	originalBytes, err := os.ReadFile(mainPath)
-	if err != nil {
-		t.Fatalf("read bridge: %v", err)
-	}
-	if err := os.WriteFile(mainPath, []byte("# drifted\n"), 0o644); err != nil {
-		t.Fatalf("seed drift: %v", err)
-	}
-
-	// Second auto-init (simulating another `belayer run`) must refresh bridge
-	// silently — the announce is suppressed on already-initialized projects.
-	out := &bytes.Buffer{}
-	if err := autoInitIfMissing(dir, out); err != nil {
-		t.Fatalf("second autoInit: %v", err)
-	}
-	if out.Len() != 0 {
-		t.Fatalf("expected silent refresh on existing project, got: %s", out.String())
-	}
-
-	got, err := os.ReadFile(mainPath)
-	if err != nil {
-		t.Fatalf("read bridge after auto re-init: %v", err)
-	}
-	if !bytes.Equal(got, originalBytes) {
-		t.Fatalf("auto-init did not refresh drifted bridge file")
-	}
+		got, err := resolveRuntimeDir(workspaceDir)
+		if err != nil {
+			t.Fatalf("resolveRuntimeDir: %v", err)
+		}
+		if got != "/from/config" {
+			t.Fatalf("expected /from/config, got %q", got)
+		}
+	})
 }

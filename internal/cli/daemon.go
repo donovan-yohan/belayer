@@ -61,6 +61,20 @@ func newDaemonCmd() *cobra.Command {
 			if belayerRoot != "" {
 				cfg.BelayerRoot = belayerRoot
 			}
+
+			// Resolve the runtime dir and extract the embedded hermes_bridge package.
+			// This must happen before daemon.New so bridge subprocesses spawned
+			// immediately after Start have the package available.
+			runtimeDir, err := resolveRuntimeDir(wd0)
+			if err != nil {
+				return fmt.Errorf("resolve runtime dir: %w", err)
+			}
+			if err := extractBridgeToRuntimeDir(runtimeDir, wd0); err != nil {
+				return fmt.Errorf("extract bridge to runtime dir: %w", err)
+			}
+			cfg.RuntimeDir = runtimeDir
+			fmt.Fprintf(cmd.OutOrStdout(), "belayer runtime dir: %s\n", runtimeDir)
+
 			if tcpAddr != "" {
 				cfg.TCPAddr = tcpAddr
 			}

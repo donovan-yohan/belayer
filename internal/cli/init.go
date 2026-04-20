@@ -138,8 +138,7 @@ upgrading belayer); existing config.yaml and policies/ are never overwritten.`,
 			}
 
 			if result.alreadyInitialized && !force {
-				fmt.Fprintf(out, "belayer already initialized at %s (refreshed %d bridge file(s))\n",
-					belayerDir, result.bridgeRefreshed)
+				fmt.Fprintf(out, "belayer already initialized at %s\n", belayerDir)
 				// Surface any upgrade changes (e.g. new .gitignore entries
 				// appended on a binary bump) so the user sees them even though
 				// the rest of the re-init path is silent.
@@ -165,14 +164,9 @@ upgrading belayer); existing config.yaml and policies/ are never overwritten.`,
 
 // scaffoldResult records what scaffold produced so callers can render output
 // (or, in the auto-init path from `belayer run`, skip output entirely).
-//
-// bridgeRefreshed is separate from created because bridge files are always
-// overwritten on every init — on re-init we want a one-line refresh summary
-// rather than N lines of "+ .belayer/hermes_bridge/<file>" noise.
 type scaffoldResult struct {
 	alreadyInitialized bool
 	created            []string
-	bridgeRefreshed    int
 }
 
 // scaffold creates belayerDir and its standard children. It is the core init
@@ -180,9 +174,9 @@ type scaffoldResult struct {
 // directly.
 //
 // On re-init without --force, user-owned files (config.yaml, policies/,
-// agents/) are not touched — the CLI reports "already initialized". The
-// hermes_bridge/ tree is refreshed unconditionally on every call so the
-// extracted copy always matches the binary version.
+// agents/) are not touched — the CLI reports "already initialized".
+// hermes_bridge/ is no longer extracted here; the daemon extracts it to the
+// runtime dir at startup (see internal/cli/runtime.go).
 func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 	var result scaffoldResult
 
@@ -195,34 +189,16 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 		return result, fmt.Errorf("stat %s: %w", belayerDir, err)
 	}
 
-	for _, sub := range []string{"", "policies", "agents", "hermes_bridge"} {
+	for _, sub := range []string{"", "policies", "agents"} {
 		p := filepath.Join(belayerDir, sub)
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			return result, fmt.Errorf("mkdir %s: %w", p, err)
 		}
 	}
 
-	// Bridge extraction runs on every scaffold, not gated by --force. It is
-	// machine-owned: the extracted tree is overwritten so it always matches
-	// the running binary's embedded copy.
-	bridgeRoot := filepath.Join(belayerDir, "hermes_bridge")
-	bridgeCopied, err := copyDefaultBridge(bridgeRoot)
-	if err != nil {
-		return result, err
-	}
-	result.bridgeRefreshed = len(bridgeCopied)
-	// On fresh init, surface bridge files in the created list so the user
-	// sees what was written. On re-init we rely on bridgeRefreshed for the
-	// one-line summary.
-	if !result.alreadyInitialized {
-		for _, p := range bridgeCopied {
-			result.created = append(result.created, "  + "+relativize(belayerDir, p))
-		}
-	}
-
 	// Gitignore maintenance runs before the re-init early return so that
-	// binary upgrades which add new entries (e.g. /.belayer/hermes_bridge/)
-	// land in already-initialized projects, not just fresh ones.
+	// binary upgrades which add new entries land in already-initialized
+	// projects, not just fresh ones.
 	gitignoreNote, err := ensureGitignoreEntries(filepath.Dir(belayerDir))
 	if err != nil {
 		return result, err
@@ -274,11 +250,13 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 // match at the repo root — nested .belayer/ inside subprojects (e.g. inside
 // .belayer/worktrees/...) are not affected by these rules.
 //
-// hermes_bridge/ is gitignored because the tree is extracted from the binary
-// on every `belayer init` and always overwrites — committing it would drift
-// against the binary version.
+// Note: .belayer/ contains per-run state (runs/, worktrees/) that is machine-
+// generated and should not be committed. The hermes_bridge Python package is
+// NOT stored here — it lives in the daemon's runtime dir
+// (default $XDG_STATE_HOME/belayer/runtime) so workspace agents cannot destroy
+// it. Only agents/, config.yaml, and policies/ are committed.
 const (
-	gitignoreHeader        = "# belayer — per-run state (committed: agents/, config.yaml, policies/)"
+	gitignoreHeader        = "# belayer — per-run state (.belayer/ contains runs/ and worktrees/; hermes_bridge is in runtime dir)"
 	gitignoreUpgradeHeader = "# belayer — added on upgrade"
 	gitignoreMarker        = "# belayer — per-run state"
 )
@@ -286,7 +264,6 @@ const (
 var gitignoreEntries = []string{
 	"/.belayer/runs/",
 	"/.belayer/worktrees/",
-	"/.belayer/hermes_bridge/",
 }
 
 // ensureGitignoreEntries makes sure every entry in gitignoreEntries is present
@@ -405,73 +382,6 @@ func copyDefaultAgents(dst string, force bool) ([]string, error) {
 	return written, nil
 }
 
-// copyDefaultBridge walks the embedded hermes_bridge/ tree and writes each
-// file into dst. Unlike copyDefaultAgents it always overwrites — the bridge
-// is machine-generated Go+Python glue pinned to this binary's version, so a
-// stale file on disk would produce a hard-to-debug version-skew bug.
-//
-// The destination is wiped before extraction so files renamed or deleted in
-// later binary versions don't linger on disk and get picked up by Python's
-// import machinery. The tree is gitignored and fully machine-owned, so this
-// is safe — nothing user-authored should live here.
-//
-// __pycache__ directories and *.pyc files are skipped so host bytecode from
-// developer builds never leaks into projects.
-func copyDefaultBridge(dst string) ([]string, error) {
-	if err := os.RemoveAll(dst); err != nil {
-		return nil, fmt.Errorf("reset bridge tree %s: %w", dst, err)
-	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir %s: %w", dst, err)
-	}
-
-	var written []string
-	err := fs.WalkDir(belayer.DefaultBridge, "hermes_bridge", func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if path == "hermes_bridge" {
-			return nil
-		}
-		rel := strings.TrimPrefix(path, "hermes_bridge/")
-		// Skip anything that's dev-only and shouldn't leak into user projects:
-		//   - __pycache__/ (bytecode)
-		//   - *.pyc (straggler bytecode)
-		//   - tests/ (pytest suite, only useful in-repo)
-		//   - *.md (README and any future dev notes)
-		// Returning SkipDir on a directory prunes its whole subtree.
-		base := filepath.Base(rel)
-		if d.IsDir() && (base == "__pycache__" || base == "tests") {
-			return fs.SkipDir
-		}
-		if !d.IsDir() && (strings.HasSuffix(base, ".pyc") || strings.HasSuffix(base, ".md")) {
-			return nil
-		}
-		out := filepath.Join(dst, rel)
-
-		if d.IsDir() {
-			if err := os.MkdirAll(out, 0o755); err != nil {
-				return fmt.Errorf("mkdir %s: %w", out, err)
-			}
-			return nil
-		}
-
-		data, err := belayer.DefaultBridge.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read embedded %s: %w", path, err)
-		}
-		if err := os.WriteFile(out, data, 0o644); err != nil {
-			return fmt.Errorf("write %s: %w", out, err)
-		}
-		written = append(written, out)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return written, nil
-}
-
 // writeIfMissing writes data to path only if path does not already exist.
 // Returns true when a file was created, false when one was already present.
 // Existing files are never touched — config.yaml and policies/ are
@@ -499,11 +409,11 @@ func relativize(parent, p string) string {
 }
 
 // autoInitIfMissing is the entry point for `belayer run` to scaffold .belayer/
-// without forcing the user to call `belayer init` first. Scaffold is invoked
-// unconditionally so the embedded hermes_bridge/ tree is refreshed on every
-// run, keeping the extracted copy in sync with the binary. On a fresh scaffold
-// (no prior .belayer/) a notice is written to w; the bridge refresh on existing
-// projects is silent to avoid log spam on the hot path.
+// without forcing the user to call `belayer init` first. On a fresh scaffold
+// (no prior .belayer/) a notice is written to w; re-init on existing projects
+// is silent to avoid log spam on the hot path.
+// Note: hermes_bridge extraction is no longer done here — the daemon handles
+// it at startup via extractBridgeToRuntimeDir.
 func autoInitIfMissing(workdir string, w io.Writer) error {
 	belayerDir := filepath.Join(workdir, ".belayer")
 	result, err := scaffold(belayerDir, false)
