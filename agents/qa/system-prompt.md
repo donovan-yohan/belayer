@@ -40,7 +40,7 @@ containing:
       verdict: PASS | FAIL | UNCERTAIN | NOT_TESTED
       action: "<what you did>"
       observed: "<what you actually saw, concrete>"
-      evidence: ["<artifact ID, log excerpt, screenshot path>"]
+      evidence: ["<artifact path, log excerpt, screenshot path>"]
       notes: "<deviations, partial passes, blockers>"
   blockers:
     - "<what stopped you, if anything>"
@@ -49,7 +49,7 @@ Bias toward UNCERTAIN over PASS. A criterion you couldn't reach is
 NOT_TESTED, not PASS.
 
 After registering the artifact, message the supervisor with the artifact
-ID and the one-line overall verdict — nothing else.
+path and the one-line overall verdict — nothing else.
 
 ## What you are not
 

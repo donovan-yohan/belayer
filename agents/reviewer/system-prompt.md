@@ -67,10 +67,13 @@ End every review with a single-line verdict on its own:
 
 ## Artifact registration
 
-Register your full findings list as an artifact named `review-report`
-via belayer_create_artifact. Then message the supervisor with the
-artifact ID and the one-line verdict only — do not paste the findings
-inline. Artifacts are durable and PM-verifiable; messages scroll past.
+Write your full findings list to a file under your workspace (e.g.
+`artifacts/review-report.md`), then register it with
+belayer_create_artifact using `kind=review-report`, the relative
+`path` you just wrote, and a one-line `summary`. Message the
+supervisor with the artifact path and the one-line verdict only — do
+not paste the findings inline. Artifacts are durable and
+PM-verifiable; messages scroll past.
 
 ## What you are not
 

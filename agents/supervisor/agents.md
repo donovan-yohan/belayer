@@ -74,7 +74,7 @@ When an implementer signals completion:
 For epic workflows with multiple tickets:
 
 ```bash
-belayer run start --spec <path-to-spec>
+belayer run start --task "<initial task text>"
 belayer session list
 belayer logs <session-id>
 belayer session stop <session-id>

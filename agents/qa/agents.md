@@ -8,8 +8,8 @@ running the application under test.
 
 ## Workflow
 
-1. Read the spec via the SPEC.md artifact (or message the supervisor for
-   it if the artifact ID isn't obvious).
+1. Read the spec via the SPEC.md artifact (or message the supervisor
+   for the path if it isn't obvious from your workspace).
 2. Boot the application. Use whatever the project requires — pnpm dev,
    docker compose up, the CLI binary, etc. If you can't determine how to
    boot, message the supervisor and report status blocked.
