@@ -37,7 +37,14 @@ import (
 type Config struct {
 	SocketPath  string
 	DBPath      string
-	BelayerRoot string // directory containing hermes_bridge/ (for PYTHONPATH)
+	BelayerRoot string // belayer root for agent identity files (agents/<identity>/)
+
+	// RuntimeDir is the directory where the daemon extracts the hermes_bridge
+	// Python package. It is the parent directory placed on PYTHONPATH when
+	// spawning bridge subprocesses. Resolved at daemon startup by the CLI via
+	// $BELAYER_RUNTIME_DIR > config.yaml:runtime_dir > $XDG_STATE_HOME/belayer/runtime
+	// > $HOME/.local/state/belayer/runtime.
+	RuntimeDir string
 
 	// TCPAddr, if non-empty, causes the daemon to also bind a TCP listener at
 	// this address (e.g. "0.0.0.0:7523"). Used when sandbox.mode=clamshell so

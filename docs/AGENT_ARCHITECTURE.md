@@ -622,6 +622,8 @@ flowchart LR
 | `internal/daemon/agents.go` | `spawnAgentInternal` for auto-spawning PM; `handleFinishAgent` intercepts supervisor finish to trigger PM gate; agent system-prompt resolution from `.belayer/agents/<name>/system-prompt.md` then `<BelayerRoot>/agents/<name>/system-prompt.md` |
 | `internal/bridge/bridge.go` | `Config.SystemPrompt` field, passed as `BELAYER_SYSTEM_PROMPT` env var |
 
+> **hermes_bridge location.** The `hermes_bridge` Python package is extracted from the binary at daemon startup into the **runtime dir** (default `$XDG_STATE_HOME/belayer/runtime`, or `$HOME/.local/state/belayer/runtime`). It does NOT live inside any workspace's `.belayer/` directory. This means workspace agents running destructive cleanup (e.g. `rm -rf .belayer/`) cannot destroy the module required for spawning peer bridges. Override the location via `BELAYER_RUNTIME_DIR` or `runtime_dir:` in `.belayer/config.yaml`.
+
 ---
 
 ## Exit-condition resolution

@@ -495,7 +495,12 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		Workdir:         workdir,
 		SocketPath:      socketPath,
 		RunDir:          runDir,
-		BelayerRoot:     d.config.BelayerRoot,
+		// BelayerRoot on bridge.Config is the parent directory placed on PYTHONPATH
+		// so that `python -m hermes_bridge` resolves correctly. We prefer the
+		// daemon's resolved RuntimeDir (extracted at daemon startup outside the
+		// workspace) so that workspace agents running `rm -rf .belayer/` cannot
+		// destroy the module required for spawning peer bridges.
+		BelayerRoot:     d.config.RuntimeDir,
 		BelayerTools:    belayerTools,
 		TranscriptPath:  transcriptPath,
 		LogLevel:        sess.LogLevel,
@@ -503,13 +508,12 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// In clamshell mode the bridge runs inside the Docker container where the
 	// host hermes venv path doesn't exist; use the container's system python3.
 	// Also inject proxy vars so LLM API calls route through the egress broker.
-	// BelayerRoot is overridden to the container's view of the extracted
-	// hermes_bridge parent (/workspace/.belayer) so `python3 -m hermes_bridge`
-	// imports the copy placed there by `belayer init`, not the host path.
+	// BelayerRoot is overridden to the container's view of the runtime dir
+	// bind-mounted into the container so `python3 -m hermes_bridge` resolves.
 	if ss.mode == "clamshell" {
 		cfg.Cmd = []string{"python3", "-m", "hermes_bridge"}
 		cfg.HTTPProxy = "http://proxy.internal:3128"
-		cfg.BelayerRoot = "/workspace/.belayer"
+		cfg.BelayerRoot = "/opt/belayer/runtime"
 		// The bridge runs inside the container where the host workspace is
 		// mounted at /workspace. Translate transcriptPath (built from the host
 		// path) so the bridge can actually open it; otherwise transcript capture
@@ -518,15 +522,12 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 			cfg.TranscriptPath = translateHostPathToContainer(cfg.TranscriptPath, sess.WorkspaceDir)
 		}
 	}
-	// Universal fallback: when no BelayerRoot was configured (CLI flag, env, or
-	// clamshell override above), look for an extracted hermes_bridge under
-	// workdir/.belayer. This lets belayer work inside any outer sandbox
-	// (including clamshell-as-devbox with mode=noop) without requiring the
-	// caller to plumb --belayer-root through every layer.
-	//
-	// Probe both the (possibly-worktree) workdir and the original repo root:
-	// worktrees are gitignored so .belayer/ only exists in the main checkout,
-	// and branch-based specialists would otherwise miss the extracted bridge.
+	// Universal fallback: when RuntimeDir was not set (e.g. tests that skip the
+	// CLI wiring path) AND BELAYER_RUNTIME_DIR is unset, fall back to legacy
+	// workspace location first, then workdir-based probe. The legacy path also
+	// emits a deprecation warning (handled by extractBridgeToRuntimeDir in normal
+	// operation; here we probe without warning since this is the test / no-daemon
+	// path).
 	if cfg.BelayerRoot == "" {
 		for _, base := range []string{workdir, repoWorkdir} {
 			if base == "" {
