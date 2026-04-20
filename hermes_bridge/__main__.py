@@ -92,12 +92,27 @@ def fetch_roster(socket_path: str, session_id: str) -> list[dict] | None:
     return data
 
 
+def _msg_field(msg: dict, *keys: str) -> str:
+    """Return the first non-empty string value found among the given keys.
+
+    The daemon serialises store.Message without json struct tags, so field
+    names arrive as PascalCase (Content, SenderID, ID).  Some call sites may
+    also pass snake_case dicts (e.g. test fixtures or future tagged versions).
+    Checking both casings here keeps the bridge tolerant of either shape.
+    """
+    for key in keys:
+        val = msg.get(key)
+        if val is not None and val != "":
+            return str(val)
+    return ""
+
+
 def format_messages(messages: list[dict]) -> str:
     """Format a list of pending message dicts into a single user-turn string."""
     parts = []
     for msg in messages:
-        sender = msg.get("sender_id", "unknown")
-        content = msg.get("content", "")
+        sender = _msg_field(msg, "SenderID", "sender_id") or "unknown"
+        content = _msg_field(msg, "Content", "content")
         parts.append(f"[Message from {sender}]: {content}")
     return "\n\n".join(parts)
 
@@ -108,15 +123,15 @@ def filter_and_format_messages(
     session_id: str,
     agent_id: str,
 ) -> str:
-    """Drop empty-content messages (post bridge:warning for each), format rest."""
+    """Drop empty-content messages, post one batched bridge:warning if any are dropped, and format the rest."""
     valid = []
     dropped = []
     for msg in messages:
-        content = msg.get("content", "") or ""
+        content = _msg_field(msg, "Content", "content")
         if not content.strip():
             dropped.append({
-                "sender": msg.get("sender_id") or "unknown",
-                "message_id": msg.get("id") or "",
+                "sender": _msg_field(msg, "SenderID", "sender_id") or "unknown",
+                "message_id": _msg_field(msg, "ID", "id"),
             })
             continue
         valid.append(msg)
@@ -411,8 +426,11 @@ def main() -> None:
     pending = fetch_pending_messages(socket_path, session_id, agent_id)
     if pending:
         queued = filter_and_format_messages(pending, socket_path, session_id, agent_id)
-        user_message = f"{user_message}\n\n{queued}"
-        log.info("Prepended %d pre-queued message(s) to initial turn", len(pending))
+        if queued:
+            user_message = f"{user_message}\n\n{queued}"
+            valid_count = queued.count("\n\n") + 1
+            log.info("Prepended %d valid pre-queued message(s) to initial turn (%d total fetched)",
+                     valid_count, len(pending))
 
     while True:
         try:
@@ -438,10 +456,20 @@ def main() -> None:
             try:
                 interrupt_msg = stdin_queue.get_nowait()
                 sender = interrupt_msg.get("from", "system")
-                content = interrupt_msg.get("content", "")
-                user_message = f"[Urgent from {sender}]: {content}"
-                log.info("Continuing after interrupt from %s", sender)
-                continue
+                content = interrupt_msg.get("content", "") or ""
+                if not content.strip():
+                    post_event(
+                        socket_path, session_id, agent_id,
+                        "bridge:warning",
+                        {"kind": "empty_message_dropped", "count": 1,
+                         "dropped": [{"sender": sender, "message_id": ""}]},
+                    )
+                    log.warning("Dropped empty interrupt message from %s", sender)
+                    # Treat as no interrupt — fall through to terminal state checks.
+                else:
+                    user_message = f"[Urgent from {sender}]: {content}"
+                    log.info("Continuing after interrupt from %s", sender)
+                    continue
             except queue.Empty:
                 # Interrupted but no pending stdin command — treat as stop.
                 log.info("Interrupted with no queued message; treating as stop")
@@ -455,9 +483,15 @@ def main() -> None:
         # --- Check for non-urgent messages from other agents ---------------
         pending = fetch_pending_messages(socket_path, session_id, agent_id)
         if pending:
-            user_message = filter_and_format_messages(pending, socket_path, session_id, agent_id)
-            log.info("Continuing with %d pending message(s)", len(pending))
-            continue
+            formatted = filter_and_format_messages(pending, socket_path, session_id, agent_id)
+            if not formatted:
+                # All pending messages were empty-content; do not invoke model.
+                log.info("Skipping turn: all %d pending message(s) had empty content", len(pending))
+            else:
+                user_message = formatted
+                log.info("Continuing with %d valid pending message(s) (%d total fetched)",
+                         formatted.count("\n\n") + 1 if formatted else 0, len(pending))
+                continue
 
         # --- Terminal states -----------------------------------------------
         if result.get("failed"):
@@ -539,14 +573,21 @@ def main() -> None:
                 # Poll for pending messages.
                 pending = fetch_pending_messages(socket_path, session_id, agent_id)
                 if pending:
-                    user_message = (
-                        "[System] You have been idle waiting for specialist agents. "
-                        "One or more have reported in. Process their updates and continue "
-                        "coordinating the session (verify work, merge branches, spawn next agents, create PRs, etc.).\n\n"
-                        + filter_and_format_messages(pending, socket_path, session_id, agent_id)
-                    )
-                    log.info("Resuming from idle with %d pending message(s)", len(pending))
-                    break
+                    formatted = filter_and_format_messages(pending, socket_path, session_id, agent_id)
+                    if not formatted:
+                        log.info("Idle poll: all %d pending message(s) had empty content; continuing to wait",
+                                 len(pending))
+                    else:
+                        valid_count = formatted.count("\n\n") + 1
+                        user_message = (
+                            "[System] You have been idle waiting for specialist agents. "
+                            "One or more have reported in. Process their updates and continue "
+                            "coordinating the session (verify work, merge branches, spawn next agents, create PRs, etc.).\n\n"
+                            + formatted
+                        )
+                        log.info("Resuming from idle with %d valid pending message(s) (%d total fetched)",
+                                 valid_count, len(pending))
+                        break
 
                 # Peer-awareness: only advance the idle counter when all peer
                 # agents are in a terminal state. While any peer is still
