@@ -1,0 +1,66 @@
+internal/daemon/daemon.go
+  292d8375836a3f59 40-47
+internal/cli/init.go
+  292d8375836a3f59 141,177-179,192,200-201,253-257,259,412-416
+internal/cli/daemon.go
+  292d8375836a3f59 64-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "fe4320bb815cde9438d8f0c997c1d3c80d5a4e2c",
+  "prompts": {
+    "292d8375836a3f59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63ba09df-2b2a-4f4b-ba9e-0a325bc7aeaf",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 2117,
+      "total_deletions": 108,
+      "accepted_lines": 2117,
+      "overriden_lines": 0
+    },
+    "d856d8042ea64a99": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d70c5-1b1e-7700-a4be-e750d5cd24de",
+        "model": "gpt-5.4"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "fda605a95c703c40": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca9969ac-5f62-418b-b31a-9a19d96fdb2b",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    },
+    "fe0ea07c20f91868": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "04dc30aa-90cb-4d8e-ab2c-09d4f9e2af88",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3500,
+      "overriden_lines": 4
+    }
+  }
+}
