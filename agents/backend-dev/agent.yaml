@@ -1,7 +1,7 @@
 schema_version: "1"
 description: "Backend dev — implementer for backend/API server code, works in worktree"
-vendor: opencode
-model: kimi-k2.5
+vendor: codex
+model: gpt-5.4
 max_turns: 100
 max_duration: "2h"
 ephemeral: false

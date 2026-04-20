@@ -28,12 +28,13 @@ func loadEnvFile(path string) {
 func newDaemonCmd() *cobra.Command {
 	var socketPath, dbPath, belayerRoot, workdir, tcpAddr, dockerGateway string
 	var bridgeAPIKey, bridgeBaseURL, bridgeProvider string
-	var logLevel string
+	var logLevel, authToken string
+	var corsOrigins []string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the belayer daemon",
-		Long:  "Starts the long-running belayer supervisor on a Unix socket.",
+		Long:  "Starts the long-running belayer supervisor on a Unix socket." + ChannelsFooter,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Load .belayer.env files into the daemon process environment so
 			// bridge subprocesses inherit provider credentials (e.g. OPENCODE_GO_API_KEY).
@@ -77,6 +78,12 @@ func newDaemonCmd() *cobra.Command {
 			}
 			if logLevel != "" {
 				cfg.DefaultLogLevel = logLevel
+			}
+			if authToken != "" {
+				cfg.AuthToken = authToken
+			}
+			if len(corsOrigins) > 0 {
+				cfg.CORSOrigins = corsOrigins
 			}
 
 			wd := workdir
@@ -126,10 +133,13 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&belayerRoot, "belayer-root", "", "Path to belayer repo root (for hermes_bridge PYTHONPATH)")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Workspace directory (for .belayer/config.yaml lookup; default cwd)")
 	cmd.Flags().StringVar(&tcpAddr, "tcp-addr", "", "Also bind a TCP listener (e.g. 0.0.0.0:7523) for clamshell container access")
+	cmd.Flags().StringVar(&tcpAddr, "bind", "", "Alias of --tcp-addr: also bind a TCP listener (e.g. 0.0.0.0:7523)")
 	cmd.Flags().StringVar(&dockerGateway, "docker-gateway", "", "Docker host gateway IP for clamshell bridge access (default 172.17.0.1)")
 	cmd.Flags().StringVar(&bridgeAPIKey, "bridge-api-key", "", "LLM provider API key injected into bridge subprocesses (for clamshell where sandbox has no Hermes config)")
 	cmd.Flags().StringVar(&bridgeBaseURL, "bridge-base-url", "", "LLM provider base URL injected into bridge subprocesses (e.g. https://opencode.ai/zen/go/v1)")
 	cmd.Flags().StringVar(&bridgeProvider, "bridge-provider", "", "LLM provider name injected into bridge subprocesses (e.g. openai)")
-	cmd.Flags().StringVar(&logLevel, "log-level", "", "Default log level for new sessions (standard|verbose). Overridable per-run via `belayer run start --log-level`.")
+	cmd.Flags().StringVar(&logLevel, "log-level", "", "Default log level for new sessions (standard|verbose|trace). Overridable per-run via `belayer run start --log-level` or BELAYER_LOG_LEVEL.")
+	cmd.Flags().StringVar(&authToken, "auth-token", "", "Bearer token required for TCP listener requests (auto-generated if --tcp-addr/--bind is set and this flag is not)")
+	cmd.Flags().StringSliceVar(&corsOrigins, "cors-origin", nil, "Allowed CORS origin (repeatable, e.g. --cors-origin https://app.example)")
 	return cmd
 }

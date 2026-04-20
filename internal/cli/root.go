@@ -8,6 +8,23 @@ import (
 
 var version = "dev"
 
+// ChannelsFooter is appended to the Long help of observability-facing commands
+// (logs, bridges, daemon) so operators see the three-channel model from any
+// entry point. Kept verbatim in tests — do not rewrap.
+const ChannelsFooter = `
+Channels:
+  events       — SessionEvent rows (id, type, data). Stream via /events/stream (SSE)
+                 or query via /sessions/{id}/events. Filters: ?agent, ?type_prefix,
+                 ?tier, ?since=<reader_id>, ?digest=0. Compact TSV via
+                 Accept: text/tab-separated-values.
+  transcripts  — per-agent Hermes transcripts at
+                 .belayer/runs/<session>/transcripts/<agent>.jsonl (verbose+).
+                 HTTP: /sessions/{id}/transcripts[/{agent}].
+  traces       — per-agent spill fragments at traces/<session>/<agent>/NNNN.jsonl[.zst]
+                 (trace tier). HTTP: /sessions/{id}/trace/{agent}/{fragment} with
+                 Range support. See docs/LOG_FORMAT.md and docs/OBSERVABILITY.md.
+`
+
 func NewRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "belayer",
@@ -37,6 +54,7 @@ over SQLite.`,
 		newArtifactCmd(),
 		newInitCmd(),
 		newArchiveCmd(),
+		newBridgesCmd(),
 	)
 	return cmd
 }

@@ -4,6 +4,7 @@ Each callback posts a typed event to the daemon's event log so the
 session bus can track agent progress without polling.
 """
 
+import hashlib
 import json
 import os
 import time
@@ -15,6 +16,71 @@ from hermes_bridge.http_client import unix_post
 log = logging.getLogger("callbacks")
 
 _HEARTBEAT_INTERVAL = 30  # seconds
+
+_MUTATING_TOOLS = frozenset({"Write", "Edit", "NotebookEdit", "write_file", "edit_file", "create_file"})
+_SHELL_TOOLS = frozenset({"Bash", "run_shell", "bash"})
+_ENV_ALLOWLIST = frozenset({"PATH", "PWD", "HOME", "USER", "LANG", "TERM", "NODE_ENV", "CI"})
+_ENV_SECRET_VARS = frozenset({
+    "BELAYER_API_KEY",
+    "BELAYER_BASE_URL",
+    "BELAYER_PROVIDER",
+    "BELAYER_HTTP_PROXY",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+})
+
+
+def _fs_snapshot(path: str, phase: str) -> dict:
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        return {
+            "phase": phase,
+            "path": path,
+            "exists": True,
+            "size_bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "content": data.decode("utf-8", "replace"),
+        }
+    except FileNotFoundError:
+        return {"phase": phase, "path": path, "exists": False, "size_bytes": 0, "sha256": "", "content": ""}
+    except OSError:
+        # Permission or read errors — still record the attempt so the trace is complete.
+        return {"phase": phase, "path": path, "exists": False, "size_bytes": 0, "sha256": "", "content": ""}
+
+
+def _filtered_env() -> dict:
+    # Only emit keys in the explicit allowlist. The prior version also emitted
+    # anything starting with BELAYER_, which would silently leak future
+    # secrets as the project added new prefixed env vars (e.g. a
+    # BELAYER_ANTHROPIC_KEY introduced months later would ride through here
+    # unless someone remembered to update _ENV_SECRET_VARS). Explicit > prefix.
+    return {k: v for k, v in os.environ.items()
+            if k in _ENV_ALLOWLIST and k not in _ENV_SECRET_VARS}
+
+
+def _coerce_plain(v):
+    """Best-effort convert arbitrary tool payloads to JSON-friendly values.
+
+    Recursively normalizes dicts, lists, and leaf values so that
+    json.dumps(_coerce_plain(x)) never raises.
+    """
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    if isinstance(v, dict):
+        # Coerce keys too — non-string keys like tuples or custom objects
+        # would otherwise ride through and blow up json.dumps, violating
+        # this function's "never raises" contract.
+        return {
+            str(_coerce_plain(k)) if not isinstance(k, str) else k:
+                _coerce_plain(val)
+            for k, val in v.items()
+        }
+    if isinstance(v, (list, tuple)):
+        return [_coerce_plain(item) for item in v]
+    if isinstance(v, bytes):
+        return v.decode("utf-8", errors="replace")
+    # pathlib.Path and any other type with no obvious JSON mapping
+    return str(v)
 
 
 def post_event(socket_path: str, session_id: str, agent_id: str, event_type: str, data: dict | None = None) -> None:
@@ -42,7 +108,8 @@ def post_event(socket_path: str, session_id: str, agent_id: str, event_type: str
             log.debug("post_event %s -> %d %s", event_type, status, body[:120])
 
 
-def make_callbacks(agent_id: str, session_id: str, socket_path: str, transcript_writer=None) -> dict:
+def make_callbacks(agent_id: str, session_id: str, socket_path: str,
+                   transcript_writer=None, log_level: str = "standard") -> dict:
     """Return a dict of callback_name -> callback_fn for AIAgent.
 
     Wire these onto the agent instance with setattr after construction:
@@ -55,6 +122,13 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str, transcript_
     reasoning/narration capture. When None, reasoning_callback and
     interim_assistant_callback are no-ops so there is zero overhead for
     standard (non-verbose) runs.
+
+    log_level controls how much detail is captured in tool events:
+      "standard" — input_preview/result_preview only (default)
+      "verbose"  — same as standard (transcript_writer enables reasoning capture)
+      "trace"    — additionally includes full_input/full_result on tool events,
+                   trace:fs_snapshot events before/after mutating file tools,
+                   and trace:subprocess_exec events after shell tools
     """
     # Mutable state captured in closure — avoids a class for a handful of callbacks.
     state = {"step_count": 0, "last_heartbeat": 0.0, "tool_starts": {}, "reasoning_buffer": []}
@@ -85,11 +159,23 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str, transcript_
         path = _extract_path(tool_name, tool_args)
         if path:
             event_data["path"] = path
+        if log_level == "trace":
+            event_data["full_input"] = _coerce_plain(tool_args)
         post_event(
             socket_path, session_id, agent_id,
             "bridge:tool_started",
             event_data,
         )
+        if log_level == "trace" and tool_name in _MUTATING_TOOLS:
+            snap_path = None
+            if isinstance(tool_args, dict):
+                snap_path = tool_args.get("path") or tool_args.get("file_path")
+            if snap_path:
+                post_event(
+                    socket_path, session_id, agent_id,
+                    "trace:fs_snapshot",
+                    _fs_snapshot(snap_path, "before"),
+                )
 
     def tool_complete_callback(tool_call_id, tool_name, tool_args, tool_result, **kwargs):
         started = state["tool_starts"].pop(tool_call_id, None)
@@ -102,11 +188,49 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str, transcript_
         path = _extract_path(tool_name, tool_args)
         if path:
             event_data["path"] = path
+        if log_level == "trace":
+            event_data["full_result"] = _coerce_plain(tool_result)
         post_event(
             socket_path, session_id, agent_id,
             "bridge:tool_completed",
             event_data,
         )
+        if log_level != "trace":
+            return
+        if tool_name in _MUTATING_TOOLS:
+            snap_path = None
+            if isinstance(tool_args, dict):
+                snap_path = tool_args.get("path") or tool_args.get("file_path")
+            if snap_path:
+                post_event(
+                    socket_path, session_id, agent_id,
+                    "trace:fs_snapshot",
+                    _fs_snapshot(snap_path, "after"),
+                )
+        if tool_name in _SHELL_TOOLS:
+            cmd = ""
+            if isinstance(tool_args, dict):
+                cmd = tool_args.get("command") or tool_args.get("cmd") or ""
+            exit_code = None
+            stdout = ""
+            stderr = ""
+            if isinstance(tool_result, dict):
+                exit_code = tool_result.get("exit_code")
+                stdout = tool_result.get("stdout", "")
+                stderr = tool_result.get("stderr", "")
+            else:
+                stdout = str(tool_result)
+            post_event(
+                socket_path, session_id, agent_id,
+                "trace:subprocess_exec",
+                {
+                    "cmd": str(cmd),
+                    "exit_code": exit_code,
+                    "stdout": str(stdout),
+                    "stderr": str(stderr),
+                    "env_subset": _filtered_env(),
+                },
+            )
 
     def reasoning_callback(text, **kwargs):
         if transcript_writer is None:

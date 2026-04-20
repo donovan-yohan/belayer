@@ -54,6 +54,25 @@ func TestInitFirstRunScaffoldsDefaults(t *testing.T) {
 	}
 }
 
+func TestInitWritesLogLevelStandardToConfig(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newInitCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--target", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(dir, ".belayer", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(cfg), "\nlog_level: standard\n") {
+		t.Fatalf("expected 'log_level: standard' in config.yaml, got:\n%s", string(cfg))
+	}
+}
+
 func TestInitIdempotentReRun(t *testing.T) {
 	dir := t.TempDir()
 

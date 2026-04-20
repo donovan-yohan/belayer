@@ -91,6 +91,14 @@ func Migrate(db *sql.DB) error {
 			INSERT INTO events_fts(events_fts, rowid, type, data) VALUES ('delete', old.id, old.type, old.data);
 			INSERT INTO events_fts(rowid, type, data) VALUES (new.id, new.type, new.data);
 		END`,
+
+		`CREATE TABLE IF NOT EXISTS reader_cursors (
+			reader_id  TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			last_id    INTEGER NOT NULL,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (reader_id, session_id)
+		)`,
 	}
 
 	for _, stmt := range stmts {
@@ -116,6 +124,15 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfNotExists(db, "agent_runs", "worktree_path", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfNotExists(db, "events", "trace_file", "TEXT"); err != nil {
+		return err
+	}
+	if err := addColumnIfNotExists(db, "events", "trace_offset", "INTEGER"); err != nil {
+		return err
+	}
+	if err := addColumnIfNotExists(db, "events", "trace_length", "INTEGER"); err != nil {
 		return err
 	}
 

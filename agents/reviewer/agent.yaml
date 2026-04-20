@@ -1,7 +1,7 @@
 schema_version: "1"
 description: "Reviewer — evaluates diffs for correctness, style, and completeness"
-vendor: claude
-model: sonnet
+vendor: codex
+model: gpt-5.4
 max_turns: 20
 max_duration: "30m"
 ephemeral: true

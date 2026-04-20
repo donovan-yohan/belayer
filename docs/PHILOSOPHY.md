@@ -138,6 +138,8 @@ The sandbox is the boundary around the agents and their tool-execution surface. 
 - Trust boundary (agents cannot self-impose it — the runtime imposes it)
 - Pluggable backend (host process, container, VM — implementation choice)
 
+Belayer does not impose isolation; the outer deployment topology does (see `docs/DEPLOYMENT.md`).
+
 ### 4. Communication
 
 Communication is the transport layer between agents. Agents don't know each other's runtime. They send messages through the session bus, which handles delivery.

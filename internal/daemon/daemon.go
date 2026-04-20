@@ -12,8 +12,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +29,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/runtime"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
+	"github.com/donovan-yohan/belayer/internal/trace"
 	"github.com/google/uuid"
 )
 
@@ -67,6 +70,17 @@ type Config struct {
 	BridgeAPIKey  string
 	BridgeBaseURL string
 	BridgeProvider string
+
+	// AuthToken, if non-empty, is the bearer token required on all TCP requests
+	// except GET /health. If TCPAddr is set and AuthToken is empty, New()
+	// auto-generates a 32-byte random token and logs it.
+	AuthToken string
+
+	// CORSOrigins is the allowlist of Origin header values that the TCP listener
+	// will reflect back as Access-Control-Allow-Origin. Empty = CORS disabled
+	// (all requests without a matching Origin header pass through un-annotated;
+	// requests with a non-allowlisted Origin are rejected 403).
+	CORSOrigins []string
 
 	// DefaultLogLevel is the default log_level for new sessions when POST
 	// /sessions does not specify one. Empty = 'standard'.
@@ -128,6 +142,10 @@ type Daemon struct {
 	tcpListener *http.Server
 	tcpPort     int
 
+	// authToken is the bearer token required on all TCP requests except /health.
+	// Set from config.AuthToken or auto-generated in New when TCPAddr is set.
+	authToken string
+
 	// workspaceSockListener is an optional Unix socket inside the workspace
 	// directory so clamshell bridge subprocesses can reach the daemon via a
 	// bind-mounted path without network proxying.
@@ -145,6 +163,18 @@ type Daemon struct {
 	// Bridge process tracking: sessionID/agentName -> *bridge.Process
 	bridgeMu    sync.RWMutex
 	bridgeProcs map[string]*bridge.Process
+	// bridgeShuttingDownSessions tracks which sessionIDs are in mid-teardown.
+	// stopAllBridgeAgents sets the flag for its target session; the spawn
+	// registration path aborts if the session the spawn targets is marked.
+	// Entries stay set — a terminated session's agents must not respawn even
+	// after its teardown goroutine returns.
+	bridgeShuttingDownSessions map[string]bool
+
+	// traceWriter spills large event payloads to fragment files at trace tier.
+	traceWriter trace.Writer
+	// traceBase is the root directory for trace fragment files (<sessionID>/<agent>/<NNNN>.jsonl).
+	// Populated by New() as filepath.Join(filepath.Dir(cfg.DBPath), "traces").
+	traceBase string
 
 	// Tool registry: per-session tool specs, protected by toolsMu.
 	toolsMu sync.RWMutex
@@ -156,11 +186,16 @@ type Daemon struct {
 	archiveDrainTimeout    time.Duration // max time Phase 3 archive drain may run
 	shutdownHTTPTimeout    time.Duration // max time HTTP servers get to drain in-flight requests
 	sseKeepaliveInterval   time.Duration // interval for SSE ": keep-alive" comments (default 15s)
+	sseDigestInterval      time.Duration // interval for session_digest control frames (default 60s)
 
 	// SSE subscriber registry. Populated by handleStreamEvents; drained by
 	// announceDraining on Shutdown. Protected by sseMu.
 	sseMu          sync.Mutex
 	sseSubscribers map[*sseSubscriber]struct{}
+
+	// cursorSweepStop is closed when the daemon shuts down to stop the hourly
+	// SweepExpiredCursors goroutine started in New.
+	cursorSweepStop chan struct{}
 }
 
 // New creates a Daemon with the given config. Call Start to begin serving.
@@ -186,20 +221,40 @@ func New(cfg Config) (*Daemon, error) {
 		keepaliveInterval = 15 * time.Second
 	}
 
+	digestInterval := 60 * time.Second
+
 	d := &Daemon{
 		store:                st,
 		config:               cfg,
 		daemonInstanceID:     uuid.NewString(),
 		tools:                make(map[string][]agent.ToolSpec),
-		bridgeProcs:          make(map[string]*bridge.Process),
+		bridgeProcs:                make(map[string]*bridge.Process),
+		bridgeShuttingDownSessions: make(map[string]bool),
 		sessionSandboxes:     make(map[string]sessionSandbox),
 		sseSubscribers:       make(map[*sseSubscriber]struct{}),
 		startCtx:             context.Background(),
 		archiveDrainTimeout:  30 * time.Second,
 		shutdownHTTPTimeout:  5 * time.Second,
 		sseKeepaliveInterval: keepaliveInterval,
+		sseDigestInterval:    digestInterval,
+		cursorSweepStop:      make(chan struct{}),
 	}
 	d.archiver = newArchiveManager(st, d.daemonInstanceID)
+
+	// Sweep expired reader cursors on startup and then hourly.
+	if _, sweepErr := st.SweepExpiredCursors(24 * time.Hour); sweepErr != nil {
+		log.Printf("daemon: initial cursor sweep: %v", sweepErr)
+	}
+	go d.cursorSweepLoop(time.Hour)
+
+	traceBase := filepath.Join(filepath.Dir(cfg.DBPath), "traces")
+	tw, err := trace.NewWriter(traceBase)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: init trace writer: %w", err)
+	}
+	d.traceWriter = tw
+	d.traceBase = traceBase
+
 	if cfg.SandboxDrivers != nil {
 		d.sandboxDrivers = cfg.SandboxDrivers
 	} else {
@@ -232,6 +287,8 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/agents", d.handleSpawnAgent)
 	mux.HandleFunc("GET /sessions/{id}/agents", d.handleListAgents)
 	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
+	mux.HandleFunc("GET /sessions/{id}/bridges", d.handleListBridges)
+	mux.HandleFunc("GET /sessions/{id}/bridges/{agent}/stdout", d.handleBridgeStdout)
 	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
 	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
 	mux.HandleFunc("GET /sessions/{id}/archive.ndjson", d.handleArchiveNDJSON)
@@ -241,6 +298,29 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
 	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
+	mux.HandleFunc("GET /sessions/{id}/trace/{agent}/{fragment}", d.handleTraceSlice)
+	mux.HandleFunc("GET /sessions/{id}/outline", d.handleOutline)
+	mux.HandleFunc("GET /sessions/{id}/tool-calls", d.handleToolCalls)
+	mux.HandleFunc("GET /sessions/{id}/conversation", d.handleConversation)
+	mux.HandleFunc("GET /sessions/{id}/phase", d.handlePhase)
+	mux.HandleFunc("GET /sessions/{id}/artifacts/{artifact_id}", d.handleGetArtifactBytes)
+	mux.HandleFunc("GET /sessions/{id}/transcripts", d.handleListTranscripts)
+	mux.HandleFunc("GET /sessions/{id}/transcripts/{agent}", d.handleTranscriptContent)
+	mux.HandleFunc("GET /sessions/{id}/traces", d.handleListTraces)
+
+	// Set up auth token for TCP listener. Use the configured token, or
+	// auto-generate one when TCPAddr is set without an explicit token.
+	if cfg.TCPAddr != "" {
+		if cfg.AuthToken != "" {
+			d.authToken = cfg.AuthToken
+		} else {
+			token, genErr := generateToken()
+			if genErr != nil {
+				return nil, fmt.Errorf("daemon: generate auth token: %w", genErr)
+			}
+			d.authToken = token
+		}
+	}
 
 	d.server = &http.Server{Handler: mux}
 	return d, nil
@@ -288,13 +368,20 @@ func (d *Daemon) Start(ctx context.Context) error {
 			return fmt.Errorf("daemon: listen tcp %s: %w", d.config.TCPAddr, err)
 		}
 		d.tcpPort = tcpLn.Addr().(*net.TCPAddr).Port
-		d.tcpListener = &http.Server{Handler: d.server.Handler}
+		// Middleware chain (outermost first):
+		//   corsMiddleware → authMiddleware → handler
+		// CORS is outermost so OPTIONS preflight short-circuits before auth runs.
+		tcpHandler := d.corsMiddleware(d.authMiddleware(d.server.Handler))
+		d.tcpListener = &http.Server{Handler: tcpHandler}
 		go func() {
 			if serveErr := d.tcpListener.Serve(tcpLn); serveErr != nil && serveErr != http.ErrServerClosed {
 				log.Printf("daemon: tcp serve: %v", serveErr)
 			}
 		}()
 		log.Printf("daemon: TCP listener on %s (port %d)", d.config.TCPAddr, d.tcpPort)
+		if d.authToken != "" {
+			log.Printf("daemon: TCP auth token: %s (keep this secret)", d.authToken)
+		}
 	}
 
 	// Optional workspace Unix socket for clamshell container bridge access.
@@ -484,10 +571,41 @@ func (d *Daemon) downRuntime(shutCtx context.Context) {
 // closeAndCleanup closes the store and removes any socket files the daemon
 // created. Final phase — nothing runs after this.
 func (d *Daemon) closeAndCleanup() {
+	// Stop the cursor sweep goroutine.
+	if d.cursorSweepStop != nil {
+		select {
+		case <-d.cursorSweepStop:
+			// already closed
+		default:
+			close(d.cursorSweepStop)
+		}
+	}
+	if d.traceWriter != nil {
+		if err := d.traceWriter.Close(); err != nil {
+			log.Printf("daemon: trace writer close: %v", err)
+		}
+	}
 	d.store.Close()
 	os.Remove(d.config.SocketPath)
 	if d.config.WorkspaceSockPath != "" {
 		os.Remove(d.config.WorkspaceSockPath)
+	}
+}
+
+// cursorSweepLoop runs SweepExpiredCursors on the given interval until
+// cursorSweepStop is closed.
+func (d *Daemon) cursorSweepLoop(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-d.cursorSweepStop:
+			return
+		case <-ticker.C:
+			if _, err := d.store.SweepExpiredCursors(24 * time.Hour); err != nil {
+				log.Printf("daemon: cursor sweep: %v", err)
+			}
+		}
 	}
 }
 
@@ -575,18 +693,24 @@ func (d *Daemon) terminateSandbox(ctx context.Context, sessionID string) {
 // processes; each bridge is stopped in its own goroutine so a single slow
 // exit does not delay the others.
 func (d *Daemon) stopAllBridgeAgents(sessionID, reason string) {
-	d.bridgeMu.RLock()
+	d.bridgeMu.Lock()
+	d.bridgeShuttingDownSessions[sessionID] = true
 	var targets []*bridge.Process
 	var names []string
 	for key, proc := range d.bridgeProcs {
 		sid, name := parseBridgeKey(key)
-		if sid != sessionID || proc == nil {
+		if sid != sessionID {
 			continue
 		}
-		targets = append(targets, proc)
-		names = append(names, name)
+		if proc != nil {
+			targets = append(targets, proc)
+			names = append(names, name)
+		}
+		// Drop only this session's entries; leave other sessions' bridges
+		// untouched so interrupts/shutdown can still reach them.
+		delete(d.bridgeProcs, key)
 	}
-	d.bridgeMu.RUnlock()
+	d.bridgeMu.Unlock()
 
 	if len(targets) == 0 {
 		return
@@ -622,15 +746,38 @@ func isTerminalSessionStatus(status string) bool {
 // --- HTTP handlers ---
 
 // healthCapabilities is the static capabilities block returned by GET /health.
+// This is the authoritative feature manifest — anything dashboards negotiate
+// against (SSE filters, cursor semantics, compact TSV, aggregates, transcripts,
+// traces, artifact bytes, pagination) must appear here. Keep in sync with
+// docs/LOG_FORMAT.md § "Capability negotiation".
+//
 // Extracted as a package-level var so tests can read it without parsing JSON.
 var healthCapabilities = struct {
 	SearchPredicates []string `json:"search_predicates"`
 	ArchiveHTTP      bool     `json:"archive_http"`
 	SSEControlFrames []string `json:"sse_control_frames"`
+	SSEFilters       []string `json:"sse_filters"`
+	CursorReaderID   bool     `json:"cursor_reader_id"`
+	CompactTSV       bool     `json:"compact_tsv"`
+	Aggregates       bool     `json:"aggregates"`
+	Transcripts      bool     `json:"transcripts"`
+	Traces           bool     `json:"traces"`
+	ArtifactsBytes   bool     `json:"artifacts_bytes"`
+	LinkNext         bool     `json:"link_next"`
+	LogLevels        []string `json:"log_levels"`
 }{
 	SearchPredicates: []string{"q", "session", "type_prefix", "agent", "after", "before"},
 	ArchiveHTTP:      true,
-	SSEControlFrames: []string{"daemon_hello", "daemon_draining"},
+	SSEControlFrames: []string{"daemon_hello", "daemon_draining", "session_digest"},
+	SSEFilters:       []string{"agent", "type_prefix", "tier", "digest"},
+	CursorReaderID:   true,
+	CompactTSV:       true,
+	Aggregates:       true,
+	Transcripts:      true,
+	Traces:           true,
+	ArtifactsBytes:   true,
+	LinkNext:         true,
+	LogLevels:        []string{"standard", "verbose", "trace"},
 }
 
 type healthResponse struct {
@@ -824,6 +971,13 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 			d.stopAllBridgeAgents(id, "session status changed to "+req.Status)
 			d.archiver.ArchiveTerminal(id)
 			d.terminateSandbox(r.Context(), id)
+		} else {
+			// Non-terminal transition (e.g. reopening a previously terminated
+			// session back to running). Clear any shutdown tombstone so fresh
+			// spawns for this session are no longer rejected by the guard.
+			d.bridgeMu.Lock()
+			delete(d.bridgeShuttingDownSessions, id)
+			d.bridgeMu.Unlock()
 		}
 	}
 
@@ -842,6 +996,9 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sessionToAPIResponse(sess))
 }
 
+// readerIDPattern is the allowed character set for ?since= reader IDs.
+var readerIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
 func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	afterID, waitFor, beforeID, limit, err := parseEventCursor(r)
@@ -850,12 +1007,74 @@ func (d *Daemon) handleGetEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?since=<reader_id>: per-reader cursor. Overrides ?after= when both are
+	// present (explicit cursor wins over positional parameter).
+	sinceRaw := strings.TrimSpace(r.URL.Query().Get("since"))
+	if sinceRaw != "" {
+		if !readerIDPattern.MatchString(sinceRaw) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "since: invalid reader_id (must be 1-64 chars, [A-Za-z0-9_-])"})
+			return
+		}
+		cursorID, lookupErr := d.store.LookupCursor(sinceRaw, id)
+		if lookupErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": lookupErr.Error()})
+			return
+		}
+		// Cursor overrides ?after= (explicit cursor wins).
+		afterID = cursorID
+	}
+
 	events, err := d.querySessionEvents(r.Context(), id, afterID, waitFor, beforeID, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+
+	// Upsert the cursor on every ?since= read — including empty pages — so
+	// an actively polling reader on an idle session refreshes its TTL and
+	// does not silently rewind to 0 after 24h.
+	if sinceRaw != "" {
+		newCursorID := afterID
+		if len(events) > 0 {
+			newCursorID = events[len(events)-1].ID
+		}
+		if updateErr := d.store.UpdateCursor(sinceRaw, id, newCursorID); updateErr != nil {
+			log.Printf("daemon: update cursor %s/%s: %v", sinceRaw, id, updateErr)
+		}
+	}
+
+	// Emit Link: rel=next when limit was specified and the page is full
+	// (i.e., exactly N events returned — indicates there may be more).
+	// Preserve tier, agent, format, and since query params in the next URL.
+	if limit > 0 && len(events) == limit {
+		lastID := events[len(events)-1].ID
+		nextURL := buildNextPageURL(r, id, lastID, limit)
+		w.Header().Set("Link", fmt.Sprintf(`<%s>; rel="next"`, nextURL))
+	}
+
+	if wantsCompactTSV(r) {
+		d.writeEventHeaders(w, id, len(events))
+		writeCompactTSV(w, events)
+		return
+	}
+
+	d.writeEventHeaders(w, id, len(events))
 	writeJSON(w, http.StatusOK, events)
+}
+
+// buildNextPageURL constructs the Link rel=next URL preserving relevant query
+// params (tier, agent, format, since) from the original request.
+func buildNextPageURL(r *http.Request, sessionID string, lastID int64, limit int) string {
+	q := make(url.Values)
+	q.Set("after", strconv.FormatInt(lastID, 10))
+	q.Set("limit", strconv.Itoa(limit))
+	// Preserve passthrough params.
+	for _, param := range []string{"tier", "agent", "format", "since"} {
+		if v := r.URL.Query().Get(param); v != "" {
+			q.Set(param, v)
+		}
+	}
+	return fmt.Sprintf("/sessions/%s/events?%s", sessionID, q.Encode())
 }
 
 type logEventRequest struct {
@@ -875,12 +1094,69 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Look up session to determine tier.
+	sess, err := d.store.GetSession(id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	data := req.Data
+	var frag trace.Fragment
+
+	if sess.LogLevel == LogLevelTrace {
+		// Pre-scrub every trace event payload regardless of size, so secrets
+		// never reach disk (fragment files) or SQLite inline storage.
+		data = Scrub(data)
+	}
+
+	if len(data) >= 65536 {
+		switch sess.LogLevel {
+		case LogLevelTrace:
+			agentName := extractAgentName(data)
+			if !isValidAgentName(agentName) {
+				// Invalid agent name: do NOT spill (prevents path traversal).
+				// Truncate with a structured sentinel preserving the original size.
+				log.Printf("trace spill rejected for session %s: invalid agent name %q", id, agentName)
+				data = fmt.Sprintf(
+					`{"_truncated":true,"tier":"trace","original_size":%d,"reason":"invalid agent id"}`,
+					len(req.Data),
+				)
+			} else if d.traceWriter != nil {
+				f, werr := d.traceWriter.Append(id, agentName, []byte(data))
+				if werr != nil {
+					log.Printf("trace spill failed for session %s agent %s: %v; falling back to truncation", id, agentName, werr)
+					data = fmt.Sprintf(
+						`{"_truncated":true,"tier":"trace","original_size":%d,"reason":"trace writer error"}`,
+						len(req.Data),
+					)
+				} else {
+					frag = f
+					data = fmt.Sprintf(`{"agent":%q,"_trace":true}`, agentName)
+				}
+			} else {
+				data = fmt.Sprintf(
+					`{"_truncated":true,"tier":"trace","original_size":%d,"reason":"trace writer error"}`,
+					len(req.Data),
+				)
+			}
+		default:
+			// Non-trace tiers: scrub then truncate with structured sentinel.
+			scrubbed := Scrub(req.Data)
+			data = fmt.Sprintf(
+				`{"_truncated":true,"tier":%q,"original_size":%d,"reason":"upgrade to trace tier to capture full payload"}`,
+				sess.LogLevel, len(req.Data),
+			)
+			_ = scrubbed // scrubbed but not stored (truncated entirely)
+		}
+	}
+
 	evt := store.SessionEvent{
 		SessionID: id,
 		Type:      req.Type,
-		Data:      req.Data,
+		Data:      data,
 	}
-	if err := d.store.LogEvent(evt); err != nil {
+	if err := d.store.InsertEventWithSpill(evt, frag); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -896,6 +1172,40 @@ func (d *Daemon) handleLogEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "logged"})
+}
+
+// extractAgentName tries to parse an "agent" field from a JSON string.
+// Returns "unknown" if parsing fails or the field is empty.
+func extractAgentName(data string) string {
+	var v struct {
+		Agent string `json:"agent"`
+	}
+	if err := json.Unmarshal([]byte(data), &v); err == nil && v.Agent != "" {
+		return v.Agent
+	}
+	return "unknown"
+}
+
+// isValidAgentName returns true iff name is safe to use as a filesystem path
+// component for trace fragment directories. Rules:
+//   - Non-empty
+//   - Length ≤ 64 characters
+//   - Contains only [A-Za-z0-9_-] characters
+//   - Not "." or ".."
+//   - Does not contain '/' or '\'
+func isValidAgentName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if len(name) > 64 {
+		return false
+	}
+	for _, c := range name {
+		if !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
@@ -944,6 +1254,23 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		waitFor = parsed
 	}
 
+	// Parse filter params: ?agent=, ?type_prefix=, ?tier=.
+	// All filters are AND-combined. Control frames always pass regardless of filters.
+	filterAgent := strings.TrimSpace(r.URL.Query().Get("agent"))
+	filterTypePrefix := strings.TrimSpace(r.URL.Query().Get("type_prefix"))
+	filterTierRaw := strings.TrimSpace(r.URL.Query().Get("tier"))
+	filterTierRank := -1 // -1 means no tier filter
+	if filterTierRaw != "" {
+		filterTierRank = tierRank(filterTierRaw)
+		if filterTierRank < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tier must be one of: standard, verbose, trace"})
+			return
+		}
+	}
+
+	// Parse ?digest= param. Default (absent or any value other than "0"): enabled.
+	digestEnabled := r.URL.Query().Get("digest") != "0"
+
 	// Compute helloLastID: the global max event ID at connect time. This is
 	// what daemon_hello advertises as the high-water mark so consumers can
 	// persist it as their epoch cursor. It is computed independently of
@@ -987,6 +1314,17 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Response headers reference a single session (X-Session-Status, X-Log-Level,
+	// X-Agent-Roster). For multi-session streams these are ambiguous — a header
+	// sourced from filtered[0] would misrepresent every other subscribed session.
+	// Single-session streams get the full header set; multi-session streams get
+	// only X-Belayer-Schema so headers cannot lie.
+	multiSession := len(filtered) > 1
+	if multiSession {
+		w.Header().Set("X-Belayer-Schema", "belayer-log/v1")
+	} else if len(filtered) == 1 {
+		d.writeEventHeaders(w, filtered[0], 0)
+	}
 
 	// Emit daemon_hello as the FIRST frame. No id: line (control frame invariant).
 	helloData, _ := json.Marshal(map[string]any{
@@ -1009,6 +1347,18 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		deadline = time.Now().Add(waitFor)
 	}
 
+	// Digest counters: emit session_digest every 50 domain events OR every
+	// sseDigestInterval, whichever comes first. ?digest=0 disables entirely.
+	// Multi-session streams suppress digests — a single frame cannot honestly
+	// describe phase/agents across N sessions, and the global lastID would
+	// advance on events from any of them (conflating scopes).
+	const digestEventThreshold = 50
+	domainEventCount := 0
+	lastDigestAt := time.Now()
+	if multiSession {
+		digestEnabled = false
+	}
+
 	for {
 		events, err := d.store.QueryEventsForSessionsAfter(filtered, lastID)
 		if err != nil {
@@ -1019,6 +1369,25 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(events) > 0 {
 			for _, evt := range events {
+				// Always advance lastID so we don't re-scan the same events;
+				// filtering is output-side only.
+				lastID = evt.ID
+				// Count every domain event regardless of filter for digest trigger.
+				domainEventCount++
+
+				// Apply output filters. All must pass to emit. Filters are only
+				// applied to domain events; control frames (emitted outside this
+				// loop) always pass.
+				if filterAgent != "" && extractAgentName(evt.Data) != filterAgent {
+					continue
+				}
+				if filterTypePrefix != "" && !strings.HasPrefix(evt.Type, filterTypePrefix) {
+					continue
+				}
+				if filterTierRank >= 0 && tierRank(eventTier(evt)) > filterTierRank {
+					continue
+				}
+
 				// Domain frames carry id: lines (spec §4 A8).
 				// emit event: <type> per LOG_FORMAT.md §4 (A2). Sanitize the type
 				// so malformed event types inserted via POST /sessions/{id}/events
@@ -1029,9 +1398,15 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				fmt.Fprint(w, "\n")
-				lastID = evt.ID
 			}
 			flusher.Flush()
+
+			// Check digest thresholds after processing a batch.
+			if digestEnabled && domainEventCount >= digestEventThreshold {
+				d.emitSessionDigest(w, flusher, filtered[0], lastID)
+				domainEventCount = 0
+				lastDigestAt = time.Now()
+			}
 		}
 
 		if !deadline.IsZero() && time.Now().After(deadline) {
@@ -1054,11 +1429,84 @@ func (d *Daemon) handleStreamEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			return
 		case <-ticker.C:
+			// Check time-based digest trigger on each poll tick.
+			if digestEnabled && time.Since(lastDigestAt) >= d.sseDigestInterval {
+				d.emitSessionDigest(w, flusher, filtered[0], lastID)
+				domainEventCount = 0
+				lastDigestAt = time.Now()
+			}
 		case <-keepalive.C:
 			fmt.Fprint(w, ": keep-alive\n\n")
 			flusher.Flush()
 		}
 	}
+}
+
+// emitSessionDigest builds and emits a session_digest control frame.
+//
+// The frame has no id: line (control frame invariant). Fields:
+//   - at: current max event ID (atID).
+//   - agents: map of agent → {last_activity, tool_calls} derived from store events.
+//   - phase: current phase derived from most recent phase event.
+//
+// sessionID is used to fetch events for agent/phase derivation. If the store
+// query fails, the digest is skipped silently (best-effort).
+func (d *Daemon) emitSessionDigest(w http.ResponseWriter, flusher http.Flusher, sessionID string, atID int64) {
+	events, err := d.store.QueryEvents(sessionID)
+	if err != nil {
+		return // best-effort: skip digest on store error
+	}
+
+	// Derive agent activity: last_activity timestamp and tool_calls count.
+	type agentInfo struct {
+		LastActivity time.Time `json:"last_activity"`
+		ToolCalls    int       `json:"tool_calls"`
+	}
+	agentMap := map[string]*agentInfo{}
+
+	phase := "unknown"
+	for _, evt := range events {
+		// Track per-agent last activity and tool call count.
+		agent := extractAgentName(evt.Data)
+		if agent != "unknown" && agent != "" {
+			info, ok := agentMap[agent]
+			if !ok {
+				info = &agentInfo{}
+				agentMap[agent] = info
+			}
+			if evt.Timestamp.After(info.LastActivity) {
+				info.LastActivity = evt.Timestamp
+			}
+			if evt.Type == "bridge:tool_started" {
+				info.ToolCalls++
+			}
+		}
+		// Track latest phase.
+		if p, ok := derivePhase(evt.Type); ok {
+			phase = p
+		}
+	}
+
+	// Convert agent map to JSON-serialisable form with RFC3339 timestamps.
+	type agentDigestEntry struct {
+		LastActivity string `json:"last_activity"`
+		ToolCalls    int    `json:"tool_calls"`
+	}
+	agentDigest := map[string]agentDigestEntry{}
+	for name, info := range agentMap {
+		agentDigest[name] = agentDigestEntry{
+			LastActivity: info.LastActivity.UTC().Format(time.RFC3339),
+			ToolCalls:    info.ToolCalls,
+		}
+	}
+
+	digestData, _ := json.Marshal(map[string]any{
+		"at":     atID,
+		"agents": agentDigest,
+		"phase":  phase,
+	})
+	fmt.Fprintf(w, "event: session_digest\ndata: %s\n\n", digestData)
+	flusher.Flush()
 }
 
 // parseEventCursor parses ?after=, ?wait=, ?before=, and ?limit= query params
@@ -1296,6 +1744,14 @@ func (d *Daemon) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": msg})
 		return
 	}
+
+	if wantsCompactTSV(r) {
+		d.writeEventHeaders(w, preds.SessionID, len(events))
+		writeCompactTSV(w, events)
+		return
+	}
+
+	d.writeEventHeaders(w, preds.SessionID, len(events))
 	writeJSON(w, http.StatusOK, events)
 }
 
@@ -1382,6 +1838,48 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// eventTier classifies a store.SessionEvent into one of three tiers:
+//
+//	"trace"    — highest verbosity; spilled events (TraceFile non-empty), type
+//	             starts with "trace:", or data contains "full_input:" / "full_result:".
+//	"verbose"  — type starts with "verbose:", OR (not trace AND type starts with
+//	             "agent_status:" or "bridge:").
+//	"standard" — everything else.
+//
+// Tiers are monotonically inclusive: standard ⊂ verbose ⊂ trace.
+// Tier rank ordering: standard=0, verbose=1, trace=2.
+// To filter: emit event if tierRank(event) <= tierRank(requested).
+func eventTier(evt store.SessionEvent) string {
+	// Trace tier: spilled, type prefix, or data markers.
+	if evt.TraceFile != "" ||
+		strings.HasPrefix(evt.Type, "trace:") ||
+		strings.Contains(evt.Data, `"full_input":`) ||
+		strings.Contains(evt.Data, `"full_result":`) {
+		return "trace"
+	}
+	// Verbose tier: verbose: prefix, or bridge:/agent_status: that aren't trace.
+	if strings.HasPrefix(evt.Type, "verbose:") ||
+		strings.HasPrefix(evt.Type, "agent_status:") ||
+		strings.HasPrefix(evt.Type, "bridge:") {
+		return "verbose"
+	}
+	return "standard"
+}
+
+// tierRank converts a tier name to its numeric rank (standard=0, verbose=1, trace=2).
+// Returns -1 for unrecognised names.
+func tierRank(tier string) int {
+	switch tier {
+	case "standard":
+		return 0
+	case "verbose":
+		return 1
+	case "trace":
+		return 2
+	}
+	return -1
 }
 
 // sanitizeSSEEventType replaces any characters that would break SSE frame

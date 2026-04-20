@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -87,34 +86,81 @@ func newSessionStopCmd() *cobra.Command {
 	return cmd
 }
 
-// lookupSessionID resolves a session name, ID prefix, or full ID to a full session ID.
+// lookupSessionID resolves a session name, ID prefix, or full ID to a full
+// session ID. Exact full-ID or exact name matches always win. Otherwise we
+// require exactly one prefix match — ambiguous prefixes are rejected so
+// commands do not silently address the wrong session.
 func lookupSessionID(c *Client, arg string) (string, error) {
 	sessions, err := c.ListSessions()
 	if err != nil {
-		return arg, nil
+		return "", fmt.Errorf("list sessions: %w", err)
 	}
+	return resolveSessionArg(sessions, arg)
+}
+
+// resolveSessionArg applies the name/ID/prefix resolution rules to an
+// in-memory session slice. Extracted so tests can exercise the ambiguity
+// branch without a live daemon.
+func resolveSessionArg(sessions []sessionResponse, arg string) (string, error) {
+	var prefixMatches []string
 	for _, s := range sessions {
-		if strings.HasPrefix(s.ID, arg) || s.Name == arg {
+		if s.ID == arg || s.Name == arg {
 			return s.ID, nil
 		}
+		if strings.HasPrefix(s.ID, arg) {
+			prefixMatches = append(prefixMatches, s.ID)
+		}
 	}
-	return "", fmt.Errorf("no session found matching %q", arg)
+	switch len(prefixMatches) {
+	case 0:
+		return "", fmt.Errorf("no session found matching %q", arg)
+	case 1:
+		return prefixMatches[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous session identifier %q (matches %d sessions: %s)",
+			arg, len(prefixMatches), strings.Join(prefixMatches, ", "))
+	}
 }
 
 func newLogsCmd() *cobra.Command {
 	var socket string
 	var follow bool
-	var since int
+	var since time.Duration
+	var rawMode bool
+	var agentName string
+	var typePrefix string
+	var tier string
+	var format string
+	var tail int
+	var noColor bool
 
 	cmd := &cobra.Command{
 		Use:   "logs <session-id>",
 		Short: "Show session events",
-		Long:  "Show session events. Use --follow to tail in real-time.",
+		Long:  "Show session events. Use --follow to tail in real-time." + ChannelsFooter,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if rawMode {
+				if agentName == "" {
+					return fmt.Errorf("--raw requires --agent <name>")
+				}
+				if since > 0 {
+					return fmt.Errorf("--raw cannot be combined with --since (raw mode serves bytes, not events)")
+				}
+				c := NewClient(resolveSocket(socket))
+				sessionID := args[0]
+				if resolved, err := lookupSessionID(c, sessionID); err == nil {
+					sessionID = resolved
+				}
+				return c.BridgeStdoutStream(cmd.Context(), sessionID, agentName, 0, follow, cmd.OutOrStdout())
+			}
+
+			if err := validateFormat(format); err != nil {
+				return err
+			}
+
 			c := NewClient(resolveSocket(socket))
 			sessionID := args[0]
-
 			if resolved, err := lookupSessionID(c, sessionID); err == nil {
 				sessionID = resolved
 			}
@@ -124,21 +170,30 @@ func newLogsCmd() *cobra.Command {
 				return fmt.Errorf("get events: %w", err)
 			}
 
+			// Apply client-side filters for backfill. The SSE path uses
+			// server-side filters; we mirror them here so one-shot mode matches
+			// follow mode semantics.
+			filtered := make([]eventResponse, 0, len(events))
 			cutoff := time.Time{}
 			if since > 0 {
-				cutoff = time.Now().Add(-time.Duration(since) * time.Minute)
+				cutoff = time.Now().Add(-since)
 			}
-
-			lastSeen := time.Time{}
-			var lastSeenID int64
 			for _, e := range events {
 				if !cutoff.IsZero() && e.Timestamp.Before(cutoff) {
 					continue
 				}
-				printEvent(cmd, e)
-				if e.Timestamp.After(lastSeen) {
-					lastSeen = e.Timestamp
+				if !matchesFilters(e, agentName, typePrefix, tier) {
+					continue
 				}
+				filtered = append(filtered, e)
+			}
+			if tail > 0 && len(filtered) > tail {
+				filtered = filtered[len(filtered)-tail:]
+			}
+
+			var lastSeenID int64
+			for _, e := range filtered {
+				printEventFormat(cmd, e, format, noColor)
 				if e.ID > lastSeenID {
 					lastSeenID = e.ID
 				}
@@ -148,90 +203,128 @@ func newLogsCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "--- following (Ctrl+C to stop) ---")
-			for {
-				events, err := c.GetEventsAfter(sessionID, lastSeenID, 30*time.Second)
-				if err != nil {
-					continue
-				}
-
-				for _, e := range events {
-					printEvent(cmd, e)
-					if e.Timestamp.After(lastSeen) {
-						lastSeen = e.Timestamp
-					}
-					if e.ID > lastSeenID {
-						lastSeenID = e.ID
-					}
+			// Track highest ID across unfiltered backfill so follow resumes from
+			// the true tip of the log, not just the last matching event.
+			for _, e := range events {
+				if e.ID > lastSeenID {
+					lastSeenID = e.ID
 				}
 			}
-		},
-	}
-	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow events in real-time")
-	cmd.Flags().IntVar(&since, "since", 0, "Show events from the last N minutes")
-	return cmd
-}
 
-func newWatchCmd() *cobra.Command {
-	var (
-		socket       string
-		sessionsFlag string
-	)
-
-	cmd := &cobra.Command{
-		Use:   "watch",
-		Short: "Stream events from one or more sessions as they happen",
-		Long:  "Stream events from one or more sessions via the daemon SSE endpoint.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			sessionArgs := strings.TrimSpace(sessionsFlag)
-			if sessionArgs == "" {
-				sessionArgs = strings.Join(args, ",")
-			}
-			if sessionArgs == "" {
-				return fmt.Errorf("--sessions is required")
-			}
-
-			c := NewClient(resolveSocket(socket))
-			rawSessions := strings.Split(sessionArgs, ",")
-			sessionIDs := make([]string, 0, len(rawSessions))
-			var afterID int64
-			for _, raw := range rawSessions {
-				raw = strings.TrimSpace(raw)
-				if raw == "" {
-					continue
-				}
-				sessionID, err := lookupSessionID(c, raw)
-				if err != nil {
-					return err
-				}
-				sessionIDs = append(sessionIDs, sessionID)
-				events, err := c.GetEvents(sessionID)
-				if err == nil {
-					for _, evt := range events {
-						if evt.ID > afterID {
-							afterID = evt.ID
-						}
-					}
-				}
-			}
-			if len(sessionIDs) == 0 {
-				return fmt.Errorf("no sessions resolved")
-			}
-
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Watching sessions: %s\n", strings.Join(sessionIDs, ", "))
-			return c.WatchSessions(ctx, sessionIDs, afterID, func(evt eventResponse) error {
-				printEvent(cmd, evt)
+			return c.SubscribeEvents(ctx, sessionID, EventFilters{
+				Agent:      agentName,
+				TypePrefix: typePrefix,
+				Tier:       tier,
+				AfterID:    lastSeenID,
+			}, func(e eventResponse) error {
+				printEventFormat(cmd, e, format, noColor)
 				return nil
 			})
 		},
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	cmd.Flags().StringVar(&sessionsFlag, "sessions", "", "Comma-separated session IDs or names")
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow events in real-time via SSE")
+	cmd.Flags().DurationVar(&since, "since", 0, "Show events from the last duration (e.g. 10m, 1h)")
+	cmd.Flags().BoolVar(&rawMode, "raw", false, "Tail raw bridge stdout file for --agent")
+	cmd.Flags().StringVar(&agentName, "agent", "", "Filter events by agent name (server-side in follow mode)")
+	cmd.Flags().StringVar(&typePrefix, "type", "", "Filter events by type prefix (e.g. bridge:, trace:)")
+	cmd.Flags().StringVar(&tier, "tier", "", "Cap events at log tier (standard|verbose|trace)")
+	cmd.Flags().StringVar(&format, "format", "pretty", "Output format (pretty|ndjson). 'json' is accepted as an alias for ndjson — both emit one JSON object per line so --follow can stream incrementally; a true JSON array would require buffering the whole stream. Pipe through `jq -s` if you need an array.")
+	cmd.Flags().IntVar(&tail, "tail", 0, "Limit backfill to the last N matching events")
+	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable ANSI color (auto when stdout is not a TTY)")
 	return cmd
+}
+
+func validateFormat(format string) error {
+	switch format {
+	case "", "pretty", "ndjson", "json":
+		return nil
+	}
+	return fmt.Errorf("unknown --format %q (want pretty|ndjson|json)", format)
+}
+
+// matchesFilters mirrors the server's SSE output filters for client-side
+// backfill. agent == "" matches any agent; typePrefix == "" matches any type;
+// tier == "" disables the tier cap.
+func matchesFilters(e eventResponse, agent, typePrefix, tier string) bool {
+	if typePrefix != "" && !strings.HasPrefix(e.Type, typePrefix) {
+		return false
+	}
+	if agent != "" {
+		// Parse e.Data as JSON and read the top-level "agent" field. A prior
+		// substring peek was cheaper but also matched embedded JSON-in-JSON
+		// (e.g. a supervisor message whose content field contained an escaped
+		// "agent":"pm"), yielding false positives that crossed agent scope.
+		var payload struct {
+			Agent string `json:"agent"`
+		}
+		if err := json.Unmarshal([]byte(e.Data), &payload); err != nil {
+			return false
+		}
+		if payload.Agent != agent {
+			return false
+		}
+	}
+	if tier != "" {
+		cap := tierRank(tier)
+		if cap < 0 {
+			// Unknown tier name — behave as "no cap" to match SSE which rejects
+			// bad values at the HTTP layer; backfill is best-effort here.
+			return true
+		}
+		if tierRank(eventTier(e)) > cap {
+			return false
+		}
+	}
+	return true
+}
+
+// eventTier mirrors the server's classification (internal/daemon.eventTier) so
+// --tier filtering is consistent between one-shot backfill and --follow.
+func eventTier(e eventResponse) string {
+	if e.TraceFile != "" ||
+		strings.HasPrefix(e.Type, "trace:") ||
+		strings.Contains(e.Data, `"full_input":`) ||
+		strings.Contains(e.Data, `"full_result":`) {
+		return "trace"
+	}
+	if strings.HasPrefix(e.Type, "verbose:") ||
+		strings.HasPrefix(e.Type, "agent_status:") ||
+		strings.HasPrefix(e.Type, "bridge:") {
+		return "verbose"
+	}
+	return "standard"
+}
+
+// tierRank matches internal/daemon.tierRank. Returns -1 for unknown names.
+func tierRank(tier string) int {
+	switch tier {
+	case "standard":
+		return 0
+	case "verbose":
+		return 1
+	case "trace":
+		return 2
+	}
+	return -1
+}
+
+func printEventFormat(cmd *cobra.Command, e eventResponse, format string, noColor bool) {
+	switch format {
+	case "ndjson", "json":
+		// Both batch and streaming modes emit one object per line — "json" as
+		// a single array would require buffering the entire follow stream,
+		// which defeats the purpose of --follow. Consumers who want an array
+		// can pipe ndjson through `jq -s`.
+		b, _ := json.Marshal(e)
+		fmt.Fprintln(cmd.OutOrStdout(), string(b))
+	default:
+		printEvent(cmd, e)
+	}
+	_ = noColor
 }
 
 func printEvent(cmd *cobra.Command, e eventResponse) {
@@ -262,9 +355,9 @@ func newStatusCmd() *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tNAME\tSTATUS\tTEMPLATE")
+			fmt.Fprintln(w, "ID\tNAME\tSTATUS\tTEMPLATE\tLOG")
 			for _, s := range sessions {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.ID[:8], s.Name, s.Status, s.Template)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", s.ID[:8], s.Name, s.Status, s.Template, s.LogLevel)
 			}
 			w.Flush()
 			return nil

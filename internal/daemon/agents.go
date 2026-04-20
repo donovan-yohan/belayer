@@ -14,6 +14,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
+	"github.com/donovan-yohan/belayer/internal/daemon/bridgelog"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
@@ -73,6 +74,15 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	if err := validateAgentName(req.Name); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
+	}
+	// Identity is used to pick the identity directory under .belayer/agents/<identity>/
+	// and agents/<identity>/; an unvalidated value with "../" would escape the
+	// identity tree when resolved by agentIdentityPaths at spawn time.
+	if req.Identity != "" {
+		if err := validateAgentName(req.Identity); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "identity: " + err.Error()})
+			return
+		}
 	}
 	req.SessionID = sessionID
 
@@ -158,6 +168,15 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	// Track the process (may be nil for test stubs).
 	if proc != nil {
 		d.bridgeMu.Lock()
+		if d.bridgeShuttingDownSessions[sessionID] {
+			d.bridgeMu.Unlock()
+			_ = proc.Stop(2 * time.Second)
+			// Move the run out of "starting" so operators see the cancel, not a
+			// stuck starting row that will never transition.
+			_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon shutting down; bridge spawn cancelled"})
+			return
+		}
 		d.bridgeProcs[bridgeKey(sessionID, req.Name)] = proc
 		d.bridgeMu.Unlock()
 	}
@@ -386,14 +405,33 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("create stdin pipe: %w", err)
 	}
 
-	// Set up stdout/stderr log files.
-	stdoutLog, err := os.OpenFile(filepath.Join(runDir, "bridge-stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// Drain any still-live bridge process for this (session, agent) before
+	// rotating its log files. bridgelog.Rotate is unsafe while a writer holds
+	// the file open — the kernel will keep writing the renamed inode, so
+	// post-rotate bytes would land in .log.1 instead of the new .log.
+	if existing := d.takeExistingBridge(req.SessionID, req.Name); existing != nil {
+		if err := existing.Stop(5 * time.Second); err != nil {
+			log.Printf("spawn %s: stop prior bridge: %v (continuing)", req.Name, err)
+		}
+		// Bound the drain: if Stop failed to reach the process (e.g. Kill
+		// returned an error and Done() never closes), we still need to
+		// rotate its logs. The risk of a few bytes leaking into .log.1 is
+		// strictly smaller than hanging the respawn forever.
+		select {
+		case <-existing.Done():
+		case <-time.After(5 * time.Second):
+			log.Printf("spawn %s: prior bridge did not drain within 5s, proceeding with rotation", req.Name)
+		}
+	}
+
+	// Rotate and open per-spawn stdout/stderr logs (keeps last 3 spawns).
+	stdoutLog, err := bridgelog.RotateAndOpen(filepath.Join(runDir, "bridge-stdout.log"), 3)
 	if err != nil {
 		stdinR.Close()
 		stdinW.Close()
 		return nil, fmt.Errorf("open stdout log: %w", err)
 	}
-	stderrLog, err := os.OpenFile(filepath.Join(runDir, "bridge-stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	stderrLog, err := bridgelog.RotateAndOpen(filepath.Join(runDir, "bridge-stderr.log"), 3)
 	if err != nil {
 		stdinR.Close()
 		stdinW.Close()
@@ -428,7 +466,9 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// is empty, the session is never archived anyway (archive_manager.doArchive
 	// skips), so there's no point writing transcripts.
 	var transcriptPath string
-	if sess.LogLevel == LogLevelVerbose && sess.WorkspaceDir != "" {
+	// Tier model is monotonic (standard ⊂ verbose ⊂ trace): trace sessions
+	// still want the verbose transcript channel in addition to trace fragments.
+	if (sess.LogLevel == LogLevelVerbose || sess.LogLevel == LogLevelTrace) && sess.WorkspaceDir != "" {
 		transcriptsDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", req.SessionID, "transcripts")
 		if mkErr := os.MkdirAll(transcriptsDir, 0o700); mkErr != nil {
 			log.Printf("spawn %s: create transcripts dir failed (continuing without transcript): %v", req.Name, mkErr)
@@ -458,6 +498,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		BelayerRoot:     d.config.BelayerRoot,
 		BelayerTools:    belayerTools,
 		TranscriptPath:  transcriptPath,
+		LogLevel:        sess.LogLevel,
 	}
 	// In clamshell mode the bridge runs inside the Docker container where the
 	// host hermes venv path doesn't exist; use the container's system python3.
@@ -541,6 +582,20 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 	go func() {
 		<-proc.Done()
 
+		// takeExistingBridge can replace this process with a fresh spawn
+		// before its watcher fires; that old watcher must not mark the new
+		// run blocked or delete the new process entry. Verify we're still
+		// the current entry under lock, and take the cleanup-slot while
+		// we hold it so the later delete race cannot touch a replacement.
+		key := bridgeKey(run.SessionID, run.Name)
+		d.bridgeMu.Lock()
+		if d.bridgeProcs[key] != proc {
+			d.bridgeMu.Unlock()
+			return
+		}
+		delete(d.bridgeProcs, key)
+		d.bridgeMu.Unlock()
+
 		current, err := d.store.GetAgentRun(run.SessionID, run.Name)
 		if err != nil {
 			return
@@ -579,11 +634,6 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 
 		// Check if this was the last active agent (session may be stalled).
 		d.checkSessionStalled(run.SessionID)
-
-		// Clean up process reference.
-		d.bridgeMu.Lock()
-		delete(d.bridgeProcs, bridgeKey(run.SessionID, run.Name))
-		d.bridgeMu.Unlock()
 	}()
 }
 
@@ -597,6 +647,21 @@ func (d *Daemon) interruptBridgeAgent(sessionID, agentName, from, content string
 		return fmt.Errorf("no bridge process for %s/%s", sessionID, agentName)
 	}
 	return proc.Interrupt(from, content)
+}
+
+// takeExistingBridge atomically removes and returns any bridge process
+// tracked for (sessionID, agentName). Returns nil if no process is tracked.
+// Caller is responsible for stopping/waiting on the returned process; the
+// map entry is gone either way, so the replacement spawn can proceed.
+func (d *Daemon) takeExistingBridge(sessionID, agentName string) *bridge.Process {
+	key := bridgeKey(sessionID, agentName)
+	d.bridgeMu.Lock()
+	proc := d.bridgeProcs[key]
+	if proc != nil {
+		delete(d.bridgeProcs, key)
+	}
+	d.bridgeMu.Unlock()
+	return proc
 }
 
 // spawnAgentInternal handles the core agent spawn logic without HTTP.
@@ -661,6 +726,13 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 
 	if proc != nil {
 		d.bridgeMu.Lock()
+		if d.bridgeShuttingDownSessions[req.SessionID] {
+			d.bridgeMu.Unlock()
+			_ = proc.Stop(2 * time.Second)
+			// Same reason as the HTTP cancellation path above.
+			_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
+			return store.AgentRun{}, fmt.Errorf("daemon shutting down; bridge spawn cancelled")
+		}
 		d.bridgeProcs[bridgeKey(req.SessionID, req.Name)] = proc
 		d.bridgeMu.Unlock()
 	}

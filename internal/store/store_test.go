@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/donovan-yohan/belayer/internal/trace"
 )
 
 func openMemory(t *testing.T) *Store {
@@ -777,6 +779,44 @@ func TestPendingMessages_AfterID(t *testing.T) {
 	}
 }
 
+func TestMigrate_TraceColumnsAndReaderCursors(t *testing.T) {
+	s, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	rows, err := s.DB().Query("PRAGMA table_info(events)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = true
+	}
+	for _, c := range []string{"trace_file", "trace_offset", "trace_length"} {
+		if !cols[c] {
+			t.Errorf("events missing column %s", c)
+		}
+	}
+	if _, err := s.DB().Exec(`INSERT INTO reader_cursors(reader_id, session_id, last_id) VALUES ('r','s',0)`); err != nil {
+		t.Fatalf("reader_cursors insert: %v", err)
+	}
+	// Upsert semantics: PK (reader_id, session_id) means second insert with same pair must conflict.
+	_, err = s.DB().Exec(`INSERT INTO reader_cursors(reader_id, session_id, last_id) VALUES ('r','s',5)`)
+	if err == nil {
+		t.Fatal("expected PK conflict on duplicate (reader_id, session_id)")
+	}
+}
+
 // seedStoreEvents inserts n events into the store for sessionID and returns
 // the assigned IDs in ascending order.
 func seedStoreEvents(t *testing.T, s *Store, sessionID string, n int) []int64 {
@@ -879,5 +919,305 @@ func TestQueryEventsWindow_AfterAndBefore(t *testing.T) {
 	}
 	if len(got) != 4 {
 		t.Errorf("expected 4 events in window, got %d", len(got))
+	}
+}
+
+// TestInsertEventWithSpill_SetsFragmentColumns verifies that InsertEventWithSpill
+// populates trace_file, trace_offset, and trace_length when a non-zero Fragment is
+// provided, and that QueryEvents returns the same values in the SessionEvent struct.
+func TestInsertEventWithSpill_SetsFragmentColumns(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "spill-test", LogLevel: "trace"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	frag := trace.Fragment{
+		Path:   "/tmp/traces/sess/agent/0001.jsonl",
+		Offset: 1234,
+		Length: 5678,
+	}
+	evt := SessionEvent{
+		SessionID: sessID,
+		Type:      "tool_call",
+		Data:      `{"agent":"implementer","_trace":true}`,
+	}
+	if err := s.InsertEventWithSpill(evt, frag); err != nil {
+		t.Fatalf("InsertEventWithSpill: %v", err)
+	}
+
+	// Read back the raw columns via s.DB().
+	var traceFile sql.NullString
+	var traceOffset, traceLength sql.NullInt64
+	row := s.DB().QueryRow(
+		`SELECT trace_file, trace_offset, trace_length FROM events WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+		sessID,
+	)
+	if err := row.Scan(&traceFile, &traceOffset, &traceLength); err != nil {
+		t.Fatalf("SELECT trace columns: %v", err)
+	}
+
+	if !traceFile.Valid || traceFile.String != frag.Path {
+		t.Errorf("trace_file: got %v, want %q", traceFile, frag.Path)
+	}
+	if !traceOffset.Valid || traceOffset.Int64 != frag.Offset {
+		t.Errorf("trace_offset: got %v, want %d", traceOffset, frag.Offset)
+	}
+	if !traceLength.Valid || traceLength.Int64 != frag.Length {
+		t.Errorf("trace_length: got %v, want %d", traceLength, frag.Length)
+	}
+
+	// Also verify the columns are returned via QueryEvents (not just raw DB).
+	events, err := s.QueryEvents(sessID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("QueryEvents: expected 1 event, got %d", len(events))
+	}
+	got := events[0]
+
+	if got.TraceFile != frag.Path {
+		t.Errorf("QueryEvents TraceFile: got %q, want %q", got.TraceFile, frag.Path)
+	}
+	if got.TraceOffset != frag.Offset {
+		t.Errorf("QueryEvents TraceOffset: got %d, want %d", got.TraceOffset, frag.Offset)
+	}
+	if got.TraceLength != frag.Length {
+		t.Errorf("QueryEvents TraceLength: got %d, want %d", got.TraceLength, frag.Length)
+	}
+	// TraceFragment should be derived from the basename without extensions.
+	wantFragment := "0001"
+	if got.TraceFragment != wantFragment {
+		t.Errorf("QueryEvents TraceFragment: got %q, want %q", got.TraceFragment, wantFragment)
+	}
+}
+
+// TestListMessagesInSession verifies that ListMessagesInSession returns all messages
+// for a session in ascending created_at order.
+func TestListMessagesInSession(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "list-msgs-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	base := time.Now().UTC()
+	for i, content := range []string{"first", "second", "third"} {
+		if _, err := s.CreateMessage(Message{
+			SessionID:   sessID,
+			SenderID:    "sup",
+			RecipientID: "dev",
+			Content:     content,
+			CreatedAt:   base.Add(time.Duration(i) * time.Second),
+		}); err != nil {
+			t.Fatalf("CreateMessage %q: %v", content, err)
+		}
+	}
+
+	msgs, err := s.ListMessagesInSession(sessID)
+	if err != nil {
+		t.Fatalf("ListMessagesInSession: %v", err)
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+	if msgs[0].Content != "first" {
+		t.Errorf("msgs[0].Content = %q, want %q", msgs[0].Content, "first")
+	}
+	if msgs[1].Content != "second" {
+		t.Errorf("msgs[1].Content = %q, want %q", msgs[1].Content, "second")
+	}
+	if msgs[2].Content != "third" {
+		t.Errorf("msgs[2].Content = %q, want %q", msgs[2].Content, "third")
+	}
+	// Verify ascending order by created_at.
+	for i := 1; i < len(msgs); i++ {
+		if msgs[i].CreatedAt.Before(msgs[i-1].CreatedAt) {
+			t.Errorf("messages not in ascending order: msgs[%d].CreatedAt=%v < msgs[%d].CreatedAt=%v",
+				i, msgs[i].CreatedAt, i-1, msgs[i-1].CreatedAt)
+		}
+	}
+}
+
+// TestListMessagesBetween verifies that ListMessagesBetween returns only messages
+// in either direction between agentA and agentB, ordered by created_at ASC.
+func TestListMessagesBetween(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "between-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	base := time.Now().UTC()
+	// Seed: a→b, b→a, a→c, c→b
+	messages := []Message{
+		{SessionID: sessID, SenderID: "a", RecipientID: "b", Content: "a-to-b", CreatedAt: base},
+		{SessionID: sessID, SenderID: "b", RecipientID: "a", Content: "b-to-a", CreatedAt: base.Add(time.Second)},
+		{SessionID: sessID, SenderID: "a", RecipientID: "c", Content: "a-to-c", CreatedAt: base.Add(2 * time.Second)},
+		{SessionID: sessID, SenderID: "c", RecipientID: "b", Content: "c-to-b", CreatedAt: base.Add(3 * time.Second)},
+	}
+	for _, msg := range messages {
+		if _, err := s.CreateMessage(msg); err != nil {
+			t.Fatalf("CreateMessage %q: %v", msg.Content, err)
+		}
+	}
+
+	// Between a and b should return only the first two.
+	msgs, err := s.ListMessagesBetween(sessID, "a", "b")
+	if err != nil {
+		t.Fatalf("ListMessagesBetween: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages between a and b, got %d", len(msgs))
+	}
+	if msgs[0].Content != "a-to-b" {
+		t.Errorf("msgs[0].Content = %q, want %q", msgs[0].Content, "a-to-b")
+	}
+	if msgs[1].Content != "b-to-a" {
+		t.Errorf("msgs[1].Content = %q, want %q", msgs[1].Content, "b-to-a")
+	}
+	// Verify ascending order.
+	if msgs[1].CreatedAt.Before(msgs[0].CreatedAt) {
+		t.Errorf("messages not in ascending order")
+	}
+}
+
+// TestInsertEventWithSpill_NullWhenFragmentEmpty verifies that InsertEventWithSpill
+// stores NULL trace columns when a zero Fragment (frag.Path == "") is provided.
+func TestInsertEventWithSpill_NullWhenFragmentEmpty(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "no-spill-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	evt := SessionEvent{
+		SessionID: sessID,
+		Type:      "tool_call",
+		Data:      `{"agent":"implementer","result":"ok"}`,
+	}
+	if err := s.InsertEventWithSpill(evt, trace.Fragment{}); err != nil {
+		t.Fatalf("InsertEventWithSpill (empty fragment): %v", err)
+	}
+
+	var traceFile sql.NullString
+	var traceOffset, traceLength sql.NullInt64
+	row := s.DB().QueryRow(
+		`SELECT trace_file, trace_offset, trace_length FROM events WHERE session_id = ? ORDER BY id DESC LIMIT 1`,
+		sessID,
+	)
+	if err := row.Scan(&traceFile, &traceOffset, &traceLength); err != nil {
+		t.Fatalf("SELECT trace columns: %v", err)
+	}
+
+	if traceFile.Valid {
+		t.Errorf("trace_file: expected NULL, got %q", traceFile.String)
+	}
+	if traceOffset.Valid {
+		t.Errorf("trace_offset: expected NULL, got %d", traceOffset.Int64)
+	}
+	if traceLength.Valid {
+		t.Errorf("trace_length: expected NULL, got %d", traceLength.Int64)
+	}
+}
+
+// TestCursor_RoundTrip verifies Lookup returns 0 for a missing cursor, and returns
+// the value set by UpdateCursor.
+func TestCursor_RoundTrip(t *testing.T) {
+	s := openMemory(t)
+
+	// Lookup on empty → 0.
+	got, err := s.LookupCursor("reader1", "session1")
+	if err != nil {
+		t.Fatalf("LookupCursor (empty): %v", err)
+	}
+	if got != 0 {
+		t.Errorf("LookupCursor (empty): expected 0, got %d", got)
+	}
+
+	// Set the cursor.
+	if err := s.UpdateCursor("reader1", "session1", 42); err != nil {
+		t.Fatalf("UpdateCursor: %v", err)
+	}
+
+	// Lookup returns the set value.
+	got, err = s.LookupCursor("reader1", "session1")
+	if err != nil {
+		t.Fatalf("LookupCursor after update: %v", err)
+	}
+	if got != 42 {
+		t.Errorf("LookupCursor after update: expected 42, got %d", got)
+	}
+
+	// Update to new value — upsert must work.
+	if err := s.UpdateCursor("reader1", "session1", 99); err != nil {
+		t.Fatalf("UpdateCursor (upsert): %v", err)
+	}
+	got, err = s.LookupCursor("reader1", "session1")
+	if err != nil {
+		t.Fatalf("LookupCursor after upsert: %v", err)
+	}
+	if got != 99 {
+		t.Errorf("LookupCursor after upsert: expected 99, got %d", got)
+	}
+
+	// Different reader/session pair must be independent.
+	got2, err := s.LookupCursor("reader2", "session1")
+	if err != nil {
+		t.Fatalf("LookupCursor (other reader): %v", err)
+	}
+	if got2 != 0 {
+		t.Errorf("LookupCursor (other reader): expected 0, got %d", got2)
+	}
+}
+
+// TestCursor_Sweep verifies that SweepExpiredCursors removes rows older than ttl.
+func TestCursor_Sweep(t *testing.T) {
+	s := openMemory(t)
+
+	// Insert a cursor with an ancient updated_at directly via SQL.
+	ancient := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	if _, err := s.DB().Exec(
+		`INSERT INTO reader_cursors(reader_id, session_id, last_id, updated_at) VALUES ('old','sess1',7,?)`,
+		ancient,
+	); err != nil {
+		t.Fatalf("insert old cursor: %v", err)
+	}
+
+	// Insert a fresh cursor.
+	if err := s.UpdateCursor("fresh", "sess1", 10); err != nil {
+		t.Fatalf("UpdateCursor fresh: %v", err)
+	}
+
+	// Sweep with 24h TTL — only old row should be deleted.
+	n, err := s.SweepExpiredCursors(24 * time.Hour)
+	if err != nil {
+		t.Fatalf("SweepExpiredCursors: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("SweepExpiredCursors: expected 1 deleted, got %d", n)
+	}
+
+	// Old cursor must be gone (LookupCursor returns 0).
+	got, err := s.LookupCursor("old", "sess1")
+	if err != nil {
+		t.Fatalf("LookupCursor after sweep: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("old cursor still visible after sweep: last_id=%d", got)
+	}
+
+	// Fresh cursor must survive.
+	got, err = s.LookupCursor("fresh", "sess1")
+	if err != nil {
+		t.Fatalf("LookupCursor fresh after sweep: %v", err)
+	}
+	if got != 10 {
+		t.Errorf("fresh cursor lost after sweep: expected 10, got %d", got)
 	}
 }

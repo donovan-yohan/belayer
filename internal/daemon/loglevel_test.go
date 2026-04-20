@@ -27,7 +27,7 @@ func TestValidateLogLevel(t *testing.T) {
 				if err == nil {
 					t.Fatalf("ValidateLogLevel(%q): expected error, got %q", tc.input, got)
 				}
-				if !strings.Contains(err.Error(), "standard") || !strings.Contains(err.Error(), "verbose") {
+				if !strings.Contains(err.Error(), "standard") || !strings.Contains(err.Error(), "verbose") || !strings.Contains(err.Error(), "trace") {
 					t.Errorf("error should name allowed set, got: %v", err)
 				}
 				return
@@ -39,6 +39,16 @@ func TestValidateLogLevel(t *testing.T) {
 				t.Errorf("ValidateLogLevel(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateLogLevel_Trace(t *testing.T) {
+	got, err := ValidateLogLevel("trace")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "trace" {
+		t.Fatalf("want %q, got %q", "trace", got)
 	}
 }
 

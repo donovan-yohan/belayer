@@ -12,3 +12,7 @@
 - [Embed hermes_bridge + deployment docs](2026-04-17-embed-hermes-bridge-design.md) — Ship bridge embedded in binary, extract via belayer init; rewrite SANDBOXING.md with prod/dev topologies and known security gaps
 - ~~[Clamshell apikey provider type](2026-04-17-clamshell-apikey-provider-design.md)~~ — Superseded by belayer-in-clamshell-design (upstream apikey spec still current, belayer integration changed)
 - [Belayer-in-clamshell](2026-04-17-belayer-in-clamshell-design.md) — One-container-per-run model; belayer daemon + bridges run inside a single clamshell sandbox; apikey provider consumed at boot; arielcharts + `pnpm run dev` as E2E proof
+
+## Current Designs
+
+- [Observability log tiers and API design](2026-04-19-observability-log-tiers-and-api-design.md) — Tiered logging (standard/verbose/trace), consolidated CLI+HTTP API, SSE with digests, per-agent spill files, Nightshift-friendly archives (2026-04-19)

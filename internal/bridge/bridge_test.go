@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -684,5 +685,58 @@ func TestBelayerToolsEnvVarOmittedWhenEmpty(t *testing.T) {
 
 	if strings.Contains(output, "BELAYER_TOOLS=") {
 		t.Errorf("expected BELAYER_TOOLS to be absent from env, but found it in output")
+	}
+}
+
+// TestSpawn_RotatesStdoutLogAcrossSpawns verifies that bridgelog.RotateAndOpen is
+// wired correctly: each new Spawn rotates the previous log so the last 3 spawns'
+// output is preserved as .log.1, .log.2, etc.
+func TestSpawn_RotatesStdoutLogAcrossSpawns(t *testing.T) {
+	// Use TestHelperProcess-style mock so we don't need a real python interpreter.
+	// NOTE: TestHelperProcess lives in internal/daemon/bridge_integration_test.go,
+	// not here — so we use a simple /bin/echo command instead.
+	dir := t.TempDir()
+
+	spawn := func(msg string) {
+		cfg := Config{
+			Cmd:       []string{"/bin/sh", "-c", "printf %s " + msg},
+			SessionID: "s", AgentID: "a", Role: "mock", Profile: "mock",
+			Workdir: t.TempDir(), RunDir: dir,
+		}
+		p, err := Spawn(cfg)
+		if err != nil {
+			t.Fatalf("Spawn: %v", err)
+		}
+		if err := p.Wait(); err != nil {
+			t.Fatalf("Wait: %v", err)
+		}
+	}
+
+	spawn("first")
+	spawn("second")
+	spawn("third")
+
+	// Current bridge-stdout.log holds the newest spawn's output.
+	cur, err := os.ReadFile(filepath.Join(dir, "bridge-stdout.log"))
+	if err != nil {
+		t.Fatalf("read current: %v", err)
+	}
+	if string(cur) != "third" {
+		t.Fatalf("current log = %q want %q", cur, "third")
+	}
+	// .log.1 holds the previous spawn; .log.2 the one before.
+	b1, err := os.ReadFile(filepath.Join(dir, "bridge-stdout.log.1"))
+	if err != nil {
+		t.Fatalf("read .1: %v", err)
+	}
+	if string(b1) != "second" {
+		t.Fatalf(".log.1 = %q want %q", b1, "second")
+	}
+	b2, err := os.ReadFile(filepath.Join(dir, "bridge-stdout.log.2"))
+	if err != nil {
+		t.Fatalf("read .2: %v", err)
+	}
+	if string(b2) != "first" {
+		t.Fatalf(".log.2 = %q want %q", b2, "first")
 	}
 }

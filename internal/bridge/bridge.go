@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/donovan-yohan/belayer/internal/daemon/bridgelog"
 )
 
 // defaultPythonCmd returns the command used to launch the bridge subprocess.
@@ -68,6 +70,7 @@ type Config struct {
 	Ephemeral       bool     // true = exit on task completion, false = stay alive for more work
 	BelayerTools    []string // role-specific belayer tools from agent.yaml
 	TranscriptPath  string   // absolute path to per-agent JSONL; empty = capture disabled (standard log level)
+	LogLevel        string   // "standard", "verbose", or "trace"; empty treated as "standard"
 
 	// Cmd overrides the default python3 -m hermes_bridge command.
 	// If nil, pythonCmd is used. Useful for testing.
@@ -178,6 +181,11 @@ func BuildEnv(cfg Config) []string {
 	if cfg.TranscriptPath != "" {
 		env = appendEnv(env, "BELAYER_TRANSCRIPT_PATH", cfg.TranscriptPath)
 	}
+	level := cfg.LogLevel
+	if level == "" {
+		level = "standard"
+	}
+	env = appendEnv(env, "BELAYER_LOG_LEVEL", level)
 	return env
 }
 
@@ -223,13 +231,14 @@ func Spawn(cfg Config) (*Process, error) {
 		return nil, fmt.Errorf("bridge: create stdin pipe: %w", err)
 	}
 
-	// Log stdout and stderr to files in RunDir.
-	stdoutLog, err := os.OpenFile(filepath.Join(cfg.RunDir, "bridge-stdout.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// Rotate and open per-spawn stdout/stderr logs under RunDir. Rotation keeps
+	// the previous 3 spawns' output so operators can diff runs after a crash.
+	stdoutLog, err := bridgelog.RotateAndOpen(filepath.Join(cfg.RunDir, "bridge-stdout.log"), 3)
 	if err != nil {
 		stdinPipe.Close()
 		return nil, fmt.Errorf("bridge: open stdout log: %w", err)
 	}
-	stderrLog, err := os.OpenFile(filepath.Join(cfg.RunDir, "bridge-stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	stderrLog, err := bridgelog.RotateAndOpen(filepath.Join(cfg.RunDir, "bridge-stderr.log"), 3)
 	if err != nil {
 		stdinPipe.Close()
 		stdoutLog.Close()

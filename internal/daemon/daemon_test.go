@@ -40,7 +40,8 @@ func testDaemon(t *testing.T) *Daemon {
 		config:               Config{},
 		daemonInstanceID:     "test-daemon-instance",
 		tools:                make(map[string][]agent.ToolSpec),
-		bridgeProcs:          make(map[string]*bridge.Process),
+		bridgeProcs:                make(map[string]*bridge.Process),
+		bridgeShuttingDownSessions: make(map[string]bool),
 		sessionSandboxes:     make(map[string]sessionSandbox),
 		sseSubscribers:       make(map[*sseSubscriber]struct{}),
 		sandboxDrivers:       reg,
@@ -50,6 +51,8 @@ func testDaemon(t *testing.T) *Daemon {
 		archiveDrainTimeout:  30 * time.Second,
 		shutdownHTTPTimeout:  5 * time.Second,
 		sseKeepaliveInterval: 15 * time.Second,
+		sseDigestInterval:    60 * time.Second,
+		cursorSweepStop:      make(chan struct{}),
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }
@@ -68,6 +71,8 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("POST /sessions/{id}/agents", d.handleSpawnAgent)
 	mux.HandleFunc("GET /sessions/{id}/agents", d.handleListAgents)
 	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
+	mux.HandleFunc("GET /sessions/{id}/bridges", d.handleListBridges)
+	mux.HandleFunc("GET /sessions/{id}/bridges/{agent}/stdout", d.handleBridgeStdout)
 	mux.HandleFunc("POST /sessions/{id}/artifacts", d.handleCreateArtifact)
 	mux.HandleFunc("GET /sessions/{id}/artifacts", d.handleListArtifacts)
 	mux.HandleFunc("GET /sessions/{id}/archive.ndjson", d.handleArchiveNDJSON)
@@ -446,7 +451,7 @@ func TestStreamEventsSSE_EmitsMultiplexedEvents(t *testing.T) {
 		if !strings.Contains(payload, "event: streamed") {
 			t.Fatalf("expected SSE event header, got %q", payload)
 		}
-		if !strings.Contains(payload, `"Type":"streamed"`) {
+		if !strings.Contains(payload, `"type":"streamed"`) {
 			t.Fatalf("expected streamed event payload, got %q", payload)
 		}
 		if !strings.Contains(payload, sess2.ID) {
