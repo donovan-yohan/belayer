@@ -205,6 +205,43 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 				d.archiver.ArchiveTerminal(sessionID)
 				d.terminateSandbox(d.startCtx, sessionID)
 			}
+		} else {
+			// A specialist gave up. Wake the supervisor so it can decide whether
+			// to respawn, hand off, or escalate — otherwise it will sleep on the
+			// idle timer and escalate the whole run without attempting recovery.
+			content := fmt.Sprintf("%s has finished with status=incomplete", agentName)
+			if detail != "" {
+				content += ". Detail: " + detail
+			}
+			msgID := uuid.New().String()
+			msg := broker.Message{
+				ID:          msgID,
+				SessionID:   sessionID,
+				SenderID:    agentName,
+				RecipientID: "supervisor",
+				Type:        broker.MessageStateChange,
+				Content:     content,
+				Urgent:      true,
+				Timestamp:   time.Now().UTC(),
+			}
+			_, _ = d.store.CreateMessage(store.Message{
+				ID:          msgID,
+				SessionID:   sessionID,
+				SenderID:    agentName,
+				RecipientID: "supervisor",
+				Type:        string(broker.MessageStateChange),
+				Content:     content,
+				Urgent:      true,
+			})
+			_ = d.broker.Interrupt(sessionID, "supervisor", msg)
+
+			// If the supervisor was already idle (or has itself exited) and this
+			// was the last running agent, the interrupt above won't wake anyone —
+			// surface the stall now so operators see it rather than waiting for
+			// the idle-timeout to fire. When the supervisor is still running this
+			// call returns immediately because at least one agent (supervisor) is
+			// still active.
+			d.checkSessionStalled(sessionID)
 		}
 
 	default:

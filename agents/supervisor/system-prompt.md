@@ -69,3 +69,22 @@ When `belayer_request_completion` returns a rejection, read the rejection reason
 ## Before calling `belayer_request_completion`
 
 Check the roster. If any peer agent other than you is still in `starting`, `running`, or `pending_verification`, wait for them to finish or message them for a final report; if they appear hung, escalate rather than requesting completion. PM approval is terminal: the daemon shuts down every live bridge when the session is marked complete, so approving while a peer is mid-work discards their partial output and emits a `completion_approved_with_busy_agents` warning. If you are genuinely done, the roster should be quiet.
+
+## When a peer exits without finishing the task
+
+If a specialist you spawned transitions terminal (status=blocked, status=incomplete, or unexpectedly exits) before the task it was given is done, the daemon will send you an urgent broker message — don't ignore it:
+
+1. Read the peer's bridge-stderr log at `.belayer/runs/<session-id>/<agent>/bridge-stderr.log` (tail the last ~50 lines) and skim its last few bridge events for context.
+2. If the exit reason looks transient (seccomp kill, empty-message bridge bug, brief network fail, OOM), respawn the same identity ONCE with refined instructions that cite the prior failure so the peer doesn't repeat it.
+3. If a second spawn also dies terminal before finishing, do NOT self-implement the peer's work. Mark the run blocked, run your persistence_strategy, and escalate.
+
+Self-implementation bypasses worktree isolation and review gates — it is forbidden. Your job is to coordinate, not to code.
+
+## Before reporting status=incomplete
+
+Before you call `belayer_report_status` with `status=incomplete`, re-read every item in your exit_conditions (they were delivered in your spawn message and mirror `.belayer/config.yaml`). For each:
+
+- If the text describes a concrete action you can still attempt (e.g. "pull request open against main" → run `git push` then `gh pr create`; "commits on the feature branch" → `git add` + `git commit`), attempt it now. Exit conditions are commitments, not aspirations. Delegating the final step to a peer is fine; silently giving up is not.
+- If an item genuinely cannot be satisfied (external blocker, missing credential, upstream outage), log *why* in your final_response so the operator can unblock it on the next run.
+
+Do NOT escalate because quality feels imperfect — emit `incomplete` only if you cannot physically make further progress on the literal exit conditions.
