@@ -192,18 +192,6 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 			log.Printf("ERROR: processAgentStatusEvent: failed to update agent %s to incomplete in session %s: %v", agentName, sessionID, err)
 		}
 
-		if err := d.store.LogEvent(store.SessionEvent{
-			SessionID: sessionID,
-			Type:      "agent_escalated",
-			Data: mustJSON(map[string]string{
-				"agent":  agentName,
-				"reason": "incomplete",
-				"detail": detail,
-			}),
-		}); err != nil {
-			log.Printf("WARNING: processAgentStatusEvent: failed to log agent_escalated event in session %s: %v", sessionID, err)
-		}
-
 		// If the supervisor reports incomplete, check the persistence gate
 		// before escalating. This mirrors how the PM gate intercepts a
 		// request for completion: a non-empty persistence_strategy is a hard
@@ -211,9 +199,25 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 		// persistence-notes artifact) before the run is allowed to bail.
 		// Otherwise a blocked overnight run ends with uncommitted local work
 		// and no diagnostics for the next operator.
+		//
+		// agent_escalated is only emitted after the gate decides — emitting
+		// before would record an escalation that never happened when the gate
+		// intercepts and reprompts instead.
 		if agentName == "supervisor" {
 			if d.maybeRepromptForPersistence(sessionID, detail) {
 				return
+			}
+			// Gate did not intercept — the supervisor is genuinely escalating.
+			if err := d.store.LogEvent(store.SessionEvent{
+				SessionID: sessionID,
+				Type:      "agent_escalated",
+				Data: mustJSON(map[string]string{
+					"agent":  agentName,
+					"reason": "incomplete",
+					"detail": detail,
+				}),
+			}); err != nil {
+				log.Printf("WARNING: processAgentStatusEvent: failed to log agent_escalated event in session %s: %v", sessionID, err)
 			}
 			if err := d.store.UpdateSessionStatus(sessionID, "needs_human_review"); err != nil {
 				log.Printf("ERROR: processAgentStatusEvent: failed to escalate session %s to needs_human_review: %v", sessionID, err)
@@ -224,6 +228,19 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 				d.terminateSandbox(d.startCtx, sessionID)
 			}
 		} else {
+			// Non-supervisor agent gave up. Emit escalated event immediately —
+			// no persistence gate applies to specialist agents.
+			if err := d.store.LogEvent(store.SessionEvent{
+				SessionID: sessionID,
+				Type:      "agent_escalated",
+				Data: mustJSON(map[string]string{
+					"agent":  agentName,
+					"reason": "incomplete",
+					"detail": detail,
+				}),
+			}); err != nil {
+				log.Printf("WARNING: processAgentStatusEvent: failed to log agent_escalated event in session %s: %v", sessionID, err)
+			}
 			// A specialist gave up. Wake the supervisor so it can decide whether
 			// to respawn, hand off, or escalate — otherwise it will sleep on the
 			// idle timer and escalate the whole run without attempting recovery.
@@ -479,7 +496,8 @@ func (d *Daemon) countPersistenceReprompts(sessionID string) int {
 // alternatives (scan tool-call logs for `git push`, inspect remote) are
 // higher-complexity and not worth the maintenance cost for a prompt-level
 // gate. Operators who want to bypass the gate set persistence_strategy: [] in
-// config.yaml or pass no --persistence-strategy flags.
+// config.yaml or omit the persistence_strategy block entirely so the resolved
+// strategy is empty.
 //
 // Bounded by maxPersistenceReprompts so a supervisor that genuinely cannot
 // persist (no network, stuck credentials) still escalates on the next
@@ -492,7 +510,13 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 	if d.hasPersistenceNotesArtifact(sessionID) {
 		return false // supervisor already executed the strategy (artifact registered)
 	}
-	if d.countPersistenceReprompts(sessionID) >= maxPersistenceReprompts {
+
+	// Cache the reprompt count once — countPersistenceReprompts scans the
+	// event log, and we use the value in two places below (limit check and
+	// the reprompt event payload).
+	repromptCount := d.countPersistenceReprompts(sessionID)
+
+	if repromptCount >= maxPersistenceReprompts {
 		// Already reprompted once — accept this incomplete so a genuinely
 		// blocked supervisor can still escalate. Log the shortfall for the
 		// post-mortem so operators see the gap.
@@ -549,7 +573,7 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 		Urgent:      true,
 		Timestamp:   time.Now().UTC(),
 	}
-	_, _ = d.store.CreateMessage(store.Message{
+	if _, err := d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
 		SenderID:    "system",
@@ -557,8 +581,22 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 		Type:        string(broker.MessageStateChange),
 		Content:     content,
 		Urgent:      true,
-	})
-	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
+	}); err != nil {
+		// Durable store failure: the supervisor won't receive the reprompt on
+		// its next polling cycle either. Revert and let normal escalation run
+		// rather than wedging the session with a supervisor that is marked
+		// running but has no pending instruction.
+		log.Printf("ERROR: maybeRepromptForPersistence: CreateMessage failed for session %s agent supervisor: %v; falling through to escalation", sessionID, err)
+		_ = d.store.UpdateAgentRunStatus(sessionID, "supervisor", "incomplete")
+		return false
+	}
+	// broker.Interrupt is best-effort live push; message already durably
+	// persisted above, so the supervisor will poll and receive it even if
+	// this in-memory delivery fails (e.g. no active subscriber in tests or
+	// during a brief bridge reconnect).
+	if err := d.broker.Interrupt(sessionID, "supervisor", msg); err != nil {
+		log.Printf("WARNING: maybeRepromptForPersistence: broker.Interrupt failed for session %s agent supervisor: %v (message persisted; supervisor will receive on next poll)", sessionID, err)
+	}
 
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
@@ -567,7 +605,7 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 			"source":           source,
 			"steps":            strategy,
 			"reported_detail":  supervisorDetail,
-			"reprompts_so_far": d.countPersistenceReprompts(sessionID) + 1,
+			"reprompts_so_far": repromptCount + 1,
 		}),
 	})
 	log.Printf("Session %s: reprompted supervisor to execute persistence_strategy (source=%s) before incomplete",
