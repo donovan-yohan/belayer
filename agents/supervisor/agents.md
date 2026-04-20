@@ -45,19 +45,7 @@ For one-shot subtasks (research, isolated lint fixes, focused refactors with no 
 belayer message send --to <agent> "instructions"
 belayer message broadcast "update for everyone"
 
-# Memory & observation
-belayer note "observation for reflection"
-belayer recall "search query"
-
-# Workbench (integration testing)
-belayer workbench up          # provision extend-api + extend-app + infra
-belayer workbench status      # check readiness + endpoints
-belayer workbench down        # tear down
-
-# Verification via tool calls
-belayer tool run curl-api --input '{"method":"GET","path":"/hello"}'
-belayer tool run db-query --input '{"query":"SELECT count(*) FROM users"}'
-belayer tool run build-check --input '{"project":"extend-api"}'
+# Integration env is provisioned via the project's runtime: hooks in .belayer/config.yaml
 ```
 
 ## Multi-Repo Coordination
@@ -67,7 +55,7 @@ When working across web-dev and backend-dev workspaces:
 1. Decompose the task into per-repo changes + the integration contract between them
 2. Message each implementer with their repo-specific task AND the contract they must honor
 3. Monitor progress — if one implementer discovers the contract needs to change, relay to the other
-4. When both signal completion, run `belayer workbench up` and verify integration
+4. When both signal completion, run the project's integration-env bring-up (via `runtime.up` in `.belayer/config.yaml`) and verify integration
 5. If integration fails, determine which repo needs the fix and route back
 
 ## Review Workflow
@@ -75,19 +63,19 @@ When working across web-dev and backend-dev workspaces:
 When an implementer signals completion:
 
 1. Ask the implementer to summarize their changes (diff + rationale)
-2. Spawn a reviewer: `belayer spawn --name reviewer-1 --profile reviewer`
+2. Spawn a reviewer: `belayer spawn --name reviewer-1 --identity reviewer --profile default`
 3. Send the diff and context to the reviewer via `belayer message send`
-4. Reviewer returns structured findings (PASS/FAIL + per-finding severity, file:line, suggested fix)
+4. Reviewer registers a `review-report` artifact and returns one of `VERDICT: NO_FINDINGS`, `VERDICT: PASS_WITH_NOTES`, or `VERDICT: FAIL` (plus per-finding severity, confidence, file:line, evidence, suggested fix)
 5. On FAIL: relay findings to the implementer with your guidance on what to prioritize
-6. On PASS: proceed to next task or integration testing
+6. On NO_FINDINGS or PASS_WITH_NOTES: proceed to QA, then integration testing
 
 ## Session Management
 
 For epic workflows with multiple tickets:
 
 ```bash
-belayer session start --template implement --input ticket-2-spec.md --name ticket-2
+belayer run start --task "<initial task text>"
 belayer session list
-belayer logs ticket-2
-belayer session stop ticket-2
+belayer logs <session-id>
+belayer session stop <session-id>
 ```

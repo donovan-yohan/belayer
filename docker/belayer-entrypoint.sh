@@ -28,23 +28,13 @@ if [ -n "${BELAYER_DEV_BINARIES:-}" ] && [ -f "$BELAYER_DEV_BINARIES/belayer" ];
     ln -sf "$BELAYER_DEV_BINARIES/belayer" /usr/local/bin/belayer
 fi
 
-# ─── Exit logging helper ─────────────────────────────────────────
-# Since exec replaces this shell (EXIT trap would never fire), we
-# inject exit logging directly into the tmux agent command wrapper.
-BELAYER_SOCKET="${BELAYER_SOCKET:-/belayer/daemon.sock}"
-BELAYER_SESSION_ID="${BELAYER_SESSION_ID:-}"
-EXIT_LOG_CMD=""
-if [ -n "$BELAYER_SESSION_ID" ]; then
-    EXIT_LOG_CMD="belayer note \"agent exited with code \$EXIT_CODE\" --socket \"$BELAYER_SOCKET\" 2>/dev/null || true;"
-fi
-
 # ─── tmux session setup ────────────────────────────────────────────
 # Two windows: 'agent' runs the vendor CLI, 'shell' is for debugging.
 # If BELAYER_AGENT_CMD is empty, both windows are interactive shells.
 # tmux attach requires a TTY; fall back when none is allocated
 # (e.g. docker compose up without tty: true).
 AGENT_CMD="${BELAYER_AGENT_CMD:-bash}"
-AGENT_WRAPPER="$AGENT_CMD; EXIT_CODE=\$?; $EXIT_LOG_CMD echo ''; echo \"Agent exited with code \$EXIT_CODE. Shell available for debugging.\"; exec bash"
+AGENT_WRAPPER="$AGENT_CMD; EXIT_CODE=\$?; echo ''; echo \"Agent exited with code \$EXIT_CODE. Shell available for debugging.\"; exec bash"
 
 if [ -t 0 ] && [ -t 1 ]; then
     exec sudo -u belayer -E env "PATH=$PATH" "HOME=/home/belayer" \
@@ -55,5 +45,5 @@ if [ -t 0 ] && [ -t 1 ]; then
 else
     echo "No TTY allocated — running agent without tmux (attach will not work)" >&2
     exec sudo -u belayer -E env "PATH=$PATH" "HOME=/home/belayer" \
-        bash -c "$AGENT_CMD; EXIT_CODE=\$?; $EXIT_LOG_CMD exit \$EXIT_CODE"
+        bash -c "$AGENT_CMD; EXIT_CODE=\$?; exit \$EXIT_CODE"
 fi

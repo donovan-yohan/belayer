@@ -52,20 +52,6 @@ Broadcast to all agents in the session:
 belayer message broadcast "Shared contract v2 is now in artifacts/shared-contract.md — please re-read before continuing"
 ```
 
-### Notes
-
-Log an observation to the session event stream:
-
-```bash
-belayer note "extend-api tests pass locally after the schema migration change"
-```
-
-Use notes for:
-- progress updates
-- things you tried
-- things you discovered
-- warnings about potential issues
-
 ### Artifacts
 
 Register a durable artifact:
@@ -113,7 +99,6 @@ This marks you as blocked rather than complete, so the supervisor knows to inter
 | Ask another agent a question | `belayer message send --to <agent>` |
 | Tell the supervisor you're done | `belayer finish "..."` |
 | Tell the supervisor you're blocked | `belayer finish --blocked "..."` |
-| Log something you discovered | `belayer note "..."` |
 | Broadcast a change everyone should know | `belayer message broadcast "..."` |
 | Publish a durable output | `belayer artifact create ...` |
 | Read what artifacts exist | `belayer artifact list` |
@@ -188,7 +173,6 @@ This is a safety net, not the primary mechanism. You should call `belayer finish
 
 ### Do
 - Be specific in messages — include file paths, artifact names, exact questions
-- Use `belayer note` frequently to leave a trail
 - Publish artifacts as soon as they are meaningful
 - Call `belayer finish` as soon as your work is complete or you are blocked
 - Respond to supervisor messages promptly
@@ -208,9 +192,6 @@ This is a safety net, not the primary mechanism. You should call `belayer finish
 # Messaging
 belayer message send --to <agent> "text"
 belayer message broadcast "text"
-
-# Notes
-belayer note "text"
 
 # Artifacts
 belayer artifact create --kind <kind> --path <path>

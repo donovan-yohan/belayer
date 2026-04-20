@@ -4,7 +4,6 @@
 
 ```bash
 belayer message send --to pilot "status update or question"
-belayer note "observation for reflection"
 belayer recall "search past learnings"
 ```
 
@@ -22,15 +21,6 @@ npm run typecheck                  # type checking
 npm test                           # run tests
 npm start                          # run the app locally (if workbench not needed)
 npm run dev                        # dev server with hot reload
-```
-
-## Spawning Helpers
-
-You can spawn ephemeral sprites for focused subtasks:
-
-```bash
-belayer session add-agent fix-types-1 --template sprite --ephemeral
-belayer message send --to fix-types-1 "Fix all TypeScript errors in src/components/Cards/"
 ```
 
 ## Git

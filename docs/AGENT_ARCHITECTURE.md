@@ -621,3 +621,56 @@ flowchart LR
 | `internal/daemon/bridge_events.go` | Event handlers: `handleBridgeCompletionRequested`, `handleBridgeCompletionApproved`, `handleBridgeCompletionRejected` |
 | `internal/daemon/agents.go` | `spawnAgentInternal` for auto-spawning PM; `handleFinishAgent` intercepts supervisor finish to trigger PM gate; agent system-prompt resolution from `.belayer/agents/<name>/system-prompt.md` then `<BelayerRoot>/agents/<name>/system-prompt.md` |
 | `internal/bridge/bridge.go` | `Config.SystemPrompt` field, passed as `BELAYER_SYSTEM_PROMPT` env var |
+
+---
+
+## Exit-condition resolution
+
+Exit conditions describe the shape of a finished run, orthogonal to the
+spec. Resolution precedence at PM spawn time:
+
+1. **Per-run override** — `belayer run start --exit-condition "<text>"`
+   delivered to the supervisor in an `<exit_conditions_override>` block
+   inside the initial task message. The override replaces the config list
+   entirely.
+2. **Project config** — `.belayer/config.yaml#exit_conditions:` — the
+   default-team list includes role-agnostic conditions requiring QA
+   evidence and a reviewer PASS verdict as durable artifacts.
+3. **None** — if neither source produces conditions, the PM validates
+   only the spec.
+
+The daemon resolves the final list via `resolveExitConditions` (see
+`internal/daemon/bridge_events.go`) and injects an explicit
+"Exit conditions for this run" block into the PM's task prompt. The PM
+rejects completion per-condition: any condition lacking observable
+evidence produces a specific gap in the rejection report, and the
+supervisor must close that gap before re-requesting completion.
+
+The PM-side contract is in `agents/pm/system-prompt.md`'s Definition-of-Done
+section; the supervisor-side planning contract is in
+`agents/supervisor/system-prompt.md`'s "Definition of done" section.
+
+---
+
+## Tool registration layers
+
+Agents receive belayer tools in two layers:
+
+1. **Baseline tools** — always registered on every agent:
+   `belayer_send_message`, `belayer_report_status`,
+   `belayer_create_artifact`. Registered unconditionally in
+   `hermes_bridge/tools.py#register_belayer_tools` from the
+   `BASELINE_TOOLS` set.
+2. **Role-specific tools** — opt-in via `agent.yaml#belayer_tools:`:
+   - `belayer_spawn_agent` — supervisor only
+   - `belayer_request_completion` — supervisor only
+   - `belayer_approve_completion`, `belayer_reject_completion` — PM only
+   - `belayer_escalate_to_human` — supervisor only (last-resort stop)
+
+The daemon reads `belayer_tools` from the spawning agent's
+`agent.yaml`, passes the allowlist to the bridge subprocess via
+`BELAYER_TOOLS`, and the bridge's `register_belayer_tools(...,
+allowed_tools=...)` adds only baseline + allowed entries to the agent's
+tool inventory. An identity that forgets to declare a needed role-specific
+tool in `belayer_tools` will spawn without it — the failure mode is
+"tool missing from inventory," caught at the first attempted call.
