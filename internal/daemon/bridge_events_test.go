@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -576,6 +578,315 @@ func TestProcessAgentStatusMissingAgentFieldDoesNotPanic(t *testing.T) {
 }
 
 // --- Tests for handleBridgeFinished status overwrite guard ---
+
+// --- Tests for resolvePersistenceStrategy ---
+
+// setupSessionWithWorkspace creates a session whose WorkspaceDir points at a
+// fresh temp dir, so tests can seed a .belayer/config.yaml that the daemon's
+// config readers will find.
+func setupSessionWithWorkspace(t *testing.T, d *Daemon, configYAML string) string {
+	t.Helper()
+	ws := t.TempDir()
+	if configYAML != "" {
+		if err := os.MkdirAll(filepath.Join(ws, ".belayer"), 0o755); err != nil {
+			t.Fatalf("mkdir .belayer: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(ws, ".belayer", "config.yaml"), []byte(configYAML), 0o644); err != nil {
+			t.Fatalf("write config.yaml: %v", err)
+		}
+	}
+	sessID, err := d.store.CreateSession(store.Session{Name: "persistence-test", WorkspaceDir: ws})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	return sessID
+}
+
+// TestResolvePersistenceStrategy_Override verifies that a run_initiated event
+// carrying persistence_strategy wins over any config file on disk.
+func TestResolvePersistenceStrategy_Override(t *testing.T) {
+	d := testDaemon(t)
+	// Config file says one thing; the override should win.
+	sessID := setupSessionWithWorkspace(t, d, "persistence_strategy:\n  - from-config\n")
+
+	overrideData, _ := json.Marshal(map[string]any{
+		"persistence_strategy": []string{"override-step-1", "override-step-2"},
+	})
+	if err := d.store.LogEvent(store.SessionEvent{
+		SessionID: sessID,
+		Type:      "run_initiated",
+		Data:      string(overrideData),
+	}); err != nil {
+		t.Fatalf("log run_initiated: %v", err)
+	}
+
+	got, source := d.resolvePersistenceStrategy(sessID)
+	if source != "override" {
+		t.Fatalf("expected source=override, got %q", source)
+	}
+	if len(got) != 2 || got[0] != "override-step-1" || got[1] != "override-step-2" {
+		t.Fatalf("expected override steps, got %v", got)
+	}
+}
+
+// TestResolvePersistenceStrategy_Config verifies that the config file is used
+// when no run_initiated override is present.
+func TestResolvePersistenceStrategy_Config(t *testing.T) {
+	d := testDaemon(t)
+	sessID := setupSessionWithWorkspace(t, d,
+		"persistence_strategy:\n  - commit-work\n  - push-branch\n")
+
+	got, source := d.resolvePersistenceStrategy(sessID)
+	if source != "config" {
+		t.Fatalf("expected source=config, got %q", source)
+	}
+	if len(got) != 2 || got[0] != "commit-work" || got[1] != "push-branch" {
+		t.Fatalf("expected config steps, got %v", got)
+	}
+}
+
+// TestResolvePersistenceStrategy_None verifies that an absent config block
+// produces source=none and an empty list (no false signal to the intercept).
+func TestResolvePersistenceStrategy_None(t *testing.T) {
+	d := testDaemon(t)
+	sessID := setupSessionWithWorkspace(t, d, "# no persistence_strategy here\n")
+
+	got, source := d.resolvePersistenceStrategy(sessID)
+	if source != "none" {
+		t.Fatalf("expected source=none, got %q", source)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty list, got %v", got)
+	}
+}
+
+// TestResolvePersistenceStrategy_EmptyOverrideFallsThroughToConfig verifies
+// that an override payload with an empty persistence_strategy array does NOT
+// shadow the config file — mirrors the --persistence-strategy flag normalization
+// in run.go, where a blank value falls through to the project config.
+func TestResolvePersistenceStrategy_EmptyOverrideFallsThroughToConfig(t *testing.T) {
+	d := testDaemon(t)
+	sessID := setupSessionWithWorkspace(t, d,
+		"persistence_strategy:\n  - config-step\n")
+
+	overrideData, _ := json.Marshal(map[string]any{
+		"persistence_strategy": []string{},
+	})
+	_ = d.store.LogEvent(store.SessionEvent{
+		SessionID: sessID,
+		Type:      "run_initiated",
+		Data:      string(overrideData),
+	})
+
+	got, source := d.resolvePersistenceStrategy(sessID)
+	if source != "config" {
+		t.Fatalf("expected fall-through to config, got source=%q", source)
+	}
+	if len(got) != 1 || got[0] != "config-step" {
+		t.Fatalf("expected config step, got %v", got)
+	}
+}
+
+// --- Tests for the persistence intercept on agent_status:incomplete ---
+
+// TestSupervisorIncompleteRepromptedWhenNoPersistenceArtifact verifies that
+// when the supervisor reports incomplete and a persistence_strategy is
+// configured but no persistence-notes artifact exists, the daemon reprompts
+// the supervisor instead of escalating the session.
+func TestSupervisorIncompleteRepromptedWhenNoPersistenceArtifact(t *testing.T) {
+	d := testDaemon(t)
+	sessID := setupSessionWithWorkspace(t, d,
+		"persistence_strategy:\n  - commit-and-push\n  - register-persistence-notes\n")
+	_ = d.store.UpdateSessionStatus(sessID, "running")
+	if _, err := d.store.CreateAgentRun(store.AgentRun{
+		SessionID: sessID, Name: "supervisor", Role: "supervisor",
+		Profile: "default", Status: "running", Transport: "bridge",
+	}); err != nil {
+		t.Fatalf("create supervisor: %v", err)
+	}
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "supervisor",
+		"status": "incomplete",
+		"detail": "stuck on DB migration",
+	})
+	d.processAgentStatusEvent(sessID, "agent_status:incomplete", string(data))
+
+	// Session must NOT escalate — the supervisor should be reprompted and
+	// kept alive for another pass.
+	sess, err := d.store.GetSession(sessID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status == "needs_human_review" {
+		t.Fatalf("session escalated despite persistence reprompt being applicable")
+	}
+
+	// Supervisor row must be flipped back to running so downstream checks
+	// don't treat it as terminal.
+	run, err := d.store.GetAgentRun(sessID, "supervisor")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.Status != "running" {
+		t.Fatalf("expected supervisor status=running after reprompt, got %q", run.Status)
+	}
+
+	// Reprompt event must be logged so post-mortems can see the gate fired.
+	events, _ := d.store.QueryEvents(sessID)
+	var foundReprompt bool
+	for _, e := range events {
+		if e.Type == "persistence_reprompt" {
+			foundReprompt = true
+			if !strings.Contains(e.Data, "commit-and-push") {
+				t.Errorf("expected reprompt event to include strategy steps, got: %s", e.Data)
+			}
+		}
+	}
+	if !foundReprompt {
+		t.Fatalf("expected persistence_reprompt event")
+	}
+
+	// Supervisor must receive an urgent message listing the strategy steps.
+	msgs, err := d.store.PendingMessages(sessID, "supervisor", "")
+	if err != nil {
+		t.Fatalf("PendingMessages: %v", err)
+	}
+	var foundMsg bool
+	for _, m := range msgs {
+		if m.RecipientID == "supervisor" && m.Urgent && strings.Contains(m.Content, "persistence_strategy") {
+			foundMsg = true
+		}
+	}
+	if !foundMsg {
+		t.Fatalf("expected urgent reprompt message to supervisor, got %#v", msgs)
+	}
+}
+
+// TestSupervisorIncompleteAcceptedWhenPersistenceArtifactPresent verifies
+// that an incomplete is accepted and the session escalates normally when the
+// supervisor has already registered a persistence-notes artifact.
+func TestSupervisorIncompleteAcceptedWhenPersistenceArtifactPresent(t *testing.T) {
+	d := testDaemon(t)
+	sessID := setupSessionWithWorkspace(t, d,
+		"persistence_strategy:\n  - commit-and-push\n")
+	_ = d.store.UpdateSessionStatus(sessID, "running")
+	if _, err := d.store.CreateAgentRun(store.AgentRun{
+		SessionID: sessID, Name: "supervisor", Role: "supervisor",
+		Profile: "default", Status: "running", Transport: "bridge",
+	}); err != nil {
+		t.Fatalf("create supervisor: %v", err)
+	}
+
+	// Supervisor already registered persistence-notes — the gate should
+	// let this incomplete through.
+	if _, err := d.store.CreateArtifact(store.Artifact{
+		SessionID: sessID,
+		Kind:      "persistence-notes",
+		Path:      "(inline)",
+		Producer:  "supervisor",
+		Summary:   "pushed branch incomplete/foo, opened draft PR #123",
+	}); err != nil {
+		t.Fatalf("create persistence-notes artifact: %v", err)
+	}
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "supervisor",
+		"status": "incomplete",
+		"detail": "blocked on upstream API",
+	})
+	d.processAgentStatusEvent(sessID, "agent_status:incomplete", string(data))
+
+	sess, err := d.store.GetSession(sessID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status != "needs_human_review" {
+		t.Fatalf("expected session escalated to needs_human_review, got %q", sess.Status)
+	}
+}
+
+// TestSupervisorIncompleteEscalatesWhenPersistenceStrategyEmpty verifies that
+// the intercept is a no-op when no persistence_strategy is declared —
+// preserves the existing escalation behavior for projects that opt out.
+func TestSupervisorIncompleteEscalatesWhenPersistenceStrategyEmpty(t *testing.T) {
+	d := testDaemon(t)
+	// No config file, no override — persistence_strategy is empty.
+	sessID := setupSessionWithWorkspace(t, d, "")
+	_ = d.store.UpdateSessionStatus(sessID, "running")
+	if _, err := d.store.CreateAgentRun(store.AgentRun{
+		SessionID: sessID, Name: "supervisor", Role: "supervisor",
+		Profile: "default", Status: "running", Transport: "bridge",
+	}); err != nil {
+		t.Fatalf("create supervisor: %v", err)
+	}
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "supervisor",
+		"status": "incomplete",
+		"detail": "done bailing",
+	})
+	d.processAgentStatusEvent(sessID, "agent_status:incomplete", string(data))
+
+	sess, err := d.store.GetSession(sessID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status != "needs_human_review" {
+		t.Fatalf("expected session escalated to needs_human_review, got %q", sess.Status)
+	}
+}
+
+// TestSupervisorIncompleteAcceptedAfterMaxReprompts verifies that after the
+// reprompt limit is reached, the next incomplete escalates normally even
+// without a persistence-notes artifact. Prevents a livelock when the
+// supervisor genuinely cannot persist (no network, stuck credentials).
+func TestSupervisorIncompleteAcceptedAfterMaxReprompts(t *testing.T) {
+	d := testDaemon(t)
+	sessID := setupSessionWithWorkspace(t, d,
+		"persistence_strategy:\n  - commit-and-push\n")
+	_ = d.store.UpdateSessionStatus(sessID, "running")
+	if _, err := d.store.CreateAgentRun(store.AgentRun{
+		SessionID: sessID, Name: "supervisor", Role: "supervisor",
+		Profile: "default", Status: "running", Transport: "bridge",
+	}); err != nil {
+		t.Fatalf("create supervisor: %v", err)
+	}
+
+	// First incomplete: should be intercepted (reprompt #1).
+	data, _ := json.Marshal(map[string]any{
+		"agent": "supervisor", "status": "incomplete", "detail": "first try",
+	})
+	d.processAgentStatusEvent(sessID, "agent_status:incomplete", string(data))
+
+	sess, _ := d.store.GetSession(sessID)
+	if sess.Status == "needs_human_review" {
+		t.Fatalf("expected first incomplete to be intercepted, got escalation")
+	}
+
+	// Second incomplete: limit reached, should escalate normally.
+	data2, _ := json.Marshal(map[string]any{
+		"agent": "supervisor", "status": "incomplete", "detail": "second try",
+	})
+	d.processAgentStatusEvent(sessID, "agent_status:incomplete", string(data2))
+
+	sess, _ = d.store.GetSession(sessID)
+	if sess.Status != "needs_human_review" {
+		t.Fatalf("expected second incomplete to escalate after reprompt limit, got %q", sess.Status)
+	}
+
+	// Bypass event must be logged so operators see the gate was skipped.
+	events, _ := d.store.QueryEvents(sessID)
+	var foundBypass bool
+	for _, e := range events {
+		if e.Type == "persistence_gate_bypassed" {
+			foundBypass = true
+		}
+	}
+	if !foundBypass {
+		t.Fatalf("expected persistence_gate_bypassed event after reprompt limit")
+	}
+}
 
 // TestBridgeFinishedDoesNotOverwriteIncomplete verifies that when an agent
 // has already been marked incomplete, bridge:finished does not overwrite

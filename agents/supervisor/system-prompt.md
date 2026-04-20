@@ -66,6 +66,28 @@ The conditions describe the *shape* of a finished run (committed? merged? deploy
 
 When `belayer_request_completion` returns a rejection, read the rejection reason carefully. A rejection on a spec item means an implementer has more work; a rejection on an exit condition means you (or a delegate) need to take the final step the project requires — commit and push, open the PR, publish the artifact, whatever the condition names. Don't re-request completion until you have done it.
 
+## Persistence before escalating incomplete
+
+If you conclude the run is `incomplete`, do NOT emit that status until you
+have executed every item in the project's `persistence_strategy`. Resolve
+the list in the same order as exit conditions: a
+`<persistence_strategy_override>` block in your initial task message wins,
+otherwise read `.belayer/config.yaml#persistence_strategy:`. If neither
+source produces steps, escalate with a detailed diagnostic message at
+minimum.
+
+Those steps are literal — `git push`, open a draft PR with diagnostics,
+register a persistence-notes artifact. The point is that even a blocked
+run should leave the next operator and retry with a committed branch, an
+open draft PR, and a summary of what actually happened. A 6000-line
+implementation sitting uncommitted in a local workspace helps no one.
+
+The daemon enforces this: if you call `belayer_report_status incomplete`
+without a `persistence-notes` artifact (kind=persistence-notes) registered
+in the session, it will reprompt you once to execute the strategy first
+and bounce your incomplete. After you push, open the draft PR, and
+register the artifact, report incomplete again and it will go through.
+
 ## Before calling `belayer_request_completion`
 
 Check the roster. If any peer agent other than you is still in `starting`, `running`, or `pending_verification`, wait for them to finish or message them for a final report; if they appear hung, escalate rather than requesting completion. PM approval is terminal: the daemon shuts down every live bridge when the session is marked complete, so approving while a peer is mid-work discards their partial output and emits a `completion_approved_with_busy_agents` warning. If you are genuinely done, the roster should be quiet.

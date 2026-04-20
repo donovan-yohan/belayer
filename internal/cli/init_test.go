@@ -54,6 +54,39 @@ func TestInitFirstRunScaffoldsDefaults(t *testing.T) {
 	}
 }
 
+func TestInitScaffoldsPersistenceStrategyBlock(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newInitCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--target", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(dir, ".belayer", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	got := string(cfg)
+	if !strings.Contains(got, "\npersistence_strategy:\n") {
+		t.Fatalf("expected 'persistence_strategy:' block in config.yaml, got:\n%s", got)
+	}
+	// Each scaffolded bullet must be present — these are the contract with
+	// the supervisor prompt and the daemon intercept. If one is removed
+	// silently, operators lose the default persistence behavior.
+	for _, want := range []string{
+		"incomplete/<session-id>",
+		"Push the branch to origin",
+		"draft pull request",
+		"persistence-notes",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in persistence_strategy block, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestInitWritesLogLevelStandardToConfig(t *testing.T) {
 	dir := t.TempDir()
 	cmd := newInitCmd()

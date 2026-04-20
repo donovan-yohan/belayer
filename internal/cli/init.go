@@ -62,6 +62,22 @@ exit_conditions:
   - "Code changes have been reviewed by an adversarial peer agent whose review-report artifact carries verdict NO_FINDINGS or PASS_WITH_NOTES (FAIL blocks completion)"
   - "Changes are committed to a feature branch with descriptive messages"
   - "A pull request is open against the default branch"
+
+# Persistence strategy — the literal steps the supervisor must execute BEFORE
+# reporting status=incomplete. Analog to exit_conditions, but fires on the
+# escalation path: when a run cannot finish, these steps guarantee that
+# in-progress work and diagnostics are saved so the next operator or retry
+# has something to pick up. If the list is empty, the supervisor escalates
+# immediately.
+#
+# The daemon intercepts a premature incomplete (no persistence-notes artifact
+# registered) and reprompts the supervisor once to execute the strategy
+# first. Set to [] to bypass the gate entirely.
+persistence_strategy:
+  - "Commit any uncommitted changes on a branch named incomplete/<session-id>"
+  - "Push the branch to origin"
+  - "Open a draft pull request to the default branch with a body describing: what was completed, what blocked progress, and next steps"
+  - "Register a persistence-notes artifact (kind=persistence-notes) summarizing the above and linking the PR"
 `
 
 // defaultPolicyYAML is a minimal placeholder so .belayer/policies/ is not
