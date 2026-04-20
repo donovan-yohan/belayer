@@ -1,8 +1,28 @@
 # Template-team exit conditions, prompt discipline, and CI lint
 
 **Date:** 2026-04-20
-**Status:** Design — pending implementation
+**Status:** Implemented in PR #86 — see deviations below
 **Author:** Donovan + assistant brainstorm
+
+> **Implementation deviations from this spec.** Do not copy the tool
+> invocations in this document verbatim into new prompts — check the
+> shipped agent files instead.
+>
+> 1. `belayer_create_artifact` takes `{kind, path, summary}` (path to a
+>    file you have already written) rather than the spec's
+>    `{name, content_type, data}`. The QA + reviewer agents.md workflows
+>    in this PR write the report body to disk first, then register by
+>    path.
+> 2. The tool returns `Artifact registered: <kind> at <path>.`; there is
+>    no artifact ID to quote. Agents message the supervisor with the
+>    artifact *path*, not an ID.
+> 3. `belayer run start` takes `--task "<text>"`; there is no `--spec`
+>    flag. The operator message delivered by `--task` is where the
+>    supervisor reads the spec pointer from.
+> 4. Reviewer exit-condition wording in `init.go` names the two passing
+>    verdicts explicitly (`NO_FINDINGS` or `PASS_WITH_NOTES`) rather than
+>    saying "PASS verdict", because the PM sees the raw exit-condition
+>    text and the reviewer never emits the literal word "PASS".
 
 ## Problem
 

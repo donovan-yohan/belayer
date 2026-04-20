@@ -6,6 +6,7 @@ package agentlint_test
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -92,49 +94,62 @@ func parseAvailableCommands(output string) []string {
 }
 
 // runHelp runs "go run ./cmd/belayer [args...] --help" and returns stdout+stderr.
+// Fails the test on timeout or non-zero exit so a broken CLI build does not
+// quietly mutate into a flood of misleading "unknown CLI reference" errors.
 func runHelp(t *testing.T, root string, args ...string) string {
 	t.Helper()
 	cmdArgs := append([]string{"run", "./cmd/belayer"}, args...)
 	cmdArgs = append(cmdArgs, "--help")
-	cmd := exec.Command("go", cmdArgs...)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", cmdArgs...)
 	cmd.Dir = root
-	out, _ := cmd.CombinedOutput() // cobra --help exits 0; ignore error
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("timed out running go %s", strings.Join(cmdArgs, " "))
+	}
+	if err != nil {
+		t.Fatalf("go %s failed: %v\noutput:\n%s", strings.Join(cmdArgs, " "), err, out)
+	}
 	return string(out)
 }
 
-// buildCLITree discovers the full command tree by recursively calling --help.
-// Skips "help" and "completion" pseudo-commands.
+// buildCLITree discovers the full command tree by recursively calling --help
+// on each command that declares subcommands. Skips "help" and "completion"
+// pseudo-commands. Keys in the returned tree are space-joined command paths
+// (e.g. "" for root, "run" for `belayer run`, "run start" for
+// `belayer run start` — though cobra currently stops one level below root for
+// us, the walker keeps going whenever a node lists Available Commands).
 func buildCLITree(t *testing.T, root string) cmdTree {
 	t.Helper()
 	tree := make(cmdTree)
 
-	// Root level.
-	rootHelp := runHelp(t, root)
-	rootCmds := parseAvailableCommands(rootHelp)
-	tree[""] = make(map[string]bool)
-	for _, c := range rootCmds {
-		if c == "help" || c == "completion" {
-			continue
-		}
-		tree[""][c] = true
-	}
+	var walk func(path []string)
+	walk = func(path []string) {
+		help := runHelp(t, root, path...)
+		cmds := parseAvailableCommands(help)
 
-	// One level deep — walk each root command and check for subcommands.
-	for cmd := range tree[""] {
-		subHelp := runHelp(t, root, cmd)
-		subs := parseAvailableCommands(subHelp)
-		if len(subs) == 0 {
-			continue
-		}
-		tree[cmd] = make(map[string]bool)
-		for _, s := range subs {
-			if s == "help" || s == "completion" {
+		var real []string
+		for _, c := range cmds {
+			if c == "help" || c == "completion" {
 				continue
 			}
-			tree[cmd][s] = true
+			real = append(real, c)
+		}
+		if len(real) == 0 {
+			return
+		}
+
+		key := strings.Join(path, " ")
+		tree[key] = make(map[string]bool)
+		for _, c := range real {
+			tree[key][c] = true
+			child := append(append([]string(nil), path...), c)
+			walk(child)
 		}
 	}
 
+	walk(nil)
 	return tree
 }
 
@@ -218,10 +233,9 @@ func collectFiles(t *testing.T, root string, dirs []string, ext string, skipDirs
 		absDir := filepath.Join(root, dir)
 		err := filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				return nil // skip unreadable
+				return err
 			}
 			if info.IsDir() {
-				// Check if this directory should be skipped.
 				for _, skip := range skipDirs {
 					if path == filepath.Join(root, skip) {
 						return filepath.SkipDir
@@ -235,7 +249,7 @@ func collectFiles(t *testing.T, root string, dirs []string, ext string, skipDirs
 			return nil
 		})
 		if err != nil {
-			t.Logf("warning: walking %s: %v", absDir, err)
+			t.Fatalf("walking %s: %v", absDir, err)
 		}
 	}
 	return files
@@ -296,8 +310,7 @@ func TestAgentPromptsOnlyReferenceRealCommands(t *testing.T) {
 	for _, path := range mdFiles {
 		f, err := os.Open(path)
 		if err != nil {
-			t.Logf("cannot open %s: %v", path, err)
-			continue
+			t.Fatalf("cannot open %s: %v", path, err)
 		}
 
 		lineNum := 0
@@ -364,7 +377,7 @@ func TestAgentPromptsOnlyReferenceRealCommands(t *testing.T) {
 		}
 		f.Close()
 		if err := scanner.Err(); err != nil {
-			t.Logf("scanner error on %s: %v", path, err)
+			t.Fatalf("scanner error on %s: %v", path, err)
 		}
 	}
 

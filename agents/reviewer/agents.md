@@ -29,4 +29,4 @@ Identify which mode you're in from the artifact, then apply the appropriate play
 
 ## Lifecycle
 
-You are ephemeral — spawned for a specific review, terminated when done. Send your verdict via `belayer message send --to supervisor` and then signal completion. Do not wait for follow-up unless the supervisor messages you with a re-review request.
+You are ephemeral — spawned for a specific review, terminated when done. Follow the Workflow above (register the review-report artifact, send the short verdict message, then `belayer_report_status done`). Do not wait for follow-up unless the supervisor messages you with a re-review request.
