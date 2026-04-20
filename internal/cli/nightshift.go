@@ -4,11 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/spf13/cobra"
 )
+
+// ansiEscapeRe matches ANSI terminal escape sequences.
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// sanitizeCmdForDisplay strips control characters and ANSI escapes from s so it
+// is safe to pass to tabwriter without corrupting column alignment.
+func sanitizeCmdForDisplay(s string) string {
+	s = ansiEscapeRe.ReplaceAllString(s, "")
+	s = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(s)
+	return s
+}
 
 func resolveAgentID(flagVal string) (string, error) {
 	if flagVal != "" {
@@ -83,7 +96,7 @@ func newRosterCmd() *cobra.Command {
 				fmt.Fprintln(w, "NAME\tROLE\tPROFILE\tSTATUS\tTRANSPORT\tDESTRUCTIVE\tLAST_CMD")
 				for _, run := range runs {
 					status := rosterStatus(run)
-					lastCmd := run.LastDestructiveCmd
+					lastCmd := sanitizeCmdForDisplay(run.LastDestructiveCmd)
 					if lastCmd == "" {
 						lastCmd = "-"
 					}

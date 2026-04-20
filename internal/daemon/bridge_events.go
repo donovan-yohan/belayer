@@ -102,16 +102,20 @@ func (d *Daemon) handleBridgeToolStarted(sessionID, agentName string, data map[s
 		return
 	}
 
+	previewSnippet := preview
+	if len(previewSnippet) > 200 {
+		previewSnippet = previewSnippet[:200]
+	}
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
 		Type:      "warning:destructive_tool_call",
 		Data: mustJSON(map[string]string{
 			"agent":   agentName,
 			"kind":    kind,
-			"preview": preview,
+			"preview": previewSnippet,
 		}),
 	})
-	log.Printf("WARNING: session %s agent %s executed destructive command (kind=%s): %s", sessionID, agentName, kind, preview)
+	log.Printf("WARNING: session %s agent %s executed destructive command (kind=%s): %s", sessionID, agentName, kind, previewSnippet)
 }
 
 func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[string]any) {

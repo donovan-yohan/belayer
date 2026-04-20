@@ -13,20 +13,22 @@ func TestDetectDestructive(t *testing.T) {
 		{"rm -fr /tmp/foo", "rm-rf"},
 		{"rm -fR /workspace/.belayer", "rm-rf"},
 		{"sudo rm -rf /", "rm-rf"},
-		// git reset --hard
+		// git reset --hard (with and without -C prefix)
 		{"git reset --hard", "git-reset-hard"},
 		{"git reset --hard HEAD~1", "git-reset-hard"},
-		{"GIT reset --hard", "git-reset-hard"}, // case-insensitive
+		{"GIT reset --hard", "git-reset-hard"},              // case-insensitive
+		{"git -C /tmp/repo reset --hard", "git-reset-hard"}, // -C <repo> prefix
 		// git force-push
 		{"git push --force", "git-force-push"},
 		{"git push -f", "git-force-push"},
 		{"git push origin main --force", "git-force-push"},
 		{"git push --force-with-lease", "git-force-push"},
-		// git clean
+		// git clean (with and without -C prefix)
 		{"git clean -f", "git-clean"},
 		{"git clean -fd", "git-clean"},
 		{"git clean -fx", "git-clean"},
 		{"git clean -fdx", "git-clean"},
+		{"git -C /foo clean -fdx", "git-clean"}, // -C <repo> prefix
 		// sql-drop
 		{"DROP TABLE users", "sql-drop"},
 		{"DROP DATABASE mydb", "sql-drop"},
@@ -49,9 +51,11 @@ func TestDetectDestructive(t *testing.T) {
 	}
 
 	negatives := []string{
-		// rm without -r flag
+		// rm without both r and f in the same flag token
 		"rm file.txt",
 		"rm -f file.txt",
+		"rm -r /tmp/foo",          // -r alone should NOT match
+		"rm -r -f /tmp/foo",       // space-separated -r and -f should NOT match
 		// git reset without --hard
 		"git reset",
 		"git reset HEAD",
@@ -66,9 +70,9 @@ func TestDetectDestructive(t *testing.T) {
 		// SQL that is not DROP/TRUNCATE
 		"SELECT * FROM users",
 		"CREATE TABLE foo (id int)",
-		// Quoted strings (known false-negative; accepted trade-off)
-		// The following would be a false-positive — document that here.
-		// "echo 'rm -rf /'" would match; that is the accepted limitation.
+		// Quoted strings: known false-positive; accepted trade-off.
+		// "echo 'rm -rf /'" matches the regex even though the command is non-destructive.
+		// Detection is whole-line and does not parse shell quoting.
 	}
 
 	for _, cmd := range negatives {

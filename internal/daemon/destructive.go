@@ -18,27 +18,29 @@ var destructivePatterns = []struct {
 	kind string
 	re   *regexp.Regexp
 }{
-	// rm -rf / rm -Rf / rm -fr / rm -fR — any two-char flag combo with r (or R) and f.
-	// Requires the flags to be in a single token starting with '-'.
+	// rm -rf / rm -Rf / rm -fr / rm -fR — requires BOTH r and f in the same flag token.
+	// Accepts any ordering (rf, fr, -rfv, etc.) but rejects -r or -f alone.
 	// Anchored to a word boundary so "form" doesn't match.
 	{
 		kind: "rm-rf",
-		re:   regexp.MustCompile(`(?i)\brm\s+-[rRfF]*[rR][rRfF]*\b`),
+		re:   regexp.MustCompile(`(?i)\brm\s+-(?:[a-zA-Z]*r[a-zA-Z]*f|[a-zA-Z]*f[a-zA-Z]*r)[a-zA-Z]*\b`),
 	},
-	// git reset --hard
+	// git reset --hard — also matches git -C <repo> reset --hard
 	{
 		kind: "git-reset-hard",
-		re:   regexp.MustCompile(`(?i)\bgit\s+reset\s+--hard\b`),
+		re:   regexp.MustCompile(`(?i)\bgit\s+(?:-C\s+\S+\s+)?reset\s+--hard\b`),
 	},
 	// git push --force / git push -f / git push --force-with-lease
+	// Also matches git -C <repo> push ...
 	{
 		kind: "git-force-push",
-		re:   regexp.MustCompile(`(?i)\bgit\s+push\b.*\s(--force|--force-with-lease|-f)\b`),
+		re:   regexp.MustCompile(`(?i)\bgit\s+(?:-C\s+\S+\s+)?push\b.*\s(--force|--force-with-lease|-f)\b`),
 	},
-	// git clean -f / -fd / -fx / -fX (any combo starting with -f containing d/x/X)
+	// git clean -f / -fd / -fx / -fX (any combo containing f)
+	// Also matches git -C <repo> clean ...
 	{
 		kind: "git-clean",
-		re:   regexp.MustCompile(`(?i)\bgit\s+clean\s+-[a-zA-Z]*f[a-zA-Z]*\b`),
+		re:   regexp.MustCompile(`(?i)\bgit\s+(?:-C\s+\S+\s+)?clean\s+-[a-zA-Z]*f[a-zA-Z]*\b`),
 	},
 	// SQL: DROP TABLE / DROP DATABASE / TRUNCATE TABLE (case-insensitive)
 	{
