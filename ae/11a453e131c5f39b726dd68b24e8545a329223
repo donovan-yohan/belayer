@@ -1,0 +1,36 @@
+hermes_bridge/__main__.py
+  9390ab5298030f80 95-109,114-115,126,130,133-134,429-433,459-472,486-494,576-590
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "ae11a453e131c5f39b726dd68b24e8545a329223",
+  "prompts": {
+    "9390ab5298030f80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7aaf6797-6f5d-4cf4-9bf1-04bf31d7776d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 88,
+      "total_deletions": 32,
+      "accepted_lines": 71,
+      "overriden_lines": 0
+    },
+    "a5f4736d16772c09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fefdc011-4177-4825-88ff-20a70e041e78",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1042,
+      "overriden_lines": 0
+    }
+  }
+}
