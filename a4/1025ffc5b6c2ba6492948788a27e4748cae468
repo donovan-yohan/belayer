@@ -1,0 +1,39 @@
+agents/supervisor/system-prompt.md
+  292d8375836a3f59 95-96
+internal/daemon/destructive.go
+  292d8375836a3f59 1-64
+agents/pm/system-prompt.md
+  292d8375836a3f59 28-31
+internal/store/migrations.go
+  292d8375836a3f59 138-143
+internal/store/store.go
+  292d8375836a3f59 65-73,289,294,306,318,388-408
+internal/daemon/destructive_test.go
+  292d8375836a3f59 1-80
+internal/daemon/bridge_events.go
+  292d8375836a3f59 56-57,59-60,71-116
+internal/cli/nightshift.go
+  292d8375836a3f59 67,82-99,107,111-119
+internal/daemon/bridge_events_test.go
+  292d8375836a3f59 224-302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "a41025ffc5b6c2ba6492948788a27e4748cae468",
+  "prompts": {
+    "292d8375836a3f59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63ba09df-2b2a-4f4b-ba9e-0a325bc7aeaf",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1424,
+      "total_deletions": 274,
+      "accepted_lines": 890,
+      "overriden_lines": 14
+    }
+  }
+}
