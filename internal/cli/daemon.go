@@ -30,6 +30,7 @@ func newDaemonCmd() *cobra.Command {
 	var bridgeAPIKey, bridgeBaseURL, bridgeProvider string
 	var logLevel, authToken string
 	var corsOrigins []string
+	var confineAgentWrites bool
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -99,6 +100,9 @@ func newDaemonCmd() *cobra.Command {
 			if len(corsOrigins) > 0 {
 				cfg.CORSOrigins = corsOrigins
 			}
+			if confineAgentWrites {
+				cfg.ConfineAgentWrites = true
+			}
 
 			wd := workdir
 			if wd == "" {
@@ -155,5 +159,6 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&logLevel, "log-level", "", "Default log level for new sessions (standard|verbose|trace). Overridable per-run via `belayer run start --log-level` or BELAYER_LOG_LEVEL.")
 	cmd.Flags().StringVar(&authToken, "auth-token", "", "Bearer token required for TCP listener requests (auto-generated if --tcp-addr/--bind is set and this flag is not)")
 	cmd.Flags().StringSliceVar(&corsOrigins, "cors-origin", nil, "Allowed CORS origin (repeatable, e.g. --cors-origin https://app.example)")
+	cmd.Flags().BoolVar(&confineAgentWrites, "confine-agent-writes", false, "Enable kernel-enforced write confinement via Landlock v2 for agent bridge subprocesses (Linux 5.19+ only; degrades gracefully on older kernels)")
 	return cmd
 }

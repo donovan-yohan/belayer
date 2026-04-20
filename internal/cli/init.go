@@ -78,6 +78,18 @@ persistence_strategy:
   - "Push the branch to origin"
   - "Open a draft pull request to the default branch with a body describing: what was completed, what blocked progress, and next steps"
   - "Register a persistence-notes artifact (kind=persistence-notes) summarizing the above and linking the PR"
+
+# Kernel-enforced write confinement for spawned agent bridges (Linux Landlock v2+).
+# When true, specialists can only write under their worktree + run dir; supervisor
+# gets workspace access excluding .belayer/ runtime; all agents can write /tmp.
+# Helper binary: belayer-landlock-exec must be on PATH (shipped with belayer).
+# Requires Linux 5.19+ kernel; falls back to passthrough on older kernels (no hard fail).
+# confine_agent_writes: true
+
+# Extra paths specialists can write to (shared caches across worktrees). Examples:
+# agent_shared_write_paths:
+#   - /workspace/.cache
+#   - /tmp/pnpm-store
 `
 
 // defaultPolicyYAML is a minimal placeholder so .belayer/policies/ is not

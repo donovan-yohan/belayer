@@ -72,6 +72,18 @@ type Config struct {
 	TranscriptPath  string   // absolute path to per-agent JSONL; empty = capture disabled (standard log level)
 	LogLevel        string   // "standard", "verbose", or "trace"; empty treated as "standard"
 
+	// WriteRoots is the set of absolute paths the agent is allowed to write to.
+	// When ConfineWrites is true and this slice is non-empty, the bridge
+	// subprocess is launched via belayer-landlock-exec which applies a
+	// Landlock v2 ruleset: read-only globally, read+write for each root.
+	// /tmp is always included by the daemon so compilers and package managers work.
+	WriteRoots []string
+
+	// ConfineWrites, when true and WriteRoots is non-empty, wraps the bridge
+	// argv in belayer-landlock-exec to enforce kernel-level write confinement.
+	// When false (the default), no wrapping is applied.
+	ConfineWrites bool
+
 	// Cmd overrides the default python3 -m hermes_bridge command.
 	// If nil, pythonCmd is used. Useful for testing.
 	Cmd []string
@@ -103,13 +115,22 @@ type Process struct {
 }
 
 // BuildCmd returns the argv slice to use when launching the bridge subprocess.
-// If cfg.Cmd is non-empty it is returned as-is; otherwise the default python
-// command (Hermes venv python3 -m hermes_bridge) is returned.
+// If cfg.Cmd is non-empty it is used as the base command; otherwise the
+// default python command (Hermes venv python3 -m hermes_bridge) is used.
+// When cfg.ConfineWrites is true and cfg.WriteRoots is non-empty, the argv is
+// prepended with "belayer-landlock-exec" so the kernel-enforced Landlock
+// ruleset is applied before exec-replacing into the bridge process.
 func BuildCmd(cfg Config) []string {
+	var base []string
 	if len(cfg.Cmd) > 0 {
-		return cfg.Cmd
+		base = cfg.Cmd
+	} else {
+		base = defaultPythonCmd()
 	}
-	return defaultPythonCmd()
+	if cfg.ConfineWrites && len(cfg.WriteRoots) > 0 {
+		return append([]string{"belayer-landlock-exec"}, base...)
+	}
+	return base
 }
 
 // BuildEnv builds the complete environment variable slice for the bridge
@@ -192,6 +213,9 @@ func BuildEnv(cfg Config) []string {
 		level = "standard"
 	}
 	env = appendEnv(env, "BELAYER_LOG_LEVEL", level)
+	if cfg.ConfineWrites && len(cfg.WriteRoots) > 0 {
+		env = appendEnv(env, "BELAYER_WRITE_ROOTS", strings.Join(cfg.WriteRoots, ":"))
+	}
 	return env
 }
 
