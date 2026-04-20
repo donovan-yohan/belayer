@@ -302,13 +302,25 @@ func TestInitExtractsHermesBridge(t *testing.T) {
 		t.Fatalf("__pycache__ was extracted; expected it to be filtered")
 	}
 
-	// No *.pyc files at any depth.
+	// No *.pyc files at any depth, and no dev-only trees (tests/, *.md).
 	walkErr := filepath.Walk(bridgeDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && strings.HasSuffix(path, ".pyc") {
-			t.Errorf("unexpected .pyc file in extracted bridge: %s", path)
+		rel, relErr := filepath.Rel(bridgeDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		if info.IsDir() && filepath.Base(rel) == "tests" {
+			t.Errorf("tests/ was extracted; expected it to be filtered: %s", path)
+		}
+		if !info.IsDir() {
+			if strings.HasSuffix(path, ".pyc") {
+				t.Errorf("unexpected .pyc file in extracted bridge: %s", path)
+			}
+			if strings.HasSuffix(path, ".md") {
+				t.Errorf("unexpected .md file in extracted bridge: %s", path)
+			}
 		}
 		return nil
 	})

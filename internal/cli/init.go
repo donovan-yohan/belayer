@@ -416,14 +416,17 @@ func copyDefaultBridge(dst string) ([]string, error) {
 			return nil
 		}
 		rel := strings.TrimPrefix(path, "hermes_bridge/")
-		// Skip bytecode: __pycache__ directories (prune the whole subtree) and
-		// any straggler *.pyc files. The walk returns SkipDir to avoid
-		// descending into __pycache__.
+		// Skip anything that's dev-only and shouldn't leak into user projects:
+		//   - __pycache__/ (bytecode)
+		//   - *.pyc (straggler bytecode)
+		//   - tests/ (pytest suite, only useful in-repo)
+		//   - *.md (README and any future dev notes)
+		// Returning SkipDir on a directory prunes its whole subtree.
 		base := filepath.Base(rel)
-		if d.IsDir() && base == "__pycache__" {
+		if d.IsDir() && (base == "__pycache__" || base == "tests") {
 			return fs.SkipDir
 		}
-		if !d.IsDir() && strings.HasSuffix(base, ".pyc") {
+		if !d.IsDir() && (strings.HasSuffix(base, ".pyc") || strings.HasSuffix(base, ".md")) {
 			return nil
 		}
 		out := filepath.Join(dst, rel)

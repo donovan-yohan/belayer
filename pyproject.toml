@@ -1,0 +1,32 @@
+[project]
+name = "belayer-hermes-bridge"
+version = "0.1.0"
+description = "Belayer's per-agent bridge subprocess. Spawned by the belayer daemon to drive a Hermes AIAgent."
+readme = "hermes_bridge/README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# Runtime deps are satisfied by the host Hermes venv at
+# ~/.hermes/hermes-agent/venv/ (openai, httpx, etc.). The bridge itself
+# imports only stdlib + hermes modules; keep this list empty so the package
+# stays installable into any venv for test/dev without pulling the LLM stack.
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes_bridge"]
+
+[tool.hatch.build.targets.wheel.sources]
+"hermes_bridge" = "hermes_bridge"
+
+[tool.pytest.ini_options]
+testpaths = ["hermes_bridge/tests"]
+pythonpath = ["."]
+addopts = "-ra"
