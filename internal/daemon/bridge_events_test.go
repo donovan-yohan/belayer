@@ -474,6 +474,7 @@ func TestProcessAgentStatusIncompleteSupervisorEscalatesSession(t *testing.T) {
 func TestProcessAgentStatusIncompleteSpecialistNotifiesSupervisor(t *testing.T) {
 	d := testDaemon(t)
 	sessionID := setupSessionWithAgents(t, d, "web-1", "supervisor")
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
 
 	data, _ := json.Marshal(map[string]any{
 		"agent":  "web-1",
@@ -517,14 +518,15 @@ func TestProcessAgentStatusIncompleteSpecialistNotifiesSupervisor(t *testing.T) 
 		t.Fatalf("expected urgent incomplete-notice from web-1 to supervisor containing detail, got %#v", msgs)
 	}
 
-	// Session itself must not be escalated — only supervisor reporting incomplete
-	// should tear the run down.
+	// Session must remain "running" — supervisor is still active and should
+	// decide whether to respawn. Any terminal transition (needs_human_review,
+	// stalled, complete) here means we incorrectly acted on a specialist exit.
 	sess, err := d.store.GetSession(sessionID)
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if sess.Status == "needs_human_review" {
-		t.Fatalf("specialist-incomplete must not escalate session; got %q", sess.Status)
+	if sess.Status != "running" {
+		t.Fatalf("specialist-incomplete must leave session running while supervisor is active; got %q", sess.Status)
 	}
 }
 

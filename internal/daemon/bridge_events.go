@@ -234,6 +234,14 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 				Urgent:      true,
 			})
 			_ = d.broker.Interrupt(sessionID, "supervisor", msg)
+
+			// If the supervisor was already idle (or has itself exited) and this
+			// was the last running agent, the interrupt above won't wake anyone —
+			// surface the stall now so operators see it rather than waiting for
+			// the idle-timeout to fire. When the supervisor is still running this
+			// call returns immediately because at least one agent (supervisor) is
+			// still active.
+			d.checkSessionStalled(sessionID)
 		}
 
 	default:
