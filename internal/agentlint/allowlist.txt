@@ -24,6 +24,9 @@ events
 # "belayer bug" — "a belayer bug" noun phrase in LOG_FORMAT.md invariant text
 bug
 
+# "belayer runtime" — prose description of the installed belayer runtime environment
+runtime
+
 # ---------------------------------------------------------------------------
 # Underscore-form: YAML field names that look like tool names
 # ---------------------------------------------------------------------------

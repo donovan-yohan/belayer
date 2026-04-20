@@ -620,12 +620,22 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 
 		// Notify supervisor.
 		if run.Name != "supervisor" {
+			// Reconstruct the run directory for this agent. If the agent was
+			// spawned on a branch it has a worktree; otherwise it uses Workdir.
+			runBase := run.Workdir
+			if run.WorktreePath != "" {
+				runBase = run.WorktreePath
+			}
+			stderrPath := filepath.Join(runBase, ".belayer", "runs", run.SessionID, run.Name, "bridge-stderr.log")
+			stderrTail := bridgelog.TailLines(stderrPath, 50)
+			content := fmt.Sprintf("%s bridge exited unexpectedly (exit_err: %v). Marked blocked.\n\nLast 50 lines of bridge-stderr.log:\n%s",
+				run.Name, exitErr, stderrTail)
 			msg := broker.Message{
 				SessionID:   run.SessionID,
 				SenderID:    run.Name,
 				RecipientID: "supervisor",
 				Type:        broker.MessageStateChange,
-				Content:     run.Name + " bridge process exited unexpectedly and was marked blocked",
+				Content:     content,
 				Urgent:      true,
 				Timestamp:   time.Now().UTC(),
 			}
