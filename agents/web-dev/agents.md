@@ -4,7 +4,6 @@
 
 ```bash
 belayer message send --to supervisor "status update or question"
-belayer note "observation for reflection"
 belayer recall "search past learnings"
 ```
 

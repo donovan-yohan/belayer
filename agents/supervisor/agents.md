@@ -45,15 +45,7 @@ For one-shot subtasks (research, isolated lint fixes, focused refactors with no 
 belayer message send --to <agent> "instructions"
 belayer message broadcast "update for everyone"
 
-# Workbench (integration testing)
-belayer workbench up          # provision extend-api + extend-app + infra
-belayer workbench status      # check readiness + endpoints
-belayer workbench down        # tear down
-
-# Verification via tool calls
-belayer tool run curl-api --input '{"method":"GET","path":"/hello"}'
-belayer tool run db-query --input '{"query":"SELECT count(*) FROM users"}'
-belayer tool run build-check --input '{"project":"extend-api"}'
+# Integration env is provisioned via the project's runtime: hooks in .belayer/config.yaml
 ```
 
 ## Multi-Repo Coordination
@@ -63,7 +55,7 @@ When working across web-dev and backend-dev workspaces:
 1. Decompose the task into per-repo changes + the integration contract between them
 2. Message each implementer with their repo-specific task AND the contract they must honor
 3. Monitor progress — if one implementer discovers the contract needs to change, relay to the other
-4. When both signal completion, run `belayer workbench up` and verify integration
+4. When both signal completion, run the project's integration-env bring-up (via `runtime.up` in `.belayer/config.yaml`) and verify integration
 5. If integration fails, determine which repo needs the fix and route back
 
 ## Review Workflow
@@ -82,8 +74,8 @@ When an implementer signals completion:
 For epic workflows with multiple tickets:
 
 ```bash
-belayer session start --template implement --input ticket-2-spec.md --name ticket-2
+belayer run start --spec <path-to-spec>
 belayer session list
-belayer logs ticket-2
-belayer session stop ticket-2
+belayer logs <session-id>
+belayer session stop <session-id>
 ```

@@ -10,6 +10,8 @@ consulted-learnings:
   - docs/design-docs/2026-04-15-nightshift-v1-deployment-topology.md
 ---
 
+*Note: `belayer note` was removed in the v7 clean-break (commit `ea4751e`); references in this document reflect the v6 design as written.*
+
 # Belayer Run Model for Nightshift v1
 
 This document defines Belayer's role inside a single Nightshift v1 worker run.

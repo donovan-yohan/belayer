@@ -1,0 +1,33 @@
+# Allowlist: tokens that look like belayer CLI invocations or tool names but are
+# placeholders, documentation examples, or pseudocode. One token per line.
+# Space-form entries: "verb subverb" (matches the full pair).
+# Underscore-form entries: single token starting with belayer_.
+# Lines starting with # are comments.
+
+# ---------------------------------------------------------------------------
+# Prose nouns matched by the space-form regex (belayer <word>) but are NOT
+# CLI invocations — they use "belayer" as a proper noun / adjective.
+# ---------------------------------------------------------------------------
+
+# "belayer agent" / "belayer peer" / "belayer team" — concept nouns in prose
+agent
+peer
+team
+user
+
+# "belayer tools" — prose description of the tool suite, not a CLI command
+tools
+
+# "belayer events" — Mermaid diagram label ("belayer events\n(CLI tail)")
+events
+
+# "belayer bug" — "a belayer bug" noun phrase in LOG_FORMAT.md invariant text
+bug
+
+# ---------------------------------------------------------------------------
+# Underscore-form: YAML field names that look like tool names
+# ---------------------------------------------------------------------------
+
+# belayer_tools is a YAML key in agent.yaml (the allowed-tools list field),
+# not a registered Python tool in hermes_bridge/tools.py.
+belayer_tools
