@@ -41,9 +41,14 @@ Source: `internal/store/store.go:SessionEvent`.
 **Trace spill:** when a session is at `log_level: "trace"` and an event's serialised `data` is ≥ 64 KiB, the daemon writes the full payload to a per-agent fragment file instead of storing it inline in SQLite. The `SessionEvent` row in the store then carries:
 - `trace_file` — path relative to the session's trace directory (e.g. `traces/<session-id>/<agent>/0001.jsonl`).
 - `trace_offset` / `trace_length` — byte range within that file.
-- Inline `data` contains a truncation sentinel: `{"_truncated": true, "full_bytes": <n>}` where `<n>` is the total payload size before spill.
+- Inline `data` contains one of three sentinel shapes depending on tier and spill outcome:
+  - **Successful trace spill:** `{"agent": "<name>", "_trace": true}` — no `_truncated` field; consumers fetch the full payload from the fragment via `trace_file` + `trace_offset` + `trace_length`.
+  - **Failed trace spill (fallback to inline truncation):** `{"_truncated": true, "tier": "trace", "original_size": <n>, "reason": "<why>"}` — spill attempt errored, data was dropped.
+  - **Standard-tier truncation:** `{"_truncated": true, "tier": "standard", "original_size": <n>, "reason": "<why>"}` — non-trace sessions truncate oversize payloads inline rather than spilling.
 
-Fragment files are newline-terminated JSONL records. When a fragment is sealed (at rotation or agent exit), it is compressed to `.jsonl.zst` using zstd. Consumers MUST check `trace_file` before reading `data` when processing events from a trace-tier session. Use `GET /sessions/{id}/trace/{agent}/{fragment}?offset=N&length=M` to fetch spilled payloads (see §6.5).
+The `original_size` field is the pre-truncation byte count (an earlier draft of this doc called it `full_bytes` — that field name is never emitted by the daemon). Consumers MUST handle all three shapes and MUST check `trace_file` before reading `data` on trace-tier sessions.
+
+Fragment files are newline-terminated JSONL records. When a fragment is sealed (at rotation or agent exit), it is compressed to `.jsonl.zst` using zstd. Use `GET /sessions/{id}/trace/{agent}/{fragment}?offset=N&length=M` to fetch spilled payloads (see §6.5) — the endpoint transparently handles both live `.jsonl` and sealed `.jsonl.zst` files.
 
 ---
 

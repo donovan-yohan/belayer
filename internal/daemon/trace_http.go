@@ -112,6 +112,27 @@ func (d *Daemon) handleTraceSlice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// filepath.Clean + HasPrefix above catch "../" traversal but do not follow
+	// symlinks. A symlink created under traceBase pointing outside would pass
+	// the prefix check and then expose arbitrary files through os.Open. Verify
+	// the resolved real path still lives under traceBase's real path.
+	baseReal, err := filepath.EvalSymlinks(d.traceBase)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("resolve trace base: %v", err)})
+		return
+	}
+	resolvedReal, err := filepath.EvalSymlinks(resolvedPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("resolve fragment: %v", err)})
+		return
+	}
+	baseRealPrefix := filepath.Clean(baseReal) + string(os.PathSeparator)
+	if !strings.HasPrefix(filepath.Clean(resolvedReal), baseRealPrefix) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid path component"})
+		return
+	}
+	resolvedPath = resolvedReal
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 
 	if isZst {

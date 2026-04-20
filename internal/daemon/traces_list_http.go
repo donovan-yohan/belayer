@@ -9,10 +9,12 @@ import (
 )
 
 // traceFragmentEntry is the JSON shape returned by handleListTraces.
+// The server-side filesystem path is intentionally omitted: clients address
+// fragments via (agent, fragment) through /sessions/{id}/trace/{agent}/{fragment},
+// and leaking the daemon's host layout over the API serves no purpose.
 type traceFragmentEntry struct {
 	Agent      string    `json:"agent"`
 	Fragment   string    `json:"fragment"`
-	Path       string    `json:"path"`
 	Size       int64     `json:"size"`
 	Compressed bool      `json:"compressed"`
 	UpdatedAt  time.Time `json:"updated_at"`
@@ -87,7 +89,6 @@ func (d *Daemon) handleListTraces(w http.ResponseWriter, r *http.Request) {
 			out = append(out, traceFragmentEntry{
 				Agent:      agentName,
 				Fragment:   baseName,
-				Path:       filepath.Join(agentFragDir, name),
 				Size:       info.Size(),
 				Compressed: isZst,
 				UpdatedAt:  info.ModTime().UTC(),

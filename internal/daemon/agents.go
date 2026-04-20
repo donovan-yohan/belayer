@@ -75,6 +75,15 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	// Identity is used to pick the identity directory under .belayer/agents/<identity>/
+	// and agents/<identity>/; an unvalidated value with "../" would escape the
+	// identity tree when resolved by agentIdentityPaths at spawn time.
+	if req.Identity != "" {
+		if err := validateAgentName(req.Identity); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "identity: " + err.Error()})
+			return
+		}
+	}
 	req.SessionID = sessionID
 
 	// Resolve workdir from session repos when repo scope is set but workdir is not.
@@ -162,6 +171,9 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		if d.bridgeShuttingDownSessions[sessionID] {
 			d.bridgeMu.Unlock()
 			_ = proc.Stop(2 * time.Second)
+			// Move the run out of "starting" so operators see the cancel, not a
+			// stuck starting row that will never transition.
+			_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon shutting down; bridge spawn cancelled"})
 			return
 		}
@@ -454,7 +466,9 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// is empty, the session is never archived anyway (archive_manager.doArchive
 	// skips), so there's no point writing transcripts.
 	var transcriptPath string
-	if sess.LogLevel == LogLevelVerbose && sess.WorkspaceDir != "" {
+	// Tier model is monotonic (standard ⊂ verbose ⊂ trace): trace sessions
+	// still want the verbose transcript channel in addition to trace fragments.
+	if (sess.LogLevel == LogLevelVerbose || sess.LogLevel == LogLevelTrace) && sess.WorkspaceDir != "" {
 		transcriptsDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", req.SessionID, "transcripts")
 		if mkErr := os.MkdirAll(transcriptsDir, 0o700); mkErr != nil {
 			log.Printf("spawn %s: create transcripts dir failed (continuing without transcript): %v", req.Name, mkErr)
@@ -568,6 +582,20 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 	go func() {
 		<-proc.Done()
 
+		// takeExistingBridge can replace this process with a fresh spawn
+		// before its watcher fires; that old watcher must not mark the new
+		// run blocked or delete the new process entry. Verify we're still
+		// the current entry under lock, and take the cleanup-slot while
+		// we hold it so the later delete race cannot touch a replacement.
+		key := bridgeKey(run.SessionID, run.Name)
+		d.bridgeMu.Lock()
+		if d.bridgeProcs[key] != proc {
+			d.bridgeMu.Unlock()
+			return
+		}
+		delete(d.bridgeProcs, key)
+		d.bridgeMu.Unlock()
+
 		current, err := d.store.GetAgentRun(run.SessionID, run.Name)
 		if err != nil {
 			return
@@ -606,11 +634,6 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 
 		// Check if this was the last active agent (session may be stalled).
 		d.checkSessionStalled(run.SessionID)
-
-		// Clean up process reference.
-		d.bridgeMu.Lock()
-		delete(d.bridgeProcs, bridgeKey(run.SessionID, run.Name))
-		d.bridgeMu.Unlock()
 	}()
 }
 
@@ -706,6 +729,8 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		if d.bridgeShuttingDownSessions[req.SessionID] {
 			d.bridgeMu.Unlock()
 			_ = proc.Stop(2 * time.Second)
+			// Same reason as the HTTP cancellation path above.
+			_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
 			return store.AgentRun{}, fmt.Errorf("daemon shutting down; bridge spawn cancelled")
 		}
 		d.bridgeProcs[bridgeKey(req.SessionID, req.Name)] = proc

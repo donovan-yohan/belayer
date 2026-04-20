@@ -99,20 +99,31 @@ func newArtifactGetCmd() *cobra.Command {
 				sessionID = resolved
 			}
 
-			data, err := c.GetArtifactBytes(sessionID, artifactID)
-			if err != nil {
+			var dst io.Writer
+			var closer io.Closer
+			if output != "" {
+				f, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+				if err != nil {
+					return fmt.Errorf("open output file: %w", err)
+				}
+				dst = f
+				closer = f
+			} else {
+				dst = cmd.OutOrStdout()
+			}
+
+			// Stream directly from the HTTP body; large artifacts (log bundles,
+			// binaries) should not be buffered in-memory before writeout.
+			if err := c.StreamArtifactBytes(sessionID, artifactID, dst); err != nil {
+				if closer != nil {
+					_ = closer.Close()
+				}
 				return fmt.Errorf("get artifact: %w", err)
 			}
-
-			if output != "" {
-				if err := os.WriteFile(output, data, 0o666); err != nil {
-					return fmt.Errorf("write output file: %w", err)
-				}
-				return nil
+			if closer != nil {
+				return closer.Close()
 			}
-
-			_, err = cmd.OutOrStdout().Write(data)
-			return err
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
@@ -160,6 +171,8 @@ func (c *Client) ListArtifacts(sessionID string) ([]store.Artifact, error) {
 }
 
 // GetArtifactBytes downloads the raw bytes of an artifact from the daemon.
+// Kept for callers that need the full payload in memory (tests, small fixtures).
+// New callers should prefer StreamArtifactBytes to avoid buffering large files.
 func (c *Client) GetArtifactBytes(sessionID, artifactID string) ([]byte, error) {
 	path := "/sessions/" + url.PathEscape(sessionID) + "/artifacts/" + url.PathEscape(artifactID)
 	resp, err := c.do("GET", path, nil)
@@ -172,4 +185,21 @@ func (c *Client) GetArtifactBytes(sessionID, artifactID string) ([]byte, error) 
 		return nil, fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 	return io.ReadAll(resp.Body)
+}
+
+// StreamArtifactBytes copies an artifact body directly to w without buffering
+// the whole payload. Returns the first error from the transport or writer.
+func (c *Client) StreamArtifactBytes(sessionID, artifactID string, w io.Writer) error {
+	path := "/sessions/" + url.PathEscape(sessionID) + "/artifacts/" + url.PathEscape(artifactID)
+	resp, err := c.do("GET", path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+	_, err = io.Copy(w, resp.Body)
+	return err
 }

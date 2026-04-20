@@ -93,7 +93,7 @@ func newSessionStopCmd() *cobra.Command {
 func lookupSessionID(c *Client, arg string) (string, error) {
 	sessions, err := c.ListSessions()
 	if err != nil {
-		return arg, nil
+		return "", fmt.Errorf("list sessions: %w", err)
 	}
 	return resolveSessionArg(sessions, arg)
 }
@@ -254,11 +254,17 @@ func matchesFilters(e eventResponse, agent, typePrefix, tier string) bool {
 		return false
 	}
 	if agent != "" {
-		// data is a JSON string; peek for "agent":"<name>" without a full parse
-		// to avoid the cost of unmarshalling every event. Exact string match so
-		// "pm" does not collide with "pm-reviewer".
-		needle := `"agent":"` + agent + `"`
-		if !strings.Contains(e.Data, needle) {
+		// Parse e.Data as JSON and read the top-level "agent" field. A prior
+		// substring peek was cheaper but also matched embedded JSON-in-JSON
+		// (e.g. a supervisor message whose content field contained an escaped
+		// "agent":"pm"), yielding false positives that crossed agent scope.
+		var payload struct {
+			Agent string `json:"agent"`
+		}
+		if err := json.Unmarshal([]byte(e.Data), &payload); err != nil {
+			return false
+		}
+		if payload.Agent != agent {
 			return false
 		}
 	}

@@ -83,6 +83,9 @@ def test_fs_snapshot_suppressed_at_standard(tmp_path):
 # ---------- Task 3.5: trace:subprocess_exec ----------
 
 def test_subprocess_exec_emitted_at_trace():
+    # Only allowlisted vars pass; prior prefix-based inclusion of BELAYER_* was
+    # removed (it would leak any future BELAYER_ env var without updating
+    # _ENV_SECRET_VARS). The explicit allowlist is the security contract now.
     with patch.dict(os.environ, {"PATH": "/usr/bin", "SECRET": "nope", "BELAYER_FOO": "yes"}, clear=True):
         with patch("hermes_bridge.callbacks.post_event") as mock_post:
             cbs = _build(log_level="trace")
@@ -98,7 +101,7 @@ def test_subprocess_exec_emitted_at_trace():
     assert d["exit_code"] == 0
     assert d["stdout"] == "hi"
     assert "PATH" in d["env_subset"]
-    assert "BELAYER_FOO" in d["env_subset"]
+    assert "BELAYER_FOO" not in d["env_subset"]
     assert "SECRET" not in d["env_subset"]
 
 
@@ -126,7 +129,10 @@ def test_subprocess_exec_filters_belayer_api_key():
     assert len(exec_events) == 1
     env_subset = exec_events[0].args[4]["env_subset"]
     assert "BELAYER_API_KEY" not in env_subset
-    assert "BELAYER_SESSION_ID" in env_subset
+    # BELAYER_SESSION_ID was incidentally included under the old prefix rule;
+    # the allowlist doesn't cover it. Session/agent context is already on the
+    # event envelope, so there's no reason to echo it into env_subset too.
+    assert "BELAYER_SESSION_ID" not in env_subset
 
 
 def test_subprocess_exec_filters_belayer_base_url():
@@ -142,7 +148,7 @@ def test_subprocess_exec_filters_belayer_base_url():
     exec_events = [c for c in mock_post.call_args_list if c.args[3] == "trace:subprocess_exec"]
     env_subset = exec_events[0].args[4]["env_subset"]
     assert "BELAYER_BASE_URL" not in env_subset
-    assert "BELAYER_AGENT_ID" in env_subset
+    assert "BELAYER_AGENT_ID" not in env_subset
 
 
 def test_subprocess_exec_filters_belayer_provider():
@@ -158,7 +164,7 @@ def test_subprocess_exec_filters_belayer_provider():
     exec_events = [c for c in mock_post.call_args_list if c.args[3] == "trace:subprocess_exec"]
     env_subset = exec_events[0].args[4]["env_subset"]
     assert "BELAYER_PROVIDER" not in env_subset
-    assert "BELAYER_ROLE" in env_subset
+    assert "BELAYER_ROLE" not in env_subset
 
 
 # ---------- CONCERN 1: recursive _coerce_plain ----------

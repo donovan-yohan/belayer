@@ -164,7 +164,14 @@ func streamBridgeStdout(ctx context.Context, w http.ResponseWriter, logPath stri
 		if err != nil && err != io.EOF {
 			return
 		}
-		// EOF — wait briefly for more bytes or context cancel.
+		// EOF — check for rotation/truncation (logrotate or in-place rewrite)
+		// the same way transcript follow does, then wait briefly for more bytes
+		// or context cancel. Without this the client would keep reading stale
+		// offsets from the pre-rotation fd indefinitely.
+		if newF := maybeReopenTranscript(f, logPath); newF != nil {
+			_ = f.Close()
+			f = newF
+		}
 		select {
 		case <-ctx.Done():
 			return

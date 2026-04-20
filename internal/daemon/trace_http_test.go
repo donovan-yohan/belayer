@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -91,6 +92,52 @@ func TestTraceSlice_RejectsNegativeOffset(t *testing.T) {
 	rr := doRequest(t, d, "GET", path, nil)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for negative offset, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestTraceSlice_RejectsSymlinkEscape verifies that a symlink under traceBase
+// pointing to a file outside traceBase is rejected with 400, not served.
+// filepath.Clean does not resolve symlinks, so the byte-level prefix check
+// above was insufficient — a malicious agent (or a writer bug) creating a
+// symlink like traceBase/<sess>/<agent>/0001.jsonl -> /etc/hostname would
+// otherwise expose arbitrary readable files.
+//
+// Addresses CodeRabbit critical: trace HTTP endpoint could be used to read any
+// file the daemon process could open by planting a symlink inside traceBase.
+func TestTraceSlice_RejectsSymlinkEscape(t *testing.T) {
+	d, dir := testDaemonWithTraceAndSlice(t)
+
+	sessID, err := d.store.CreateSession(store.Session{
+		Name:     "symlink-escape-test",
+		LogLevel: LogLevelTrace,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Write the target file somewhere outside traceBase.
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("top-secret"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Create a symlink inside traceBase that points at the outside file.
+	agentDir := filepath.Join(dir, "traces", sessID, "myagent")
+	if err := os.MkdirAll(agentDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	linkPath := filepath.Join(agentDir, "0001.jsonl")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	path := fmt.Sprintf("/sessions/%s/trace/myagent/0001?offset=0&length=10", sessID)
+	rr := doRequest(t, d, "GET", path, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for symlink-escape, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "top-secret") {
+		t.Fatalf("leaked target contents via symlink: %s", rr.Body.String())
 	}
 }
 

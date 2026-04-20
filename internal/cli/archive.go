@@ -54,7 +54,8 @@ func newArchiveCmd() *cobra.Command {
 			}
 			daemonInstanceID := health.DaemonInstanceID
 
-			if !terminalStatuses[sess.Status] {
+			isTerminal := terminalStatuses[sess.Status]
+			if !isTerminal {
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"warning: session status %q is not a terminal value; archiving anyway\n",
 					sess.Status)
@@ -102,11 +103,12 @@ func newArchiveCmd() *cobra.Command {
 					ID:        sess.ID,
 					Name:      sess.Name,
 					Workspace: sess.WorkspaceDir,
+					LogLevel:  sess.LogLevel,
 				},
 				AgentRoster: roster,
 				Artifacts:   artifacts,
 				FinalStatus: sess.Status,
-				Partial:     false,
+				Partial:     !isTerminal,
 				ArchivedAt:  time.Now().UTC(),
 			}
 

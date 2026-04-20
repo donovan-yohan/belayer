@@ -42,7 +42,29 @@ func resolveArtifactPath(workspaceDir, artifactPath string) (string, error) {
 	if abs != absRoot && !strings.HasPrefix(abs, rootWithSep) {
 		return "", fmt.Errorf("artifact path escapes workspace")
 	}
-	return abs, nil
+
+	// filepath.Clean and string-prefix checks normalize "../" but do not follow
+	// symlinks. A symlink inside the workspace pointing to /etc/passwd would
+	// pass the prefix check above and then be served verbatim by os.Open. Re-
+	// verify after resolving both sides through EvalSymlinks.
+	rootReal, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace symlinks: %w", err)
+	}
+	absReal, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		// Missing target is the caller's problem (they'll hit 404 via os.Stat).
+		// Only symlink-chain failures are security-relevant here.
+		if os.IsNotExist(err) {
+			return abs, nil
+		}
+		return "", fmt.Errorf("resolve artifact symlinks: %w", err)
+	}
+	rootRealWithSep := rootReal + string(os.PathSeparator)
+	if absReal != rootReal && !strings.HasPrefix(absReal, rootRealWithSep) {
+		return "", fmt.Errorf("artifact path escapes workspace via symlink")
+	}
+	return absReal, nil
 }
 
 // artifactInlineDisposition reports whether ct is safe to render inline in a

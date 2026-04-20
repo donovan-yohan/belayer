@@ -245,6 +245,56 @@ func TestGetArtifactBytes_AbsoluteOutsideWorkspace(t *testing.T) {
 	}
 }
 
+// TestGetArtifactBytes_SymlinkEscape verifies that a symlink inside the
+// workspace pointing to a file outside the workspace is rejected. Prior to
+// EvalSymlinks in resolveArtifactPath, the prefix check passed (the symlink
+// file itself lives inside the workspace) and os.Open followed the link to
+// expose arbitrary readable files.
+//
+// Addresses CodeRabbit critical: artifact endpoint could be used to read any
+// file the daemon process could open, as long as an attacker (or compromised
+// agent) created a symlink inside workspace_dir.
+func TestGetArtifactBytes_SymlinkEscape(t *testing.T) {
+	d := testDaemonWithArtifactBytes(t)
+
+	outer := t.TempDir()
+	secret := filepath.Join(outer, "secret.txt")
+	if err := os.WriteFile(secret, []byte("top-secret"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	workspace := filepath.Join(outer, "work")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	// Symlink inside workspace points to a file outside the workspace.
+	link := filepath.Join(workspace, "link.txt")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	sessID, err := d.store.CreateSession(store.Session{Name: "symlink-test", WorkspaceDir: workspace})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	artID, err := d.store.CreateArtifact(store.Artifact{
+		SessionID: sessID,
+		Kind:      "output",
+		Path:      "link.txt",
+		Producer:  "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateArtifact: %v", err)
+	}
+
+	rr := doRequest(t, d, "GET", "/sessions/"+sessID+"/artifacts/"+artID, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for symlink-escape, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "top-secret") {
+		t.Fatalf("leaked secret contents via symlink: %s", rr.Body.String())
+	}
+}
+
 func TestGetArtifactBytes_HTMLForcedAttachment(t *testing.T) {
 	d := testDaemonWithArtifactBytes(t)
 
