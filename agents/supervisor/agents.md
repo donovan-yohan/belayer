@@ -69,6 +69,10 @@ When an implementer signals completion:
 5. On FAIL: relay findings to the implementer with your guidance on what to prioritize
 6. On NO_FINDINGS or PASS_WITH_NOTES: proceed to QA, then integration testing
 
+## Peer terminal transitions
+
+When a spawned peer transitions terminal (blocked, incomplete, or an unexpected bridge exit), the daemon delivers an urgent broker message like `<name> has finished with status=<x>`. Treat those messages as wake-ups: investigate (bridge-stderr tail, last events), respawn once if the failure looks transient, escalate if it doesn't. Do not let these messages sit in the queue while you sleep on the idle timer — the run will time out and escalate without ever attempting recovery.
+
 ## Session Management
 
 For epic workflows with multiple tickets:

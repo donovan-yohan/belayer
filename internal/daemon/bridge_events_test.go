@@ -466,6 +466,94 @@ func TestProcessAgentStatusIncompleteSupervisorEscalatesSession(t *testing.T) {
 	}
 }
 
+// TestProcessAgentStatusIncompleteSpecialistNotifiesSupervisor verifies that
+// when a specialist (non-supervisor) reports incomplete, the daemon sends an
+// urgent broker message to the supervisor. Without this nudge the supervisor
+// would sleep on its idle timer and escalate the whole run without ever
+// attempting to respawn the dead peer or take corrective action.
+func TestProcessAgentStatusIncompleteSpecialistNotifiesSupervisor(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "web-1", "supervisor")
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "web-1",
+		"status": "incomplete",
+		"detail": "ran out of retries after seccomp kill",
+	})
+	d.processAgentStatusEvent(sessionID, "agent_status:incomplete", string(data))
+
+	// Specialist status must be updated.
+	run, err := d.store.GetAgentRun(sessionID, "web-1")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.Status != "incomplete" {
+		t.Fatalf("expected agent status=incomplete, got %q", run.Status)
+	}
+
+	// Supervisor must have an urgent pending message from the peer.
+	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
+	if err != nil {
+		t.Fatalf("PendingMessages: %v", err)
+	}
+	found := false
+	for _, m := range msgs {
+		if m.SenderID != "web-1" || m.RecipientID != "supervisor" {
+			continue
+		}
+		if !m.Urgent {
+			continue
+		}
+		if !strings.Contains(m.Content, "incomplete") {
+			continue
+		}
+		if !strings.Contains(m.Content, "seccomp") {
+			continue
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatalf("expected urgent incomplete-notice from web-1 to supervisor containing detail, got %#v", msgs)
+	}
+
+	// Session itself must not be escalated — only supervisor reporting incomplete
+	// should tear the run down.
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if sess.Status == "needs_human_review" {
+		t.Fatalf("specialist-incomplete must not escalate session; got %q", sess.Status)
+	}
+}
+
+// TestProcessAgentStatusIncompleteSupervisorSendsNoSelfMessage verifies that
+// when the supervisor itself reports incomplete, no self-directed broker
+// message is generated (the session-escalation path handles it).
+func TestProcessAgentStatusIncompleteSupervisorSendsNoSelfMessage(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor")
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "supervisor",
+		"status": "incomplete",
+		"detail": "idle timeout",
+	})
+	d.processAgentStatusEvent(sessionID, "agent_status:incomplete", string(data))
+
+	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
+	if err != nil {
+		t.Fatalf("PendingMessages: %v", err)
+	}
+	for _, m := range msgs {
+		if m.SenderID == "supervisor" && m.RecipientID == "supervisor" {
+			t.Fatalf("supervisor reporting incomplete must not generate self-message: %#v", m)
+		}
+	}
+}
+
 // TestProcessAgentStatusMalformedJSONDoesNotPanic verifies that malformed event
 // data does not panic and is handled gracefully.
 func TestProcessAgentStatusMalformedJSONDoesNotPanic(t *testing.T) {
