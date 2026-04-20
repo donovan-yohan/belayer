@@ -1,0 +1,36 @@
+docs/design-docs/2026-04-20-template-team-exit-conditions-and-prompt-discipline.md
+  415091e244f379c3 1-721
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "19e473cd6b8dd906b6754e1f55d428eda18c9fd4",
+  "prompts": {
+    "415091e244f379c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c56dc0ec-a252-446a-9120-8344bf1a3e83",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 722,
+      "total_deletions": 1,
+      "accepted_lines": 721,
+      "overriden_lines": 0
+    },
+    "edbf9f73c8916cfc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66974178-7e29-4b2f-a0fb-3d75c1178376",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1350,
+      "total_deletions": 0,
+      "accepted_lines": 1350,
+      "overriden_lines": 0
+    }
+  }
+}
