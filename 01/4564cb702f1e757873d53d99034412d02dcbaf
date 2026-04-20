@@ -1,0 +1,29 @@
+internal/daemon/bridgelog/tail.go
+  292d8375836a3f59 1-63
+internal/daemon/bridgelog/tail_test.go
+  292d8375836a3f59 1-89
+internal/daemon/agents.go
+  292d8375836a3f59 623-632,638
+internal/agentlint/allowlist.txt
+  292d8375836a3f59 27-29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "014564cb702f1e757873d53d99034412d02dcbaf",
+  "prompts": {
+    "292d8375836a3f59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63ba09df-2b2a-4f4b-ba9e-0a325bc7aeaf",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 175,
+      "total_deletions": 6,
+      "accepted_lines": 175,
+      "overriden_lines": 0
+    }
+  }
+}
