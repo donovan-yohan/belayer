@@ -1,0 +1,23 @@
+internal/daemon/bridge_events.go
+  9390ab5298030f80 20-28,195-201,207-209,230,244-271,405-498,501-512,520-575,577-583,600-607,609-615
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "bad7c278819477187cd1359fe946c80424a17d49",
+  "prompts": {
+    "9390ab5298030f80": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7aaf6797-6f5d-4cf4-9bf1-04bf31d7776d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 62,
+      "total_deletions": 24,
+      "accepted_lines": 56,
+      "overriden_lines": 0
+    }
+  }
+}
