@@ -179,6 +179,37 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		}
 		d.bridgeProcs[bridgeKey(sessionID, req.Name)] = proc
 		d.bridgeMu.Unlock()
+
+		// Wait up to 500ms for the first bridge event (proves healthy startup)
+		// or process exit (crash during startup). This converts a silent race
+		// where the bridge exits in <500ms into an immediate error returned to
+		// the supervisor tool call (Gap 14).
+		workdirForRunDir := req.Workdir
+		if workdirForRunDir == "" {
+			if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+				workdirForRunDir = cwd
+			}
+		}
+		runDir := filepath.Join(workdirForRunDir, ".belayer", "runs", sessionID, req.Name)
+		select {
+		case <-proc.FirstEvent():
+			// healthy startup — proceed
+		case <-proc.Done():
+			// bridge exited before posting any event — report failure with stderr tail
+			_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
+			d.bridgeMu.Lock()
+			delete(d.bridgeProcs, bridgeKey(sessionID, req.Name))
+			d.bridgeMu.Unlock()
+			stderrPath := filepath.Join(runDir, "bridge-stderr.log")
+			tail := bridgelog.TailLines(stderrPath, 20)
+			errMsg := fmt.Sprintf("bridge exited during spawn (%v): %s", proc.ExitErr(), tail)
+			log.Printf("spawn agent %s failed during startup: %v", req.Name, errMsg)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
+			return
+		case <-time.After(500 * time.Millisecond):
+			// Slow start — assume the bridge is still initialising.
+			// watchBridgeExit will catch any later crash.
+		}
 	}
 
 	if err := d.store.UpdateAgentRunStatus(sessionID, req.Name, "running"); err != nil {
@@ -735,6 +766,28 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		}
 		d.bridgeProcs[bridgeKey(req.SessionID, req.Name)] = proc
 		d.bridgeMu.Unlock()
+
+		// Wait up to 500ms for the first bridge event (proves healthy startup)
+		// or process exit (crash during startup). This converts a silent race
+		// where the bridge exits in <500ms into an immediate error returned to
+		// the supervisor tool call (Gap 14).
+		runDir := filepath.Join(req.Workdir, ".belayer", "runs", req.SessionID, req.Name)
+		select {
+		case <-proc.FirstEvent():
+			// healthy startup — proceed
+		case <-proc.Done():
+			// bridge exited before posting any event — report failure with stderr tail
+			_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
+			d.bridgeMu.Lock()
+			delete(d.bridgeProcs, bridgeKey(req.SessionID, req.Name))
+			d.bridgeMu.Unlock()
+			stderrPath := filepath.Join(runDir, "bridge-stderr.log")
+			tail := bridgelog.TailLines(stderrPath, 20)
+			return store.AgentRun{}, fmt.Errorf("bridge exited during spawn (%v): %s", proc.ExitErr(), tail)
+		case <-time.After(500 * time.Millisecond):
+			// Slow start — assume the bridge is still initialising.
+			// watchBridgeExit will catch any later crash.
+		}
 	}
 
 	if err := d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "running"); err != nil {
