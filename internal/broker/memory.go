@@ -3,6 +3,7 @@ package broker
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -78,6 +79,9 @@ func (b *MemoryBroker) Unsubscribe(sessionID, agentID string) error {
 // Send delivers msg to a specific agent. Non-urgent messages are debounced;
 // urgent messages flush the buffer and deliver immediately.
 func (b *MemoryBroker) Send(sessionID, agentID string, msg Message) error {
+	if strings.TrimSpace(msg.Content) == "" {
+		return fmt.Errorf("broker: refusing to send message with empty content (sender=%q recipient=%q)", msg.SenderID, agentID)
+	}
 	if msg.ID == "" {
 		msg.ID = uuid.New().String()
 	}
@@ -134,6 +138,9 @@ func (b *MemoryBroker) Send(sessionID, agentID string, msg Message) error {
 
 // Broadcast delivers msg to all subscribers in sessionID except the sender.
 func (b *MemoryBroker) Broadcast(sessionID string, msg Message) error {
+	if strings.TrimSpace(msg.Content) == "" {
+		return fmt.Errorf("broker: refusing to broadcast message with empty content (sender=%q recipient=%q)", msg.SenderID, "<broadcast>")
+	}
 	if msg.ID == "" {
 		msg.ID = uuid.New().String()
 	}
@@ -165,6 +172,9 @@ func (b *MemoryBroker) Broadcast(sessionID string, msg Message) error {
 // bypassing debounce entirely. The Ctrl+C convention was tmux-specific and is not
 // used for bridge agents, which receive interrupts via stdin directly.
 func (b *MemoryBroker) Interrupt(sessionID, agentID string, msg Message) error {
+	if strings.TrimSpace(msg.Content) == "" {
+		return fmt.Errorf("broker: refusing to interrupt with empty content (sender=%q recipient=%q)", msg.SenderID, agentID)
+	}
 	if msg.ID == "" {
 		msg.ID = uuid.New().String()
 	}
