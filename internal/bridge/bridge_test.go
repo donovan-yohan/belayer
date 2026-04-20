@@ -383,6 +383,105 @@ func TestBelayerToolsEnvVarInjected(t *testing.T) {
 	}
 }
 
+// TestBuildCmdConfinementWraps verifies that BuildCmd prepends
+// "belayer-landlock-exec" when ConfineWrites is true and WriteRoots is set.
+func TestBuildCmdConfinementWraps(t *testing.T) {
+	cfg := Config{
+		Cmd:           []string{"python3", "-m", "hermes_bridge"},
+		ConfineWrites: true,
+		WriteRoots:    []string{"/workspace", "/tmp"},
+	}
+	argv := BuildCmd(cfg)
+	if argv[0] != "belayer-landlock-exec" {
+		t.Fatalf("expected argv[0] = %q, got %q", "belayer-landlock-exec", argv[0])
+	}
+	if argv[1] != "python3" {
+		t.Fatalf("expected argv[1] = %q, got %q", "python3", argv[1])
+	}
+}
+
+// TestBuildCmdConfinementNoWrapWhenRootsEmpty verifies that BuildCmd does NOT
+// wrap when WriteRoots is empty, even if ConfineWrites is true.
+func TestBuildCmdConfinementNoWrapWhenRootsEmpty(t *testing.T) {
+	cfg := Config{
+		Cmd:           []string{"python3", "-m", "hermes_bridge"},
+		ConfineWrites: true,
+		WriteRoots:    nil,
+	}
+	argv := BuildCmd(cfg)
+	if argv[0] == "belayer-landlock-exec" {
+		t.Fatal("BuildCmd must not wrap when WriteRoots is empty")
+	}
+	if argv[0] != "python3" {
+		t.Fatalf("expected argv[0] = %q, got %q", "python3", argv[0])
+	}
+}
+
+// TestBuildCmdConfinementNoWrapWhenDisabled verifies that BuildCmd does NOT
+// wrap when ConfineWrites is false.
+func TestBuildCmdConfinementNoWrapWhenDisabled(t *testing.T) {
+	cfg := Config{
+		Cmd:           []string{"python3", "-m", "hermes_bridge"},
+		ConfineWrites: false,
+		WriteRoots:    []string{"/workspace"},
+	}
+	argv := BuildCmd(cfg)
+	if argv[0] == "belayer-landlock-exec" {
+		t.Fatal("BuildCmd must not wrap when ConfineWrites is false")
+	}
+}
+
+// TestBuildEnvWriteRootsSet verifies that BELAYER_WRITE_ROOTS is set when
+// ConfineWrites is true and WriteRoots is non-empty.
+func TestBuildEnvWriteRootsSet(t *testing.T) {
+	cfg := Config{
+		SessionID:     "s",
+		AgentID:       "a",
+		Role:          "implementer",
+		Profile:       "default",
+		SocketPath:    "/tmp/t.sock",
+		RunDir:        t.TempDir(),
+		ConfineWrites: true,
+		WriteRoots:    []string{"/workspace", "/tmp"},
+	}
+	env := BuildEnv(cfg)
+	envMap := make(map[string]string, len(env))
+	for _, e := range env {
+		if idx := strings.IndexByte(e, '='); idx >= 0 {
+			envMap[e[:idx]] = e[idx+1:]
+		}
+	}
+	want := "/workspace:/tmp"
+	got, ok := envMap["BELAYER_WRITE_ROOTS"]
+	if !ok {
+		t.Fatal("expected BELAYER_WRITE_ROOTS to be set")
+	}
+	if got != want {
+		t.Errorf("BELAYER_WRITE_ROOTS = %q, want %q", got, want)
+	}
+}
+
+// TestBuildEnvWriteRootsOmittedWhenConfinementOff verifies that
+// BELAYER_WRITE_ROOTS is absent when ConfineWrites is false.
+func TestBuildEnvWriteRootsOmittedWhenConfinementOff(t *testing.T) {
+	cfg := Config{
+		SessionID:     "s",
+		AgentID:       "a",
+		Role:          "implementer",
+		Profile:       "default",
+		SocketPath:    "/tmp/t.sock",
+		RunDir:        t.TempDir(),
+		ConfineWrites: false,
+		WriteRoots:    []string{"/workspace"},
+	}
+	env := BuildEnv(cfg)
+	for _, e := range env {
+		if strings.HasPrefix(e, "BELAYER_WRITE_ROOTS=") {
+			t.Errorf("expected BELAYER_WRITE_ROOTS to be absent, but got %q", e)
+		}
+	}
+}
+
 // TestBuildCmdDefault verifies that BuildCmd with an empty Cmd field returns a
 // python3 command.
 func TestBuildCmdDefault(t *testing.T) {

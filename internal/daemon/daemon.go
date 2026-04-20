@@ -93,6 +93,20 @@ type Config struct {
 	// /sessions does not specify one. Empty = 'standard'.
 	DefaultLogLevel string
 
+	// ConfineAgentWrites, when true, wraps each spawned bridge subprocess in
+	// belayer-landlock-exec to apply a Landlock v2 write-confinement ruleset.
+	// Specialists are confined to their worktree + run dir; the supervisor gets
+	// workspace access excluding .belayer/ runtime dirs; PM gets run dir only.
+	// Requires Linux 5.19+ kernel; degrades to passthrough on older kernels.
+	// Default: false (opt-in).
+	ConfineAgentWrites bool
+
+	// AgentSharedWritePaths is an optional list of absolute paths that
+	// specialist agents are allowed to write to in addition to their worktree
+	// and run dir. Useful for shared caches (e.g. /workspace/.cache, a pnpm
+	// store) that span worktrees.
+	AgentSharedWritePaths []string
+
 	// SSEKeepaliveInterval is how often the SSE handler emits a ": keep-alive"
 	// comment to prevent idle-connection timeouts. Defaults to 15s in New().
 	// Tests can set a small value (e.g., 50ms) to verify keepalive behaviour

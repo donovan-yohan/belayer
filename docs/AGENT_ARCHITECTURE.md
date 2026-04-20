@@ -676,3 +676,72 @@ allowed_tools=...)` adds only baseline + allowed entries to the agent's
 tool inventory. An identity that forgets to declare a needed role-specific
 tool in `belayer_tools` will spawn without it — the failure mode is
 "tool missing from inventory," caught at the first attempted call.
+
+---
+
+## Write confinement via Landlock
+
+When `confine_agent_writes: true` is set in `.belayer/config.yaml` (or
+`--confine-agent-writes` is passed to `belayer daemon`), each bridge
+subprocess is launched via the `belayer-landlock-exec` helper binary. That
+binary applies a Linux **Landlock v2** ruleset before exec-replacing itself
+with the actual bridge command. The ruleset is an allow-list: the entire
+filesystem is read-only, and a per-agent set of paths is read+write.
+
+### Kernel floor and fallback
+
+Landlock v2 requires **Linux 5.19+**. The helper uses `go-landlock`'s
+`BestEffort()` call, so on older kernels the restriction silently degrades
+to passthrough — the bridge runs unconfined. There is no hard failure.
+
+To check at runtime whether Landlock is active, inspect the kernel ABI
+version:
+
+```
+cat /sys/kernel/security/landlock/abi
+```
+
+A value of `2` or higher confirms that Landlock v2 (file truncation
+control) is available. If the file does not exist, Landlock is absent.
+
+### Per-role write-root tables
+
+| Role | Writable paths |
+|------|---------------|
+| **supervisor** | All top-level workspace children except `.belayer/` root, plus `.belayer/runs/`, `.belayer/artifacts/`, `.belayer/worktrees/`, and `/tmp` |
+| **pm** | Agent run dir (`<workspace>/.belayer/runs/<session>/pm`) + `/tmp` |
+| **branched specialist** | Worktree dir + agent run dir + git common dir (`<parent>.git/worktrees/<name>`) + `AgentSharedWritePaths` + `/tmp` |
+| **unbranched specialist** | Agent run dir + `/tmp` |
+
+The supervisor carve-out enumerates workspace top-level children at spawn
+time (not dynamically). Directories created after spawn are not
+automatically added to the allow-list.
+
+### What this protects
+
+- A specialist agent that is manipulated into running `rm -rf /workspace/.belayer` will
+  receive **EACCES** from the kernel regardless of prompt discipline. This
+  structurally prevents Gap 10 (runtime deletion) and Gap 15 (worktree
+  escape).
+- The supervisor cannot delete `.belayer/` root because `.belayer/` is
+  excluded from its allow-list; it can only write to the three explicit
+  sub-dirs.
+
+### Limitations and known gaps
+
+- **Reads are not restricted.** Landlock only limits writes here; an agent
+  can still read any file on the filesystem it has OS read permission for.
+- **File-descriptor inheritance bypasses Landlock.** Descriptors opened
+  before the ruleset is applied (e.g. log files opened by the daemon, passed
+  to the bridge via stdin/stdout) are not restricted. Landlock governs
+  `open()`-time path resolution, not existing descriptors.
+- **`/tmp` is always writable.** Compilers, pip, npm, and other tools need
+  OS scratch space. An agent can write anything to `/tmp` and the daemon
+  makes no attempt to clean or monitor it. This is a known exfiltration
+  channel.
+- **Opt-in by default.** `confine_agent_writes` defaults to `false` to
+  avoid breaking existing deployments. Once the feature is validated in
+  production, flipping the default to `true` is a follow-up task.
+- **`belayer-landlock-exec` must be on PATH.** The daemon does not ship or
+  locate the binary — callers are responsible for ensuring it is installed.
+  See `docs/DEPLOYMENT.md` for notes on baking it into deployment images.

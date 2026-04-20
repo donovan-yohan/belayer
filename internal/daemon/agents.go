@@ -336,6 +336,9 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		return nil, fmt.Errorf("create run dir: %w", err)
 	}
 
+	// Compute Landlock write roots for this agent (used when ConfineAgentWrites is true).
+	writeRoots := computeWriteRoots(req, repoWorkdir, worktreePath, runDir, d.config.AgentSharedWritePaths)
+
 	// Resolve ephemeral flag: explicit request > role-based default.
 	// Supervisors stay alive by default; all other roles exit on task completion.
 	ephemeral := true
@@ -504,6 +507,8 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		BelayerTools:    belayerTools,
 		TranscriptPath:  transcriptPath,
 		LogLevel:        sess.LogLevel,
+		WriteRoots:      writeRoots,
+		ConfineWrites:   d.config.ConfineAgentWrites,
 	}
 	// In clamshell mode the bridge runs inside the Docker container where the
 	// host hermes venv path doesn't exist; use the container's system python3.
