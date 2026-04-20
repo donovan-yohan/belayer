@@ -135,6 +135,12 @@ func Migrate(db *sql.DB) error {
 	if err := addColumnIfNotExists(db, "events", "trace_length", "INTEGER"); err != nil {
 		return err
 	}
+	if err := addColumnIfNotExists(db, "agent_runs", "destructive_actions", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := addColumnIfNotExists(db, "agent_runs", "last_destructive_cmd", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	return nil
 }

@@ -4,11 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/spf13/cobra"
 )
+
+// ansiEscapeRe matches ANSI terminal escape sequences.
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// sanitizeCmdForDisplay strips control characters and ANSI escapes from s so it
+// is safe to pass to tabwriter without corrupting column alignment.
+func sanitizeCmdForDisplay(s string) string {
+	s = ansiEscapeRe.ReplaceAllString(s, "")
+	s = strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(s)
+	return s
+}
 
 func resolveAgentID(flagVal string) (string, error) {
 	if flagVal != "" {
@@ -64,6 +77,7 @@ func newSpawnCmd() *cobra.Command {
 
 func newRosterCmd() *cobra.Command {
 	var session, socket string
+	var verbose bool
 	cmd := &cobra.Command{
 		Use:   "roster",
 		Short: "List active agents in the current session",
@@ -78,9 +92,24 @@ func newRosterCmd() *cobra.Command {
 				return fmt.Errorf("roster: %w", err)
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tROLE\tPROFILE\tSTATUS\tTRANSPORT")
-			for _, run := range runs {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", run.Name, run.Role, run.Profile, run.Status, run.Transport)
+			if verbose {
+				fmt.Fprintln(w, "NAME\tROLE\tPROFILE\tSTATUS\tTRANSPORT\tDESTRUCTIVE\tLAST_CMD")
+				for _, run := range runs {
+					status := rosterStatus(run)
+					lastCmd := sanitizeCmdForDisplay(run.LastDestructiveCmd)
+					if lastCmd == "" {
+						lastCmd = "-"
+					}
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
+						run.Name, run.Role, run.Profile, status, run.Transport,
+						run.DestructiveActions, lastCmd)
+				}
+			} else {
+				fmt.Fprintln(w, "NAME\tROLE\tPROFILE\tSTATUS\tTRANSPORT")
+				for _, run := range runs {
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+						run.Name, run.Role, run.Profile, rosterStatus(run), run.Transport)
+				}
 			}
 			w.Flush()
 			return nil
@@ -88,7 +117,19 @@ func newRosterCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&session, "session", "", "Session ID (required if BELAYER_SESSION_ID not set)")
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "Show destructive action count and last command snippet")
 	return cmd
+}
+
+// rosterStatus returns the display status string for a roster row.
+// When an agent has recorded destructive actions, a warning suffix (⚠) is
+// appended so supervisors and PM agents can distinguish a clean completion
+// from one that nuked its own workspace first. See Gap 16 in VARIANCE_REPORT.md.
+func rosterStatus(run store.AgentRun) string {
+	if run.DestructiveActions > 0 {
+		return run.Status + "⚠"
+	}
+	return run.Status
 }
 
 func newFinishCmd() *cobra.Command {
