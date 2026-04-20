@@ -22,6 +22,7 @@ func newRunCmd() *cobra.Command {
 func newRunStartCmd() *cobra.Command {
 	var socket, name, task, supervisorProfile, workdir, reposFlag string
 	var exitConditions []string
+	var persistenceStrategy []string
 	var logLevel string
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -56,6 +57,33 @@ func newRunStartCmd() *cobra.Command {
 				b.WriteString(task)
 				task = b.String()
 			}
+
+			// Same shape as --exit-condition above: --persistence-strategy lets
+			// the operator override .belayer/config.yaml#persistence_strategy
+			// for this run only. These are the literal steps the supervisor
+			// must execute before reporting status=incomplete. Empty values are
+			// dropped so `--persistence-strategy ""` falls through to the
+			// project config instead of injecting an authoritative empty list.
+			normalizedPersistenceStrategy := make([]string, 0, len(persistenceStrategy))
+			for _, p := range persistenceStrategy {
+				if p = strings.TrimSpace(p); p != "" {
+					normalizedPersistenceStrategy = append(normalizedPersistenceStrategy, p)
+				}
+			}
+			if len(normalizedPersistenceStrategy) > 0 {
+				var b strings.Builder
+				b.WriteString("<persistence_strategy_override>\n")
+				b.WriteString("These persistence steps replace .belayer/config.yaml#persistence_strategy for this run. Execute every step BEFORE reporting status=incomplete — the daemon will intercept and reprompt if no persistence-notes artifact is registered.\n")
+				for _, p := range normalizedPersistenceStrategy {
+					b.WriteString("- ")
+					b.WriteString(p)
+					b.WriteString("\n")
+				}
+				b.WriteString("</persistence_strategy_override>\n\n")
+				b.WriteString(task)
+				task = b.String()
+			}
+
 			if strings.TrimSpace(supervisorProfile) == "" {
 				supervisorProfile = "default"
 			}
@@ -117,9 +145,10 @@ func newRunStartCmd() *cobra.Command {
 			}
 			// Log the initial prompt as telemetry so post-mortems can see what started the run.
 			initData, _ := json.Marshal(map[string]any{
-				"task":               task,
-				"supervisor_profile": supervisorProfile,
-				"exit_conditions":    normalizedExitConditions,
+				"task":                 task,
+				"supervisor_profile":   supervisorProfile,
+				"exit_conditions":      normalizedExitConditions,
+				"persistence_strategy": normalizedPersistenceStrategy,
 			})
 			_ = c.LogEvent(sess.ID, "run_initiated", string(initData))
 
@@ -146,6 +175,7 @@ func newRunStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
 	cmd.Flags().StringArrayVar(&exitConditions, "exit-condition", nil, "Override .belayer/config.yaml#exit_conditions for this run. Repeatable. When present, these replace the file's list entirely.")
+	cmd.Flags().StringArrayVar(&persistenceStrategy, "persistence-strategy", nil, "Override .belayer/config.yaml#persistence_strategy for this run. Repeatable. Literal steps the supervisor must execute before reporting status=incomplete.")
 	cmd.Flags().StringVar(&logLevel, "log-level", "", "Log tier for this run: standard|verbose|trace. Falls back to BELAYER_LOG_LEVEL, then daemon default.")
 	return cmd
 }

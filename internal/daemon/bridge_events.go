@@ -17,6 +17,15 @@ import (
 
 const maxRejectionCycles = 3
 
+// maxPersistenceReprompts bounds how many times the daemon will bounce a
+// supervisor-reported incomplete back for missing persistence work before
+// accepting the escalation. One reprompt is the design target: supervisor
+// either executes the persistence_strategy and registers a persistence-notes
+// artifact, or the daemon gives up on the next incomplete and escalates
+// as usual. Prevents a livelock if the supervisor is genuinely unable to
+// persist (e.g. no network, no remote, stuck credentials).
+const maxPersistenceReprompts = 1
+
 // processBridgeEvent handles side effects for bridge:* events.
 // It is called after the event has already been persisted to the event log.
 func (d *Daemon) processBridgeEvent(sessionID, eventType, data string) {
@@ -195,8 +204,17 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 			log.Printf("WARNING: processAgentStatusEvent: failed to log agent_escalated event in session %s: %v", sessionID, err)
 		}
 
-		// If the supervisor reports incomplete, escalate the session.
+		// If the supervisor reports incomplete, check the persistence gate
+		// before escalating. This mirrors how the PM gate intercepts a
+		// request for completion: a non-empty persistence_strategy is a hard
+		// requirement — the supervisor must execute it (and register a
+		// persistence-notes artifact) before the run is allowed to bail.
+		// Otherwise a blocked overnight run ends with uncommitted local work
+		// and no diagnostics for the next operator.
 		if agentName == "supervisor" {
+			if d.maybeRepromptForPersistence(sessionID, detail) {
+				return
+			}
 			if err := d.store.UpdateSessionStatus(sessionID, "needs_human_review"); err != nil {
 				log.Printf("ERROR: processAgentStatusEvent: failed to escalate session %s to needs_human_review: %v", sessionID, err)
 			} else {
@@ -365,6 +383,196 @@ func (d *Daemon) resolveExitConditions(sessionID string) ([]string, string) {
 		return nil, "none"
 	}
 	return file.ExitConditions, "config"
+}
+
+// resolvePersistenceStrategy returns the authoritative persistence-strategy
+// list for the session plus the source it came from ("override" for a
+// --persistence-strategy flag at run start, "config" for .belayer/config.yaml,
+// or "none"). These are the literal steps the supervisor must execute before
+// reporting status=incomplete — committing, pushing, opening a draft PR,
+// registering a persistence-notes artifact — so a blocked run still leaves
+// the next operator with something to pick up.
+//
+// Shape mirrors resolveExitConditions: run-initiated override wins, then the
+// config file, then empty. See docs/AGENT_ARCHITECTURE.md for the resolution
+// order discussion; this sibling keeps the two gates symmetric.
+func (d *Daemon) resolvePersistenceStrategy(sessionID string) ([]string, string) {
+	// First: check run_initiated event for a per-run override.
+	events, _ := d.store.QueryEvents(sessionID)
+	for _, ev := range events {
+		if ev.Type != "run_initiated" || ev.Data == "" {
+			continue
+		}
+		var payload struct {
+			PersistenceStrategy []string `json:"persistence_strategy"`
+		}
+		if err := json.Unmarshal([]byte(ev.Data), &payload); err == nil && len(payload.PersistenceStrategy) > 0 {
+			return payload.PersistenceStrategy, "override"
+		}
+		break // only the first run_initiated event is authoritative
+	}
+
+	// Fallback: read .belayer/config.yaml from the session's workspace.
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil || sess.WorkspaceDir == "" {
+		return nil, "none"
+	}
+	cfgPath := filepath.Join(sess.WorkspaceDir, ".belayer", "config.yaml")
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return nil, "none"
+	}
+	var file struct {
+		PersistenceStrategy []string `yaml:"persistence_strategy"`
+	}
+	if err := yaml.Unmarshal(raw, &file); err != nil || len(file.PersistenceStrategy) == 0 {
+		return nil, "none"
+	}
+	return file.PersistenceStrategy, "config"
+}
+
+// hasPersistenceNotesArtifact returns true when at least one artifact in the
+// session has kind=persistence-notes — the simplest signal that the supervisor
+// actually executed its persistence_strategy. Used as the heuristic for the
+// pre-incomplete intercept: no artifact, no escalation.
+func (d *Daemon) hasPersistenceNotesArtifact(sessionID string) bool {
+	artifacts, err := d.store.ListArtifacts(sessionID)
+	if err != nil {
+		// Treat lookup errors as "present" — the store failure is the wrong
+		// place to wedge a retry loop; better to let the escalation proceed.
+		log.Printf("hasPersistenceNotesArtifact: ListArtifacts failed for session %s: %v (treating as present)", sessionID, err)
+		return true
+	}
+	for _, a := range artifacts {
+		if a.Kind == "persistence-notes" {
+			return true
+		}
+	}
+	return false
+}
+
+// countPersistenceReprompts counts how many times the daemon has already
+// bounced a supervisor-reported incomplete back for missing persistence work
+// in this session. Bounded by maxPersistenceReprompts so a supervisor that
+// genuinely cannot persist (no network, no remote) still escalates.
+func (d *Daemon) countPersistenceReprompts(sessionID string) int {
+	events, err := d.store.QueryEvents(sessionID)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, ev := range events {
+		if ev.Type == "persistence_reprompt" {
+			n++
+		}
+	}
+	return n
+}
+
+// maybeRepromptForPersistence decides whether to intercept a supervisor-
+// reported incomplete and bounce it back to execute the persistence_strategy
+// first. Returns true if the event was intercepted (the caller should NOT
+// proceed to escalate). Returns false to let the normal escalation path run.
+//
+// Acceptance heuristic: a persistence-notes artifact exists in the session.
+// That's the simplest signal the supervisor actually walked its strategy; the
+// alternatives (scan tool-call logs for `git push`, inspect remote) are
+// higher-complexity and not worth the maintenance cost for a prompt-level
+// gate. Operators who want to bypass the gate set persistence_strategy: [] in
+// config.yaml or pass no --persistence-strategy flags.
+//
+// Bounded by maxPersistenceReprompts so a supervisor that genuinely cannot
+// persist (no network, stuck credentials) still escalates on the next
+// incomplete rather than looping forever.
+func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string) bool {
+	strategy, source := d.resolvePersistenceStrategy(sessionID)
+	if len(strategy) == 0 {
+		return false // nothing to enforce
+	}
+	if d.hasPersistenceNotesArtifact(sessionID) {
+		return false // supervisor already executed the strategy (artifact registered)
+	}
+	if d.countPersistenceReprompts(sessionID) >= maxPersistenceReprompts {
+		// Already reprompted once — accept this incomplete so a genuinely
+		// blocked supervisor can still escalate. Log the shortfall for the
+		// post-mortem so operators see the gap.
+		log.Printf("Session %s: accepting incomplete without persistence-notes artifact (reprompt limit %d reached)",
+			sessionID, maxPersistenceReprompts)
+		_ = d.store.LogEvent(store.SessionEvent{
+			SessionID: sessionID,
+			Type:      "persistence_gate_bypassed",
+			Data: mustJSON(map[string]any{
+				"reason": "reprompt_limit_reached",
+				"limit":  maxPersistenceReprompts,
+				"source": source,
+			}),
+		})
+		return false
+	}
+
+	// Revert supervisor back to running so it can act on the reprompt. The
+	// bridge process is still alive; we just set the row that
+	// processAgentStatusEvent already flipped to "incomplete" back to
+	// something active. Without this, checkSessionStalled (or a subsequent
+	// status query) would see the supervisor as terminal.
+	if err := d.store.UpdateAgentRunStatus(sessionID, "supervisor", "running"); err != nil {
+		log.Printf("maybeRepromptForPersistence: revert supervisor status failed for session %s: %v", sessionID, err)
+		return false // can't safely continue the intercept — let escalation run
+	}
+
+	// Render the strategy back to the supervisor as an urgent state change.
+	// The supervisor already has the list in its spawn message, but restating
+	// it here makes the reprompt self-contained in the live message stream.
+	var b strings.Builder
+	fmt.Fprintf(&b, "You reported status=incomplete but the persistence_strategy (source: %s) has not been executed: no persistence-notes artifact is registered in this session.\n\n", source)
+	b.WriteString("Execute each step below, THEN call belayer_report_status with status=incomplete again:\n")
+	for _, step := range strategy {
+		b.WriteString("- ")
+		b.WriteString(step)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nThe point: even a blocked run should leave the next operator with a committed branch, a draft PR, and a summary. Register the artifact with kind=persistence-notes summarizing what you did (or why a step was impossible).")
+	if strings.TrimSpace(supervisorDetail) != "" {
+		b.WriteString("\n\nYour reported reason for incomplete was preserved: ")
+		b.WriteString(supervisorDetail)
+	}
+	content := b.String()
+
+	msgID := uuid.New().String()
+	msg := broker.Message{
+		ID:          msgID,
+		SessionID:   sessionID,
+		SenderID:    "system",
+		RecipientID: "supervisor",
+		Type:        broker.MessageStateChange,
+		Content:     content,
+		Urgent:      true,
+		Timestamp:   time.Now().UTC(),
+	}
+	_, _ = d.store.CreateMessage(store.Message{
+		ID:          msgID,
+		SessionID:   sessionID,
+		SenderID:    "system",
+		RecipientID: "supervisor",
+		Type:        string(broker.MessageStateChange),
+		Content:     content,
+		Urgent:      true,
+	})
+	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
+
+	_ = d.store.LogEvent(store.SessionEvent{
+		SessionID: sessionID,
+		Type:      "persistence_reprompt",
+		Data: mustJSON(map[string]any{
+			"source":           source,
+			"steps":            strategy,
+			"reported_detail":  supervisorDetail,
+			"reprompts_so_far": d.countPersistenceReprompts(sessionID) + 1,
+		}),
+	})
+	log.Printf("Session %s: reprompted supervisor to execute persistence_strategy (source=%s) before incomplete",
+		sessionID, source)
+	return true
 }
 
 func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, data map[string]any) {
