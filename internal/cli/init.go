@@ -47,6 +47,18 @@ log_level: standard
 #     - name: api
 #       url: http://localhost:8080
 
+# Bridge settings. Controls how bridge subprocesses are configured.
+#
+# skip_openrouter_probe: when true (default), hermes-agent skips the
+#   openrouter.ai metadata fetch at startup. This eliminates 20+ proxy-denied
+#   CONNECTs per run on clamshell sandboxes that do not whitelist openrouter.ai.
+#   Set to false only if your LLM vendor requires OpenRouter metadata at startup.
+#   Note: requires a complementary hermes-agent change to take effect — see
+#   docs/AGENT_ARCHITECTURE.md for details.
+#
+# bridge:
+#   skip_openrouter_probe: true
+
 # Exit conditions — natural-language assertions the PM validates before a run
 # is marked complete. These are the project-wide definition-of-done: the PM
 # rejects completion until every condition has evidence. Edit to fit your

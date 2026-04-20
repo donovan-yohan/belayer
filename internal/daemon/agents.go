@@ -534,12 +534,13 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		// daemon's resolved RuntimeDir (extracted at daemon startup outside the
 		// workspace) so that workspace agents running `rm -rf .belayer/` cannot
 		// destroy the module required for spawning peer bridges.
-		BelayerRoot:     d.config.RuntimeDir,
-		BelayerTools:    belayerTools,
-		TranscriptPath:  transcriptPath,
-		LogLevel:        sess.LogLevel,
-		WriteRoots:      writeRoots,
-		ConfineWrites:   d.config.ConfineAgentWrites,
+		BelayerRoot:         d.config.RuntimeDir,
+		BelayerTools:        belayerTools,
+		TranscriptPath:      transcriptPath,
+		LogLevel:            sess.LogLevel,
+		SkipOpenRouterProbe: d.config.SkipOpenRouterProbe,
+		WriteRoots:          writeRoots,
+		ConfineWrites:       d.config.ConfineAgentWrites,
 	}
 	// In clamshell mode the bridge runs inside the Docker container where the
 	// host hermes venv path doesn't exist; use the container's system python3.

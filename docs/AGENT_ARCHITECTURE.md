@@ -421,6 +421,31 @@ flowchart TB
 
 The stdin pipe is push (daemon writes when it needs to interrupt). The HTTP channel is pull (bridge calls when it has something to send or needs to check for messages).
 
+### Bridge environment toggles
+
+The daemon injects environment variables into every bridge subprocess at spawn time (see `internal/bridge/bridge.go:BuildEnv`). Some are config-driven:
+
+#### `HERMES_SKIP_OPENROUTER_PROBE`
+
+Set to `1` by default. Suppresses the `openrouter.ai/api/v1/models` metadata fetch that hermes-agent performs at startup, which causes 20+ proxy-denied `CONNECT` requests per run on clamshell sandboxes where the egress policy does not whitelist `openrouter.ai`.
+
+**When to disable:** Only if your LLM vendor requires OpenRouter metadata at startup (e.g. a routing layer that resolves model IDs via the OpenRouter catalog). To opt out, add the following to `.belayer/config.yaml`:
+
+```yaml
+bridge:
+  skip_openrouter_probe: false
+```
+
+**Upstream dependency:** This env var is a no-op until hermes-agent honours it. The complementary hermes-agent change must add (in `auth.py` or wherever `_fetch_openrouter_models` is called):
+
+```python
+import os
+if os.getenv("HERMES_SKIP_OPENROUTER_PROBE") == "1":
+    return {}
+```
+
+Until that hermes-agent change lands, setting or clearing this env var has no effect. Once it lands, the config default (`skip_openrouter_probe: true`) suppresses the probe for all spawned bridges.
+
 ---
 
 ## Worktree isolation
