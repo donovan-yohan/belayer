@@ -62,6 +62,15 @@ type AgentRun struct {
 	Status          string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+
+	// DestructiveActions is the count of destructive shell commands observed
+	// for this agent run (e.g. rm -rf, git reset --hard). Non-zero means the
+	// agent mutated the environment in a potentially irreversible way; a
+	// complete status with this set should be treated with suspicion.
+	DestructiveActions int `json:"destructive_actions,omitempty"`
+	// LastDestructiveCmd is the most recent destructive command string,
+	// truncated to 200 chars.
+	LastDestructiveCmd string `json:"last_destructive_cmd,omitempty"`
 }
 
 // Message represents a persistent message stored for pull-based delivery.
@@ -277,12 +286,12 @@ func (s *Store) CreateAgentRun(run AgentRun) (string, error) {
 // GetAgentRun retrieves a single agent run by session + name.
 func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
 	row := s.db.QueryRow(
-		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at
+		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
 		 FROM agent_runs WHERE session_id = ? AND name = ?`, sessionID, name,
 	)
 	var run AgentRun
 	var createdAt, updatedAt string
-	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &createdAt, &updatedAt)
+	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd)
 	if err != nil {
 		return AgentRun{}, fmt.Errorf("store: get agent run: %w", err)
 	}
@@ -294,7 +303,7 @@ func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
 // ListAgentRuns returns all agent runs for a session ordered by created_at.
 func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at
+		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
 		 FROM agent_runs WHERE session_id = ? ORDER BY created_at ASC`, sessionID,
 	)
 	if err != nil {
@@ -306,7 +315,7 @@ func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
 	for rows.Next() {
 		var run AgentRun
 		var createdAt, updatedAt string
-		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd); err != nil {
 			return nil, fmt.Errorf("store: list agent runs scan: %w", err)
 		}
 		run.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
@@ -372,6 +381,27 @@ func (s *Store) UpdateAgentRunHermesSessionID(sessionID, name, hermesSessionID s
 	)
 	if err != nil {
 		return fmt.Errorf("store: update agent run hermes session id: %w", err)
+	}
+	return nil
+}
+
+// UpdateAgentRunDestructive atomically increments destructive_actions and
+// records the most recent destructive command (truncated to 200 chars).
+// kind is the pattern kind (e.g. "rm-rf"); cmd is the raw command string.
+func (s *Store) UpdateAgentRunDestructive(sessionID, name, kind, cmd string) error {
+	if len(cmd) > 200 {
+		cmd = cmd[:200]
+	}
+	_, err := s.db.Exec(
+		`UPDATE agent_runs
+		 SET destructive_actions = COALESCE(destructive_actions, 0) + 1,
+		     last_destructive_cmd = ?,
+		     updated_at = ?
+		 WHERE session_id = ? AND name = ?`,
+		cmd, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run destructive (%s): %w", kind, err)
 	}
 	return nil
 }

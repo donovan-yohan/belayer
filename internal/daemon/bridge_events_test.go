@@ -221,6 +221,85 @@ func TestUnknownBridgeEventDoesNotError(t *testing.T) {
 	}
 }
 
+// TestBridgeToolStartedDestructiveDetection verifies that a bridge:tool_started
+// event with a destructive terminal command increments the destructive_actions
+// counter on the agent run and records the command snippet.
+func TestBridgeToolStartedDestructiveDetection(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "backend-dev")
+
+	// Non-destructive terminal call — should not increment counter.
+	rr := postBridgeEvent(t, d, sessionID, "bridge:tool_started", map[string]any{
+		"agent":         "backend-dev",
+		"tool":          "terminal",
+		"input_preview": "ls /workspace",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("non-destructive: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	run, err := d.store.GetAgentRun(sessionID, "backend-dev")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.DestructiveActions != 0 {
+		t.Fatalf("expected 0 destructive actions after non-destructive cmd, got %d", run.DestructiveActions)
+	}
+
+	// Destructive terminal call — rm -rf
+	rr = postBridgeEvent(t, d, sessionID, "bridge:tool_started", map[string]any{
+		"agent":         "backend-dev",
+		"tool":          "terminal",
+		"input_preview": "rm -rf /workspace/.belayer",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("destructive rm -rf: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	run, err = d.store.GetAgentRun(sessionID, "backend-dev")
+	if err != nil {
+		t.Fatalf("GetAgentRun after destructive: %v", err)
+	}
+	if run.DestructiveActions != 1 {
+		t.Fatalf("expected 1 destructive action after rm -rf, got %d", run.DestructiveActions)
+	}
+	if run.LastDestructiveCmd == "" {
+		t.Fatal("expected LastDestructiveCmd to be set")
+	}
+
+	// Second destructive call — counter should increment to 2.
+	rr = postBridgeEvent(t, d, sessionID, "bridge:tool_started", map[string]any{
+		"agent":         "backend-dev",
+		"tool":          "bash",
+		"input_preview": "git reset --hard HEAD",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("destructive git reset: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	run, err = d.store.GetAgentRun(sessionID, "backend-dev")
+	if err != nil {
+		t.Fatalf("GetAgentRun after second destructive: %v", err)
+	}
+	if run.DestructiveActions != 2 {
+		t.Fatalf("expected 2 destructive actions, got %d", run.DestructiveActions)
+	}
+
+	// Non-terminal tool (Write) — destructive pattern in input_preview should be ignored.
+	rr = postBridgeEvent(t, d, sessionID, "bridge:tool_started", map[string]any{
+		"agent":         "backend-dev",
+		"tool":          "write_file",
+		"input_preview": "rm -rf /would-be-bad-if-executed",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("non-terminal tool: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	run, err = d.store.GetAgentRun(sessionID, "backend-dev")
+	if err != nil {
+		t.Fatalf("GetAgentRun after non-terminal: %v", err)
+	}
+	if run.DestructiveActions != 2 {
+		t.Fatalf("expected counter still 2 for non-terminal tool, got %d", run.DestructiveActions)
+	}
+}
+
 // TestBridgeEventWithoutAgentFieldDoesNotPanic verifies that bridge events
 // missing the agent field are silently ignored without panicking.
 func TestBridgeEventWithoutAgentFieldDoesNotPanic(t *testing.T) {

@@ -25,6 +25,10 @@ Examples of good rejection reasons:
 - *Exit condition:* "Exit condition 'A pull request is open against the default branch' — `gh pr list --head $(git branch --show-current)` returns zero rows."
 - *Exit condition:* "Exit condition 'Tests pass' — `pnpm test` exited non-zero with 3 failures in `apps/web/test/toolbar.test.tsx`."
 
+## Destructive-action flag
+
+Agents that completed with the destructive-action flag (status shown as `complete⚠` in the roster) must be treated as adversarial — verify the workspace state matches spec by direct inspection, not via the agent's summary. Check git status, directory contents, and database state directly. The agent may have nuked its own workspace before reporting completion.
+
 ## What you don't do
 
 You are not a code reviewer. Style, naming, and architecture are the reviewer's job. You care about one thing: did the agents build what the spec says, and did they land it the way the project requires?

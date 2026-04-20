@@ -53,9 +53,11 @@ func (d *Daemon) processBridgeEvent(sessionID, eventType, data string) {
 		d.handleBridgeCompletionApproved(sessionID, agentName, eventData)
 	case "bridge:completion_rejected":
 		d.handleBridgeCompletionRejected(sessionID, agentName, eventData)
+	case "bridge:tool_started":
+		d.handleBridgeToolStarted(sessionID, agentName, eventData)
 	}
-	// bridge:step_completed, bridge:heartbeat, bridge:tool_started,
-	// bridge:tool_completed, bridge:status_change, bridge:turn_usage,
+	// bridge:step_completed, bridge:heartbeat, bridge:tool_completed,
+	// bridge:status_change, bridge:turn_usage,
 	// bridge:session_usage — log-only, no side effects needed.
 }
 
@@ -64,6 +66,52 @@ func (d *Daemon) handleBridgeStarted(sessionID, agentName string, data map[strin
 	if hermesSessionID != "" {
 		_ = d.store.UpdateAgentRunHermesSessionID(sessionID, agentName, hermesSessionID)
 	}
+}
+
+// handleBridgeToolStarted inspects terminal tool calls for destructive shell
+// patterns. When detected, it increments the agent run's destructive_actions
+// counter and records the command snippet for later surfacing in roster output.
+func (d *Daemon) handleBridgeToolStarted(sessionID, agentName string, data map[string]any) {
+	// Only inspect terminal / bash tool invocations.
+	toolName, _ := data["tool"].(string)
+	if toolName == "" {
+		toolName, _ = data["name"].(string)
+	}
+	// Hermes terminal tool names can vary by profile; we check common names.
+	// input_preview is always present for standard+ log levels.
+	switch toolName {
+	case "terminal", "bash", "shell", "run_command", "execute_command", "computer":
+		// These are the tools that execute shell commands.
+	default:
+		// Not a terminal tool; skip destructive check.
+		return
+	}
+
+	preview, _ := data["input_preview"].(string)
+	if preview == "" {
+		return
+	}
+
+	kind, ok := DetectDestructive(preview)
+	if !ok {
+		return
+	}
+
+	if err := d.store.UpdateAgentRunDestructive(sessionID, agentName, kind, preview); err != nil {
+		log.Printf("WARNING: handleBridgeToolStarted: failed to record destructive action for %s in session %s: %v", agentName, sessionID, err)
+		return
+	}
+
+	_ = d.store.LogEvent(store.SessionEvent{
+		SessionID: sessionID,
+		Type:      "warning:destructive_tool_call",
+		Data: mustJSON(map[string]string{
+			"agent":   agentName,
+			"kind":    kind,
+			"preview": preview,
+		}),
+	})
+	log.Printf("WARNING: session %s agent %s executed destructive command (kind=%s): %s", sessionID, agentName, kind, preview)
 }
 
 func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[string]any) {

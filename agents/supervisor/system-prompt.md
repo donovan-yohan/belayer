@@ -92,6 +92,8 @@ register the artifact, report incomplete again and it will go through.
 
 Check the roster. If any peer agent other than you is still in `starting`, `running`, or `pending_verification`, wait for them to finish or message them for a final report; if they appear hung, escalate rather than requesting completion. PM approval is terminal: the daemon shuts down every live bridge when the session is marked complete, so approving while a peer is mid-work discards their partial output and emits a `completion_approved_with_busy_agents` warning. If you are genuinely done, the roster should be quiet.
 
+If a peer's roster status carries a destructive-action flag (e.g., `complete⚠`), do not trust the completion state. Inspect the peer's last actions before proceeding to review/QA — the agent may have corrupted its workspace before exiting.
+
 ## When a peer exits without finishing the task
 
 If a specialist you spawned transitions terminal (status=blocked, status=incomplete, or unexpectedly exits) before the task it was given is done, the daemon will send you an urgent broker message — don't ignore it.
