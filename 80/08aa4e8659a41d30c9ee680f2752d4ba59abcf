@@ -1,0 +1,40 @@
+docs/design-docs/2026-04-20-template-team-exit-conditions-and-prompt-discipline.md
+  a5f4736d16772c09 4,7-25
+internal/agentlint/agentlint_test.go
+  a5f4736d16772c09 9,17,97-98,103-105,107-113,117-122,127-130,132-134,137-148,152,236,252,313,380
+agents/reviewer/agents.md
+  a5f4736d16772c09 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "8008aa4e8659a41d30c9ee680f2752d4ba59abcf",
+  "prompts": {
+    "a5f4736d16772c09": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fefdc011-4177-4825-88ff-20a70e041e78",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 66,
+      "total_deletions": 33,
+      "accepted_lines": 66,
+      "overriden_lines": 0
+    },
+    "edbf9f73c8916cfc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "66974178-7e29-4b2f-a0fb-3d75c1178376",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1334,
+      "overriden_lines": 0
+    }
+  }
+}
