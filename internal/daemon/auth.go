@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -19,6 +21,24 @@ func generateToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// normalizeOrigin returns the canonical scheme://host[:port] form used by
+// browsers in the Origin header. Trailing slashes, paths, queries, fragments,
+// and mixed-case schemes/hosts on the configured allowlist entry would all
+// cause a byte-for-byte map lookup to miss a legitimate browser request.
+// Invalid inputs (unparseable, missing scheme, missing host) return "" so
+// the caller can reject them at startup.
+func normalizeOrigin(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+}
+
 // corsMiddleware wraps next and enforces the CORS origin allowlist on TCP
 // requests. Only origins in d.config.CORSOrigins are permitted. If the
 // request carries no Origin header, CORS headers are not emitted but the
@@ -28,15 +48,24 @@ func generateToken() (string, error) {
 //
 // Chain order on TCP: corsMiddleware → authMiddleware → handler
 // CORS is outermost so OPTIONS short-circuits before auth is checked.
+//
+// Allowlist entries are normalized to lowercase scheme://host[:port] at
+// startup so configs like "HTTPS://Example.com/" match the canonical form
+// browsers send.
 func (d *Daemon) corsMiddleware(next http.Handler) http.Handler {
 	allowed := make(map[string]struct{}, len(d.config.CORSOrigins))
 	for _, o := range d.config.CORSOrigins {
-		allowed[o] = struct{}{}
+		if norm := normalizeOrigin(o); norm != "" {
+			allowed[norm] = struct{}{}
+		}
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin != "" {
-			if _, ok := allowed[origin]; !ok {
+			// Browsers already send canonical form, but we normalize the
+			// incoming value too so a misbehaving client cannot bypass the
+			// allowlist via casing tricks.
+			if _, ok := allowed[normalizeOrigin(origin)]; !ok {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "origin not allowed"})
 				return
 			}
@@ -71,7 +100,13 @@ func (d *Daemon) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		token := strings.TrimPrefix(auth, "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(d.authToken)) != 1 {
+		// subtle.ConstantTimeCompare short-circuits on length mismatch, which
+		// leaks the length of the expected token over timing. Hash both
+		// inputs to a fixed-width digest first so the compare always runs
+		// over 32 bytes regardless of the presented token's length.
+		wantDigest := sha256.Sum256([]byte(d.authToken))
+		gotDigest := sha256.Sum256([]byte(token))
+		if subtle.ConstantTimeCompare(wantDigest[:], gotDigest[:]) != 1 {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
 			return
 		}

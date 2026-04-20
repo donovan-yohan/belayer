@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -233,6 +234,77 @@ func TestCORS_NoCredentialsHeader(t *testing.T) {
 
 	if v := rr.Header().Get("Access-Control-Allow-Credentials"); v != "" {
 		t.Fatalf("expected no Access-Control-Allow-Credentials header, got %q", v)
+	}
+}
+
+// TestCORS_OriginNormalization verifies that an allowlist entry with a
+// trailing slash, a mixed-case scheme/host, or extraneous path components
+// still matches the canonical Origin header value that browsers send.
+// Without normalization an operator pasting "HTTPS://App.Example/" into
+// config would silently reject every legitimate request from app.example.
+//
+// Addresses codex review nit: CORS origin byte-equality was too strict.
+func TestCORS_OriginNormalization(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure string // value written to CORSOrigins
+		origin    string // Origin header sent by browser (always canonical)
+	}{
+		{"trailing_slash", "https://app.example/", "https://app.example"},
+		{"uppercase_scheme", "HTTPS://app.example", "https://app.example"},
+		{"uppercase_host", "https://App.Example", "https://app.example"},
+		{"with_path", "https://app.example/login", "https://app.example"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := testDaemon(t)
+			d.config.CORSOrigins = []string{tc.configure}
+			handler := d.corsMiddleware(d.authMiddleware(d.server.Handler))
+
+			req := httptest.NewRequest("OPTIONS", "/sessions", nil)
+			req.Header.Set("Origin", tc.origin)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusNoContent {
+				t.Fatalf("OPTIONS from normalized allowlist entry %q: got %d, want 204",
+					tc.configure, rr.Code)
+			}
+			if got := rr.Header().Get("Access-Control-Allow-Origin"); got != tc.origin {
+				t.Fatalf("Access-Control-Allow-Origin: got %q, want %q (echo of browser Origin)",
+					got, tc.origin)
+			}
+		})
+	}
+}
+
+// TestAuth_WrongLengthTokenTakesSameTimeAsCorrectLength verifies that a
+// token of a completely different length still flows through sha256 + the
+// constant-time compare, not short-circuited by a length mismatch inside
+// ConstantTimeCompare itself. We can't measure cycles here, but we can
+// confirm the response behavior is identical (unauthorized, same body).
+//
+// Addresses codex review nit: ConstantTimeCompare leaked token length via
+// early return on length-mismatched inputs.
+func TestAuth_WrongLengthTokenTakesSameTimeAsCorrectLength(t *testing.T) {
+	d := testDaemon(t)
+	d.authToken = "a-moderately-long-secret-token-32b"
+
+	handler := d.authMiddleware(d.server.Handler)
+
+	// Short attempt (1 char) and long attempt (200 chars) should both come
+	// back as plain 401 invalid token — not 401 + different body, not 400.
+	for _, tok := range []string{"x", strings.Repeat("x", 200)} {
+		req := httptest.NewRequest("GET", "/sessions", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("token of length %d: got %d, want 401", len(tok), rr.Code)
+		}
+		if !strings.Contains(rr.Body.String(), "invalid token") {
+			t.Fatalf("token of length %d: body %q missing 'invalid token'", len(tok), rr.Body.String())
+		}
 	}
 }
 

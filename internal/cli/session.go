@@ -232,7 +232,7 @@ func newLogsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&agentName, "agent", "", "Filter events by agent name (server-side in follow mode)")
 	cmd.Flags().StringVar(&typePrefix, "type", "", "Filter events by type prefix (e.g. bridge:, trace:)")
 	cmd.Flags().StringVar(&tier, "tier", "", "Cap events at log tier (standard|verbose|trace)")
-	cmd.Flags().StringVar(&format, "format", "pretty", "Output format (pretty|ndjson|json)")
+	cmd.Flags().StringVar(&format, "format", "pretty", "Output format (pretty|ndjson). 'json' is accepted as an alias for ndjson — both emit one JSON object per line so --follow can stream incrementally; a true JSON array would require buffering the whole stream. Pipe through `jq -s` if you need an array.")
 	cmd.Flags().IntVar(&tail, "tail", 0, "Limit backfill to the last N matching events")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "Disable ANSI color (auto when stdout is not a TTY)")
 	return cmd
