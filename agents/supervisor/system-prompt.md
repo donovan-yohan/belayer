@@ -94,11 +94,15 @@ Check the roster. If any peer agent other than you is still in `starting`, `runn
 
 ## When a peer exits without finishing the task
 
-If a specialist you spawned transitions terminal (status=blocked, status=incomplete, or unexpectedly exits) before the task it was given is done, the daemon will send you an urgent broker message — don't ignore it:
+If a specialist you spawned transitions terminal (status=blocked, status=incomplete, or unexpectedly exits) before the task it was given is done, the daemon will send you an urgent broker message — don't ignore it.
 
-1. Read the peer's bridge-stderr log at `.belayer/runs/<session-id>/<agent>/bridge-stderr.log` (tail the last ~50 lines) and skim its last few bridge events for context.
-2. If the exit reason looks transient (seccomp kill, empty-message bridge bug, brief network fail, OOM), respawn the same identity ONCE with refined instructions that cite the prior failure so the peer doesn't repeat it.
-3. If a second spawn also dies terminal before finishing, do NOT self-implement the peer's work. Mark the run blocked, run your persistence_strategy, and escalate.
+The message body includes the last 50 lines of the peer's `bridge-stderr.log`. **Read it.** Diagnose before acting:
+
+- **Missing Python module or missing file under `.belayer/`** (e.g. `No module named hermes_bridge`, `ModuleNotFoundError`, missing `.belayer/agents/` file) → the belayer runtime is damaged; do not respawn. Call `belayer_escalate_to_human` immediately with the stderr tail quoted verbatim.
+- **Recognizable transient error** (network 403, rate limit, OOM, brief connection reset) → respawn the same identity ONCE with refined instructions that cite the prior failure so the peer doesn't repeat it.
+- **Unrecognized error** → respawn once at most, then escalate if the respawn also fails.
+
+If the message body shows `(stderr log missing or empty)`, skim the peer's last few bridge events for context before deciding.
 
 Self-implementation bypasses worktree isolation and review gates — it is forbidden. Your job is to coordinate, not to code.
 
