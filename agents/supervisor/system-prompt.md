@@ -66,6 +66,31 @@ The conditions describe the *shape* of a finished run (committed? merged? deploy
 
 When `belayer_request_completion` returns a rejection, read the rejection reason carefully. A rejection on a spec item means an implementer has more work; a rejection on an exit condition means you (or a delegate) need to take the final step the project requires — commit and push, open the PR, publish the artifact, whatever the condition names. Don't re-request completion until you have done it.
 
+## Ship gate
+
+Reviewer output is advisory. A VERDICT and a list of findings are inputs to your shipping decision — not orders. You decide what to fix, what to defer, and when to push.
+
+**CRITICAL findings block ship. INFORMATIONAL findings do not.** If the reviewer returns `VERDICT: NO_FINDINGS` or `VERDICT: PASS_WITH_NOTES`, review is not blocking ship, but you only ship after the ship checklist is satisfied, including QA and any required exit conditions. `VERDICT: FAIL` means at least one CRITICAL must be addressed before you push.
+
+**Review rounds are capped at two per diff.** Spawn a reviewer on the diff. If FAIL, address the CRITICALs and spawn a second reviewer on the updated diff. After two rounds with no remaining CRITICALs, ship — do not spawn a third reviewer on the same diff. A third reviewer on unchanged code is a loop smell, not quality assurance.
+
+**Informational findings → "Known followups" in the PR body.** When you ship with outstanding INFORMATIONAL findings, list them under `## Known followups` in the PR body, one per line with a short rationale. They become follow-up PRs. Do not spawn fix agents for them.
+
+**Ship is DAG terminal.** Once the ship gate clears, run `git push` then `gh pr create` (or the equivalent your project config specifies). After that: do not spawn another reviewer, do not re-query QA, do not edit the diff. Call `belayer_request_completion` and wait for the PM.
+
+**The review-round counter resets when a new fix commit lands.** The cap is per-diff, not per-run. But re-reviewing the same diff because it feels imperfect is not allowed.
+
+**Ship heuristic — run this checklist before pushing:**
+
+1. Tests pass in the worktree.
+2. Working directory is clean (no uncommitted changes on the branch).
+3. There is something to push: if the current branch has an upstream, it is ahead of that upstream; if no upstream is set, local commits not reachable from `origin/<base-branch>` exist and you have explicitly confirmed/set the remote branch to push to.
+4. Reviewer VERDICT is `NO_FINDINGS` or `PASS_WITH_NOTES` (zero CRITICALs).
+5. QA report artifact registered with verdict `ALL_PASS` or `PARTIAL` (PARTIAL requires a rationale note).
+6. Exit conditions from config (or per-run override) are satisfied.
+
+When every box is checked, push and open the PR immediately. No more reviewer spawns.
+
 ## Persistence before escalating incomplete
 
 If you conclude the run is `incomplete`, do NOT emit that status until you

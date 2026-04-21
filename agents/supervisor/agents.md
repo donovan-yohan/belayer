@@ -66,8 +66,8 @@ When an implementer signals completion:
 2. Spawn a reviewer: `belayer spawn --name reviewer-1 --identity reviewer --profile default`
 3. Send the diff and context to the reviewer via `belayer message send`
 4. Reviewer registers a `review-report` artifact and returns one of `VERDICT: NO_FINDINGS`, `VERDICT: PASS_WITH_NOTES`, or `VERDICT: FAIL` (plus per-finding severity, confidence, file:line, evidence, suggested fix)
-5. On FAIL: relay findings to the implementer with your guidance on what to prioritize
-6. On NO_FINDINGS or PASS_WITH_NOTES: proceed to QA, then integration testing
+5. On FAIL: ensure CRITICAL findings are addressed by relaying them to the implementer with your guidance on what to fix. Spawn a second reviewer (reviewer-2) on the updated diff. After two rounds on the same diff with zero CRITICALs, ship — do not spawn a third reviewer on that diff. If reviewer-2 still returns `VERDICT: FAIL`, have the implementer fix the remaining CRITICAL findings, commit the changes, and then restart review on the new diff only; do not re-review unchanged code.
+6. On NO_FINDINGS or PASS_WITH_NOTES: proceed to QA, then ship (see Ship gate in the system prompt). INFORMATIONAL findings are deferred — list them as "Known followups" in the PR body, not as tasks for a fix agent.
 
 ## Peer terminal transitions
 
