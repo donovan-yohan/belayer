@@ -44,12 +44,16 @@ def test_reasoning_buffers_and_flushes_on_step():
 
         cbs["step_callback"](messages=[])
 
-    # One write_turn call with the joined text.
-    writer.write_turn.assert_called_once_with({
+    # Two write_turn calls: reasoning flush then step record.
+    assert writer.write_turn.call_count == 2
+    reasoning_call = writer.write_turn.call_args_list[0][0][0]
+    step_call = writer.write_turn.call_args_list[1][0][0]
+    assert reasoning_call == {
         "kind": "reasoning",
         "turn": 1,
         "text": "chunk1chunk2chunk3",
-    })
+    }
+    assert step_call == {"kind": "step", "turn": 1}
 
     # post_event should have received a bridge:agent_reasoning call.
     reasoning_calls = [
@@ -74,8 +78,8 @@ def test_reasoning_empty_after_flush():
 
         cbs["step_callback"](messages=[])  # no new reasoning
 
-    # No spurious second write.
-    writer.write_turn.assert_not_called()
+    # Only a step record written; no spurious reasoning write.
+    writer.write_turn.assert_called_once_with({"kind": "step", "turn": 2})
 
 
 def test_reasoning_no_writer_noop():
@@ -101,8 +105,8 @@ def test_empty_reasoning_delta_ignored():
         cbs["reasoning_callback"](None)
         cbs["step_callback"](messages=[])
 
-    # Buffer was never populated, so no write and no reasoning event.
-    writer.write_turn.assert_not_called()
+    # Buffer was never populated — only a step record is written, no reasoning event.
+    writer.write_turn.assert_called_once_with({"kind": "step", "turn": 1})
     reasoning_calls = [
         c for c in mock_post.call_args_list
         if c.args[3] == "bridge:agent_reasoning"

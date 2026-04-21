@@ -166,6 +166,16 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str,
             "bridge:tool_started",
             event_data,
         )
+        if transcript_writer is not None:
+            record = {
+                "kind": "tool_start",
+                "tool_call_id": tool_call_id,
+                "tool": tool_name,
+                "input_preview": str(tool_args)[:200],
+            }
+            if log_level == "trace":
+                record["full_input"] = _coerce_plain(tool_args)
+            transcript_writer.write_turn(record)
         if log_level == "trace" and tool_name in _MUTATING_TOOLS:
             snap_path = None
             if isinstance(tool_args, dict):
@@ -195,6 +205,17 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str,
             "bridge:tool_completed",
             event_data,
         )
+        if transcript_writer is not None:
+            record = {
+                "kind": "tool_complete",
+                "tool_call_id": tool_call_id,
+                "tool": tool_name,
+                "duration_ms": duration_ms,
+                "result_preview": str(tool_result)[:200],
+            }
+            if log_level == "trace":
+                record["full_result"] = _coerce_plain(tool_result)
+            transcript_writer.write_turn(record)
         if log_level != "trace":
             return
         if tool_name in _MUTATING_TOOLS:
@@ -257,6 +278,8 @@ def make_callbacks(agent_id: str, session_id: str, socket_path: str,
                 {"text": full_text, "turn": turn},
             )
         state["step_count"] += 1
+        if transcript_writer is not None:
+            transcript_writer.write_turn({"kind": "step", "turn": state["step_count"]})
         post_event(
             socket_path, session_id, agent_id,
             "bridge:step_completed",
@@ -342,10 +365,23 @@ class _TranscriptWriter:
                 pass
 
 
-def make_transcript_writer(path: str | None, agent_id: str):
+def make_transcript_writer(
+    path: str | None,
+    agent_id: str,
+    *,
+    log_level: str = "standard",
+    socket_path: str = "",
+    session_id: str = "",
+):
     """Return a _TranscriptWriter, or None if path is falsy.
 
     Call sites should gate on the return value: `if writer: writer.write_turn(...)`.
+
+    When log_level is "verbose" or "trace" and the writer fails to open,
+    a single bridge:warning event with kind "transcript_disabled" is posted so
+    operators see the failure in the event log rather than losing it silently.
+    The optional socket_path/session_id are required for the warning post; if
+    absent the warning is only logged locally.
     """
     if not path:
         return None
@@ -353,6 +389,12 @@ def make_transcript_writer(path: str | None, agent_id: str):
         return _TranscriptWriter(path, agent_id)
     except OSError as exc:
         log.warning("transcript writer init failed for %s: %s", path, exc)
+        if log_level in ("verbose", "trace") and socket_path and session_id:
+            post_event(
+                socket_path, session_id, agent_id,
+                "bridge:warning",
+                {"kind": "transcript_disabled", "path": path, "error": str(exc)},
+            )
         return None
 
 
