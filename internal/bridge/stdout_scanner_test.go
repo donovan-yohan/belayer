@@ -104,12 +104,15 @@ func TestStdoutScannerNoFalsePositiveOnInnocentLines(t *testing.T) {
 
 // TestStdoutScannerSafeToIgnoreContextualReference verifies that a line
 // containing a past-tense contextual reference to an error does not fire,
-// even when it contains an error keyword.
+// even when it contains an error keyword. The heuristic requires a past-tense
+// marker ("last time", "previously", "earlier") within 30 characters of an
+// error keyword, so genuinely past-tense lines are suppressed.
 func TestStdoutScannerSafeToIgnoreContextualReference(t *testing.T) {
 	safe := []string{
 		"we got a Connection error last time, now fixed",
 		"had a Connection error previously but recovered",
 		"last time we got HTTP 429 but retried successfully",
+		"earlier we had a connection error but it resolved",
 	}
 	for _, line := range safe {
 		t.Run(line[:min(40, len(line))], func(t *testing.T) {
@@ -121,6 +124,32 @@ func TestStdoutScannerSafeToIgnoreContextualReference(t *testing.T) {
 				t.Errorf("safe-to-ignore line %q should not trigger but got pattern=%q", line, se.Pattern)
 			case <-time.After(50 * time.Millisecond):
 				// good — no false positive
+			}
+		})
+	}
+}
+
+// TestStdoutScannerLiveFailureNotSuppressed verifies that live failure lines
+// are NOT suppressed by isSafeToIgnore. The old heuristic used broad matches
+// like "we got" which incorrectly dropped lines like "we got HTTP 429 from
+// provider". The new heuristic requires a past-tense marker nearby.
+func TestStdoutScannerLiveFailureNotSuppressed(t *testing.T) {
+	live := []string{
+		"we got HTTP 429 from provider",
+		"we got a Connection error",
+		"API failed after 3 retries",
+		"Max retries exceeded calling backend",
+	}
+	for _, line := range live {
+		t.Run(line[:min(40, len(line))], func(t *testing.T) {
+			sc := newStdoutScanner()
+			var buf bytes.Buffer
+			sc.pump(strings.NewReader(line+"\n"), &buf)
+			select {
+			case <-sc.errors:
+				// good — live failure correctly detected
+			case <-time.After(200 * time.Millisecond):
+				t.Errorf("live failure line %q should trigger an error but did not", line)
 			}
 		})
 	}

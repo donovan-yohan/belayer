@@ -89,8 +89,8 @@ func newRosterCmd() *cobra.Command {
 			c := NewClient(resolveSocket(socket))
 
 			// Emit session status as the first line so scripts polling
-			// `belayer roster | grep -qE "completed|failed|terminated"` can
-			// detect terminal failure states (e.g. session=failed) without
+			// `belayer roster | grep -qE "complete|failed|stalled"` can
+			// detect terminal states (e.g. session=failed) without
 			// requiring every agent row to carry the same status.
 			sess, sessErr := c.GetSession(sessID)
 			if sessErr == nil {

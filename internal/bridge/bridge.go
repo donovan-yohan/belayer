@@ -274,13 +274,13 @@ func Spawn(cfg Config) (*Process, error) {
 	// the previous 3 spawns' output so operators can diff runs after a crash.
 	stdoutLog, err := bridgelog.RotateAndOpen(filepath.Join(cfg.RunDir, "bridge-stdout.log"), 3)
 	if err != nil {
-		stdinPipe.Close()
+		_ = stdinPipe.Close()
 		return nil, fmt.Errorf("bridge: open stdout log: %w", err)
 	}
 	stderrLog, err := bridgelog.RotateAndOpen(filepath.Join(cfg.RunDir, "bridge-stderr.log"), 3)
 	if err != nil {
-		stdinPipe.Close()
-		stdoutLog.Close()
+		_ = stdinPipe.Close()
+		_ = stdoutLog.Close()
 		return nil, fmt.Errorf("bridge: open stderr log: %w", err)
 	}
 
@@ -294,11 +294,11 @@ func Spawn(cfg Config) (*Process, error) {
 	cmd.Stdout = stdoutPipeW
 
 	if err := cmd.Start(); err != nil {
-		stdinPipe.Close()
-		stdoutLog.Close()
-		stderrLog.Close()
-		stdoutPipeR.Close()
-		stdoutPipeW.Close()
+		_ = stdinPipe.Close()
+		_ = stdoutLog.Close()
+		_ = stderrLog.Close()
+		_ = stdoutPipeR.Close()
+		_ = stdoutPipeW.Close()
 		return nil, fmt.Errorf("bridge: start subprocess: %w", err)
 	}
 
@@ -321,7 +321,7 @@ func Spawn(cfg Config) (*Process, error) {
 	// is reached (write-end closed by the goroutine below after cmd.Wait).
 	go func() {
 		sc.pump(stdoutPipeR, io.MultiWriter(os.Stdout, stdoutLog))
-		stdoutPipeR.Close()
+		_ = stdoutPipeR.Close()
 		close(sc.errors)
 		close(pumpDone)
 	}()
@@ -331,12 +331,12 @@ func Spawn(cfg Config) (*Process, error) {
 		// drained (including the stderr pipe). For stdout we use our own pipe;
 		// closing stdoutPipeW causes the scanner goroutine to see EOF.
 		waitErr := cmd.Wait()
-		stdoutPipeW.Close()
+		_ = stdoutPipeW.Close()
 		// Wait for the pump goroutine to finish writing to stdoutLog before
 		// closing it, so callers that read the file after Done() see full output.
 		<-pumpDone
-		stdoutLog.Close()
-		stderrLog.Close()
+		_ = stdoutLog.Close()
+		_ = stderrLog.Close()
 		p.mu.Lock()
 		p.exitErr = waitErr
 		p.mu.Unlock()

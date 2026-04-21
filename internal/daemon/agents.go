@@ -584,34 +584,53 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	argv := bridge.BuildCmd(cfg)
 	env := bridge.BuildEnv(cfg)
 
+	// Use an io.Pipe for stdout so the scanner pump can tee bytes to the log
+	// writer while concurrently scanning for error markers. If we assigned
+	// io.MultiWriter directly to Stdout, NewProcess would have no scanner and
+	// proc.StdoutErrors() would be nil — meaning stdout markers would never
+	// synthesize bridge:failed events in watchBridgeExit.
+	stdoutPipeR, stdoutPipeW := io.Pipe()
+
 	osProc, err := ss.driver.Exec(d.startCtx, ss.handle, argv, sandbox.ExecOpts{
 		Env:    env,
 		Dir:    workdir,
 		Stdin:  stdinR,
-		Stdout: io.MultiWriter(os.Stdout, stdoutLog),
+		Stdout: stdoutPipeW,
 		Stderr: io.MultiWriter(os.Stderr, stderrLog),
 	})
 	if err != nil {
-		stdinR.Close()
-		stdinW.Close()
-		stdoutLog.Close()
-		stderrLog.Close()
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutLog.Close()
+		_ = stderrLog.Close()
+		_ = stdoutPipeR.Close()
+		_ = stdoutPipeW.Close()
 		return nil, fmt.Errorf("sandbox exec: %w", err)
 	}
 
 	// Close read end — it's been inherited by the child process.
-	stdinR.Close()
+	_ = stdinR.Close()
 
 	proc := bridge.NewProcess(osProc, stdinW)
 
+	// Attach the stdout scanner so proc.StdoutErrors() is non-nil and
+	// watchBridgeExit can synthesize bridge:failed events from LLM/API
+	// connectivity markers detected in stdout.
+	pumpDone := proc.StartStdoutScanner(stdoutPipeR, io.MultiWriter(os.Stdout, stdoutLog))
+
 	// Close log files and stdin writer when process exits. stdinW is our
 	// handle for sending interrupts; once the process is gone it's a pipe to
-	// nowhere, so closing it avoids leaking file descriptors.
+	// nowhere, so closing it avoids leaking file descriptors. We must close
+	// stdoutPipeW to EOF the scanner pump, then wait for pumpDone before
+	// closing stdoutLog so the log file contains complete output.
 	go func() {
 		<-proc.Done()
-		stdinW.Close()
-		stdoutLog.Close()
-		stderrLog.Close()
+		_ = stdoutPipeW.Close() // EOF the scanner pump
+		<-pumpDone
+		_ = stdoutPipeR.Close()
+		_ = stdinW.Close()
+		_ = stdoutLog.Close()
+		_ = stderrLog.Close()
 	}()
 
 	return proc, nil

@@ -8,6 +8,30 @@ import (
 	"sync"
 )
 
+// StartStdoutScanner attaches a stdout scanner to the process and starts a
+// pump goroutine that reads from r, tees bytes to logWriter, and scans each
+// line for error markers. Returns a channel closed when the pump finishes.
+// Callers must close r's write-end (or the upstream pipe) to EOF the pump
+// after the subprocess exits; callers should then drain this channel before
+// closing any log writers.
+//
+// Intended for sandbox-driver paths where Spawn is not used. The daemon's
+// watchBridgeExit goroutine reads StdoutErrors() to synthesize bridge:failed
+// events from LLM/API connectivity markers detected in stdout.
+func (p *Process) StartStdoutScanner(r io.Reader, logWriter io.Writer) <-chan struct{} {
+	sc := newStdoutScanner()
+	p.mu.Lock()
+	p.scanner = sc
+	p.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		sc.pump(r, logWriter)
+		close(sc.errors)
+		close(done)
+	}()
+	return done
+}
+
 // StdoutError represents a structured error detected in bridge stdout output.
 type StdoutError struct {
 	Pattern string // the pattern label that matched (e.g. "api_failed_retries")
@@ -56,19 +80,31 @@ func newStdoutScanner() *stdoutScanner {
 // the OS closes the pipe). Call from a goroutine.
 func (s *stdoutScanner) pump(r io.Reader, logWriter io.Writer) {
 	// Use a TeeReader so bytes flow to the log writer as they are consumed.
+	// Use bufio.Reader.ReadString instead of bufio.Scanner to avoid the 64KB
+	// token limit — long JSON lines from hermes-bridge would trigger ErrTooLong,
+	// stopping the pump and causing the subprocess to block on a full stdout pipe.
 	tee := io.TeeReader(r, logWriter)
-	scanner := bufio.NewScanner(tee)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Apply safe-to-ignore heuristic before error detection. This avoids
-		// false positives when agent reasoning includes a reference to a past
-		// error that has since been resolved (e.g. "we got a Connection error
-		// last time, now fixed").
-		if !isSafeToIgnore(line) {
-			s.checkLine(line)
+	br := bufio.NewReader(tee)
+	for {
+		line, err := br.ReadString('\n')
+		if len(line) > 0 {
+			trimmed := strings.TrimRight(line, "\n")
+			// Apply safe-to-ignore heuristic before error detection. This avoids
+			// false positives when agent reasoning includes a reference to a past
+			// error that has since been resolved (e.g. "last time we got a
+			// Connection error, now fixed").
+			if !isSafeToIgnore(trimmed) {
+				s.checkLine(trimmed)
+			}
+		}
+		if err != nil {
+			// io.EOF on pipe close is expected; anything else is a read error.
+			// Either way, exit so the pump goroutine terminates cleanly and the
+			// pipe drains. ReadString returns the partial final line (if any)
+			// above before reporting the error, so no bytes are lost.
+			return
 		}
 	}
-	// Ignore scanner.Err() — pipe close on process exit is not an error.
 }
 
 // checkLine tests line against all patterns and emits on the errors channel
@@ -101,18 +137,6 @@ func (s *stdoutScanner) checkLine(line string) {
 	}
 }
 
-// matchesAnyErrorPattern reports whether line matches any of the scanner
-// patterns. Used from tests that want to verify the pattern set without
-// running the full pump goroutine.
-func matchesAnyErrorPattern(line string) (label string, ok bool) {
-	for _, p := range stdoutErrorPatterns {
-		if p.re.MatchString(line) {
-			return p.label, true
-		}
-	}
-	return "", false
-}
-
 // StdoutErrorsOrNil returns a receive-only channel of StdoutErrors, or nil if
 // the process was created without a scanner (e.g. NewProcess path).
 // The channel is closed when the pump goroutine finishes (i.e., after Done).
@@ -127,23 +151,35 @@ func (p *Process) StdoutErrors() <-chan StdoutError {
 // isSafeToIgnore returns true when the line contains a known-safe context that
 // should NOT trigger an alert even if a pattern matches — e.g. an agent
 // reasoning about a past connection error that has since been resolved.
-// This is a lightweight heuristic: it checks for past-tense framing.
+// This is a lightweight heuristic: it requires a past-tense marker ("last
+// time", "previously", "earlier") within 30 characters of an error keyword.
+// The broad "we got" / "had a" heuristic has been removed because it was
+// suppressing live failures like "we got HTTP 429 from provider".
 // Intentionally conservative to avoid suppressing real failures.
 func isSafeToIgnore(line string) bool {
 	lower := strings.ToLower(line)
-	// Lines that contain "last time" or "previously" before the error keyword
-	// are likely contextual references, not live failures.
-	if strings.Contains(lower, "last time") || strings.Contains(lower, "previously") ||
-		strings.Contains(lower, "we got") || strings.Contains(lower, "had a") {
-		return true
+	pastMarkers := []string{"last time", "previously", "earlier"}
+	errorKeywords := []string{"error", "failed", "exception", "http", "connection", "retries", "rate limit"}
+	for _, pm := range pastMarkers {
+		pmIdx := strings.Index(lower, pm)
+		if pmIdx < 0 {
+			continue
+		}
+		for _, kw := range errorKeywords {
+			kwIdx := strings.Index(lower, kw)
+			if kwIdx < 0 {
+				continue
+			}
+			// Past-tense marker and error keyword within 30 chars of each other.
+			dist := kwIdx - (pmIdx + len(pm))
+			if dist < 0 {
+				dist = pmIdx - (kwIdx + len(kw))
+			}
+			if dist >= 0 && dist <= 30 {
+				return true
+			}
+		}
 	}
 	return false
 }
 
-// checkLineSafe wraps checkLine with the safe-to-ignore heuristic.
-func (s *stdoutScanner) checkLineSafe(line string) {
-	if isSafeToIgnore(line) {
-		return
-	}
-	s.checkLine(line)
-}

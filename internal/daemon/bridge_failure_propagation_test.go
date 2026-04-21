@@ -1,15 +1,18 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/bridge"
+	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -518,5 +521,142 @@ func TestSessionFailedStatusVisibleViaRoster(t *testing.T) {
 	body := decodeJSON[sessResp](t, rr)
 	if body.Status != "failed" {
 		t.Fatalf("GET /sessions/{id} returned status=%q, want %q", body.Status, "failed")
+	}
+}
+
+// --- Regression test: bridgeLaunchAgent (sandbox-driver path) wires scanner ---
+
+// stdoutMarkerFakeDriver is a sandbox.Driver whose Exec runs a shell command
+// that prints an error marker line to stdout, then exits. This lets us verify
+// that bridgeLaunchAgent (the noop/clamshell path that calls driver.Exec +
+// NewProcess) now attaches a scanner via StartStdoutScanner so that stdout
+// markers synthesize bridge:failed events — not just the Spawn path.
+type stdoutMarkerFakeDriver struct{}
+
+func (d *stdoutMarkerFakeDriver) Create(_ context.Context, cfg sandbox.Config) (sandbox.Handle, error) {
+	return sandbox.Handle{ID: cfg.Name}, nil
+}
+
+func (d *stdoutMarkerFakeDriver) Exec(_ context.Context, _ sandbox.Handle, _ []string, opts sandbox.ExecOpts) (sandbox.Process, error) {
+	// Override the command: print error marker then exit cleanly.
+	// The real bridgeLaunchAgent command is ignored; this fake driver always
+	// runs the marker-emitting shell one-liner so the test is hermetic.
+	cmd := exec.Command("/bin/sh", "-c", "echo 'API failed after 3 retries — Connection error'")
+	cmd.Env = opts.Env
+	cmd.Dir = opts.Dir
+	cmd.Stdin = opts.Stdin
+	cmd.Stdout = opts.Stdout
+	cmd.Stderr = opts.Stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("fake driver: start: %w", err)
+	}
+	return &fakeDriverProcess{cmd: cmd}, nil
+}
+
+func (d *stdoutMarkerFakeDriver) Stop(_ context.Context, _ sandbox.Handle) error { return nil }
+
+type fakeDriverProcess struct{ cmd *exec.Cmd }
+
+func (p *fakeDriverProcess) Pid() int    { return p.cmd.Process.Pid }
+func (p *fakeDriverProcess) Wait() error { return p.cmd.Wait() }
+func (p *fakeDriverProcess) Kill() error { return p.cmd.Process.Kill() }
+
+// TestBridgeLaunchAgentWiresStdoutScanner is the regression test for Fix 1:
+// it verifies that the bridgeLaunchAgent sandbox-driver path (NewProcess +
+// StartStdoutScanner) correctly fires a bridge:failed event when the bridge
+// subprocess writes a matching stdout error marker. Before the fix,
+// proc.StdoutErrors() was nil in this path, so markers were silently dropped.
+func TestBridgeLaunchAgentWiresStdoutScanner(t *testing.T) {
+	d := testDaemon(t)
+
+	// Create a session that the daemon can look up.
+	sessRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "launch-agent-scanner-test"})
+	if sessRR.Code != http.StatusCreated {
+		t.Fatalf("create session: expected 201, got %d: %s", sessRR.Code, sessRR.Body.String())
+	}
+	sess := decodeJSON[sessionAPIResponse](t, sessRR)
+	sessionID := sess.ID
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
+
+	// Pre-create supervisor so watchBridgeExit notify path has a recipient.
+	_, err := d.store.CreateAgentRun(store.AgentRun{
+		SessionID: sessionID, Name: "supervisor", Role: "supervisor",
+		Profile: "mock", Status: "running", Transport: "bridge",
+	})
+	if err != nil {
+		t.Fatalf("create supervisor: %v", err)
+	}
+
+	// Inject the fake driver as the session sandbox so bridgeLaunchAgent uses it.
+	fakeDriver := &stdoutMarkerFakeDriver{}
+	fakeHandle := sandbox.Handle{ID: sessionID}
+	d.sandboxMu.Lock()
+	d.sessionSandboxes[sessionID] = sessionSandbox{
+		driver: fakeDriver,
+		handle: fakeHandle,
+		mode:   sandbox.DefaultMode,
+	}
+	d.sandboxMu.Unlock()
+
+	// Create an agent run entry so bridgeLaunchAgent can find it.
+	workdir := t.TempDir()
+	_, err = d.store.CreateAgentRun(store.AgentRun{
+		SessionID: sessionID, Name: "scan-test-agent", Role: "implementer",
+		Profile: "mock", Status: "running", Transport: "bridge",
+		Workdir: workdir,
+	})
+	if err != nil {
+		t.Fatalf("create agent run: %v", err)
+	}
+
+	// Call bridgeLaunchAgent directly — this is the path under test.
+	req := agentSpawnRequest{
+		SessionID: sessionID,
+		Name:      "scan-test-agent",
+		Role:      "implementer",
+		Profile:   "mock",
+		Workdir:   workdir,
+	}
+	proc, err := d.bridgeLaunchAgent(req)
+	if err != nil {
+		t.Fatalf("bridgeLaunchAgent: %v", err)
+	}
+
+	// Verify that the scanner was wired: StdoutErrors() must be non-nil.
+	if proc.StdoutErrors() == nil {
+		t.Fatal("bridgeLaunchAgent did not attach a stdout scanner (StdoutErrors() is nil)")
+	}
+
+	proc.MarkLive()
+
+	// Start watching so bridge:failed events get synthesized when the scanner fires.
+	agentRun, err := d.store.GetAgentRun(sessionID, "scan-test-agent")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	d.watchBridgeExit(agentRun, proc)
+
+	// Wait for bridge:failed event — the marker line in stdout should fire it.
+	deadline := time.Now().Add(5 * time.Second)
+	var foundBridgeFailed bool
+	for time.Now().Before(deadline) {
+		events, evErr := d.store.QueryEvents(sessionID)
+		if evErr != nil {
+			t.Fatalf("QueryEvents: %v", evErr)
+		}
+		for _, e := range events {
+			if e.Type == "bridge:failed" && strings.Contains(e.Data, "scan-test-agent") {
+				foundBridgeFailed = true
+				break
+			}
+		}
+		if foundBridgeFailed {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !foundBridgeFailed {
+		events, _ := d.store.QueryEvents(sessionID)
+		t.Fatalf("expected bridge:failed event from bridgeLaunchAgent scanner path, got events: %#v", events)
 	}
 }

@@ -223,7 +223,10 @@ func (d *Daemon) checkSessionStalled(sessionID string) {
 	hasBridgeFailed := false
 	if allFailure {
 		events, evErr := d.store.QueryEvents(sessionID)
-		if evErr == nil {
+		if evErr != nil {
+			log.Printf("WARNING: checkSessionStalled: session %s failed to query events for bridge:failed detection: %v (defaulting to stalled)",
+				sessionID, evErr)
+		} else {
 			for _, ev := range events {
 				if ev.Type == "bridge:failed" {
 					hasBridgeFailed = true

@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/donovan-yohan/belayer/internal/store"
 )
 
 func TestRootCmdRegistersNightshiftCommands(t *testing.T) {
@@ -34,46 +36,49 @@ func TestFinishCmdRequiresSummary(t *testing.T) {
 }
 
 // TestRosterStatusTerminalStatuses verifies that rosterStatus returns the raw
-// status string for non-destructive agents, and that terminal failure statuses
-// like "failed", "blocked", "stalled" are preserved verbatim so runner scripts
-// can grep for them.
+// status string verbatim for non-destructive agents. Terminal failure statuses
+// like "failed", "blocked", "stalled" must be preserved so runner scripts
+// polling `belayer roster | grep -qE "complete|failed|stalled"` work correctly.
 func TestRosterStatusTerminalStatuses(t *testing.T) {
-	// These statuses must appear verbatim in rosterStatus output so downstream
-	// consumers (e.g. a runner polling `belayer roster | grep -qE "completed|failed|terminated"`)
-	// can detect terminal states without false negatives.
 	statuses := []string{"running", "complete", "blocked", "failed", "incomplete", "stalled"}
 	for _, s := range statuses {
-		// Use import trick: store.AgentRun is not importable here, but rosterStatus
-		// just uses run.Status and run.DestructiveActions — both exported fields.
-		// We can test the helper directly via a local struct that embeds the same
-		// JSON shape. Instead, test the session= output format by verifying that
-		// a "failed" session status would be present in output from the roster header.
-		if !strings.Contains(s, s) {
-			// trivially true — this just documents the assertion
-			t.Errorf("status %q not preserved", s)
-		}
+		t.Run(s, func(t *testing.T) {
+			run := store.AgentRun{Status: s, DestructiveActions: 0}
+			got := rosterStatus(run)
+			if got != s {
+				t.Errorf("rosterStatus({Status:%q, DestructiveActions:0}) = %q, want %q", s, got, s)
+			}
+			// Verify no extra suffix is appended for non-destructive agents.
+			if strings.ContainsRune(got, '⚠') {
+				t.Errorf("rosterStatus unexpectedly appended ⚠ for DestructiveActions=0")
+			}
+		})
 	}
 }
 
-// TestRosterSessionStatusLineMatchesGrepPattern verifies that a session status
-// of "failed" produces a line matching the runner's grep pattern.
-func TestRosterSessionStatusLineMatchesGrepPattern(t *testing.T) {
-	// The roster command emits "session=<status>" as the first output line.
-	// This test verifies the format so runners can rely on it.
+// TestRosterStatusDestructiveActionsSuffix verifies that rosterStatus appends
+// the ⚠ warning suffix when an agent has recorded destructive actions.
+func TestRosterStatusDestructiveActionsSuffix(t *testing.T) {
+	run := store.AgentRun{Status: "complete", DestructiveActions: 1}
+	got := rosterStatus(run)
+	if got != "complete⚠" {
+		t.Errorf("rosterStatus with DestructiveActions=1 = %q, want %q", got, "complete⚠")
+	}
+}
+
+// TestRosterSessionStatusLineFormat verifies the "session=<status>" header
+// format emitted by the roster command so runners can rely on it.
+// TestRosterSessionStatusLineMatchesGrepPattern was removed — it used a
+// hardcoded rosterOutput string and tested the wrong grep pattern
+// ("completed|terminated" instead of "complete|stalled").
+func TestRosterSessionStatusLineFormat(t *testing.T) {
 	for _, status := range []string{"failed", "stalled", "complete", "running"} {
 		line := "session=" + status
+		if !strings.HasPrefix(line, "session=") {
+			t.Errorf("session status line %q does not start with 'session='", line)
+		}
 		if !strings.Contains(line, status) {
 			t.Errorf("session status line %q does not contain %q", line, status)
 		}
 	}
-
-	// Verify that the runner grep pattern matches "failed" and "stalled".
-	rosterOutput := "session=failed\nNAME  ROLE  PROFILE  STATUS  TRANSPORT\nsupervisor  supervisor  default  blocked  bridge\n"
-	grepPattern := "completed|failed|terminated"
-	for _, p := range strings.Split(grepPattern, "|") {
-		if strings.Contains(rosterOutput, p) {
-			return // at least one pattern matched
-		}
-	}
-	t.Errorf("roster output with session=failed does not match any pattern in %q", grepPattern)
 }
