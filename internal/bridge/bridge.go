@@ -217,6 +217,10 @@ func BuildEnv(cfg Config) []string {
 	if cfg.SkipOpenRouterProbe {
 		env = appendEnv(env, "HERMES_SKIP_OPENROUTER_PROBE", "1")
 	}
+	// Disable CPython's 4 KB block-buffer on piped stdout/stderr. Without this,
+	// hermes_bridge log output and error strings are never written to
+	// bridge-stdout.log if the process crashes before flushing the buffer.
+	env = appendEnv(env, "PYTHONUNBUFFERED", "1")
 	if cfg.ConfineWrites && len(cfg.WriteRoots) > 0 {
 		env = appendEnv(env, "BELAYER_WRITE_ROOTS", strings.Join(cfg.WriteRoots, ":"))
 	}

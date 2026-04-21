@@ -731,6 +731,29 @@ func envToMap(env []string) map[string]string {
 	return m
 }
 
+// TestBuildEnvPYTHONUNBUFFERED verifies that PYTHONUNBUFFERED=1 is always
+// present in the environment built by BuildEnv so that CPython line-buffers
+// its stdout/stderr when running as a piped subprocess.
+func TestBuildEnvPYTHONUNBUFFERED(t *testing.T) {
+	cfg := Config{
+		SessionID:  "sess-buf",
+		AgentID:    "agent-buf",
+		Role:       "implementer",
+		Profile:    "default",
+		SocketPath: "/tmp/buf.sock",
+		RunDir:     t.TempDir(),
+	}
+	env := BuildEnv(cfg)
+	envMap := envToMap(env)
+	got, ok := envMap["PYTHONUNBUFFERED"]
+	if !ok {
+		t.Fatal("expected PYTHONUNBUFFERED to be set in env")
+	}
+	if got != "1" {
+		t.Errorf("PYTHONUNBUFFERED = %q, want \"1\"", got)
+	}
+}
+
 // TestBuildEnvPYTHONPATHInteriorEmptySegmentsPassedThrough documents current
 // behavior: BuildEnv does not normalize interior empty segments supplied in
 // the caller's PYTHONPATH. Callers with cwd-sensitive environments must
