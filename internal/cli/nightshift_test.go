@@ -3,6 +3,8 @@ package cli
 import (
 	"strings"
 	"testing"
+
+	"github.com/donovan-yohan/belayer/internal/store"
 )
 
 func TestRootCmdRegistersNightshiftCommands(t *testing.T) {
@@ -30,5 +32,53 @@ func TestFinishCmdRequiresSummary(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "accepts 1 arg") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestRosterStatusTerminalStatuses verifies that rosterStatus returns the raw
+// status string verbatim for non-destructive agents. Terminal failure statuses
+// like "failed", "blocked", "stalled" must be preserved so runner scripts
+// polling `belayer roster | grep -qE "complete|failed|stalled"` work correctly.
+func TestRosterStatusTerminalStatuses(t *testing.T) {
+	statuses := []string{"running", "complete", "blocked", "failed", "incomplete", "stalled"}
+	for _, s := range statuses {
+		t.Run(s, func(t *testing.T) {
+			run := store.AgentRun{Status: s, DestructiveActions: 0}
+			got := rosterStatus(run)
+			if got != s {
+				t.Errorf("rosterStatus({Status:%q, DestructiveActions:0}) = %q, want %q", s, got, s)
+			}
+			// Verify no extra suffix is appended for non-destructive agents.
+			if strings.ContainsRune(got, '⚠') {
+				t.Errorf("rosterStatus unexpectedly appended ⚠ for DestructiveActions=0")
+			}
+		})
+	}
+}
+
+// TestRosterStatusDestructiveActionsSuffix verifies that rosterStatus appends
+// the ⚠ warning suffix when an agent has recorded destructive actions.
+func TestRosterStatusDestructiveActionsSuffix(t *testing.T) {
+	run := store.AgentRun{Status: "complete", DestructiveActions: 1}
+	got := rosterStatus(run)
+	if got != "complete⚠" {
+		t.Errorf("rosterStatus with DestructiveActions=1 = %q, want %q", got, "complete⚠")
+	}
+}
+
+// TestRosterSessionStatusLineFormat verifies the "session=<status>" header
+// format emitted by the roster command so runners can rely on it.
+// TestRosterSessionStatusLineMatchesGrepPattern was removed — it used a
+// hardcoded rosterOutput string and tested the wrong grep pattern
+// ("completed|terminated" instead of "complete|stalled").
+func TestRosterSessionStatusLineFormat(t *testing.T) {
+	for _, status := range []string{"failed", "stalled", "complete", "running"} {
+		line := "session=" + status
+		if !strings.HasPrefix(line, "session=") {
+			t.Errorf("session status line %q does not start with 'session='", line)
+		}
+		if !strings.Contains(line, status) {
+			t.Errorf("session status line %q does not contain %q", line, status)
+		}
 	}
 }

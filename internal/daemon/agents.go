@@ -17,6 +17,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/daemon/bridgelog"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
+	"github.com/google/uuid"
 )
 
 type agentSpawnRequest struct {
@@ -583,40 +584,92 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	argv := bridge.BuildCmd(cfg)
 	env := bridge.BuildEnv(cfg)
 
+	// Use an io.Pipe for stdout so the scanner pump can tee bytes to the log
+	// writer while concurrently scanning for error markers. If we assigned
+	// io.MultiWriter directly to Stdout, NewProcess would have no scanner and
+	// proc.StdoutErrors() would be nil — meaning stdout markers would never
+	// synthesize bridge:failed events in watchBridgeExit.
+	stdoutPipeR, stdoutPipeW := io.Pipe()
+
 	osProc, err := ss.driver.Exec(d.startCtx, ss.handle, argv, sandbox.ExecOpts{
 		Env:    env,
 		Dir:    workdir,
 		Stdin:  stdinR,
-		Stdout: io.MultiWriter(os.Stdout, stdoutLog),
+		Stdout: stdoutPipeW,
 		Stderr: io.MultiWriter(os.Stderr, stderrLog),
 	})
 	if err != nil {
-		stdinR.Close()
-		stdinW.Close()
-		stdoutLog.Close()
-		stderrLog.Close()
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutLog.Close()
+		_ = stderrLog.Close()
+		_ = stdoutPipeR.Close()
+		_ = stdoutPipeW.Close()
 		return nil, fmt.Errorf("sandbox exec: %w", err)
 	}
 
 	// Close read end — it's been inherited by the child process.
-	stdinR.Close()
+	_ = stdinR.Close()
 
 	proc := bridge.NewProcess(osProc, stdinW)
 
+	// Attach the stdout scanner so proc.StdoutErrors() is non-nil and
+	// watchBridgeExit can synthesize bridge:failed events from LLM/API
+	// connectivity markers detected in stdout.
+	pumpDone := proc.StartStdoutScanner(stdoutPipeR, io.MultiWriter(os.Stdout, stdoutLog))
+
 	// Close log files and stdin writer when process exits. stdinW is our
 	// handle for sending interrupts; once the process is gone it's a pipe to
-	// nowhere, so closing it avoids leaking file descriptors.
+	// nowhere, so closing it avoids leaking file descriptors. We must close
+	// stdoutPipeW to EOF the scanner pump, then wait for pumpDone before
+	// closing stdoutLog so the log file contains complete output.
 	go func() {
 		<-proc.Done()
-		stdinW.Close()
-		stdoutLog.Close()
-		stderrLog.Close()
+		_ = stdoutPipeW.Close() // EOF the scanner pump
+		<-pumpDone
+		_ = stdoutPipeR.Close()
+		_ = stdinW.Close()
+		_ = stdoutLog.Close()
+		_ = stderrLog.Close()
 	}()
 
 	return proc, nil
 }
 
 func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
+	// Drain stdout errors in a separate goroutine. When a matching line is
+	// detected AND the agent is still running, synthesize a bridge:failed event
+	// so the session can transition to failed rather than silently stalling.
+	if proc.StdoutErrors() != nil {
+		go func() {
+			for se := range proc.StdoutErrors() {
+				current, err := d.store.GetAgentRun(run.SessionID, run.Name)
+				if err != nil || current.Status != "running" {
+					continue
+				}
+				eventData := mustJSON(map[string]string{
+					"agent":           run.Name,
+					"error":           se.Line,
+					"stdout_marker":   se.Pattern,
+					"source":          "stdout_scanner",
+				})
+				_ = d.store.LogEvent(store.SessionEvent{
+					SessionID: run.SessionID,
+					Type:      "bridge:failed",
+					Data:      eventData,
+				})
+				log.Printf("stdout_scanner: session %s agent %s matched pattern %q: %s",
+					run.SessionID, run.Name, se.Pattern, se.Line)
+				d.handleBridgeFailed(run.SessionID, run.Name, map[string]any{
+					"agent":         run.Name,
+					"error":         se.Line,
+					"stdout_marker": se.Pattern,
+					"source":        "stdout_scanner",
+				})
+			}
+		}()
+	}
+
 	go func() {
 		<-proc.Done()
 
@@ -664,11 +717,17 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 			if run.WorktreePath != "" {
 				runBase = run.WorktreePath
 			}
-			stderrPath := filepath.Join(runBase, ".belayer", "runs", run.SessionID, run.Name, "bridge-stderr.log")
+			runDir := filepath.Join(runBase, ".belayer", "runs", run.SessionID, run.Name)
+			stderrPath := filepath.Join(runDir, "bridge-stderr.log")
 			stderrTail := bridgelog.TailLines(stderrPath, 50)
-			content := fmt.Sprintf("%s bridge exited unexpectedly (exit_err: %v). Marked blocked.\n\nLast 50 lines of bridge-stderr.log:\n%s",
-				run.Name, exitErr, stderrTail)
+			stdoutPath := filepath.Join(runDir, "bridge-stdout.log")
+			stdoutTail := bridgelog.TailLines(stdoutPath, 50)
+			content := fmt.Sprintf(
+				"%s bridge exited unexpectedly (exit_err: %v). Marked blocked.\n\nLast 50 lines of bridge-stderr.log:\n%s\n\nLast 50 lines of bridge-stdout.log:\n%s",
+				run.Name, exitErr, stderrTail, stdoutTail)
+			msgID := uuid.New().String()
 			msg := broker.Message{
+				ID:          msgID,
 				SessionID:   run.SessionID,
 				SenderID:    run.Name,
 				RecipientID: "supervisor",
@@ -677,6 +736,16 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 				Urgent:      true,
 				Timestamp:   time.Now().UTC(),
 			}
+			// Persist so bridge-based supervisors can pull via GET /messages.
+			_, _ = d.store.CreateMessage(store.Message{
+				ID:          msgID,
+				SessionID:   run.SessionID,
+				SenderID:    run.Name,
+				RecipientID: "supervisor",
+				Type:        string(broker.MessageStateChange),
+				Content:     content,
+				Urgent:      true,
+			})
 			_ = d.broker.Interrupt(run.SessionID, "supervisor", msg)
 		}
 
