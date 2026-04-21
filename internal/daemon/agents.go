@@ -351,6 +351,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 
 	// If a branch is specified, create (or reuse) a git worktree for isolation.
 	worktreePath := ""
+	initialMessage := req.Message
 	if req.Branch != "" {
 		wtPath, err := ensureWorktree(workdir, req.SessionID, req.Name, req.Branch)
 		if err != nil {
@@ -361,6 +362,10 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		_ = d.store.UpdateAgentRunWorktree(req.SessionID, req.Name, req.Branch, wtPath)
 		// Agent works in the worktree, not the main repo.
 		workdir = wtPath
+		// Inject workspace context so the agent knows its isolation boundary without
+		// needing it prescribed in the identity prompt. The daemon owns the path
+		// convention; the agent just reads the fact.
+		initialMessage = buildAgentInitialMessage(req.Branch, wtPath, req.Message)
 	}
 
 	runDir := filepath.Join(workdir, ".belayer", "runs", req.SessionID, req.Name)
@@ -523,7 +528,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		APIKey:          d.config.BridgeAPIKey,
 		BaseURL:         d.config.BridgeBaseURL,
 		Provider:        d.config.BridgeProvider,
-		Message:         req.Message,
+		Message:         initialMessage,
 		SystemPrompt:    systemPrompt,
 		HermesSessionID: req.HermesSessionID,
 		Ephemeral:       ephemeral,
@@ -1077,6 +1082,21 @@ func translateHostPathToContainer(hostPath, hostWorkspace string) string {
 		return hostPath
 	}
 	return "/workspace/" + filepath.ToSlash(rel)
+}
+
+// buildAgentInitialMessage prepends a workspace context header to the agent's
+// initial message when the agent is isolated to a git worktree on a specific
+// branch. When branch is empty the message is returned unchanged.
+//
+// The header tells the agent exactly where its working tree lives so it does
+// not need to rely on identity-prompt conventions (which may contradict the
+// real cwd injected by the daemon).
+func buildAgentInitialMessage(branch, worktreePath, message string) string {
+	if branch == "" {
+		return message
+	}
+	prefix := fmt.Sprintf("[workspace: %s (git worktree on branch %s)]\n\n", worktreePath, branch)
+	return prefix + message
 }
 
 // validateAgentName rejects names that could escape a filesystem path.
