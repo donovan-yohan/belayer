@@ -1,0 +1,29 @@
+internal/daemon/agents_worktree_message_test.go
+  75f6daeb2f609fcd 1-64
+agents/web-dev/system-prompt.md
+  75f6daeb2f609fcd 3
+internal/daemon/agents.go
+  75f6daeb2f609fcd 354,365-368,531,1087-1101
+agents/backend-dev/system-prompt.md
+  75f6daeb2f609fcd 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "8b0727a6c19426177bfdb67cb68bda0db3763fe2",
+  "prompts": {
+    "75f6daeb2f609fcd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3eda8c6e-7afc-4fad-a82d-ce4171ccf3dc",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 88,
+      "total_deletions": 4,
+      "accepted_lines": 87,
+      "overriden_lines": 0
+    }
+  }
+}
