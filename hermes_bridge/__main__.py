@@ -17,6 +17,16 @@ import logging
 import queue
 import time
 
+# Ensure stdout/stderr are line-buffered when running as a subprocess with piped
+# stdio. CPython defaults to block-buffering (~4 KB) on non-TTY file descriptors;
+# without this, log output and error strings die in the buffer on crash.
+# reconfigure() is available on Python 3.7+; skip gracefully on older runtimes.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except AttributeError:
+    pass
+
 # Hermes imports — conditional so package structure validates without hermes installed.
 try:
     from run_agent import AIAgent  # type: ignore[import]
@@ -370,10 +380,15 @@ def main() -> None:
     # the closure — reasoning_callback and interim_assistant_callback gate
     # on transcript_writer being non-None.
     transcript_path = os.environ.get("BELAYER_TRANSCRIPT_PATH") or None
-    transcript_writer = make_transcript_writer(transcript_path, agent_id)
+    log_level = os.environ.get("BELAYER_LOG_LEVEL", "standard")
+    transcript_writer = make_transcript_writer(
+        transcript_path, agent_id,
+        log_level=log_level,
+        socket_path=socket_path,
+        session_id=session_id,
+    )
 
     # --- Wire callbacks ----------------------------------------------------
-    log_level = os.environ.get("BELAYER_LOG_LEVEL", "standard")
     callbacks = make_callbacks(
         agent_id, session_id, socket_path,
         transcript_writer=transcript_writer,
