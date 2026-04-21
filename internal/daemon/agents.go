@@ -17,6 +17,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/daemon/bridgelog"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
+	"github.com/google/uuid"
 )
 
 type agentSpawnRequest struct {
@@ -617,6 +618,39 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 }
 
 func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
+	// Drain stdout errors in a separate goroutine. When a matching line is
+	// detected AND the agent is still running, synthesize a bridge:failed event
+	// so the session can transition to failed rather than silently stalling.
+	if proc.StdoutErrors() != nil {
+		go func() {
+			for se := range proc.StdoutErrors() {
+				current, err := d.store.GetAgentRun(run.SessionID, run.Name)
+				if err != nil || current.Status != "running" {
+					continue
+				}
+				eventData := mustJSON(map[string]string{
+					"agent":           run.Name,
+					"error":           se.Line,
+					"stdout_marker":   se.Pattern,
+					"source":          "stdout_scanner",
+				})
+				_ = d.store.LogEvent(store.SessionEvent{
+					SessionID: run.SessionID,
+					Type:      "bridge:failed",
+					Data:      eventData,
+				})
+				log.Printf("stdout_scanner: session %s agent %s matched pattern %q: %s",
+					run.SessionID, run.Name, se.Pattern, se.Line)
+				d.handleBridgeFailed(run.SessionID, run.Name, map[string]any{
+					"agent":         run.Name,
+					"error":         se.Line,
+					"stdout_marker": se.Pattern,
+					"source":        "stdout_scanner",
+				})
+			}
+		}()
+	}
+
 	go func() {
 		<-proc.Done()
 
@@ -664,11 +698,17 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 			if run.WorktreePath != "" {
 				runBase = run.WorktreePath
 			}
-			stderrPath := filepath.Join(runBase, ".belayer", "runs", run.SessionID, run.Name, "bridge-stderr.log")
+			runDir := filepath.Join(runBase, ".belayer", "runs", run.SessionID, run.Name)
+			stderrPath := filepath.Join(runDir, "bridge-stderr.log")
 			stderrTail := bridgelog.TailLines(stderrPath, 50)
-			content := fmt.Sprintf("%s bridge exited unexpectedly (exit_err: %v). Marked blocked.\n\nLast 50 lines of bridge-stderr.log:\n%s",
-				run.Name, exitErr, stderrTail)
+			stdoutPath := filepath.Join(runDir, "bridge-stdout.log")
+			stdoutTail := bridgelog.TailLines(stdoutPath, 50)
+			content := fmt.Sprintf(
+				"%s bridge exited unexpectedly (exit_err: %v). Marked blocked.\n\nLast 50 lines of bridge-stderr.log:\n%s\n\nLast 50 lines of bridge-stdout.log:\n%s",
+				run.Name, exitErr, stderrTail, stdoutTail)
+			msgID := uuid.New().String()
 			msg := broker.Message{
+				ID:          msgID,
 				SessionID:   run.SessionID,
 				SenderID:    run.Name,
 				RecipientID: "supervisor",
@@ -677,6 +717,16 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 				Urgent:      true,
 				Timestamp:   time.Now().UTC(),
 			}
+			// Persist so bridge-based supervisors can pull via GET /messages.
+			_, _ = d.store.CreateMessage(store.Message{
+				ID:          msgID,
+				SessionID:   run.SessionID,
+				SenderID:    run.Name,
+				RecipientID: "supervisor",
+				Type:        string(broker.MessageStateChange),
+				Content:     content,
+				Urgent:      true,
+			})
 			_ = d.broker.Interrupt(run.SessionID, "supervisor", msg)
 		}
 

@@ -169,8 +169,19 @@ func (d *Daemon) checkSupervisorExitedEarly(sessionID string) {
 	}
 }
 
+// failureTerminalStatuses is the set of agent statuses that indicate the agent
+// ended due to an error rather than clean completion.
+var failureTerminalStatuses = map[string]bool{
+	"blocked":    true,
+	"failed":     true,
+	"incomplete": true,
+}
+
 // checkSessionStalled detects when all agents have exited but the session
-// was never completed via the PM gate. Transitions session to "stalled".
+// was never completed via the PM gate. When every terminal agent is in a
+// failure state (blocked/failed/incomplete) AND at least one bridge:failed
+// event was emitted, the session transitions to "failed". Otherwise it
+// transitions to "stalled" (the original behaviour for mixed or clean exits).
 func (d *Daemon) checkSessionStalled(sessionID string) {
 	sess, err := d.store.GetSession(sessionID)
 	if err != nil {
@@ -198,11 +209,45 @@ func (d *Daemon) checkSessionStalled(sessionID string) {
 		}
 	}
 
+	// Determine whether this looks like a connectivity failure:
+	// every terminal agent must be in a failure state (no clean completions)
+	// AND at least one bridge:failed event must have been logged.
+	allFailure := true
+	for _, a := range agents {
+		if !failureTerminalStatuses[a.Status] {
+			allFailure = false
+			break
+		}
+	}
+
+	hasBridgeFailed := false
+	if allFailure {
+		events, evErr := d.store.QueryEvents(sessionID)
+		if evErr == nil {
+			for _, ev := range events {
+				if ev.Type == "bridge:failed" {
+					hasBridgeFailed = true
+					break
+				}
+			}
+		}
+	}
+
+	// Choose target status.
+	targetStatus := "stalled"
+	eventType := "session_stalled"
+	reason := "all_agents_exited_without_completion"
+	if allFailure && hasBridgeFailed {
+		targetStatus = "failed"
+		eventType = "session_failed"
+		reason = "all_agents_failed_bridge_errors"
+	}
+
 	// All agents are done/blocked/complete but session is still "running".
 	// Use conditional update to avoid race when multiple agents finish concurrently.
-	updated, err := d.store.UpdateSessionStatusIf(sessionID, "running", "stalled")
+	updated, err := d.store.UpdateSessionStatusIf(sessionID, "running", targetStatus)
 	if err != nil {
-		log.Printf("ERROR: checkSessionStalled: failed to mark session %s as stalled: %v", sessionID, err)
+		log.Printf("ERROR: checkSessionStalled: failed to mark session %s as %s: %v", sessionID, targetStatus, err)
 		return
 	}
 	if !updated {
@@ -210,15 +255,15 @@ func (d *Daemon) checkSessionStalled(sessionID string) {
 	}
 	if err := d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
-		Type:      "session_stalled",
+		Type:      eventType,
 		Data: mustJSON(map[string]string{
-			"reason": "all_agents_exited_without_completion",
+			"reason": reason,
 		}),
 	}); err != nil {
-		log.Printf("WARNING: checkSessionStalled: session %s marked stalled but event log failed: %v", sessionID, err)
+		log.Printf("WARNING: checkSessionStalled: session %s marked %s but event log failed: %v", sessionID, targetStatus, err)
 	}
 	d.archiver.ArchiveTerminal(sessionID)
-	log.Printf("Session %s marked stalled: all agents exited without completion approval", sessionID)
+	log.Printf("Session %s marked %s: %s", sessionID, targetStatus, reason)
 }
 
 // processAgentStatusEvent handles side effects for agent_status:* events

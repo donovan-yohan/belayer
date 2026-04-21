@@ -108,6 +108,10 @@ type Process struct {
 	exitErr error         // set before done is closed
 	mu      sync.Mutex
 
+	// scanner, when non-nil, tees bridge stdout and emits StdoutErrors for
+	// known LLM/API failure patterns. Only set by Spawn (not NewProcess).
+	scanner *stdoutScanner
+
 	// firstEvent is closed the first time the bridge posts an event to the daemon.
 	// Used by spawn callers to distinguish a live bridge from one that crashes
 	// during startup (Gap 14).
@@ -280,25 +284,57 @@ func Spawn(cfg Config) (*Process, error) {
 		return nil, fmt.Errorf("bridge: open stderr log: %w", err)
 	}
 
-	cmd.Stdout = io.MultiWriter(os.Stdout, stdoutLog)
+	// Stderr goes directly to both os.Stderr and the log file.
 	cmd.Stderr = io.MultiWriter(os.Stderr, stderrLog)
+
+	// Stdout is piped through the scanner (which tees into the log file and
+	// watches for API/network error markers) instead of being assigned directly
+	// to cmd.Stdout. The scanner pump goroutine is started after cmd.Start().
+	stdoutPipeR, stdoutPipeW := io.Pipe()
+	cmd.Stdout = stdoutPipeW
 
 	if err := cmd.Start(); err != nil {
 		stdinPipe.Close()
 		stdoutLog.Close()
 		stderrLog.Close()
+		stdoutPipeR.Close()
+		stdoutPipeW.Close()
 		return nil, fmt.Errorf("bridge: start subprocess: %w", err)
 	}
 
+	sc := newStdoutScanner()
 	p := &Process{
 		cmd:        cmd,
 		stdin:      stdinPipe,
 		done:       make(chan struct{}),
 		firstEvent: make(chan struct{}),
+		scanner:    sc,
 	}
 
+	// pumpDone signals that the scanner pump goroutine has finished draining
+	// stdout. We wait for it before closing done so callers that read log files
+	// after <-proc.Done() see the complete output.
+	pumpDone := make(chan struct{})
+
+	// Start the scanner pump: reads from the pipe, tees to os.Stdout + log file,
+	// and scans each line for error markers. Closes pumpDone when the pipe EOF
+	// is reached (write-end closed by the goroutine below after cmd.Wait).
 	go func() {
+		sc.pump(stdoutPipeR, io.MultiWriter(os.Stdout, stdoutLog))
+		stdoutPipeR.Close()
+		close(sc.errors)
+		close(pumpDone)
+	}()
+
+	go func() {
+		// cmd.Wait blocks until the subprocess exits AND all OS-level I/O is
+		// drained (including the stderr pipe). For stdout we use our own pipe;
+		// closing stdoutPipeW causes the scanner goroutine to see EOF.
 		waitErr := cmd.Wait()
+		stdoutPipeW.Close()
+		// Wait for the pump goroutine to finish writing to stdoutLog before
+		// closing it, so callers that read the file after Done() see full output.
+		<-pumpDone
 		stdoutLog.Close()
 		stderrLog.Close()
 		p.mu.Lock()
