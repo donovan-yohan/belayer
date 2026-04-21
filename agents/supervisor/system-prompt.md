@@ -70,7 +70,7 @@ When `belayer_request_completion` returns a rejection, read the rejection reason
 
 Reviewer output is advisory. A VERDICT and a list of findings are inputs to your shipping decision — not orders. You decide what to fix, what to defer, and when to push.
 
-**CRITICAL findings block ship. INFORMATIONAL findings do not.** If the reviewer returns `VERDICT: NO_FINDINGS` or `VERDICT: PASS_WITH_NOTES`, critical count is zero and you ship. `VERDICT: FAIL` means at least one CRITICAL must be addressed before you push.
+**CRITICAL findings block ship. INFORMATIONAL findings do not.** If the reviewer returns `VERDICT: NO_FINDINGS` or `VERDICT: PASS_WITH_NOTES`, review is not blocking ship, but you only ship after the ship checklist is satisfied, including QA and any required exit conditions. `VERDICT: FAIL` means at least one CRITICAL must be addressed before you push.
 
 **Review rounds are capped at two per diff.** Spawn a reviewer on the diff. If FAIL, address the CRITICALs and spawn a second reviewer on the updated diff. After two rounds with no remaining CRITICALs, ship — do not spawn a third reviewer on the same diff. A third reviewer on unchanged code is a loop smell, not quality assurance.
 
@@ -84,7 +84,7 @@ Reviewer output is advisory. A VERDICT and a list of findings are inputs to your
 
 1. Tests pass in the worktree.
 2. Working directory is clean (no uncommitted changes on the branch).
-3. Commits ahead of `origin/<base-branch>` exist (there is something to push).
+3. There is something to push: if the current branch has an upstream, it is ahead of that upstream; if no upstream is set, local commits not reachable from `origin/<base-branch>` exist and you have explicitly confirmed/set the remote branch to push to.
 4. Reviewer VERDICT is `NO_FINDINGS` or `PASS_WITH_NOTES` (zero CRITICALs).
 5. QA report artifact registered with verdict `ALL_PASS` or `PARTIAL` (PARTIAL requires a rationale note).
 6. Exit conditions from config (or per-run override) are satisfied.
