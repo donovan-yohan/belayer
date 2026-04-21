@@ -273,3 +273,99 @@ def test_make_transcript_writer_no_warning_when_no_socket(tmp_path):
     assert result is None
     # No post_event call since socket_path is empty.
     assert mock_post.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# _TranscriptWriter: crash-safe write_turn
+# ---------------------------------------------------------------------------
+
+
+def test_transcript_writer_disables_after_write_failure(tmp_path):
+    """After a write OSError, writer sets _disabled and subsequent writes are no-ops."""
+    from hermes_bridge.callbacks import _TranscriptWriter
+
+    path = str(tmp_path / "agent.jsonl")
+    writer = _TranscriptWriter(path, "agent-1")
+
+    write_call_count = 0
+
+    original_write = writer._fh.write
+
+    def failing_write(data):
+        nonlocal write_call_count
+        write_call_count += 1
+        if write_call_count == 1:
+            raise OSError("disk full")
+        return original_write(data)
+
+    writer._fh.write = failing_write
+
+    # First call triggers the OSError.
+    writer.write_turn({"kind": "step", "turn": 1})
+    assert writer._disabled is True
+
+    # Second call should be a no-op (write not called again).
+    writer.write_turn({"kind": "step", "turn": 2})
+    assert write_call_count == 1
+
+
+def test_transcript_writer_posts_warning_on_write_failure_at_verbose(tmp_path):
+    """At verbose log level, a write failure posts a bridge:warning event."""
+    from hermes_bridge.callbacks import _TranscriptWriter
+
+    path = str(tmp_path / "agent.jsonl")
+    with patch("hermes_bridge.callbacks.post_event") as mock_post:
+        writer = _TranscriptWriter(
+            path, "agent-2",
+            log_level="verbose",
+            socket_path="/tmp/fake.sock",
+            session_id="s1",
+        )
+        writer._fh.write = MagicMock(side_effect=OSError("disk full"))
+        writer.write_turn({"kind": "step", "turn": 1})
+
+    warning_calls = [
+        c for c in mock_post.call_args_list
+        if c.args[3] == "bridge:warning"
+    ]
+    assert len(warning_calls) == 1
+    data = warning_calls[0].args[4]
+    assert data["kind"] == "transcript_write_failed"
+    assert data["path"] == path
+    assert "disk full" in data["error"]
+
+
+def test_transcript_writer_no_warning_at_standard_on_write_failure(tmp_path):
+    """At standard log level, write failure disables silently — no warning event."""
+    from hermes_bridge.callbacks import _TranscriptWriter
+
+    path = str(tmp_path / "agent.jsonl")
+    with patch("hermes_bridge.callbacks.post_event") as mock_post:
+        writer = _TranscriptWriter(
+            path, "agent-3",
+            log_level="standard",
+            socket_path="/tmp/fake.sock",
+            session_id="s2",
+        )
+        writer._fh.write = MagicMock(side_effect=OSError("disk full"))
+        writer.write_turn({"kind": "step", "turn": 1})
+
+    warning_calls = [
+        c for c in mock_post.call_args_list
+        if c.args[3] == "bridge:warning"
+    ]
+    assert len(warning_calls) == 0
+    assert writer._disabled is True
+
+
+def test_transcript_writer_survives_valueerror(tmp_path):
+    """A ValueError (e.g. 'I/O operation on closed file') also disables writer — no crash."""
+    from hermes_bridge.callbacks import _TranscriptWriter
+
+    path = str(tmp_path / "agent.jsonl")
+    writer = _TranscriptWriter(path, "agent-4")
+    writer._fh.write = MagicMock(side_effect=ValueError("I/O operation on closed file"))
+
+    # Must not raise.
+    writer.write_turn({"kind": "step", "turn": 1})
+    assert writer._disabled is True

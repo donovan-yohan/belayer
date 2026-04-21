@@ -336,16 +336,29 @@ class _TranscriptWriter:
     with timestamp and agent_id. Flush on every write to reduce loss if
     the bridge process crashes, but without fsync this does not guarantee
     durability across OS or host crashes.
+
+    On a write failure (OSError, ValueError) the writer disables itself and
+    posts a single bridge:warning event (at verbose/trace log levels) so
+    operators see the failure without the bridge crashing.
     """
 
-    def __init__(self, path: str, agent_id: str):
+    def __init__(self, path: str, agent_id: str, *,
+                 log_level: str = "standard",
+                 socket_path: str = "",
+                 session_id: str = ""):
         self._path = path
         self._agent_id = agent_id
+        self._log_level = log_level
+        self._socket_path = socket_path
+        self._session_id = session_id
+        self._disabled = False
         self._lock = threading.Lock()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self._fh = open(path, "a", encoding="utf-8")
 
     def write_turn(self, data: dict) -> None:
+        if self._disabled:
+            return
         payload = {
             "ts": time.time(),
             "agent_id": self._agent_id,
@@ -353,9 +366,27 @@ class _TranscriptWriter:
         }
         line = json.dumps(payload, ensure_ascii=False)
         with self._lock:
-            self._fh.write(line)
-            self._fh.write("\n")
-            self._fh.flush()
+            if self._disabled:
+                return
+            try:
+                self._fh.write(line)
+                self._fh.write("\n")
+                self._fh.flush()
+            except (OSError, ValueError) as exc:
+                self._disabled = True
+                self._handle_write_failure(exc)
+
+    def _handle_write_failure(self, exc: Exception) -> None:
+        log.warning("transcript write failed for %s: %s (disabling)", self._path, exc)
+        if self._log_level in ("verbose", "trace") and self._socket_path and self._session_id:
+            try:
+                post_event(
+                    self._socket_path, self._session_id, self._agent_id,
+                    "bridge:warning",
+                    {"kind": "transcript_write_failed", "path": self._path, "error": str(exc)},
+                )
+            except Exception:
+                pass
 
     def close(self) -> None:
         with self._lock:
@@ -386,7 +417,12 @@ def make_transcript_writer(
     if not path:
         return None
     try:
-        return _TranscriptWriter(path, agent_id)
+        return _TranscriptWriter(
+            path, agent_id,
+            log_level=log_level,
+            socket_path=socket_path,
+            session_id=session_id,
+        )
     except OSError as exc:
         log.warning("transcript writer init failed for %s: %s", path, exc)
         if log_level in ("verbose", "trace") and socket_path and session_id:
