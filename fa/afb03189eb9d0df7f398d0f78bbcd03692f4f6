@@ -1,0 +1,25 @@
+agents/supervisor/system-prompt.md
+  dd87132bbf0bb2f2 73,87
+agents/supervisor/agents.md
+  dd87132bbf0bb2f2 69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "faafb03189eb9d0df7f398d0f78bbcd03692f4f6",
+  "prompts": {
+    "dd87132bbf0bb2f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a24be346-047c-41c8-9106-416db60b4f86",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 3,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
