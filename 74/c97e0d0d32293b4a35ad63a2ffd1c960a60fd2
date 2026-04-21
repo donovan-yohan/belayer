@@ -1,0 +1,37 @@
+internal/bridge/stdout_scanner.go
+  ff06d1eb08ec82b9 1-149
+internal/daemon/bridge_events.go
+  ff06d1eb08ec82b9 172-179,181-184,212-245,248,250,258,260,263,266
+internal/bridge/bridge.go
+  ff06d1eb08ec82b9 111-114,287,290-295,300-301,305,311,314-328,330-332,334-337
+internal/daemon/agents.go
+  ff06d1eb08ec82b9 20,621-653,701-702,704-709,711,720-729
+internal/cli/nightshift.go
+  ff06d1eb08ec82b9 90-99
+internal/bridge/stdout_scanner_test.go
+  ff06d1eb08ec82b9 1-295
+internal/cli/nightshift_test.go
+  ff06d1eb08ec82b9 35-79
+internal/daemon/bridge_failure_propagation_test.go
+  ff06d1eb08ec82b9 1-522
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "74c97e0d0d32293b4a35ad63a2ffd1c960a60fd2",
+  "prompts": {
+    "ff06d1eb08ec82b9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c98939a0-d2b5-4056-afa9-5ce1b9ef6759",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1172,
+      "total_deletions": 20,
+      "accepted_lines": 1163,
+      "overriden_lines": 0
+    }
+  }
+}
