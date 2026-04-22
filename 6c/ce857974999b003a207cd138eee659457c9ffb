@@ -1,0 +1,34 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "6cce857974999b003a207cd138eee659457c9ffb",
+  "prompts": {
+    "ebd2fe56b22daf38": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db297-98ff-7363-9a48-31e6c780ce3c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1057,
+      "overriden_lines": 0
+    },
+    "fd2eb41efb85140b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "37f045c7-d4ce-43b5-8f27-1e26bd2fb053",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 482,
+      "total_deletions": 0,
+      "accepted_lines": 482,
+      "overriden_lines": 0
+    }
+  }
+}
