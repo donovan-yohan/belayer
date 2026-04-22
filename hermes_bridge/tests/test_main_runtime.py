@@ -203,3 +203,34 @@ def test_side_kind_skips_mail_polling(monkeypatch):
 
     finished_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:finished"]
     assert len(finished_calls) == 1
+
+
+def test_bridge_honors_ephemeral_env_override(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_AGENT_KIND", "side")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "false")
+
+    created_agents = []
+    result = {
+        "budget_exhausted": True,
+        "turns_used": 1,
+        "final_response": "done",
+        "last_message": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert created_agents[0].kwargs["ephemeral"] is False

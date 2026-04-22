@@ -206,6 +206,20 @@ def result_budget_exhausted(result: dict, max_turns: int | None = None) -> bool:
     return False
 
 
+def parse_optional_env_bool(name: str) -> bool | None:
+    """Parse a tri-state boolean env var, returning None when unset/invalid."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    log.warning("Ignoring invalid %s=%r", name, raw)
+    return None
+
+
 def fetch_and_format_pending_messages(
     socket_path: str,
     session_id: str,
@@ -283,10 +297,11 @@ def main() -> None:
     initial_message = _decode_nl(os.environ.get("BELAYER_MESSAGE", ""))
     system_prompt = _decode_nl(os.environ.get("BELAYER_SYSTEM_PROMPT", ""))
     hermes_session_id = os.environ.get("BELAYER_HERMES_SESSION_ID", "")
-    if agent_kind == "main":
-        ephemeral = False
+    ephemeral_override = parse_optional_env_bool("BELAYER_EPHEMERAL")
+    if ephemeral_override is None:
+        ephemeral = agent_kind != "main"
     else:
-        ephemeral = True
+        ephemeral = ephemeral_override
 
     log.info(
         "Starting bridge agent=%s session=%s role=%s kind=%s gm=%s profile=%s ephemeral=%s",

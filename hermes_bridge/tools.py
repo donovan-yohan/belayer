@@ -27,12 +27,6 @@ log = logging.getLogger("tools")
 KIND_MAIN = "main"
 KIND_SIDE = "side"
 
-LEGACY_ALIAS_TO_CANONICAL = {
-    "belayer_send_message": "belayer_send",
-    "belayer_create_artifact": "belayer_register_artifact",
-    "belayer_spawn_agent": "belayer_summon_side",
-}
-
 MAIN_CANONICAL_TOOLS = {
     "belayer_send",
     "belayer_broadcast",
@@ -46,14 +40,20 @@ GM_CANONICAL_TOOLS = MAIN_CANONICAL_TOOLS | {
     "belayer_finish",
 }
 
-LEGACY_GM_TOOLS = {
+LEGACY_SHARED_COMPAT_TOOLS = {
     "belayer_send_message",
     "belayer_create_artifact",
+}
+
+LEGACY_GM_COMPAT_TOOLS = {
     "belayer_spawn_agent",
     "belayer_request_completion",
+    "belayer_escalate_to_human",
+}
+
+LEGACY_PM_COMPAT_TOOLS = {
     "belayer_approve_completion",
     "belayer_reject_completion",
-    "belayer_escalate_to_human",
 }
 
 
@@ -1248,8 +1248,10 @@ def register_belayer_tools(
     compatibility but does not override the kind split.
     """
     try:
-        allowed_preview = sorted(set(allowed_tools or []))
+        allowed_set = {str(tool) for tool in (allowed_tools or [])}
+        allowed_preview = sorted(allowed_set)
     except TypeError:
+        allowed_set = set()
         allowed_preview = []
 
     kind = (agent_kind or KIND_MAIN).strip().lower() or KIND_MAIN
@@ -1263,10 +1265,11 @@ def register_belayer_tools(
         if gm:
             canonical_tools.extend(["belayer_spawn_main", "belayer_summon_side", "belayer_finish"])
 
-    legacy_tools = ["belayer_send_message", "belayer_create_artifact"]
+    legacy_tools = list(LEGACY_SHARED_COMPAT_TOOLS)
     if kind == KIND_MAIN and gm:
-        legacy_tools.extend(sorted(LEGACY_GM_TOOLS - {"belayer_send_message", "belayer_create_artifact", "belayer_spawn_agent"}))
-        legacy_tools.extend(["belayer_spawn_agent"])
+        legacy_tools.extend(sorted(LEGACY_GM_COMPAT_TOOLS))
+    if allowed_set:
+        legacy_tools.extend(sorted(tool for tool in allowed_set if tool in LEGACY_PM_COMPAT_TOOLS))
 
     registered = []
     seen = set()
@@ -1280,7 +1283,9 @@ def register_belayer_tools(
             continue
         if tool_name in {"belayer_spawn_main", "belayer_summon_side", "belayer_finish"} and not gm:
             continue
-        if tool_name in {"belayer_spawn_agent", "belayer_request_completion", "belayer_approve_completion", "belayer_reject_completion", "belayer_escalate_to_human"} and not gm:
+        if tool_name in LEGACY_GM_COMPAT_TOOLS and not gm:
+            continue
+        if tool_name in LEGACY_PM_COMPAT_TOOLS and tool_name not in allowed_set:
             continue
         _register(agent, tool_name, agent_id, session_id, socket_path, turn_mail_ids=turn_mail_ids)
         registered.append(tool_name)

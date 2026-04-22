@@ -102,7 +102,6 @@ class StdinReader:
                     self.agent.interrupt(cmd.get("content", "Interrupt requested."))
                 except Exception as exc:
                     log.warning("agent.interrupt() raised: %s", exc)
-                    continue
                 try:
                     self._ack_interrupt(cmd)
                 except Exception as exc:

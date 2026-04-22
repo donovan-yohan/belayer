@@ -82,11 +82,12 @@ def _build_agent():
                 "belayer_finish",
                 "belayer_spawn_agent",
                 "belayer_request_completion",
-                "belayer_approve_completion",
-                "belayer_reject_completion",
                 "belayer_escalate_to_human",
             },
-            set(),
+            {
+                "belayer_approve_completion",
+                "belayer_reject_completion",
+            },
         ),
         (
             "side",
@@ -131,3 +132,24 @@ def test_register_belayer_tools_splits_by_kind(monkeypatch, agent_kind, is_game_
     assert not (unexpected & names)
     assert set(agent.valid_tool_names) == names
     assert {tool["function"]["name"] for tool in agent.tools} == names
+
+
+def test_register_belayer_tools_allows_pm_legacy_tools_via_allowlist(monkeypatch):
+    fake_registry = _install_fake_tools_registry(monkeypatch)
+    agent = _build_agent()
+
+    register_belayer_tools(
+        agent,
+        agent_id="pm-1",
+        session_id="sess-1",
+        socket_path="/tmp/belayer.sock",
+        agent_kind="side",
+        is_game_master=False,
+        allowed_tools=["belayer_approve_completion", "belayer_reject_completion"],
+    )
+
+    names = {call["name"] for call in fake_registry.calls}
+    assert "belayer_approve_completion" in names
+    assert "belayer_reject_completion" in names
+    assert "belayer_request_completion" not in names
+    assert "belayer_spawn_agent" not in names
