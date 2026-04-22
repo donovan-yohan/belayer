@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,24 +52,25 @@ func hermesAgentRoot() string {
 
 // Config holds everything needed to spawn one bridge subprocess.
 type Config struct {
-	SessionID       string
-	AgentID         string
-	Role            string
-	Profile         string
-	Workdir         string
-	SocketPath      string // daemon Unix socket path or http://host:port for TCP
-	HTTPProxy       string // HTTP CONNECT proxy for clamshell (e.g. http://172.31.0.2:3128)
-	RunDir          string // e.g. /workspace/.belayer/runs/{session}/{agent}
-	Model           string // optional model override
-	APIKey          string // LLM provider API key (injected when Hermes config is unavailable, e.g. clamshell)
-	BaseURL         string // LLM provider base URL (e.g. https://opencode.ai/zen/go/v1)
-	Provider        string // LLM provider name (e.g. "openai")
-	Message         string // initial message/instructions for the agent
-	SystemPrompt    string // optional system prompt injected via ephemeral_system_prompt
-	HermesSessionID string // for crash recovery resume
-	BelayerRoot     string   // directory containing hermes_bridge/ package (for PYTHONPATH)
-	Ephemeral       bool     // true = exit on task completion, false = stay alive for more work
-	BelayerTools    []string // role-specific belayer tools from agent.yaml
+	SessionID           string
+	AgentID             string
+	Role                string
+	Profile             string
+	Workdir             string
+	SocketPath          string   // daemon Unix socket path or http://host:port for TCP
+	HTTPProxy           string   // HTTP CONNECT proxy for clamshell (e.g. http://172.31.0.2:3128)
+	RunDir              string   // e.g. /workspace/.belayer/runs/{session}/{agent}
+	Model               string   // optional model override
+	MaxTurns            int      // optional turn cap forwarded to Hermes via BELAYER_MAX_TURNS
+	APIKey              string   // LLM provider API key (injected when Hermes config is unavailable, e.g. clamshell)
+	BaseURL             string   // LLM provider base URL (e.g. https://opencode.ai/zen/go/v1)
+	Provider            string   // LLM provider name (e.g. "openai")
+	Message             string   // initial message/instructions for the agent
+	SystemPrompt        string   // optional system prompt injected via ephemeral_system_prompt
+	HermesSessionID     string   // for crash recovery resume
+	BelayerRoot         string   // directory containing hermes_bridge/ package (for PYTHONPATH)
+	Ephemeral           bool     // true = exit on task completion, false = stay alive for more work
+	BelayerTools        []string // role-specific belayer tools from agent.yaml
 	TranscriptPath      string   // absolute path to per-agent JSONL; empty = capture disabled (standard log level)
 	LogLevel            string   // "standard", "verbose", or "trace"; empty treated as "standard"
 	SkipOpenRouterProbe bool     // when true, injects HERMES_SKIP_OPENROUTER_PROBE=1 to suppress the openrouter metadata fetch at bridge startup
@@ -185,6 +187,9 @@ func BuildEnv(cfg Config) []string {
 	env = appendEnv(env, "BELAYER_PROFILE", cfg.Profile)
 	if cfg.Model != "" {
 		env = appendEnv(env, "BELAYER_MODEL", cfg.Model)
+	}
+	if cfg.MaxTurns > 0 {
+		env = appendEnv(env, "BELAYER_MAX_TURNS", strconv.Itoa(cfg.MaxTurns))
 	}
 	if cfg.APIKey != "" {
 		env = appendEnv(env, "BELAYER_API_KEY", cfg.APIKey)
@@ -371,11 +376,22 @@ func (p *Process) WriteStdin(v any) error {
 
 // Interrupt sends an interrupt command via stdin.
 func (p *Process) Interrupt(from, content string) error {
-	return p.WriteStdin(map[string]string{
+	return p.InterruptMessage("", from, content)
+}
+
+// InterruptMessage sends an interrupt command via stdin and includes the
+// durable message ID when available so the bridge can acknowledge it.
+func (p *Process) InterruptMessage(id, from, content string) error {
+	id = strings.TrimSpace(id)
+	payload := map[string]string{
 		"type":    "interrupt",
 		"from":    from,
 		"content": content,
-	})
+	}
+	if id != "" {
+		payload["id"] = id
+	}
+	return p.WriteStdin(payload)
 }
 
 // Stop sends a stop command via stdin and waits for the process to exit

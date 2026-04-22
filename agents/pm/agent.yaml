@@ -1,8 +1,9 @@
 schema_version: "1"
-description: "PM — adversarial spec-vs-reality verification before run completion"
+description: "PM — side verifier for adversarial spec-vs-reality checks before run completion"
+kind: side
 vendor: codex
 model: gpt-5.4
-max_turns: 30
+max_turns: 100
 max_duration: "30m"
 ephemeral: true
 workspace: inherit

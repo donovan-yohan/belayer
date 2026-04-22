@@ -52,6 +52,24 @@ func TestInitFirstRunScaffoldsDefaults(t *testing.T) {
 			t.Fatalf("expected %s: %v", sp, err)
 		}
 	}
+
+	kinds := map[string]string{
+		"backend-dev": "main",
+		"pm":          "side",
+		"qa":          "side",
+		"reviewer":    "side",
+		"supervisor":  "main",
+		"web-dev":     "main",
+	}
+	for name, kind := range kinds {
+		cfg, err := os.ReadFile(filepath.Join(belayerDir, "agents", name, "agent.yaml"))
+		if err != nil {
+			t.Fatalf("read %s agent.yaml: %v", name, err)
+		}
+		if !strings.Contains(string(cfg), "\nkind: "+kind+"\n") {
+			t.Fatalf("expected %s to declare kind %q, got:\n%s", name, kind, string(cfg))
+		}
+	}
 }
 
 func TestInitScaffoldsPersistenceStrategyBlock(t *testing.T) {
@@ -100,6 +118,35 @@ func TestInitWritesLogLevelStandardToConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(cfg), "\nlog_level: standard\n") {
 		t.Fatalf("expected 'log_level: standard' in config.yaml, got:\n%s", string(cfg))
+	}
+}
+
+func TestInitScaffoldsSplitRuntimeCaps(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newInitCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--target", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(dir, ".belayer", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	got := string(cfg)
+	if !strings.Contains(got, "\nruntime:\n") {
+		t.Fatalf("expected runtime block in config.yaml, got:\n%s", got)
+	}
+	for _, want := range []string{
+		"max_concurrent_mains: 8",
+		"max_concurrent_sides: 15",
+		"max_side_summons_per_session: 30",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q scaffold, got:\n%s", want, got)
+		}
 	}
 }
 

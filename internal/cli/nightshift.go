@@ -135,11 +135,16 @@ func newRosterCmd() *cobra.Command {
 // When an agent has recorded destructive actions, a warning suffix (⚠) is
 // appended so supervisors and PM agents can distinguish a clean completion
 // from one that nuked its own workspace first. See Gap 16 in VARIANCE_REPORT.md.
-func rosterStatus(run store.AgentRun) string {
-	if run.DestructiveActions > 0 {
-		return run.Status + "⚠"
+func rosterStatus(run AgentRunView) string {
+	status := run.Status
+	outcome := run.Outcome
+	if outcome != "" {
+		status += "/" + outcome
 	}
-	return run.Status
+	if run.DestructiveActions > 0 {
+		return status + "⚠"
+	}
+	return status
 }
 
 func newFinishCmd() *cobra.Command {
@@ -175,13 +180,20 @@ func newFinishCmd() *cobra.Command {
 }
 
 type spawnAgentRequest struct {
-	Name     string `json:"name"`
-	Identity string `json:"identity,omitempty"` // identity template under .belayer/agents/<identity>/; defaults to Name
-	Role     string `json:"role"`
-	Profile  string `json:"profile"`
-	Repo     string `json:"repo,omitempty"`
-	Workdir  string `json:"workdir,omitempty"`
-	Branch   string `json:"branch,omitempty"` // git branch for worktree-isolated spawns
+	Name       string `json:"name"`
+	Identity   string `json:"identity,omitempty"` // identity template under .belayer/agents/<identity>/; defaults to Name
+	Role       string `json:"role"`
+	Kind       string `json:"kind,omitempty"`
+	Profile    string `json:"profile"`
+	Repo       string `json:"repo,omitempty"`
+	Workdir    string `json:"workdir,omitempty"`
+	Branch     string `json:"branch,omitempty"` // git branch for worktree-isolated spawns
+}
+
+type AgentRunView struct {
+	store.AgentRun
+	PendingMailCount int `json:"pending_mail_count,omitempty"`
+	UnackedMailCount int `json:"unacked_mail_count,omitempty"`
 }
 
 type finishAgentRequest struct {
@@ -196,6 +208,16 @@ func (c *Client) SpawnAgent(sessionID string, req spawnAgentRequest) (store.Agen
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 201 {
+		var payload struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err == nil && payload.Error != "" {
+			if payload.Code != "" {
+				return store.AgentRun{}, fmt.Errorf("%s: %s", payload.Code, payload.Error)
+			}
+			return store.AgentRun{}, fmt.Errorf("%s", payload.Error)
+		}
 		return store.AgentRun{}, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 	var run store.AgentRun
@@ -205,7 +227,7 @@ func (c *Client) SpawnAgent(sessionID string, req spawnAgentRequest) (store.Agen
 	return run, nil
 }
 
-func (c *Client) ListAgents(sessionID string) ([]store.AgentRun, error) {
+func (c *Client) ListAgents(sessionID string) ([]AgentRunView, error) {
 	resp, err := c.do("GET", "/sessions/"+sessionID+"/agents", nil)
 	if err != nil {
 		return nil, err
@@ -214,7 +236,7 @@ func (c *Client) ListAgents(sessionID string) ([]store.AgentRun, error) {
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
-	var runs []store.AgentRun
+	var runs []AgentRunView
 	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
 		return nil, fmt.Errorf("decode agent runs: %w", err)
 	}

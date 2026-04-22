@@ -41,8 +41,14 @@ func (d *Daemon) processBridgeEvent(sessionID, eventType, data string) {
 	switch eventType {
 	case "bridge:started":
 		d.handleBridgeStarted(sessionID, agentName, eventData)
+	case "bridge:idle":
+		d.handleBridgeIdle(sessionID, agentName)
 	case "bridge:finished":
 		d.handleBridgeFinished(sessionID, agentName, eventData)
+	case "bridge:budget_exhausted":
+		d.handleBridgeBudgetExhausted(sessionID, agentName, eventData)
+	case "bridge:message_ack":
+		d.handleBridgeMessageAck(sessionID, agentName, eventData)
 	case "bridge:failed":
 		d.handleBridgeFailed(sessionID, agentName, eventData)
 	case "bridge:clarification_needed":
@@ -61,10 +67,23 @@ func (d *Daemon) processBridgeEvent(sessionID, eventType, data string) {
 	// bridge:session_usage — log-only, no side effects needed.
 }
 
+func (d *Daemon) notificationSender(sessionID, agentName string) string {
+	if run, ok := d.agentRunByName(sessionID, agentName); ok && agentRunIsSide(run) {
+		return "system"
+	}
+	return agentName
+}
+
 func (d *Daemon) handleBridgeStarted(sessionID, agentName string, data map[string]any) {
 	hermesSessionID, _ := data["hermes_session_id"].(string)
 	if hermesSessionID != "" {
 		_ = d.store.UpdateAgentRunHermesSessionID(sessionID, agentName, hermesSessionID)
+	}
+}
+
+func (d *Daemon) handleBridgeIdle(sessionID, agentName string) {
+	if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "idle"); err != nil {
+		log.Printf("WARNING: handleBridgeIdle: failed to update %s in session %s: %v", agentName, sessionID, err)
 	}
 }
 
@@ -121,9 +140,15 @@ func (d *Daemon) handleBridgeToolStarted(sessionID, agentName string, data map[s
 func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[string]any) {
 	// Don't overwrite "incomplete" — the agent already reported it couldn't finish.
 	current, err := d.store.GetAgentRun(sessionID, agentName)
-	if err != nil || current.Status != "incomplete" {
+	preserveTerminal := err == nil && current.Outcome != "" && current.Outcome != "active" && current.Outcome != "succeeded"
+	if (err != nil || current.Status != "incomplete") && !preserveTerminal {
 		if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "complete"); err != nil {
 			log.Printf("ERROR: handleBridgeFinished: failed to update agent %s status in session %s: %v", agentName, sessionID, err)
+		}
+	}
+	if err == nil && current.Outcome == "active" {
+		if updateErr := d.store.UpdateAgentRunOutcome(sessionID, agentName, "succeeded"); updateErr != nil {
+			log.Printf("WARNING: handleBridgeFinished: failed to set outcome for %s in session %s: %v", agentName, sessionID, updateErr)
 		}
 	}
 
@@ -140,6 +165,65 @@ func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[stri
 
 	// Check if the session is now stalled (all agents done, no completion approval).
 	d.checkSessionStalled(sessionID)
+}
+
+func (d *Daemon) handleBridgeBudgetExhausted(sessionID, agentName string, data map[string]any) {
+	_ = d.store.UpdateAgentRunStatus(sessionID, agentName, "exited")
+	_ = d.store.UpdateAgentRunOutcome(sessionID, agentName, "budget_exhausted")
+
+	content := fmt.Sprintf(
+		"Agent %s exhausted its turn budget (%v/%v). Its last message: %q. Decide whether to respawn, retire, or continue without it.",
+		agentName,
+		data["turns_used"],
+		data["max_turns"],
+		data["last_message"],
+	)
+
+	msgID := uuid.New().String()
+	sender := d.notificationSender(sessionID, agentName)
+	msg := broker.Message{
+		ID:          msgID,
+		SessionID:   sessionID,
+		SenderID:    sender,
+		RecipientID: "supervisor",
+		Type:        broker.MessageStateChange,
+		Content:     content,
+		Urgent:      true,
+		Timestamp:   time.Now().UTC(),
+	}
+	if _, err := d.store.CreateMessage(store.Message{
+		ID:          msgID,
+		SessionID:   sessionID,
+		SenderID:    sender,
+		RecipientID: "supervisor",
+		Type:        string(broker.MessageStateChange),
+		Content:     content,
+		Urgent:      true,
+	}); err != nil {
+		log.Printf("ERROR: handleBridgeBudgetExhausted: failed to persist supervisor notification for session %s agent %s message %s: %v", sessionID, agentName, msgID, err)
+	}
+	if err := d.broker.Interrupt(sessionID, "supervisor", msg); err != nil {
+		log.Printf("WARNING: handleBridgeBudgetExhausted: failed to interrupt supervisor for session %s agent %s message %s: %v", sessionID, agentName, msgID, err)
+	}
+}
+
+func (d *Daemon) handleBridgeMessageAck(sessionID, agentName string, data map[string]any) {
+	rawIDs, _ := data["ids"].([]any)
+	if len(rawIDs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(rawIDs))
+	for _, raw := range rawIDs {
+		if id := strings.TrimSpace(fmt.Sprint(raw)); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if err := d.store.MarkAcknowledgedForRecipient(sessionID, agentName, ids...); err != nil {
+		log.Printf("WARNING: handleBridgeMessageAck: failed to acknowledge messages %v: %v", ids, err)
+	}
 }
 
 // checkSupervisorExitedEarly emits a warning if the supervisor exits while
@@ -291,6 +375,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 		if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "incomplete"); err != nil {
 			log.Printf("ERROR: processAgentStatusEvent: failed to update agent %s to incomplete in session %s: %v", agentName, sessionID, err)
 		}
+		_ = d.store.UpdateAgentRunOutcome(sessionID, agentName, "incomplete")
 
 		// If the supervisor reports incomplete, check the persistence gate
 		// before escalating. This mirrors how the PM gate intercepts a
@@ -349,10 +434,11 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 				content += ". Detail: " + detail
 			}
 			msgID := uuid.New().String()
+			sender := d.notificationSender(sessionID, agentName)
 			msg := broker.Message{
 				ID:          msgID,
 				SessionID:   sessionID,
-				SenderID:    agentName,
+				SenderID:    sender,
 				RecipientID: "supervisor",
 				Type:        broker.MessageStateChange,
 				Content:     content,
@@ -362,7 +448,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 			_, _ = d.store.CreateMessage(store.Message{
 				ID:          msgID,
 				SessionID:   sessionID,
-				SenderID:    agentName,
+				SenderID:    sender,
 				RecipientID: "supervisor",
 				Type:        string(broker.MessageStateChange),
 				Content:     content,
@@ -378,6 +464,19 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 			// still active.
 			d.checkSessionStalled(sessionID)
 		}
+	case "agent_status:done":
+		if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "idle"); err != nil {
+			log.Printf("ERROR: processAgentStatusEvent: failed to update agent %s to idle in session %s: %v", agentName, sessionID, err)
+		}
+		if err := d.store.LogEvent(store.SessionEvent{
+			SessionID: sessionID,
+			Type:      "agent_status_done",
+			Data: mustJSON(map[string]string{
+				"agent": agentName,
+			}),
+		}); err != nil {
+			log.Printf("WARNING: processAgentStatusEvent: failed to log agent_status_done for %s in session %s: %v", agentName, sessionID, err)
+		}
 
 	default:
 		log.Printf("DEBUG: unhandled agent_status event %s for agent %s in session %s (log-only)", eventType, agentName, sessionID)
@@ -386,6 +485,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 
 func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string]any) {
 	_ = d.store.UpdateAgentRunStatus(sessionID, agentName, "blocked")
+	_ = d.store.UpdateAgentRunOutcome(sessionID, agentName, "failed")
 
 	// Check if this was the last active agent.
 	d.checkSessionStalled(sessionID)
@@ -401,10 +501,11 @@ func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string
 	}
 
 	msgID := uuid.New().String()
+	sender := d.notificationSender(sessionID, agentName)
 	msg := broker.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        broker.MessageStateChange,
 		Content:     content,
@@ -416,7 +517,7 @@ func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string
 	_, _ = d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        string(broker.MessageStateChange),
 		Content:     content,
@@ -439,10 +540,11 @@ func (d *Daemon) handleBridgeClarification(sessionID, agentName string, data map
 
 	content := agentName + " needs clarification: " + question
 	msgID := uuid.New().String()
+	sender := d.notificationSender(sessionID, agentName)
 	msg := broker.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        broker.MessageInputNeeded,
 		Content:     content,
@@ -453,7 +555,7 @@ func (d *Daemon) handleBridgeClarification(sessionID, agentName string, data map
 	_, _ = d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        string(broker.MessageInputNeeded),
 		Content:     content,
@@ -643,10 +745,21 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 		log.Printf("maybeRepromptForPersistence: revert supervisor status failed for session %s: %v", sessionID, err)
 		return false // can't safely continue the intercept — let escalation run
 	}
+	if err := d.store.UpdateAgentRunOutcome(sessionID, "supervisor", "active"); err != nil {
+		log.Printf("maybeRepromptForPersistence: revert supervisor outcome failed for session %s: %v", sessionID, err)
+		_ = d.store.UpdateAgentRunStatus(sessionID, "supervisor", "incomplete")
+		return false
+	}
 
 	// Render the strategy back to the supervisor as an urgent state change.
 	// The supervisor already has the list in its spawn message, but restating
 	// it here makes the reprompt self-contained in the live message stream.
+	if path, err := d.WriteHandoffArtifact(sessionID); err != nil {
+		log.Printf("maybeRepromptForPersistence: write handoff artifact failed for session %s: %v", sessionID, err)
+	} else if err := d.registerHandoffArtifact(sessionID, path); err != nil {
+		log.Printf("maybeRepromptForPersistence: register handoff artifact failed for session %s: %v", sessionID, err)
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "You reported status=incomplete but the persistence_strategy (source: %s) has not been executed: no persistence-notes artifact is registered in this session.\n\n", source)
 	b.WriteString("Execute each step below, THEN call belayer_report_status with status=incomplete again:\n")
@@ -688,6 +801,7 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 		// running but has no pending instruction.
 		log.Printf("ERROR: maybeRepromptForPersistence: CreateMessage failed for session %s agent supervisor: %v; falling through to escalation", sessionID, err)
 		_ = d.store.UpdateAgentRunStatus(sessionID, "supervisor", "incomplete")
+		_ = d.store.UpdateAgentRunOutcome(sessionID, "supervisor", "incomplete")
 		return false
 	}
 	// broker.Interrupt is best-effort live push; message already durably
@@ -799,6 +913,7 @@ If gaps exist: call belayer_reject_completion with the specific gaps so the supe
 			SessionID: sessionID,
 			Name:      "pm",
 			Role:      "pm",
+			Kind:      "side",
 			Profile:   "default",
 			Message:   pmMessage,
 		})
@@ -982,10 +1097,11 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		rejectionCount+1, maxRejectionCycles, gapList,
 	)
 	msgID := uuid.New().String()
+	sender := d.notificationSender(sessionID, agentName)
 	msg := broker.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        broker.MessageStateChange,
 		Content:     content,
@@ -993,7 +1109,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		Timestamp:   time.Now().UTC(),
 	}
 	_, _ = d.store.CreateMessage(store.Message{
-		ID: msgID, SessionID: sessionID, SenderID: agentName,
+		ID: msgID, SessionID: sessionID, SenderID: sender,
 		RecipientID: "supervisor", Type: string(broker.MessageStateChange),
 		Content: content, Urgent: true,
 	})

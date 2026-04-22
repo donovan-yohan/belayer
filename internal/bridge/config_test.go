@@ -102,3 +102,28 @@ func TestLoadProjectConfig_BridgeSectionPresentKeyMissing(t *testing.T) {
 		t.Error("expected SkipOpenRouterProbe=true when key is absent from bridge section")
 	}
 }
+
+func TestLoadProjectConfig_DefaultMaxConcurrentAgents(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg, err := LoadProjectConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadProjectConfig: %v", err)
+	}
+	if cfg.MaxConcurrentAgents != 15 {
+		t.Fatalf("expected MaxConcurrentAgents=15 by default, got %d", cfg.MaxConcurrentAgents)
+	}
+}
+
+func TestLoadProjectConfig_RuntimeMaxConcurrentAgents(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "runtime:\n  max_concurrent_agents: 7\n")
+
+	cfg, err := LoadProjectConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadProjectConfig: %v", err)
+	}
+	if cfg.MaxConcurrentAgents != 7 {
+		t.Fatalf("expected MaxConcurrentAgents=7, got %d", cfg.MaxConcurrentAgents)
+	}
+}

@@ -1,5 +1,6 @@
 schema_version: "1"
-description: "Backend dev — implementer for backend/API server code, works in worktree"
+description: "Backend dev — main implementer for backend/API server code, works in worktree"
+kind: main
 vendor: codex
 model: gpt-5.4
 max_turns: 100

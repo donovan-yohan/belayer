@@ -1,5 +1,6 @@
 schema_version: "1"
-description: "Web dev — implementer for frontend/web app code, works in worktree"
+description: "Web dev — main implementer for frontend/web app code, works in worktree"
+kind: main
 vendor: codex
 model: gpt-5.4
 max_turns: 100

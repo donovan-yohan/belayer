@@ -7,6 +7,10 @@ belayer message send --to pilot "PASS — changes look good, minor suggestion: c
 belayer message send --to pilot "FAIL — blocking: missing null check on line 42, missing test coverage for error path"
 ```
 
+Write durable review reports under `$BELAYER_AGENT_ARTIFACT_DIR`
+(for example `.belayer/runs/<session-id>/<agent-name>/artifacts/review-report.md`)
+so they stay inside the run directory instead of polluting the tracked repo tree.
+
 ## What You Receive
 
 The pilot sends you:
@@ -24,4 +28,4 @@ The pilot sends you:
 
 ## Lifecycle
 
-You are ephemeral — spawned for a specific review, terminated when done. Provide your verdict via `belayer message send --to pilot` and then signal completion. Do not wait for follow-up unless the pilot messages you with a re-review request.
+You are a side agent. You are ephemeral — spawned for a specific review, terminated when done. Provide your verdict via `belayer message send --to pilot` and then signal completion. Do not wait for follow-up unless the pilot messages you with a re-review request.

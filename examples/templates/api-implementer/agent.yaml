@@ -1,5 +1,6 @@
 schema_version: "1"
-description: "API implementer — writes code in extend-api (Kotlin/Spring Boot)"
+description: "API implementer — main agent that writes code in extend-api (Kotlin/Spring Boot)"
+kind: main
 vendor: opencode
 model: kimi-k2.5
 max_turns: 100

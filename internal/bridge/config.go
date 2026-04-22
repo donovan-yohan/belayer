@@ -20,12 +20,18 @@ type ProjectConfig struct {
 	// metadata at startup (e.g. a routing layer that resolves model IDs via
 	// the OpenRouter catalog).
 	SkipOpenRouterProbe bool `yaml:"skip_openrouter_probe"`
+
+	// MaxConcurrentAgents is the daemon-enforced upper bound for live agents
+	// in a session. It is read from runtime.max_concurrent_agents in the
+	// project config and defaults to 15 when unset.
+	MaxConcurrentAgents int `yaml:"max_concurrent_agents"`
 }
 
 // bridgeConfigFile is the top-level shape of .belayer/config.yaml that we
 // care about — unknown sections are silently ignored by yaml.v3.
 type bridgeConfigFile struct {
-	Bridge bridgeConfigSection `yaml:"bridge"`
+	Bridge  bridgeConfigSection  `yaml:"bridge"`
+	Runtime runtimeConfigSection `yaml:"runtime"`
 }
 
 // bridgeConfigSection mirrors the yaml shape so we can apply the default
@@ -35,6 +41,10 @@ type bridgeConfigSection struct {
 	SkipOpenRouterProbe *bool `yaml:"skip_openrouter_probe"`
 }
 
+type runtimeConfigSection struct {
+	MaxConcurrentAgents *int `yaml:"max_concurrent_agents"`
+}
+
 // LoadProjectConfig reads the bridge section from <workdir>/.belayer/config.yaml.
 // If the file does not exist, or the bridge section is absent, it returns the
 // default config (SkipOpenRouterProbe = true). A missing key inside an existing
@@ -42,6 +52,7 @@ type bridgeConfigSection struct {
 func LoadProjectConfig(workdir string) (ProjectConfig, error) {
 	defaults := ProjectConfig{
 		SkipOpenRouterProbe: true,
+		MaxConcurrentAgents: 15,
 	}
 	if workdir == "" {
 		return defaults, nil
@@ -64,6 +75,9 @@ func LoadProjectConfig(workdir string) (ProjectConfig, error) {
 	out := defaults
 	if f.Bridge.SkipOpenRouterProbe != nil {
 		out.SkipOpenRouterProbe = *f.Bridge.SkipOpenRouterProbe
+	}
+	if f.Runtime.MaxConcurrentAgents != nil && *f.Runtime.MaxConcurrentAgents > 0 {
+		out.MaxConcurrentAgents = *f.Runtime.MaxConcurrentAgents
 	}
 	return out, nil
 }

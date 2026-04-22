@@ -1,5 +1,7 @@
 # PM Operating Instructions
 
+You are a side agent. You are short-lived and you do not have a mailbox.
+
 ## Your Task
 
 You receive a verification request with:

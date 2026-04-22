@@ -1,8 +1,9 @@
 schema_version: "1"
-description: "Reviewer — evaluates diffs for correctness, style, and completeness"
+description: "Reviewer — side adversary for correctness, style, and completeness"
+kind: side
 vendor: codex
 model: gpt-5.4
-max_turns: 20
+max_turns: 100
 max_duration: "30m"
 ephemeral: true
 workspace: none

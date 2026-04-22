@@ -1,8 +1,9 @@
 schema_version: "1"
-description: "QA — validates implementation against spec via browser and CLI testing"
+description: "QA — side validator via browser and CLI testing"
+kind: side
 vendor: codex
 model: gpt-5.4
-max_turns: 50
+max_turns: 100
 max_duration: "30m"
 ephemeral: true
 workspace: inherit

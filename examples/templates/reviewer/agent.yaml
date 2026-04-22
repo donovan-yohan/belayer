@@ -1,5 +1,6 @@
 schema_version: "1"
-description: "Reviewer — evaluates diffs for correctness, style, and completeness"
+description: "Reviewer — side agent that evaluates diffs for correctness, style, and completeness"
+kind: side
 vendor: claude
 model: sonnet
 max_turns: 20

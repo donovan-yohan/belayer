@@ -1,18 +1,9 @@
 """Belayer coordination tools for Hermes agents.
 
-Baseline tools (always registered on every agent):
-  - belayer_send_message        — agent-to-agent messaging via session bus
-  - belayer_report_status       — publish agent status events (working/blocked/done)
-  - belayer_create_artifact     — register a durable output with the artifact registry
-
-Role-specific tools (only registered when declared in agent.yaml):
-  - belayer_spawn_agent         — supervisor spawns specialists into the session
-  - belayer_request_completion  — supervisor signals "work is done, verify before closing"
-  - belayer_approve_completion  — PM approves the run after spec verification
-  - belayer_reject_completion   — PM rejects the run with a gap list for remediation
-  - belayer_escalate_to_human   — supervisor deliberately stops the run when genuinely
-                                   blocked by something outside its agency (last resort
-                                   stop button; transitions session to needs_human_review)
+Registered tools are kind-aware, but the names are belayer-native:
+  - mains: belayer_send_message, belayer_broadcast, belayer_check_mail
+  - all agents: belayer_report_status, belayer_create_artifact
+  - role-specific tools come from the daemon-provided BELAYER_TOOLS allowlist
 
 Tool schemas follow the OpenAI function-calling format used by Hermes.
 Handlers receive kwargs matching schema property names (Hermes calling convention).
@@ -21,9 +12,65 @@ Handlers receive kwargs matching schema property names (Hermes calling conventio
 import json
 import logging
 
-from hermes_bridge.http_client import unix_post
+from hermes_bridge.http_client import unix_get, unix_post
 
 log = logging.getLogger("tools")
+
+KIND_MAIN = "main"
+KIND_SIDE = "side"
+
+
+def _body_preview(body: str, limit: int = 200) -> str:
+    return body[:limit]
+
+
+def _json_messages(body: str) -> list[dict]:
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, list):
+        return [msg for msg in parsed if isinstance(msg, dict)]
+    return []
+
+
+def _message_field(msg: dict, *keys: str) -> str:
+    for key in keys:
+        val = msg.get(key)
+        if val is not None and val != "":
+            return str(val)
+    return ""
+
+
+def _format_messages(messages: list[dict]) -> str:
+    parts = []
+    for msg in messages:
+        sender = _message_field(msg, "SenderID", "sender_id") or "unknown"
+        content = _message_field(msg, "Content", "content")
+        parts.append(f"[Message from {sender}]: {content}")
+    return "\n\n".join(parts)
+
+
+def _filter_messages(messages: list[dict]) -> tuple[str, list[str]]:
+    valid = []
+    dropped = []
+    ack_ids: list[str] = []
+    for msg in messages:
+        msg_id = _message_field(msg, "ID", "id")
+        content = _message_field(msg, "Content", "content")
+        if not content.strip():
+            dropped.append({
+                "sender": _message_field(msg, "SenderID", "sender_id") or "unknown",
+                "message_id": msg_id,
+            })
+            if msg_id:
+                ack_ids.append(msg_id)
+            continue
+        valid.append(msg)
+        if msg_id:
+            ack_ids.append(msg_id)
+    return _format_messages(valid), ack_ids
+
 
 # ---------------------------------------------------------------------------
 # Tool schemas
@@ -73,6 +120,13 @@ SEND_MESSAGE_SCHEMA = {
                     "this as a single turn, so include enough context (what you're asking for, "
                     "what file/diff/issue you're referring to, what success looks like) that "
                     "they can act without a clarifying round-trip."
+                ),
+            },
+            "interrupt": {
+                "type": "boolean",
+                "description": (
+                    "Set true to deliver this as an immediate interrupt instead of queued "
+                    "mail. Required when messaging side agents, which do not have a mailbox."
                 ),
             },
         },
@@ -554,6 +608,37 @@ REJECT_COMPLETION_SCHEMA = {
     },
 }
 
+BROADCAST_SCHEMA = {
+    "name": "belayer_broadcast",
+    "description": (
+        "Broadcast a message to every main agent in the session except the sender. "
+        "Broadcasts are for party-wide announcements, not private follow-up."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "Message body to broadcast to the party.",
+            },
+        },
+        "required": ["content"],
+    },
+}
+
+CHECK_MAIL_SCHEMA = {
+    "name": "belayer_check_mail",
+    "description": (
+        "Explicitly poll your mailbox now. This is optional because the bridge "
+        "already polls pending mail before every turn, but it is available for "
+        "mid-narrative checks between tool calls."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
 # ---------------------------------------------------------------------------
 # Handler factories
 # ---------------------------------------------------------------------------
@@ -565,17 +650,84 @@ def make_send_message_handler(agent_id: str, session_id: str, socket_path: str):
     def handler(args: dict, **kwargs) -> str:
         to = args.get("to", "")
         content = args.get("content", "")
+        interrupt = bool(args.get("interrupt", False))
         status, body = unix_post(
             socket_path,
             f"/sessions/{session_id}/messages",
-            {"to": to, "content": content, "from": agent_id},
+            {"to": to, "content": content, "from": agent_id, "interrupt": interrupt},
         )
         if status == 201:
-            return f"Message sent to {to}."
-        log.warning("send_message to %s failed (%d): %s", to, status, body[:200])
-        if status == 410:
-            return f"[System] Agent '{to}' has exited. Use belayer_spawn_agent to re-spawn with conversation history."
+            prefix = "Interrupt sent" if interrupt else "Message sent"
+            return f"{prefix} to {to}."
+        log.warning("send %s to %s failed (%d): %s", "interrupt" if interrupt else "message", to, status, body[:200])
+        if status in (410, 404):
+            return f"[System] Agent '{to}' is not available. Choose another target or respawn it."
         return f"[System] Daemon unavailable — message to {to} not delivered. Continue local work. Error: {body[:200]}"
+
+    return handler
+
+
+def make_broadcast_handler(agent_id: str, session_id: str, socket_path: str):
+    """Return a handler for belayer_broadcast."""
+
+    def handler(args: dict, **kwargs) -> str:
+        content = args.get("content", "")
+        status, body = unix_post(
+            socket_path,
+            f"/sessions/{session_id}/messages/broadcast",
+            {"content": content, "from": agent_id, "type": "instruction"},
+        )
+        if status == 201:
+            return "Broadcast sent."
+        log.warning("broadcast failed (%d): %s", status, body[:200])
+        return f"[System] Failed to broadcast message. Error: {body[:200]}"
+
+    return handler
+
+
+def make_report_status_handler(agent_id: str, session_id: str, socket_path: str):
+    """Return a handler for belayer_report_status."""
+
+    def handler(args: dict, **kwargs) -> str:
+        status = args.get("status", "")
+        detail = args.get("detail", "")
+        event_data = json.dumps({"agent": agent_id, "status": status, "detail": detail})
+        status_code, body = unix_post(
+            socket_path,
+            f"/sessions/{session_id}/events",
+            {"type": f"agent_status:{status}", "data": event_data},
+        )
+        if status_code in (200, 201):
+            return f"Status reported: {status}."
+        log.warning("report_status %s failed (%d): %s", status, status_code, body[:200])
+        return f"[System] Daemon unavailable — status not broadcast. Continue local work. Error: {body[:200]}"
+
+    return handler
+
+
+def make_check_mail_handler(
+    agent_id: str,
+    session_id: str,
+    socket_path: str,
+    turn_mail_ids: list[str] | None = None,
+):
+    """Return a handler for belayer_check_mail."""
+
+    def handler(args: dict, **kwargs) -> str:
+        status, body = unix_get(
+            socket_path,
+            f"/sessions/{session_id}/messages?for={agent_id}&pending=true",
+        )
+        if status != 200:
+            log.warning("check_mail failed (%d): %s", status, body[:200])
+            return f"[System] Failed to poll mail. Error: {body[:200]}"
+        messages = _json_messages(body)
+        if not messages:
+            return "[System] No pending mail."
+        formatted, ack_ids = _filter_messages(messages)
+        if turn_mail_ids is not None:
+            turn_mail_ids.extend(ack_ids)
+        return formatted or "[System] No pending mail."
 
     return handler
 
@@ -599,26 +751,6 @@ def make_create_artifact_handler(agent_id: str, session_id: str, socket_path: st
             f"[System] Daemon unavailable — artifact not registered centrally. "
             f"Artifact saved locally at {path}. Error: {body[:200]}"
         )
-
-    return handler
-
-
-def make_report_status_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_report_status."""
-
-    def handler(args: dict, **kwargs) -> str:
-        status = args.get("status", "")
-        detail = args.get("detail", "")
-        event_data = json.dumps({"agent": agent_id, "status": status, "detail": detail})
-        status_code, body = unix_post(
-            socket_path,
-            f"/sessions/{session_id}/events",
-            {"type": f"agent_status:{status}", "data": event_data},
-        )
-        if status_code in (200, 201):
-            return f"Status reported: {status}."
-        log.warning("report_status %s failed (%d): %s", status, status_code, body[:200])
-        return f"[System] Daemon unavailable — status not broadcast. Continue local work. Error: {body[:200]}"
 
     return handler
 
@@ -810,14 +942,10 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
 # Registration
 # ---------------------------------------------------------------------------
 
-BASELINE_TOOLS = {
-    "belayer_send_message",
-    "belayer_report_status",
-    "belayer_create_artifact",
-}
-
-_HANDLER_FACTORIES = {
+_TOOL_SPECS = {
     "belayer_send_message": (SEND_MESSAGE_SCHEMA, make_send_message_handler),
+    "belayer_broadcast": (BROADCAST_SCHEMA, make_broadcast_handler),
+    "belayer_check_mail": (CHECK_MAIL_SCHEMA, make_check_mail_handler),
     "belayer_report_status": (REPORT_STATUS_SCHEMA, make_report_status_handler),
     "belayer_create_artifact": (CREATE_ARTIFACT_SCHEMA, make_create_artifact_handler),
     "belayer_spawn_agent": (SPAWN_AGENT_SCHEMA, make_spawn_agent_handler),
@@ -828,14 +956,7 @@ _HANDLER_FACTORIES = {
 }
 
 
-def register_belayer_tools(agent, agent_id: str, session_id: str, socket_path: str, allowed_tools: list[str] | None = None) -> None:
-    """Register Belayer coordination tools on an AIAgent instance.
-
-    Baseline tools (send_message, report_status, create_artifact) are always
-    registered. Additional tools are only registered if they appear in
-    allowed_tools (read from BELAYER_TOOLS env var, set by the daemon from
-    the agent template's agent.yaml).
-    """
+def _register(agent, tool_name: str, agent_id: str, session_id: str, socket_path: str, turn_mail_ids: list[str] | None = None) -> None:
     try:
         from tools.registry import registry  # type: ignore[import]
     except ImportError as exc:
@@ -843,22 +964,19 @@ def register_belayer_tools(agent, agent_id: str, session_id: str, socket_path: s
             "Hermes 'tools' package not found. Ensure hermes-agent is installed."
         ) from exc
 
-    tools_to_register = set(BASELINE_TOOLS)
-    if allowed_tools:
-        tools_to_register |= set(allowed_tools)
-
-    registered = 0
-    for tool_name, (schema, make_handler) in _HANDLER_FACTORIES.items():
-        if tool_name not in tools_to_register:
-            continue
-        handler = make_handler(agent_id, session_id, socket_path)
-        registry.register(
-            name=schema["name"],
-            toolset="belayer",
-            schema=schema,
-            handler=handler,
-        )
-        tool_def = {
+    schema, factory = _TOOL_SPECS[tool_name]
+    if tool_name == "belayer_check_mail":
+        handler = factory(agent_id, session_id, socket_path, turn_mail_ids=turn_mail_ids)
+    else:
+        handler = factory(agent_id, session_id, socket_path)
+    registry.register(
+        name=schema["name"],
+        toolset="belayer",
+        schema=schema,
+        handler=handler,
+    )
+    agent.tools.append(
+        {
             "type": "function",
             "function": {
                 "name": schema["name"],
@@ -866,15 +984,58 @@ def register_belayer_tools(agent, agent_id: str, session_id: str, socket_path: s
                 "parameters": schema["parameters"],
             },
         }
-        agent.tools.append(tool_def)
-        agent.valid_tool_names.add(schema["name"])
-        registered += 1
+    )
+    agent.valid_tool_names.add(schema["name"])
+
+
+def register_belayer_tools(
+    agent,
+    agent_id: str,
+    session_id: str,
+    socket_path: str,
+    allowed_tools: list[str] | None = None,
+    *,
+    agent_kind: str = KIND_MAIN,
+    turn_mail_ids: list[str] | None = None,
+) -> None:
+    """Register Belayer coordination tools on an AIAgent instance.
+
+    Kind determines the baseline mail surface; allowed_tools grants
+    role-specific capabilities like spawn_agent or PM approval tools.
+    """
+    try:
+        allowed_set = {str(tool) for tool in (allowed_tools or [])}
+        allowed_preview = sorted(allowed_set)
+    except TypeError:
+        allowed_set = set()
+        allowed_preview = []
+
+    kind = (agent_kind or KIND_MAIN).strip().lower() or KIND_MAIN
+    if kind not in (KIND_MAIN, KIND_SIDE):
+        kind = KIND_MAIN
+
+    baseline_tools = ["belayer_report_status", "belayer_create_artifact"]
+    if kind == KIND_MAIN:
+        baseline_tools.extend(["belayer_send_message", "belayer_broadcast", "belayer_check_mail"])
+
+    registered = []
+    seen = set()
+    for tool_name in baseline_tools + allowed_preview:
+        if tool_name in seen:
+            continue
+        seen.add(tool_name)
+        if tool_name not in _TOOL_SPECS:
+            continue
+        if tool_name in {"belayer_check_mail", "belayer_broadcast", "belayer_send_message"} and kind != KIND_MAIN:
+            continue
+        _register(agent, tool_name, agent_id, session_id, socket_path, turn_mail_ids=turn_mail_ids)
+        registered.append(tool_name)
 
     log.info(
-        "Registered %d/%d Belayer tools for agent=%s session=%s (allowed: %s)",
-        registered,
-        len(_HANDLER_FACTORIES),
+        "Registered Belayer tools for agent=%s session=%s kind=%s tools=%s allowed=%s",
         agent_id,
         session_id,
-        tools_to_register,
+        kind,
+        registered,
+        allowed_preview,
     )

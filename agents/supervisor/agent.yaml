@@ -1,5 +1,6 @@
 schema_version: "1"
-description: "Supervisor — orchestrates implementation across repos"
+description: "Supervisor — main party lead across repos"
+kind: main
 vendor: codex
 model: gpt-5.4
 max_turns: 200

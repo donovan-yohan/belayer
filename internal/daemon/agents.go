@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/bridge"
@@ -30,6 +33,7 @@ type agentSpawnRequest struct {
 	// off the same identity (e.g. Name="reviewer-1", Identity="reviewer").
 	Identity        string `json:"identity,omitempty"`
 	Role            string `json:"role"`
+	Kind            string `json:"kind,omitempty"`
 	Profile         string `json:"profile"` // Hermes runtime profile (BELAYER_PROFILE / HERMES_HOME), independent of identity
 	Model           string `json:"model,omitempty"`
 	Message         string `json:"message,omitempty"`
@@ -54,6 +58,84 @@ type finishAgentRequest struct {
 	Summary      string `json:"summary"`
 	Blocked      bool   `json:"blocked"`
 	SpecArtifact string `json:"spec_artifact,omitempty"`
+}
+
+type spawnLimitError struct {
+	Cap        int
+	LiveAgents int
+	Code       string
+	Message    string
+}
+
+func (e *spawnLimitError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return fmt.Sprintf("cap reached (%d live agents); retire one before spawning", e.Cap)
+}
+
+func normalizeAgentKind(kind string) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	switch kind {
+	case "", "main":
+		return "main"
+	case "side":
+		return "side"
+	default:
+		return kind
+	}
+}
+
+func validateAgentKind(kind string) (string, error) {
+	normalized := normalizeAgentKind(kind)
+	switch normalized {
+	case "main", "side":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("kind must be main or side")
+	}
+}
+
+func agentRunIsSide(run store.AgentRun) bool {
+	return normalizeAgentKind(run.Kind) == "side"
+}
+
+func agentRunIsMain(run store.AgentRun) bool {
+	return !agentRunIsSide(run)
+}
+
+func (d *Daemon) lockSpawnSession(sessionID string) func() {
+	d.spawnSessionMu.Lock()
+	mu := d.spawnSessionLocks[sessionID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		d.spawnSessionLocks[sessionID] = mu
+	}
+	d.spawnSessionMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
+}
+
+type agentRunResponse struct {
+	ID                 string `json:"id"`
+	SessionID          string `json:"session_id"`
+	Name               string `json:"name"`
+	Role               string `json:"role"`
+	Kind               string `json:"kind"`
+	Profile            string `json:"profile"`
+	RepoScope          string `json:"repo_scope"`
+	Workdir            string `json:"workdir"`
+	Branch             string `json:"branch"`
+	WorktreePath       string `json:"worktree_path"`
+	Transport          string `json:"transport"`
+	TmuxSession        string `json:"tmux_session"`
+	HermesSessionID    string `json:"hermes_session_id"`
+	Status             string `json:"status"`
+	Outcome            string `json:"outcome"`
+	DestructiveActions int    `json:"destructive_actions,omitempty"`
+	LastDestructiveCmd string `json:"last_destructive_cmd,omitempty"`
+	PendingMailCount   int    `json:"pending_mail_count,omitempty"`
+	UnackedMailCount   int    `json:"unacked_mail_count,omitempty"`
 }
 
 func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +167,15 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	kind := ""
+	if req.Kind != "" {
+		var kindErr error
+		kind, kindErr = validateAgentKind(req.Kind)
+		if kindErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": kindErr.Error()})
+			return
+		}
+	}
 	req.SessionID = sessionID
 
 	// Resolve workdir from session repos when repo scope is set but workdir is not.
@@ -111,6 +202,14 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	// If it exists, carry over its Hermes session ID for resume and update
 	// the existing row instead of creating a new one (UNIQUE constraint).
 	prior, priorErr := d.store.GetAgentRun(sessionID, req.Name)
+	if priorErr == nil && kind == "" {
+		kind, _ = validateAgentKind(prior.Kind)
+	}
+	if kind == "" {
+		kind = "main"
+	}
+	req.Kind = kind
+
 	resuming := priorErr == nil && prior.HermesSessionID != ""
 
 	if resuming && req.HermesSessionID == "" {
@@ -128,15 +227,57 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	unlockSpawn := d.lockSpawnSession(sessionID)
+	excludeName := ""
+	if priorErr == nil {
+		excludeName = req.Name
+	}
+	if err := d.enforceSpawnCapacity(sessionID, sess.WorkspaceDir, excludeName, req.Kind); err != nil {
+		unlockSpawn()
+		var limitErr *spawnLimitError
+		if errors.As(err, &limitErr) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":       limitErr.Error(),
+				"code":        limitErr.Code,
+				"limit":       limitErr.Cap,
+				"live_agents": limitErr.LiveAgents,
+			})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
 	if priorErr == nil {
 		// Prior run exists — update its status back to starting.
 		// Carry over branch/worktree path from prior run if not re-specified.
 		if req.Branch == "" && prior.Branch != "" {
 			req.Branch = prior.Branch
 		}
+		if kind == "" {
+			kind = prior.Kind
+		}
+		if prior.Kind != "" && kind != prior.Kind {
+			unlockSpawn()
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind cannot change for an existing agent run"})
+			return
+		}
 		if err := d.store.UpdateAgentRunStatus(sessionID, req.Name, "starting"); err != nil {
+			unlockSpawn()
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
+		}
+		if err := d.store.UpdateAgentRunOutcome(sessionID, req.Name, "active"); err != nil {
+			unlockSpawn()
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if prior.Kind != req.Kind {
+			if err := d.store.UpdateAgentRunKind(sessionID, req.Name, req.Kind); err != nil {
+				unlockSpawn()
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
 		}
 	} else {
 		// No prior run — create a new row.
@@ -144,6 +285,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			SessionID:       sessionID,
 			Name:            req.Name,
 			Role:            req.Role,
+			Kind:            req.Kind,
 			Profile:         req.Profile,
 			RepoScope:       req.Repo,
 			Workdir:         req.Workdir,
@@ -153,15 +295,18 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			Status:          "starting",
 		}
 		if _, err := d.store.CreateAgentRun(run); err != nil {
+			unlockSpawn()
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 	}
+	unlockSpawn()
 
 	proc, err := d.spawnBridgeAgent(req)
 	if err != nil {
 		log.Printf("spawn agent %s failed: %v", req.Name, err)
 		_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
+		_ = d.store.UpdateAgentRunOutcome(sessionID, req.Name, "failed")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -175,6 +320,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			// Move the run out of "starting" so operators see the cancel, not a
 			// stuck starting row that will never transition.
 			_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
+			_ = d.store.UpdateAgentRunOutcome(sessionID, req.Name, "failed")
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon shutting down; bridge spawn cancelled"})
 			return
 		}
@@ -198,6 +344,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		case <-proc.Done():
 			// bridge exited before posting any event — report failure with stderr tail
 			_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
+			_ = d.store.UpdateAgentRunOutcome(sessionID, req.Name, "failed")
 			d.bridgeMu.Lock()
 			delete(d.bridgeProcs, bridgeKey(sessionID, req.Name))
 			d.bridgeMu.Unlock()
@@ -234,9 +381,10 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
 		Type:      "agent_spawned",
-		Data: mustJSON(map[string]string{
+		Data: mustJSON(map[string]any{
 			"agent":     req.Name,
 			"role":      req.Role,
+			"kind":      req.Kind,
 			"profile":   req.Profile,
 			"transport": "bridge",
 		}),
@@ -255,7 +403,45 @@ func (d *Daemon) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, runs)
+	states := d.agentSurfaceStates(sessionID)
+	resp := make([]agentRunResponse, 0, len(runs))
+	for _, run := range runs {
+		state := states[run.Name]
+		pendingCount := 0
+		if agentRunIsMain(run) {
+			if pending, err := d.store.PendingMessages(sessionID, run.Name, ""); err == nil {
+				pendingCount = len(pending)
+			}
+		}
+		unackedCount := 0
+		if agentRunIsMain(run) {
+			if unacked, err := d.store.UnackedMessages(sessionID, run.Name, ""); err == nil {
+				unackedCount = len(unacked)
+			}
+		}
+		resp = append(resp, agentRunResponse{
+			ID:                 run.ID,
+			SessionID:          run.SessionID,
+			Name:               run.Name,
+			Role:               run.Role,
+			Kind:               run.Kind,
+			Profile:            run.Profile,
+			RepoScope:          run.RepoScope,
+			Workdir:            run.Workdir,
+			Branch:             run.Branch,
+			WorktreePath:       run.WorktreePath,
+			Transport:          run.Transport,
+			TmuxSession:        run.TmuxSession,
+			HermesSessionID:    run.HermesSessionID,
+			Status:             state.Lifecycle,
+			Outcome:            state.Outcome,
+			DestructiveActions: run.DestructiveActions,
+			LastDestructiveCmd: run.LastDestructiveCmd,
+			PendingMailCount:   pendingCount,
+			UnackedMailCount:   unackedCount,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
@@ -288,8 +474,8 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 			}),
 		})
 		d.handleBridgeCompletionRequested(sessionID, name, map[string]any{
-			"agent":        name,
-			"summary":      req.Summary,
+			"agent":         name,
+			"summary":       req.Summary,
 			"spec_artifact": req.SpecArtifact,
 		})
 		writeJSON(w, http.StatusOK, map[string]string{
@@ -300,13 +486,16 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := "complete"
+	outcome := "succeeded"
 	if req.Blocked {
 		status = "blocked"
+		outcome = "blocked"
 	}
 	if err := d.store.UpdateAgentRunStatus(sessionID, name, status); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	_ = d.store.UpdateAgentRunOutcome(sessionID, name, outcome)
 	run, err := d.store.GetAgentRun(sessionID, name)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -323,7 +512,11 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 	})
 	if name != "supervisor" {
 		content := fmt.Sprintf("%s marked work as %s. Summary: %s", name, status, req.Summary)
-		msg := broker.Message{SessionID: sessionID, SenderID: name, RecipientID: "supervisor", Type: broker.MessageStateChange, Content: content, Timestamp: time.Now().UTC(), Urgent: req.Blocked}
+		sender := name
+		if agentRunIsSide(run) {
+			sender = "system"
+		}
+		msg := broker.Message{SessionID: sessionID, SenderID: sender, RecipientID: "supervisor", Type: broker.MessageStateChange, Content: content, Timestamp: time.Now().UTC(), Urgent: req.Blocked}
 		if req.Blocked {
 			_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 		} else {
@@ -351,6 +544,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 
 	// If a branch is specified, create (or reuse) a git worktree for isolation.
 	worktreePath := ""
+	initialMessage := req.Message
 	if req.Branch != "" {
 		wtPath, err := ensureWorktree(workdir, req.SessionID, req.Name, req.Branch)
 		if err != nil {
@@ -361,6 +555,10 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		_ = d.store.UpdateAgentRunWorktree(req.SessionID, req.Name, req.Branch, wtPath)
 		// Agent works in the worktree, not the main repo.
 		workdir = wtPath
+		// Inject workspace context so the agent knows its isolation boundary without
+		// needing it prescribed in the identity prompt. The daemon owns the path
+		// convention; the agent just reads the fact.
+		initialMessage = buildAgentInitialMessage(req.Branch, wtPath, req.Message)
 	}
 
 	runDir := filepath.Join(workdir, ".belayer", "runs", req.SessionID, req.Name)
@@ -398,6 +596,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// project-local-over-shipped resolution as the system prompt.
 	var belayerTools []string
 	agentModel := req.Model // explicit spawn request takes precedence
+	agentMaxTurns := 0
 	for _, yamlPath := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "agent.yaml") {
 		data, err := os.ReadFile(yamlPath)
 		if err != nil {
@@ -411,6 +610,14 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "model:") && agentModel == "" {
 				agentModel = strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
+				inTools = false
+				continue
+			}
+			if strings.HasPrefix(trimmed, "max_turns:") && agentMaxTurns == 0 {
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "max_turns:"))
+				if n, convErr := strconv.Atoi(raw); convErr == nil && n > 0 {
+					agentMaxTurns = n
+				}
 				inTools = false
 				continue
 			}
@@ -520,10 +727,11 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		Role:            req.Role,
 		Profile:         req.Profile,
 		Model:           agentModel,
+		MaxTurns:        agentMaxTurns,
 		APIKey:          d.config.BridgeAPIKey,
 		BaseURL:         d.config.BridgeBaseURL,
 		Provider:        d.config.BridgeProvider,
-		Message:         req.Message,
+		Message:         initialMessage,
 		SystemPrompt:    systemPrompt,
 		HermesSessionID: req.HermesSessionID,
 		Ephemeral:       ephemeral,
@@ -583,6 +791,8 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// Build command and environment using bridge pure functions.
 	argv := bridge.BuildCmd(cfg)
 	env := bridge.BuildEnv(cfg)
+	env = append(env, "BELAYER_AGENT_KIND="+req.Kind)
+	env = append(env, "BELAYER_AGENT_ARTIFACT_DIR="+filepath.ToSlash(filepath.Join(".belayer", "runs", req.SessionID, req.Name, "artifacts")))
 
 	// Use an io.Pipe for stdout so the scanner pump can tee bytes to the log
 	// writer while concurrently scanning for error markers. If we assigned
@@ -648,10 +858,10 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 					continue
 				}
 				eventData := mustJSON(map[string]string{
-					"agent":           run.Name,
-					"error":           se.Line,
-					"stdout_marker":   se.Pattern,
-					"source":          "stdout_scanner",
+					"agent":         run.Name,
+					"error":         se.Line,
+					"stdout_marker": se.Pattern,
+					"source":        "stdout_scanner",
 				})
 				_ = d.store.LogEvent(store.SessionEvent{
 					SessionID: run.SessionID,
@@ -699,6 +909,7 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 		// Bridge exited without sending bridge:finished — mark as blocked.
 		exitErr := proc.ExitErr()
 		_ = d.store.UpdateAgentRunStatus(run.SessionID, run.Name, "blocked")
+		_ = d.store.UpdateAgentRunOutcome(run.SessionID, run.Name, "failed")
 		_ = d.store.LogEvent(store.SessionEvent{
 			SessionID: run.SessionID,
 			Type:      "agent_exited_without_finish",
@@ -755,7 +966,7 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 }
 
 // interruptBridgeAgent sends an interrupt command to a bridge agent's stdin.
-func (d *Daemon) interruptBridgeAgent(sessionID, agentName, from, content string) error {
+func (d *Daemon) interruptBridgeAgent(sessionID, agentName, messageID, from, content string) error {
 	d.bridgeMu.RLock()
 	proc := d.bridgeProcs[bridgeKey(sessionID, agentName)]
 	d.bridgeMu.RUnlock()
@@ -763,7 +974,7 @@ func (d *Daemon) interruptBridgeAgent(sessionID, agentName, from, content string
 	if proc == nil {
 		return fmt.Errorf("no bridge process for %s/%s", sessionID, agentName)
 	}
-	return proc.Interrupt(from, content)
+	return proc.InterruptMessage(messageID, from, content)
 }
 
 // takeExistingBridge atomically removes and returns any bridge process
@@ -789,7 +1000,6 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	if err != nil {
 		return store.AgentRun{}, fmt.Errorf("session not found: %w", err)
 	}
-
 	// Resolve workdir from session.
 	if req.Workdir == "" && req.Repo != "" {
 		var repos map[string]string
@@ -803,25 +1013,68 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		req.Workdir = sess.WorkspaceDir
 	}
 
+	kind := ""
+	if req.Kind != "" {
+		var kindErr error
+		kind, kindErr = validateAgentKind(req.Kind)
+		if kindErr != nil {
+			return store.AgentRun{}, kindErr
+		}
+	}
+
 	// Check for prior run (resume support).
 	prior, priorErr := d.store.GetAgentRun(req.SessionID, req.Name)
+	if priorErr == nil && kind == "" {
+		kind, _ = validateAgentKind(prior.Kind)
+	}
+	if kind == "" {
+		kind = "main"
+	}
+	req.Kind = kind
 	if priorErr == nil && prior.HermesSessionID != "" && req.HermesSessionID == "" {
 		req.HermesSessionID = prior.HermesSessionID
 		log.Printf("Resuming agent %s with hermes session %s", req.Name, req.HermesSessionID)
 	}
 
 	if priorErr == nil {
+		unlockSpawn := d.lockSpawnSession(req.SessionID)
+		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir, req.Name, req.Kind); err != nil {
+			unlockSpawn()
+			return store.AgentRun{}, err
+		}
 		if req.Branch == "" && prior.Branch != "" {
 			req.Branch = prior.Branch
 		}
+		if prior.Kind != "" && req.Kind != prior.Kind {
+			unlockSpawn()
+			return store.AgentRun{}, fmt.Errorf("kind cannot change for an existing agent run")
+		}
 		if err := d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "starting"); err != nil {
+			unlockSpawn()
 			return store.AgentRun{}, fmt.Errorf("update agent status: %w", err)
 		}
+		if err := d.store.UpdateAgentRunOutcome(req.SessionID, req.Name, "active"); err != nil {
+			unlockSpawn()
+			return store.AgentRun{}, fmt.Errorf("update agent outcome: %w", err)
+		}
+		if prior.Kind != req.Kind {
+			if err := d.store.UpdateAgentRunKind(req.SessionID, req.Name, req.Kind); err != nil {
+				unlockSpawn()
+				return store.AgentRun{}, err
+			}
+		}
+		unlockSpawn()
 	} else {
+		unlockSpawn := d.lockSpawnSession(req.SessionID)
+		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir, "", req.Kind); err != nil {
+			unlockSpawn()
+			return store.AgentRun{}, err
+		}
 		run := store.AgentRun{
 			SessionID:       req.SessionID,
 			Name:            req.Name,
 			Role:            req.Role,
+			Kind:            req.Kind,
 			Profile:         req.Profile,
 			RepoScope:       req.Repo,
 			Workdir:         req.Workdir,
@@ -831,13 +1084,16 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			Status:          "starting",
 		}
 		if _, err := d.store.CreateAgentRun(run); err != nil {
+			unlockSpawn()
 			return store.AgentRun{}, fmt.Errorf("create agent run: %w", err)
 		}
+		unlockSpawn()
 	}
 
 	proc, err := d.spawnBridgeAgent(req)
 	if err != nil {
 		_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
+		_ = d.store.UpdateAgentRunOutcome(req.SessionID, req.Name, "failed")
 		return store.AgentRun{}, fmt.Errorf("spawn bridge: %w", err)
 	}
 
@@ -848,6 +1104,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			_ = proc.Stop(2 * time.Second)
 			// Same reason as the HTTP cancellation path above.
 			_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
+			_ = d.store.UpdateAgentRunOutcome(req.SessionID, req.Name, "failed")
 			return store.AgentRun{}, fmt.Errorf("daemon shutting down; bridge spawn cancelled")
 		}
 		d.bridgeProcs[bridgeKey(req.SessionID, req.Name)] = proc
@@ -864,6 +1121,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		case <-proc.Done():
 			// bridge exited before posting any event — report failure with stderr tail
 			_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
+			_ = d.store.UpdateAgentRunOutcome(req.SessionID, req.Name, "failed")
 			d.bridgeMu.Lock()
 			delete(d.bridgeProcs, bridgeKey(req.SessionID, req.Name))
 			d.bridgeMu.Unlock()
@@ -892,15 +1150,164 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: req.SessionID,
 		Type:      "agent_spawned",
-		Data: mustJSON(map[string]string{
+		Data: mustJSON(map[string]any{
 			"agent":     req.Name,
 			"role":      req.Role,
+			"kind":      req.Kind,
 			"profile":   req.Profile,
 			"transport": "bridge",
 		}),
 	})
 
 	return stored, nil
+}
+
+func (d *Daemon) enforceSpawnCapacity(sessionID, workdir, excludeName, kind string) error {
+	caps, splitMode, err := d.spawnCapsForWorkdir(workdir)
+	if err != nil {
+		return err
+	}
+	runs, err := d.store.ListAgentRuns(sessionID)
+	if err != nil {
+		return err
+	}
+	liveMain := 0
+	liveSide := 0
+	for _, run := range runs {
+		if excludeName != "" && run.Name == excludeName {
+			continue
+		}
+		lifecycle := lifecycleFromRunStatus(run.Status, d.isBridgeLive(sessionID, run.Name))
+		switch lifecycle {
+		case "starting", "running", "idle":
+			if agentRunIsSide(run) {
+				liveSide++
+			} else {
+				liveMain++
+			}
+		}
+	}
+
+	if !splitMode {
+		liveAgents := liveMain + liveSide
+		if liveAgents >= caps.legacy {
+			return &spawnLimitError{Cap: caps.legacy, LiveAgents: liveAgents, Code: "max_concurrent_agents"}
+		}
+		return nil
+	}
+
+	if liveSide >= caps.sides {
+		if normalizeAgentKind(kind) == "side" {
+			return &spawnLimitError{
+				Cap:        caps.sides,
+				LiveAgents: liveSide,
+				Code:       "max_concurrent_sides",
+				Message:    fmt.Sprintf("side summon cap reached (%d live sides); retire one before summoning", caps.sides),
+			}
+		}
+	}
+	if liveMain >= caps.mains {
+		if normalizeAgentKind(kind) != "side" {
+			return &spawnLimitError{
+				Cap:        caps.mains,
+				LiveAgents: liveMain,
+				Code:       "max_concurrent_mains",
+				Message:    fmt.Sprintf("main agent cap reached (%d live mains); retire one before spawning", caps.mains),
+			}
+		}
+	}
+	if normalizeAgentKind(kind) == "side" {
+		sideSummons, err := d.countSideSummons(sessionID)
+		if err != nil {
+			return err
+		}
+		if sideSummons >= caps.sideSummons {
+			return &spawnLimitError{
+				Cap:        caps.sideSummons,
+				LiveAgents: sideSummons,
+				Code:       "max_side_summons_per_session",
+				Message:    fmt.Sprintf("side summon budget reached (%d summons this session); do not summon more sides", caps.sideSummons),
+			}
+		}
+	}
+	return nil
+}
+
+func (d *Daemon) countSideSummons(sessionID string) (int, error) {
+	events, err := d.store.QueryEvents(sessionID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, evt := range events {
+		if evt.Type != "agent_spawned" {
+			continue
+		}
+		var payload struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal([]byte(evt.Data), &payload); err != nil {
+			continue
+		}
+		if normalizeAgentKind(payload.Kind) == "side" {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (d *Daemon) spawnCapsForWorkdir(workdir string) (spawnCapsConfig, bool, error) {
+	caps := spawnCapsConfig{
+		legacy:      d.config.MaxConcurrentAgents,
+		mains:       d.config.MaxConcurrentMains,
+		sides:       d.config.MaxConcurrentSides,
+		sideSummons: d.config.MaxSideSummonsPerSession,
+	}
+	loaded, err := LoadRuntimeCaps(workdir)
+	if err != nil {
+		return caps, false, err
+	}
+	if loaded.MaxConcurrentAgents > 0 {
+		caps.legacy = loaded.MaxConcurrentAgents
+	}
+	if loaded.MaxConcurrentMains > 0 {
+		caps.mains = loaded.MaxConcurrentMains
+	}
+	if loaded.MaxConcurrentSides > 0 {
+		caps.sides = loaded.MaxConcurrentSides
+	}
+	if loaded.MaxSideSummonsPerSession > 0 {
+		caps.sideSummons = loaded.MaxSideSummonsPerSession
+	}
+	if caps.mains == 0 && caps.sides == 0 && caps.sideSummons == 0 {
+		if caps.legacy <= 0 {
+			caps.legacy = 15
+		}
+		return caps, false, nil
+	}
+	if caps.mains <= 0 {
+		caps.mains = caps.legacy
+		if caps.mains <= 0 {
+			caps.mains = 15
+		}
+	}
+	if caps.sides <= 0 {
+		caps.sides = caps.legacy
+		if caps.sides <= 0 {
+			caps.sides = 15
+		}
+	}
+	if caps.sideSummons <= 0 {
+		caps.sideSummons = 30
+	}
+	return caps, true, nil
+}
+
+type spawnCapsConfig struct {
+	legacy      int
+	mains       int
+	sides       int
+	sideSummons int
 }
 
 func repoNames(repos map[string]string) []string {
@@ -1079,6 +1486,21 @@ func translateHostPathToContainer(hostPath, hostWorkspace string) string {
 	return "/workspace/" + filepath.ToSlash(rel)
 }
 
+// buildAgentInitialMessage prepends a workspace context header to the agent's
+// initial message when the agent is isolated to a git worktree on a specific
+// branch. When branch is empty the message is returned unchanged.
+//
+// The header tells the agent exactly where its working tree lives so it does
+// not need to rely on identity-prompt conventions (which may contradict the
+// real cwd injected by the daemon).
+func buildAgentInitialMessage(branch, worktreePath, message string) string {
+	if branch == "" {
+		return message
+	}
+	prefix := fmt.Sprintf("[workspace: %s (git worktree on branch %s)]\n\n", worktreePath, branch)
+	return prefix + message
+}
+
 // validateAgentName rejects names that could escape a filesystem path.
 // Agent names are used as directory segments under .belayer/runs/<session>/
 // and as filenames for per-agent transcripts, so they must not contain path
@@ -1104,4 +1526,3 @@ func validateAgentName(name string) error {
 	}
 	return nil
 }
-

@@ -47,21 +47,23 @@ type SessionEvent struct {
 
 // AgentRun represents a launched agent/harness instance within a session.
 type AgentRun struct {
-	ID              string
-	SessionID       string
-	Name            string
-	Role            string
-	Profile         string
-	RepoScope       string
-	Workdir         string
-	Branch          string // git branch the agent works on (empty = no worktree)
-	WorktreePath    string // filesystem path of the git worktree (empty = shared workdir)
-	Transport       string
-	TmuxSession     string
-	HermesSessionID string
-	Status          string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID              string    `json:"id"`
+	SessionID       string    `json:"session_id"`
+	Name            string    `json:"name"`
+	Role            string    `json:"role"`
+	Kind            string    `json:"kind"`
+	Profile         string    `json:"profile"`
+	RepoScope       string    `json:"repo_scope"`
+	Workdir         string    `json:"workdir"`
+	Branch          string    `json:"branch"`        // git branch the agent works on (empty = no worktree)
+	WorktreePath    string    `json:"worktree_path"` // filesystem path of the git worktree (empty = shared workdir)
+	Transport       string    `json:"transport"`
+	TmuxSession     string    `json:"tmux_session"`
+	HermesSessionID string    `json:"hermes_session_id"`
+	Status          string    `json:"status"`
+	Outcome         string    `json:"outcome"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 
 	// DestructiveActions is the count of destructive shell commands observed
 	// for this agent run (e.g. rm -rf, git reset --hard). Non-zero means the
@@ -75,15 +77,17 @@ type AgentRun struct {
 
 // Message represents a persistent message stored for pull-based delivery.
 type Message struct {
-	ID          string
-	SessionID   string
-	SenderID    string
-	RecipientID string
-	Type        string
-	Content     string
-	Urgent      bool
-	Delivered   bool
-	CreatedAt   time.Time
+	ID             string     `json:"id"`
+	SessionID      string     `json:"session_id"`
+	SenderID       string     `json:"sender_id"`
+	RecipientID    string     `json:"recipient_id"`
+	Type           string     `json:"type"`
+	Content        string     `json:"content"`
+	Urgent         bool       `json:"urgent"`
+	Delivered      bool       `json:"delivered"`
+	DeliveredAt    *time.Time `json:"delivered_at,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // Artifact represents a durable output produced by an agent during a run.
@@ -268,14 +272,20 @@ func (s *Store) CreateAgentRun(run AgentRun) (string, error) {
 	if run.Status == "" {
 		run.Status = "starting"
 	}
+	if run.Outcome == "" {
+		run.Outcome = "active"
+	}
+	if run.Kind == "" {
+		run.Kind = "main"
+	}
 	if run.Transport == "" {
 		run.Transport = "bridge"
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO agent_runs (id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.SessionID, run.Name, run.Role, run.Profile, run.RepoScope, run.Workdir, run.Branch, run.WorktreePath, run.Transport, run.TmuxSession, run.HermesSessionID, run.Status, run.CreatedAt, run.UpdatedAt,
+		`INSERT INTO agent_runs (id, session_id, name, role, kind, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.SessionID, run.Name, run.Role, run.Kind, run.Profile, run.RepoScope, run.Workdir, run.Branch, run.WorktreePath, run.Transport, run.TmuxSession, run.HermesSessionID, run.Status, run.Outcome, run.CreatedAt, run.UpdatedAt,
 	)
 	if err != nil {
 		return "", fmt.Errorf("store: create agent run: %w", err)
@@ -286,12 +296,12 @@ func (s *Store) CreateAgentRun(run AgentRun) (string, error) {
 // GetAgentRun retrieves a single agent run by session + name.
 func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
 	row := s.db.QueryRow(
-		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
+		`SELECT id, session_id, name, role, COALESCE(kind,'main'), profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
 		 FROM agent_runs WHERE session_id = ? AND name = ?`, sessionID, name,
 	)
 	var run AgentRun
 	var createdAt, updatedAt string
-	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd)
+	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Kind, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &run.Outcome, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd)
 	if err != nil {
 		return AgentRun{}, fmt.Errorf("store: get agent run: %w", err)
 	}
@@ -303,7 +313,7 @@ func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
 // ListAgentRuns returns all agent runs for a session ordered by created_at.
 func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
+		`SELECT id, session_id, name, role, COALESCE(kind,'main'), profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
 		 FROM agent_runs WHERE session_id = ? ORDER BY created_at ASC`, sessionID,
 	)
 	if err != nil {
@@ -315,7 +325,7 @@ func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
 	for rows.Next() {
 		var run AgentRun
 		var createdAt, updatedAt string
-		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd); err != nil {
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Kind, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &run.Outcome, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd); err != nil {
 			return nil, fmt.Errorf("store: list agent runs scan: %w", err)
 		}
 		run.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
@@ -333,6 +343,18 @@ func (s *Store) UpdateAgentRunStatus(sessionID, name, status string) error {
 	)
 	if err != nil {
 		return fmt.Errorf("store: update agent run status: %w", err)
+	}
+	return nil
+}
+
+// UpdateAgentRunOutcome updates the outcome and updated_at of an agent run.
+func (s *Store) UpdateAgentRunOutcome(sessionID, name, outcome string) error {
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET outcome = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		outcome, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run outcome: %w", err)
 	}
 	return nil
 }
@@ -385,6 +407,21 @@ func (s *Store) UpdateAgentRunHermesSessionID(sessionID, name, hermesSessionID s
 	return nil
 }
 
+// UpdateAgentRunKind updates the kind for an agent run.
+func (s *Store) UpdateAgentRunKind(sessionID, name, kind string) error {
+	if kind == "" {
+		kind = "main"
+	}
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET kind = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		kind, time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run kind: %w", err)
+	}
+	return nil
+}
+
 // UpdateAgentRunDestructive atomically increments destructive_actions and
 // records the most recent destructive command (truncated to 200 chars).
 // kind is the pattern kind (e.g. "rm-rf"); cmd is the raw command string.
@@ -418,14 +455,31 @@ func (s *Store) CreateMessage(msg Message) (string, error) {
 	if msg.Type == "" {
 		msg.Type = "instruction"
 	}
+	if msg.AcknowledgedAt != nil && msg.DeliveredAt == nil {
+		msg.DeliveredAt = msg.AcknowledgedAt
+	}
+	if msg.DeliveredAt == nil && (msg.Delivered || msg.AcknowledgedAt != nil) {
+		now := time.Now().UTC()
+		msg.DeliveredAt = &now
+	}
+	if msg.DeliveredAt != nil {
+		msg.Delivered = true
+	}
+	if msg.AcknowledgedAt != nil {
+		msg.Delivered = true
+	}
 	urgent := 0
 	if msg.Urgent {
 		urgent = 1
 	}
+	delivered := 0
+	if msg.Delivered {
+		delivered = 1
+	}
 	_, err := s.db.Exec(
-		`INSERT INTO messages (id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-		msg.ID, msg.SessionID, msg.SenderID, msg.RecipientID, msg.Type, msg.Content, urgent, msg.CreatedAt,
+		`INSERT INTO messages (id, session_id, sender_id, recipient_id, type, content, urgent, delivered, delivered_at, acknowledged_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		msg.ID, msg.SessionID, msg.SenderID, msg.RecipientID, msg.Type, msg.Content, urgent, delivered, timePtrOrNil(msg.DeliveredAt), timePtrOrNil(msg.AcknowledgedAt), msg.CreatedAt,
 	)
 	if err != nil {
 		return "", fmt.Errorf("store: create message: %w", err)
@@ -433,69 +487,62 @@ func (s *Store) CreateMessage(msg Message) (string, error) {
 	return msg.ID, nil
 }
 
-// PendingMessages returns undelivered messages for a specific agent in a session,
+// PendingMessages returns queued messages for a specific agent in a session,
 // ordered by created_at ASC. If afterID is non-empty, only messages created after
 // the message with that ID are returned.
 func (s *Store) PendingMessages(sessionID, recipientID string, afterID string) ([]Message, error) {
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if afterID == "" {
-		rows, err = s.db.Query(
-			`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at
-			 FROM messages
-			 WHERE session_id = ? AND recipient_id = ? AND delivered = 0
-			 ORDER BY created_at ASC`,
-			sessionID, recipientID,
-		)
-	} else {
-		rows, err = s.db.Query(
-			`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at
-			 FROM messages
-			 WHERE session_id = ? AND recipient_id = ? AND delivered = 0
-			   AND created_at > (SELECT created_at FROM messages WHERE id = ?)
-			 ORDER BY created_at ASC`,
-			sessionID, recipientID, afterID,
-		)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("store: pending messages: %w", err)
-	}
-	defer rows.Close()
-
-	var msgs []Message
-	for rows.Next() {
-		var m Message
-		var createdAt string
-		var urgent, delivered int
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.SenderID, &m.RecipientID, &m.Type, &m.Content, &urgent, &delivered, &createdAt); err != nil {
-			return nil, fmt.Errorf("store: pending messages scan: %w", err)
-		}
-		m.Urgent = urgent != 0
-		m.Delivered = delivered != 0
-		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-		msgs = append(msgs, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if msgs == nil {
-		msgs = []Message{}
-	}
-	return msgs, nil
+	return s.messagesForRecipientState(sessionID, recipientID, afterID, "delivered_at IS NULL")
 }
 
-// MarkDelivered marks a message as delivered so it is excluded from future
-// PendingMessages results.
-func (s *Store) MarkDelivered(id string) error {
-	_, err := s.db.Exec(
-		`UPDATE messages SET delivered = 1 WHERE id = ?`, id,
+// UnackedMessages returns queued + delivered-but-unacknowledged messages for a
+// specific agent in a session, ordered by created_at ASC.
+func (s *Store) UnackedMessages(sessionID, recipientID string, afterID string) ([]Message, error) {
+	return s.messagesForRecipientState(sessionID, recipientID, afterID, "acknowledged_at IS NULL")
+}
+
+// MarkDelivered marks one or more messages as delivered so they are excluded
+// from future PendingMessages results.
+func (s *Store) MarkDelivered(ids ...string) error {
+	return s.markMessagesDelivered(ids...)
+}
+
+// MarkAcknowledged marks one or more messages as acknowledged.
+func (s *Store) MarkAcknowledged(ids ...string) error {
+	return s.markMessagesAcknowledged("", "", ids...)
+}
+
+// MarkAcknowledgedForSession marks messages acknowledged only when they belong
+// to the provided session.
+func (s *Store) MarkAcknowledgedForSession(sessionID string, ids ...string) error {
+	return s.markMessagesAcknowledged(sessionID, "", ids...)
+}
+
+// MarkAcknowledgedForRecipient marks messages acknowledged only when they
+// belong to the provided session and recipient.
+func (s *Store) MarkAcknowledgedForRecipient(sessionID, recipientID string, ids ...string) error {
+	return s.markMessagesAcknowledged(sessionID, recipientID, ids...)
+}
+
+// RollbackUnacked resets delivered-but-unacknowledged messages back to queued
+// state after a restart. Returns the number of rows rolled back.
+func (s *Store) RollbackUnacked(sessionID string) (int, error) {
+	result, err := s.db.Exec(
+		`UPDATE messages
+		 SET delivered = 0,
+		     delivered_at = NULL
+		 WHERE session_id = ?
+		   AND delivered_at IS NOT NULL
+		   AND acknowledged_at IS NULL`,
+		sessionID,
 	)
 	if err != nil {
-		return fmt.Errorf("store: mark delivered: %w", err)
+		return 0, fmt.Errorf("store: rollback unacked: %w", err)
 	}
-	return nil
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("store: rollback unacked rows affected: %w", err)
+	}
+	return int(rows), nil
 }
 
 // CreateArtifact inserts a new artifact record.
@@ -835,7 +882,7 @@ WHERE 1=1`)
 
 // scanEvents reads event rows into a slice. Each row must provide 9 columns:
 // id, session_id, timestamp, type, data,
-// COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0),
+// COALESCE(trace_file,”), COALESCE(trace_offset,0), COALESCE(trace_length,0),
 // trace_file IS NOT NULL (boolean indicating whether trace columns are set).
 func scanEvents(rows *sql.Rows) ([]SessionEvent, error) {
 	var events []SessionEvent
@@ -880,7 +927,7 @@ func scanEvents(rows *sql.Rows) ([]SessionEvent, error) {
 // ListMessagesInSession returns all messages for a session ordered by created_at ASC.
 func (s *Store) ListMessagesInSession(sessionID string) ([]Message, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at
+		`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, delivered_at, acknowledged_at, created_at
 		 FROM messages
 		 WHERE session_id = ?
 		 ORDER BY created_at ASC`,
@@ -890,34 +937,14 @@ func (s *Store) ListMessagesInSession(sessionID string) ([]Message, error) {
 		return nil, fmt.Errorf("store: list messages in session: %w", err)
 	}
 	defer rows.Close()
-
-	msgs := []Message{}
-	for rows.Next() {
-		var m Message
-		var createdAt string
-		var urgent, delivered int
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.SenderID, &m.RecipientID, &m.Type, &m.Content, &urgent, &delivered, &createdAt); err != nil {
-			return nil, fmt.Errorf("store: list messages in session scan: %w", err)
-		}
-		m.Urgent = urgent != 0
-		m.Delivered = delivered != 0
-		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-		msgs = append(msgs, m)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if msgs == nil {
-		msgs = []Message{}
-	}
-	return msgs, nil
+	return scanMessageRows(rows)
 }
 
 // ListMessagesBetween returns messages where (sender_id, recipient_id) is either
 // (agentA, agentB) or (agentB, agentA), ordered by created_at ASC.
 func (s *Store) ListMessagesBetween(sessionID, agentA, agentB string) ([]Message, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, created_at
+		`SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, delivered_at, acknowledged_at, created_at
 		 FROM messages
 		 WHERE session_id = ?
 		   AND (
@@ -931,17 +958,92 @@ func (s *Store) ListMessagesBetween(sessionID, agentA, agentB string) ([]Message
 		return nil, fmt.Errorf("store: list messages between: %w", err)
 	}
 	defer rows.Close()
+	return scanMessageRows(rows)
+}
 
+func (s *Store) messagesForRecipientState(sessionID, recipientID, afterID, stateClause string) ([]Message, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	baseQuery := `SELECT id, session_id, sender_id, recipient_id, type, content, urgent, delivered, delivered_at, acknowledged_at, created_at
+		FROM messages
+		WHERE session_id = ? AND recipient_id = ? AND ` + stateClause
+	args := []any{sessionID, recipientID}
+	if afterID == "" {
+		rows, err = s.db.Query(baseQuery+`
+		ORDER BY created_at ASC`, args...)
+	} else {
+		rows, err = s.db.Query(baseQuery+`
+		  AND created_at > (SELECT created_at FROM messages WHERE id = ? AND session_id = ? AND recipient_id = ?)
+		ORDER BY created_at ASC`, append(args, afterID, sessionID, recipientID)...)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: query messages by recipient state: %w", err)
+	}
+	defer rows.Close()
+	return scanMessageRows(rows)
+}
+
+func (s *Store) markMessagesDelivered(ids ...string) error {
+	return s.updateMessagesState("", "", ids, "store: mark delivered", func(now time.Time) string {
+		return `delivered = 1, delivered_at = COALESCE(delivered_at, ?)`
+	}, false)
+}
+
+func (s *Store) markMessagesAcknowledged(sessionID, recipientID string, ids ...string) error {
+	return s.updateMessagesState(sessionID, recipientID, ids, "store: mark acknowledged", func(now time.Time) string {
+		return `delivered = 1,
+		        delivered_at = COALESCE(delivered_at, ?),
+		        acknowledged_at = COALESCE(acknowledged_at, ?)`
+	}, true)
+}
+
+func (s *Store) updateMessagesState(sessionID, recipientID string, ids []string, errPrefix string, setClause func(time.Time) string, acknowledged bool) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+2)
+	args = append(args, now)
+	if acknowledged {
+		args = append(args, now)
+	}
+	query := `UPDATE messages SET ` + setClause(now) + ` WHERE 1=1`
+	if sessionID != "" {
+		query += ` AND session_id = ?`
+		args = append(args, sessionID)
+	}
+	if recipientID != "" {
+		query += ` AND recipient_id = ?`
+		args = append(args, recipientID)
+	}
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query += ` AND id IN (` + strings.Join(placeholders, ",") + `)`
+	if _, err := s.db.Exec(query, args...); err != nil {
+		return fmt.Errorf("%s: %w", errPrefix, err)
+	}
+	return nil
+}
+
+func scanMessageRows(rows *sql.Rows) ([]Message, error) {
 	msgs := []Message{}
 	for rows.Next() {
 		var m Message
 		var createdAt string
 		var urgent, delivered int
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.SenderID, &m.RecipientID, &m.Type, &m.Content, &urgent, &delivered, &createdAt); err != nil {
-			return nil, fmt.Errorf("store: list messages between scan: %w", err)
+		var deliveredAt, acknowledgedAt sql.NullString
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.SenderID, &m.RecipientID, &m.Type, &m.Content, &urgent, &delivered, &deliveredAt, &acknowledgedAt, &createdAt); err != nil {
+			return nil, fmt.Errorf("store: scan messages: %w", err)
 		}
 		m.Urgent = urgent != 0
-		m.Delivered = delivered != 0
+		m.Delivered = delivered != 0 || deliveredAt.Valid || acknowledgedAt.Valid
+		m.DeliveredAt = parseNullableTime(deliveredAt)
+		m.AcknowledgedAt = parseNullableTime(acknowledgedAt)
 		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		msgs = append(msgs, m)
 	}
@@ -952,6 +1054,24 @@ func (s *Store) ListMessagesBetween(sessionID, agentA, agentB string) ([]Message
 		msgs = []Message{}
 	}
 	return msgs, nil
+}
+
+func parseNullableTime(v sql.NullString) *time.Time {
+	if !v.Valid || v.String == "" {
+		return nil
+	}
+	ts, err := time.Parse(time.RFC3339Nano, v.String)
+	if err != nil {
+		return nil
+	}
+	return &ts
+}
+
+func timePtrOrNil(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return *t
 }
 
 // nullableString returns nil for empty strings (stores NULL in SQLite).

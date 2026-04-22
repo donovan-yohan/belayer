@@ -21,19 +21,27 @@ import json
 import logging
 import threading
 
+from hermes_bridge.callbacks import post_event
+
 log = logging.getLogger("stdin_reader")
 
 
 class StdinReader:
-    def __init__(self, agent, interrupt_queue):
+    def __init__(self, agent, interrupt_queue, socket_path: str, session_id: str, agent_id: str):
         """
         Args:
             agent: AIAgent instance. Must have an .interrupt(message) method.
             interrupt_queue: queue.Queue where interrupt payloads are deposited
                              so the main loop can inject them as user messages.
+            socket_path: daemon event channel endpoint used for ack events.
+            session_id: session identifier for the bridge event stream.
+            agent_id: session-local agent name for the bridge event stream.
         """
         self.agent = agent
         self.interrupt_queue = interrupt_queue
+        self.socket_path = socket_path
+        self.session_id = session_id
+        self.agent_id = agent_id
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
@@ -94,6 +102,10 @@ class StdinReader:
                     self.agent.interrupt(cmd.get("content", "Interrupt requested."))
                 except Exception as exc:
                     log.warning("agent.interrupt() raised: %s", exc)
+                try:
+                    self._ack_interrupt(cmd)
+                except Exception as exc:
+                    log.warning("message_ack emission failed: %s", exc)
             else:
                 log.warning("Unknown stdin command type %r (ignored)", cmd_type)
 
@@ -104,3 +116,23 @@ class StdinReader:
         except Exception as exc:
             log.warning("agent.interrupt() raised during stop: %s", exc)
         self._stop.set()
+
+    def _ack_interrupt(self, cmd: dict) -> None:
+        """Emit a bridge:message_ack event once an interrupt has been accepted."""
+        ack_ids: list[str] = []
+        raw_ids = cmd.get("ids")
+        if isinstance(raw_ids, list):
+            ack_ids = [str(v).strip() for v in raw_ids if str(v).strip()]
+        else:
+            ack_id = str(cmd.get("id", "")).strip()
+            if ack_id:
+                ack_ids = [ack_id]
+        if not ack_ids:
+            return
+        post_event(
+            self.socket_path,
+            self.session_id,
+            self.agent_id,
+            "bridge:message_ack",
+            {"ids": ack_ids},
+        )

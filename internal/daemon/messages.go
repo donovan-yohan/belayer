@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +12,32 @@ import (
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/google/uuid"
 )
+
+func (d *Daemon) agentRunByName(sessionID, name string) (store.AgentRun, bool) {
+	run, err := d.store.GetAgentRun(sessionID, name)
+	if err != nil {
+		return store.AgentRun{}, false
+	}
+	return run, true
+}
+
+func (d *Daemon) mainAgentNames(sessionID, exclude string) ([]string, error) {
+	runs, err := d.store.ListAgentRuns(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(runs))
+	for _, run := range runs {
+		if !agentRunIsMain(run) {
+			continue
+		}
+		if exclude != "" && run.Name == exclude {
+			continue
+		}
+		names = append(names, run.Name)
+	}
+	return names, nil
+}
 
 type sendMessageRequest struct {
 	To        string `json:"to"`
@@ -43,12 +70,21 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if fromRun, ok := d.agentRunByName(id, req.From); ok && agentRunIsSide(fromRun) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "side agents have no outbox"})
+		return
+	}
+
 	// Reject messages to agents that have exited the session.
 	if target, err := d.store.GetAgentRun(id, req.To); err == nil {
-		if target.Status == "complete" || target.Status == "blocked" || target.Status == "incomplete" {
+		if target.Status == "complete" || target.Status == "blocked" || target.Status == "incomplete" || target.Status == "exited" {
 			writeJSON(w, http.StatusGone, map[string]string{
 				"error": "agent '" + req.To + "' has exited (status: " + target.Status + "). Use belayer_spawn_agent to re-spawn with conversation history.",
 			})
+			return
+		}
+		if agentRunIsSide(target) && !req.Interrupt {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sides have no inbox; use interrupt only"})
 			return
 		}
 	}
@@ -69,25 +105,35 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		Timestamp:   time.Now().UTC(),
 	}
 
-	// Persist to messages table for pull-based delivery (bridge agents poll this).
-	if _, err := d.store.CreateMessage(store.Message{
-		ID:          msgID,
-		SessionID:   id,
-		SenderID:    from,
-		RecipientID: req.To,
-		Type:        req.Type,
-		Content:     req.Content,
-		Urgent:      req.Interrupt,
-	}); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("persist message: %v", err)})
-		return
+	persistToMailbox := true
+	if target, ok := d.agentRunByName(id, req.To); ok && agentRunIsSide(target) && req.Interrupt {
+		// Side agents only have the stdin interrupt surface. Do not create a
+		// queued/unacked mailbox row that the side can never poll or ack.
+		persistToMailbox = false
+		msg.ID = ""
+	}
+
+	// Persist to messages table for pull-based delivery when the recipient has a mailbox.
+	if persistToMailbox {
+		if _, err := d.store.CreateMessage(store.Message{
+			ID:          msgID,
+			SessionID:   id,
+			SenderID:    from,
+			RecipientID: req.To,
+			Type:        req.Type,
+			Content:     req.Content,
+			Urgent:      req.Interrupt,
+		}); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("persist message: %v", err)})
+			return
+		}
 	}
 
 	if req.Interrupt {
 		// Check if target is a bridge agent; if so, write to stdin directly.
 		targetRun, runErr := d.store.GetAgentRun(id, req.To)
 		if runErr == nil && targetRun.Transport == "bridge" {
-			if bridgeErr := d.interruptBridgeAgent(id, req.To, from, req.Content); bridgeErr != nil {
+			if bridgeErr := d.interruptBridgeAgent(id, req.To, msg.ID, from, req.Content); bridgeErr != nil {
 				// Bridge proc not tracked (e.g. already exited) — fall back to broker
 				// so the message is still delivered if anything is still subscribed.
 				_ = d.broker.Interrupt(id, req.To, msg)
@@ -137,6 +183,10 @@ func (d *Daemon) handleBroadcastMessage(w http.ResponseWriter, r *http.Request) 
 	if from == "" {
 		from = "operator"
 	}
+	if fromRun, ok := d.agentRunByName(id, from); ok && agentRunIsSide(fromRun) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "side agents have no outbox"})
+		return
+	}
 	msg := broker.Message{
 		ID:        uuid.New().String(),
 		SessionID: id,
@@ -145,19 +195,39 @@ func (d *Daemon) handleBroadcastMessage(w http.ResponseWriter, r *http.Request) 
 		Content:   req.Content,
 		Timestamp: time.Now().UTC(),
 	}
-	if err := d.broker.Broadcast(id, msg); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	recipients, err := d.mainAgentNames(id, from)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	// TODO(v1): persist broadcast to messages table with one row per subscribed
-	// agent so bridge agents can pull via PendingMessages. For now, broadcasts
-	// are delivered only through the broker (push-based).
+	for _, recipient := range recipients {
+		msgID := uuid.New().String()
+		msgCopy := msg
+		msgCopy.ID = msgID
+		msgCopy.RecipientID = recipient
+		if _, err := d.store.CreateMessage(store.Message{
+			ID:          msgID,
+			SessionID:   id,
+			SenderID:    from,
+			RecipientID: recipient,
+			Type:        req.Type,
+			Content:     req.Content,
+			Urgent:      false,
+		}); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("persist broadcast message: %v", err)})
+			return
+		}
+		if err := d.broker.Send(id, recipient, msgCopy); err != nil {
+			log.Printf("WARNING: broadcast delivery to %s in session %s failed: %v", recipient, id, err)
+		}
+	}
 
 	data := mustJSON(map[string]any{
-		"from":    from,
-		"content": req.Content,
-		"type":    req.Type,
-		"sent_at": msg.Timestamp.Format(time.RFC3339Nano),
+		"from":       from,
+		"content":    req.Content,
+		"type":       req.Type,
+		"recipients": recipients,
+		"sent_at":    msg.Timestamp.Format(time.RFC3339Nano),
 	})
 	if err := d.store.LogEvent(store.SessionEvent{SessionID: id, Type: "message_broadcast", Data: data}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -170,24 +240,68 @@ func (d *Daemon) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	forAgent := r.URL.Query().Get("for")
+	state := r.URL.Query().Get("state")
 	if forAgent != "" {
 		// Pull-based delivery for bridge agents.
 		afterID := r.URL.Query().Get("after")
 		pending := r.URL.Query().Get("pending") == "true"
+		if run, ok := d.agentRunByName(id, forAgent); ok && agentRunIsSide(run) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sides have no inbox"})
+			return
+		}
 
-		messages, err := d.store.PendingMessages(id, forAgent, afterID)
+		var (
+			messages []store.Message
+			err      error
+		)
+		if state == "unacked" {
+			messages, err = d.store.UnackedMessages(id, forAgent, afterID)
+		} else {
+			messages, err = d.store.PendingMessages(id, forAgent, afterID)
+		}
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 
 		// Mark as delivered so they are not returned on the next poll.
-		if pending {
+		if pending && len(messages) > 0 {
+			ids := make([]string, 0, len(messages))
 			for _, msg := range messages {
-				_ = d.store.MarkDelivered(msg.ID)
+				ids = append(ids, msg.ID)
+			}
+			if err := d.store.MarkDelivered(ids...); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
 			}
 		}
 
+		writeJSON(w, http.StatusOK, messages)
+		return
+	}
+
+	if state == "unacked" {
+		recipients, err := d.mainAgentNames(id, "")
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		var messages []store.Message
+		seen := map[string]struct{}{}
+		for _, recipient := range recipients {
+			unacked, err := d.store.UnackedMessages(id, recipient, "")
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			for _, msg := range unacked {
+				if _, ok := seen[msg.ID]; ok {
+					continue
+				}
+				seen[msg.ID] = struct{}{}
+				messages = append(messages, msg)
+			}
+		}
 		writeJSON(w, http.StatusOK, messages)
 		return
 	}
@@ -210,4 +324,38 @@ func (d *Daemon) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, messages)
+}
+
+func (d *Daemon) handleAckMessage(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
+	messageID := strings.TrimSpace(r.PathValue("mid"))
+	if messageID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "message id is required"})
+		return
+	}
+	msgs, err := d.store.ListMessagesInSession(sessionID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	var recipient string
+	for _, msg := range msgs {
+		if msg.ID == messageID {
+			recipient = msg.RecipientID
+			break
+		}
+	}
+	if recipient == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "message not found"})
+		return
+	}
+	if run, ok := d.agentRunByName(sessionID, recipient); ok && agentRunIsSide(run) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sides have no ack state"})
+		return
+	}
+	if err := d.store.MarkAcknowledgedForRecipient(sessionID, recipient, messageID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged", "id": messageID})
 }
