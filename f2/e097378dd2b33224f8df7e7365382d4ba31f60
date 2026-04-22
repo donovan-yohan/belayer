@@ -1,0 +1,35 @@
+hermes_bridge/stdin_reader.py
+  ebd2fe56b22daf38 105-109
+internal/store/store.go
+  ebd2fe56b22daf38 959-960
+internal/daemon/agents.go
+  ebd2fe56b22daf38 177-181,943,961,1055,1066-1068
+internal/daemon/daemon.go
+  ebd2fe56b22daf38 1573,1581-1584,1586
+internal/daemon/bridge_events.go
+  ebd2fe56b22daf38 186,194-199,780
+hermes_bridge/__main__.py
+  ebd2fe56b22daf38 559-561,652-654
+internal/store/migrations.go
+  ebd2fe56b22daf38 6,169,183-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "f2e097378dd2b33224f8df7e7365382d4ba31f60",
+  "prompts": {
+    "ebd2fe56b22daf38": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db297-98ff-7363-9a48-31e6c780ce3c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 64,
+      "total_deletions": 19,
+      "accepted_lines": 1121,
+      "overriden_lines": 0
+    }
+  }
+}
