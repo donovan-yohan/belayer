@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
+const gitProbeTimeout = 2 * time.Second
+
 func (d *Daemon) WriteHandoffArtifact(sessionID string) (string, error) {
 	sess, err := d.store.GetSession(sessionID)
 	if err != nil {
@@ -23,7 +26,7 @@ func (d *Daemon) WriteHandoffArtifact(sessionID string) (string, error) {
 	}
 
 	runDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", sessionID)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return "", fmt.Errorf("mkdir handoff dir: %w", err)
 	}
 	path := filepath.Join(runDir, "handoff.md")
@@ -145,7 +148,12 @@ func (d *Daemon) WriteHandoffArtifact(sessionID string) (string, error) {
 		)
 	}
 
-	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("write handoff: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Write(b.Bytes()); err != nil {
 		return "", fmt.Errorf("write handoff: %w", err)
 	}
 	return path, nil
@@ -231,7 +239,9 @@ func inspectGitState(path string) string {
 		return "no path"
 	}
 	if _, err := os.Stat(filepath.Join(path, ".git")); err != nil {
-		cmd := exec.Command("git", "-C", path, "rev-parse", "--git-dir")
+		ctx, cancel := context.WithTimeout(context.Background(), gitProbeTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--git-dir")
 		if err := cmd.Run(); err != nil {
 			return "not a git worktree"
 		}
@@ -252,7 +262,9 @@ func inspectGitState(path string) string {
 }
 
 func gitOutput(path string, args ...string) string {
-	cmd := exec.Command("git", append([]string{"-C", path}, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", path}, args...)...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "-"

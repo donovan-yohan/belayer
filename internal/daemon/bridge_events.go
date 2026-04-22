@@ -48,7 +48,7 @@ func (d *Daemon) processBridgeEvent(sessionID, eventType, data string) {
 	case "bridge:budget_exhausted":
 		d.handleBridgeBudgetExhausted(sessionID, agentName, eventData)
 	case "bridge:message_ack":
-		d.handleBridgeMessageAck(eventData)
+		d.handleBridgeMessageAck(sessionID, agentName, eventData)
 	case "bridge:failed":
 		d.handleBridgeFailed(sessionID, agentName, eventData)
 	case "bridge:clarification_needed":
@@ -195,7 +195,7 @@ func (d *Daemon) handleBridgeBudgetExhausted(sessionID, agentName string, data m
 	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 }
 
-func (d *Daemon) handleBridgeMessageAck(data map[string]any) {
+func (d *Daemon) handleBridgeMessageAck(sessionID, agentName string, data map[string]any) {
 	rawIDs, _ := data["ids"].([]any)
 	if len(rawIDs) == 0 {
 		return
@@ -209,7 +209,7 @@ func (d *Daemon) handleBridgeMessageAck(data map[string]any) {
 	if len(ids) == 0 {
 		return
 	}
-	if err := d.store.MarkAcknowledged(ids...); err != nil {
+	if err := d.store.MarkAcknowledgedForRecipient(sessionID, agentName, ids...); err != nil {
 		log.Printf("WARNING: handleBridgeMessageAck: failed to acknowledge messages %v: %v", ids, err)
 	}
 }
@@ -716,6 +716,11 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 	if err := d.store.UpdateAgentRunStatus(sessionID, "supervisor", "running"); err != nil {
 		log.Printf("maybeRepromptForPersistence: revert supervisor status failed for session %s: %v", sessionID, err)
 		return false // can't safely continue the intercept — let escalation run
+	}
+	if err := d.store.UpdateAgentRunOutcome(sessionID, "supervisor", "active"); err != nil {
+		log.Printf("maybeRepromptForPersistence: revert supervisor outcome failed for session %s: %v", sessionID, err)
+		_ = d.store.UpdateAgentRunStatus(sessionID, "supervisor", "incomplete")
+		return false
 	}
 
 	// Render the strategy back to the supervisor as an urgent state change.

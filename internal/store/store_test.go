@@ -1030,6 +1030,55 @@ func TestMessageStateHelpers_DeliveryAckAndRollback(t *testing.T) {
 	}
 }
 
+func TestMarkAcknowledgedForSession_ScopesToSession(t *testing.T) {
+	s := openMemory(t)
+
+	sessA, err := s.CreateSession(Session{Name: "sess-a"})
+	if err != nil {
+		t.Fatalf("CreateSession A: %v", err)
+	}
+	sessB, err := s.CreateSession(Session{Name: "sess-b"})
+	if err != nil {
+		t.Fatalf("CreateSession B: %v", err)
+	}
+
+	msgID, err := s.CreateMessage(Message{
+		SessionID:   sessA,
+		SenderID:    "supervisor",
+		RecipientID: "worker",
+		Content:     "hello",
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage: %v", err)
+	}
+	if err := s.MarkDelivered(msgID); err != nil {
+		t.Fatalf("MarkDelivered: %v", err)
+	}
+
+	if err := s.MarkAcknowledgedForSession(sessB, msgID); err != nil {
+		t.Fatalf("MarkAcknowledgedForSession wrong session: %v", err)
+	}
+
+	unacked, err := s.UnackedMessages(sessA, "worker", "")
+	if err != nil {
+		t.Fatalf("UnackedMessages: %v", err)
+	}
+	if len(unacked) != 1 {
+		t.Fatalf("expected message to remain unacked for original session, got %d", len(unacked))
+	}
+
+	if err := s.MarkAcknowledgedForRecipient(sessA, "worker", msgID); err != nil {
+		t.Fatalf("MarkAcknowledgedForRecipient: %v", err)
+	}
+	unacked, err = s.UnackedMessages(sessA, "worker", "")
+	if err != nil {
+		t.Fatalf("UnackedMessages after scoped ack: %v", err)
+	}
+	if len(unacked) != 0 {
+		t.Fatalf("expected no unacked messages after scoped ack, got %d", len(unacked))
+	}
+}
+
 func TestMigrate_TraceColumnsAndReaderCursors(t *testing.T) {
 	s, err := Open(":memory:")
 	if err != nil {

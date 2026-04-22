@@ -196,7 +196,10 @@ func (d *Daemon) handleListMessages(w http.ResponseWriter, r *http.Request) {
 			for _, msg := range messages {
 				ids = append(ids, msg.ID)
 			}
-			_ = d.store.MarkDelivered(ids...)
+			if err := d.store.MarkDelivered(ids...); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
 		}
 
 		writeJSON(w, http.StatusOK, messages)
@@ -250,12 +253,13 @@ func (d *Daemon) handleListMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d *Daemon) handleAckMessage(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.PathValue("id")
 	messageID := strings.TrimSpace(r.PathValue("mid"))
 	if messageID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "message id is required"})
 		return
 	}
-	if err := d.store.MarkAcknowledged(messageID); err != nil {
+	if err := d.store.MarkAcknowledgedForSession(sessionID, messageID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

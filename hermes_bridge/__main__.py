@@ -138,15 +138,17 @@ def filter_and_format_messages(
     dropped = []
     ack_ids: list[str] = []
     for msg in messages:
+        msg_id = _msg_field(msg, "ID", "id")
         content = _msg_field(msg, "Content", "content")
         if not content.strip():
             dropped.append({
                 "sender": _msg_field(msg, "SenderID", "sender_id") or "unknown",
-                "message_id": _msg_field(msg, "ID", "id"),
+                "message_id": msg_id,
             })
+            if msg_id:
+                ack_ids.append(msg_id)
             continue
         valid.append(msg)
-        msg_id = _msg_field(msg, "ID", "id")
         if msg_id:
             ack_ids.append(msg_id)
     if dropped:

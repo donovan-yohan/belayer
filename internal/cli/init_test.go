@@ -121,7 +121,7 @@ func TestInitScaffoldsRuntimeMaxConcurrentAgents(t *testing.T) {
 	if !strings.Contains(got, "\nruntime:\n") {
 		t.Fatalf("expected runtime block in config.yaml, got:\n%s", got)
 	}
-	if !strings.Contains(got, "max_concurrent_agents: 15") {
+	if !strings.Contains(got, "\nruntime:\n  max_concurrent_agents: 15\n") {
 		t.Fatalf("expected max_concurrent_agents scaffold, got:\n%s", got)
 	}
 }

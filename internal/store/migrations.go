@@ -154,12 +154,14 @@ func Migrate(db *sql.DB) error {
 
 	if _, err := db.Exec(`UPDATE messages
 		SET delivered_at = COALESCE(delivered_at, created_at),
-		    delivered = CASE WHEN delivered_at IS NULL THEN delivered ELSE 1 END
+		    delivered = 1
 		WHERE delivered = 1 AND delivered_at IS NULL`); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`UPDATE messages
-		SET delivered = CASE WHEN delivered_at IS NULL THEN 0 ELSE 1 END`); err != nil {
+		SET delivered = CASE WHEN delivered_at IS NULL THEN 0 ELSE 1 END
+		WHERE (delivered = 1 AND delivered_at IS NULL)
+		   OR (delivered = 0 AND delivered_at IS NOT NULL)`); err != nil {
 		return err
 	}
 

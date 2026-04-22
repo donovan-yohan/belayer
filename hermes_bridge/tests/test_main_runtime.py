@@ -8,7 +8,7 @@ import types
 from unittest.mock import MagicMock
 
 
-def _load_main_module():
+def _load_main_module(monkeypatch):
     fake_run_agent = types.ModuleType("run_agent")
     fake_state = types.ModuleType("hermes_state")
 
@@ -26,9 +26,9 @@ def _load_main_module():
 
     fake_run_agent.AIAgent = _PlaceholderAIAgent
     fake_state.SessionDB = _PlaceholderSessionDB
-    sys.modules["run_agent"] = fake_run_agent
-    sys.modules["hermes_state"] = fake_state
-    sys.modules.pop("hermes_bridge.__main__", None)
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+    monkeypatch.setitem(sys.modules, "hermes_state", fake_state)
+    monkeypatch.delitem(sys.modules, "hermes_bridge.__main__", raising=False)
     return importlib.import_module("hermes_bridge.__main__")
 
 
@@ -86,7 +86,7 @@ def _set_required_env(monkeypatch, max_turns="7"):
 
 
 def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
-    module = _load_main_module()
+    module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="7")
 
     created_agents = []
@@ -120,7 +120,7 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
 
 
 def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
-    module = _load_main_module()
+    module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="9")
 
     created_agents = []

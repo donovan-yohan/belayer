@@ -43,7 +43,7 @@ func TestRosterStatusTerminalStatuses(t *testing.T) {
 	statuses := []string{"running", "complete", "blocked", "failed", "incomplete", "stalled"}
 	for _, s := range statuses {
 		t.Run(s, func(t *testing.T) {
-			run := AgentRunView{AgentRun: store.AgentRun{Status: s, DestructiveActions: 0}, Outcome: "active"}
+			run := AgentRunView{AgentRun: store.AgentRun{Status: s, Outcome: "active", DestructiveActions: 0}}
 			got := rosterStatus(run)
 			if got != s+"/active" {
 				t.Errorf("rosterStatus({Status:%q, DestructiveActions:0}) = %q, want %q", s, got, s+"/active")
@@ -59,7 +59,7 @@ func TestRosterStatusTerminalStatuses(t *testing.T) {
 // TestRosterStatusDestructiveActionsSuffix verifies that rosterStatus appends
 // the ⚠ warning suffix when an agent has recorded destructive actions.
 func TestRosterStatusDestructiveActionsSuffix(t *testing.T) {
-	run := AgentRunView{AgentRun: store.AgentRun{Status: "complete", DestructiveActions: 1}, Outcome: "active"}
+	run := AgentRunView{AgentRun: store.AgentRun{Status: "complete", Outcome: "active", DestructiveActions: 1}}
 	got := rosterStatus(run)
 	if got != "complete/active⚠" {
 		t.Errorf("rosterStatus with DestructiveActions=1 = %q, want %q", got, "complete/active⚠")
@@ -68,8 +68,7 @@ func TestRosterStatusDestructiveActionsSuffix(t *testing.T) {
 
 func TestRosterStatusLifecycleOutcome(t *testing.T) {
 	run := AgentRunView{
-		AgentRun: store.AgentRun{Status: "running", DestructiveActions: 0},
-		Outcome:  "budget_exhausted",
+		AgentRun: store.AgentRun{Status: "running", Outcome: "budget_exhausted", DestructiveActions: 0},
 	}
 	got := rosterStatus(run)
 	if got != "running/budget_exhausted" {

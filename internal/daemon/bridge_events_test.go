@@ -146,12 +146,17 @@ func TestBridgeBudgetExhaustedSetsExitedAndNotifiesSupervisor(t *testing.T) {
 	if len(decoded) != 2 {
 		t.Fatalf("expected 2 agent rows, got %d", len(decoded))
 	}
+	var sawWorker bool
 	for _, row := range decoded {
 		if row["name"] == "worker" {
+			sawWorker = true
 			if row["outcome"] != "budget_exhausted" {
 				t.Fatalf("worker outcome = %v, want budget_exhausted", row["outcome"])
 			}
 		}
+	}
+	if !sawWorker {
+		t.Fatalf("worker row missing from agents list: %#v", decoded)
 	}
 }
 

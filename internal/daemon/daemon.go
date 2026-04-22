@@ -208,6 +208,12 @@ type Daemon struct {
 	toolsMu sync.RWMutex
 	tools   map[string][]agent.ToolSpec
 
+	// spawnSessionLocks serializes capacity-check + row-preparation per session
+	// so concurrent spawns cannot both pass the live-agent cap before either
+	// writes its "starting" row.
+	spawnSessionMu    sync.Mutex
+	spawnSessionLocks map[string]*sync.Mutex
+
 	// Lifecycle / shutdown fields.
 	draining               atomic.Bool   // set at start of Shutdown; readable by /health and SSE handlers
 	archiver               *archiveManager
@@ -271,6 +277,7 @@ func New(cfg Config) (*Daemon, error) {
 		config:               cfg,
 		daemonInstanceID:     uuid.NewString(),
 		tools:                make(map[string][]agent.ToolSpec),
+		spawnSessionLocks:    make(map[string]*sync.Mutex),
 		bridgeProcs:                make(map[string]*bridge.Process),
 		bridgeShuttingDownSessions: make(map[string]bool),
 		sessionSandboxes:     make(map[string]sessionSandbox),
@@ -1657,7 +1664,7 @@ func lifecycleFromRunStatus(status string, live bool) string {
 }
 
 func chooseOutcome(run store.AgentRun, fallback string) string {
-	if run.Outcome != "" {
+	if run.Outcome != "" && run.Outcome != "active" {
 		return run.Outcome
 	}
 	if fallback != "" {

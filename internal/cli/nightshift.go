@@ -135,28 +135,13 @@ func newRosterCmd() *cobra.Command {
 // When an agent has recorded destructive actions, a warning suffix (⚠) is
 // appended so supervisors and PM agents can distinguish a clean completion
 // from one that nuked its own workspace first. See Gap 16 in VARIANCE_REPORT.md.
-func rosterStatus(run any) string {
-	var (
-		status             string
-		outcome            string
-		destructiveActions int
-	)
-	switch v := run.(type) {
-	case AgentRunView:
-		status = v.Status
-		outcome = v.Outcome
-		destructiveActions = v.DestructiveActions
-	case store.AgentRun:
-		status = v.Status
-		outcome = v.Outcome
-		destructiveActions = v.DestructiveActions
-	default:
-		return ""
-	}
+func rosterStatus(run AgentRunView) string {
+	status := run.Status
+	outcome := run.Outcome
 	if outcome != "" {
 		status += "/" + outcome
 	}
-	if destructiveActions > 0 {
+	if run.DestructiveActions > 0 {
 		return status + "⚠"
 	}
 	return status
@@ -206,7 +191,6 @@ type spawnAgentRequest struct {
 
 type AgentRunView struct {
 	store.AgentRun
-	Outcome          string `json:"outcome,omitempty"`
 	PendingMailCount int    `json:"pending_mail_count,omitempty"`
 	UnackedMailCount int    `json:"unacked_mail_count,omitempty"`
 }

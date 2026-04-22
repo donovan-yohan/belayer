@@ -47,22 +47,22 @@ type SessionEvent struct {
 
 // AgentRun represents a launched agent/harness instance within a session.
 type AgentRun struct {
-	ID              string
-	SessionID       string
-	Name            string
-	Role            string
-	Profile         string
-	RepoScope       string
-	Workdir         string
-	Branch          string // git branch the agent works on (empty = no worktree)
-	WorktreePath    string // filesystem path of the git worktree (empty = shared workdir)
-	Transport       string
-	TmuxSession     string
-	HermesSessionID string
-	Status          string
-	Outcome         string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID              string    `json:"id"`
+	SessionID       string    `json:"session_id"`
+	Name            string    `json:"name"`
+	Role            string    `json:"role"`
+	Profile         string    `json:"profile"`
+	RepoScope       string    `json:"repo_scope"`
+	Workdir         string    `json:"workdir"`
+	Branch          string    `json:"branch"` // git branch the agent works on (empty = no worktree)
+	WorktreePath    string    `json:"worktree_path"` // filesystem path of the git worktree (empty = shared workdir)
+	Transport       string    `json:"transport"`
+	TmuxSession     string    `json:"tmux_session"`
+	HermesSessionID string    `json:"hermes_session_id"`
+	Status          string    `json:"status"`
+	Outcome         string    `json:"outcome"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 
 	// DestructiveActions is the count of destructive shell commands observed
 	// for this agent run (e.g. rm -rf, git reset --hard). Non-zero means the
@@ -76,17 +76,17 @@ type AgentRun struct {
 
 // Message represents a persistent message stored for pull-based delivery.
 type Message struct {
-	ID             string
-	SessionID      string
-	SenderID       string
-	RecipientID    string
-	Type           string
-	Content        string
-	Urgent         bool
-	Delivered      bool
+	ID             string     `json:"id"`
+	SessionID      string     `json:"session_id"`
+	SenderID       string     `json:"sender_id"`
+	RecipientID    string     `json:"recipient_id"`
+	Type           string     `json:"type"`
+	Content        string     `json:"content"`
+	Urgent         bool       `json:"urgent"`
+	Delivered      bool       `json:"delivered"`
 	DeliveredAt    *time.Time `json:"delivered_at,omitempty"`
 	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
-	CreatedAt      time.Time
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // Artifact represents a durable output produced by an agent during a run.
@@ -489,7 +489,19 @@ func (s *Store) MarkDelivered(ids ...string) error {
 
 // MarkAcknowledged marks one or more messages as acknowledged.
 func (s *Store) MarkAcknowledged(ids ...string) error {
-	return s.markMessagesAcknowledged(ids...)
+	return s.markMessagesAcknowledged("", "", ids...)
+}
+
+// MarkAcknowledgedForSession marks messages acknowledged only when they belong
+// to the provided session.
+func (s *Store) MarkAcknowledgedForSession(sessionID string, ids ...string) error {
+	return s.markMessagesAcknowledged(sessionID, "", ids...)
+}
+
+// MarkAcknowledgedForRecipient marks messages acknowledged only when they
+// belong to the provided session and recipient.
+func (s *Store) MarkAcknowledgedForRecipient(sessionID, recipientID string, ids ...string) error {
+	return s.markMessagesAcknowledged(sessionID, recipientID, ids...)
 }
 
 // RollbackUnacked resets delivered-but-unacknowledged messages back to queued
@@ -851,7 +863,7 @@ WHERE 1=1`)
 
 // scanEvents reads event rows into a slice. Each row must provide 9 columns:
 // id, session_id, timestamp, type, data,
-// COALESCE(trace_file,”), COALESCE(trace_offset,0), COALESCE(trace_length,0),
+// COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0),
 // trace_file IS NOT NULL (boolean indicating whether trace columns are set).
 func scanEvents(rows *sql.Rows) ([]SessionEvent, error) {
 	var events []SessionEvent
@@ -955,20 +967,20 @@ func (s *Store) messagesForRecipientState(sessionID, recipientID, afterID, state
 }
 
 func (s *Store) markMessagesDelivered(ids ...string) error {
-	return s.updateMessagesState(ids, "store: mark delivered", func(now time.Time) string {
+	return s.updateMessagesState("", "", ids, "store: mark delivered", func(now time.Time) string {
 		return `delivered = 1, delivered_at = COALESCE(delivered_at, ?)`
 	}, false)
 }
 
-func (s *Store) markMessagesAcknowledged(ids ...string) error {
-	return s.updateMessagesState(ids, "store: mark acknowledged", func(now time.Time) string {
+func (s *Store) markMessagesAcknowledged(sessionID, recipientID string, ids ...string) error {
+	return s.updateMessagesState(sessionID, recipientID, ids, "store: mark acknowledged", func(now time.Time) string {
 		return `delivered = 1,
 		        delivered_at = COALESCE(delivered_at, ?),
 		        acknowledged_at = COALESCE(acknowledged_at, ?)`
 	}, true)
 }
 
-func (s *Store) updateMessagesState(ids []string, errPrefix string, setClause func(time.Time) string, acknowledged bool) error {
+func (s *Store) updateMessagesState(sessionID, recipientID string, ids []string, errPrefix string, setClause func(time.Time) string, acknowledged bool) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -979,12 +991,20 @@ func (s *Store) updateMessagesState(ids []string, errPrefix string, setClause fu
 	if acknowledged {
 		args = append(args, now)
 	}
+	query := `UPDATE messages SET ` + setClause(now) + ` WHERE 1=1`
+	if sessionID != "" {
+		query += ` AND session_id = ?`
+		args = append(args, sessionID)
+	}
+	if recipientID != "" {
+		query += ` AND recipient_id = ?`
+		args = append(args, recipientID)
+	}
 	for i, id := range ids {
 		placeholders[i] = "?"
 		args = append(args, id)
 	}
-	query := `UPDATE messages SET ` + setClause(now)
-	query += ` WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+	query += ` AND id IN (` + strings.Join(placeholders, ",") + `)`
 	if _, err := s.db.Exec(query, args...); err != nil {
 		return fmt.Errorf("%s: %w", errPrefix, err)
 	}

@@ -40,6 +40,7 @@ func testDaemon(t *testing.T) *Daemon {
 		config:               Config{},
 		daemonInstanceID:     "test-daemon-instance",
 		tools:                make(map[string][]agent.ToolSpec),
+		spawnSessionLocks:    make(map[string]*sync.Mutex),
 		bridgeProcs:                make(map[string]*bridge.Process),
 		bridgeShuttingDownSessions: make(map[string]bool),
 		sessionSandboxes:     make(map[string]sessionSandbox),
@@ -68,6 +69,7 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("POST /sessions/{id}/messages", d.handleSendMessage)
 	mux.HandleFunc("POST /sessions/{id}/messages/broadcast", d.handleBroadcastMessage)
 	mux.HandleFunc("GET /sessions/{id}/messages", d.handleListMessages)
+	mux.HandleFunc("POST /sessions/{id}/messages/{mid}/ack", d.handleAckMessage)
 	mux.HandleFunc("POST /sessions/{id}/agents", d.handleSpawnAgent)
 	mux.HandleFunc("GET /sessions/{id}/agents", d.handleListAgents)
 	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
@@ -1720,4 +1722,3 @@ func TestArchive_ManifestCarriesDaemonInstanceID(t *testing.T) {
 		t.Errorf("manifest daemon_instance_id = %q, want %q", gotID, testInstanceID)
 	}
 }
-

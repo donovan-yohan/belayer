@@ -382,12 +382,13 @@ func (p *Process) Interrupt(from, content string) error {
 // InterruptMessage sends an interrupt command via stdin and includes the
 // durable message ID when available so the bridge can acknowledge it.
 func (p *Process) InterruptMessage(id, from, content string) error {
+	id = strings.TrimSpace(id)
 	payload := map[string]string{
 		"type":    "interrupt",
 		"from":    from,
 		"content": content,
 	}
-	if strings.TrimSpace(id) != "" {
+	if id != "" {
 		payload["id"] = id
 	}
 	return p.WriteStdin(payload)

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/bridge"
@@ -67,6 +68,18 @@ func (e *spawnLimitError) Error() string {
 	return fmt.Sprintf("cap reached (%d live agents); retire one before spawning", e.Cap)
 }
 
+func (d *Daemon) lockSpawnSession(sessionID string) func() {
+	d.spawnSessionMu.Lock()
+	mu := d.spawnSessionLocks[sessionID]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		d.spawnSessionLocks[sessionID] = mu
+	}
+	d.spawnSessionMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
+}
+
 type agentRunResponse struct {
 	ID                 string `json:"id"`
 	SessionID          string `json:"session_id"`
@@ -119,21 +132,6 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	req.SessionID = sessionID
 
-	if err := d.enforceSpawnCapacity(sessionID, sess.WorkspaceDir); err != nil {
-		var limitErr *spawnLimitError
-		if errors.As(err, &limitErr) {
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"error":       limitErr.Error(),
-				"code":        "max_concurrent_agents",
-				"limit":       limitErr.Cap,
-				"live_agents": limitErr.LiveAgents,
-			})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
 	// Resolve workdir from session repos when repo scope is set but workdir is not.
 	if req.Workdir == "" && req.Repo != "" {
 		var repos map[string]string
@@ -175,6 +173,23 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	unlockSpawn := d.lockSpawnSession(sessionID)
+	if err := d.enforceSpawnCapacity(sessionID, sess.WorkspaceDir); err != nil {
+		unlockSpawn()
+		var limitErr *spawnLimitError
+		if errors.As(err, &limitErr) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":       limitErr.Error(),
+				"code":        "max_concurrent_agents",
+				"limit":       limitErr.Cap,
+				"live_agents": limitErr.LiveAgents,
+			})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
 	if priorErr == nil {
 		// Prior run exists — update its status back to starting.
 		// Carry over branch/worktree path from prior run if not re-specified.
@@ -182,6 +197,12 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			req.Branch = prior.Branch
 		}
 		if err := d.store.UpdateAgentRunStatus(sessionID, req.Name, "starting"); err != nil {
+			unlockSpawn()
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := d.store.UpdateAgentRunOutcome(sessionID, req.Name, "active"); err != nil {
+			unlockSpawn()
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -200,15 +221,18 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			Status:          "starting",
 		}
 		if _, err := d.store.CreateAgentRun(run); err != nil {
+			unlockSpawn()
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 	}
+	unlockSpawn()
 
 	proc, err := d.spawnBridgeAgent(req)
 	if err != nil {
 		log.Printf("spawn agent %s failed: %v", req.Name, err)
 		_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
+		_ = d.store.UpdateAgentRunOutcome(sessionID, req.Name, "failed")
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -222,6 +246,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			// Move the run out of "starting" so operators see the cancel, not a
 			// stuck starting row that will never transition.
 			_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
+			_ = d.store.UpdateAgentRunOutcome(sessionID, req.Name, "failed")
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "daemon shutting down; bridge spawn cancelled"})
 			return
 		}
@@ -245,6 +270,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		case <-proc.Done():
 			// bridge exited before posting any event — report failure with stderr tail
 			_ = d.store.UpdateAgentRunStatus(sessionID, req.Name, "failed")
+			_ = d.store.UpdateAgentRunOutcome(sessionID, req.Name, "failed")
 			d.bridgeMu.Lock()
 			delete(d.bridgeProcs, bridgeKey(sessionID, req.Name))
 			d.bridgeMu.Unlock()
@@ -888,10 +914,6 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	if err != nil {
 		return store.AgentRun{}, fmt.Errorf("session not found: %w", err)
 	}
-	if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir); err != nil {
-		return store.AgentRun{}, err
-	}
-
 	// Resolve workdir from session.
 	if req.Workdir == "" && req.Repo != "" {
 		var repos map[string]string
@@ -913,13 +935,29 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	}
 
 	if priorErr == nil {
+		unlockSpawn := d.lockSpawnSession(req.SessionID)
+		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir); err != nil {
+			unlockSpawn()
+			return store.AgentRun{}, err
+		}
 		if req.Branch == "" && prior.Branch != "" {
 			req.Branch = prior.Branch
 		}
 		if err := d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "starting"); err != nil {
+			unlockSpawn()
 			return store.AgentRun{}, fmt.Errorf("update agent status: %w", err)
 		}
+		if err := d.store.UpdateAgentRunOutcome(req.SessionID, req.Name, "active"); err != nil {
+			unlockSpawn()
+			return store.AgentRun{}, fmt.Errorf("update agent outcome: %w", err)
+		}
+		unlockSpawn()
 	} else {
+		unlockSpawn := d.lockSpawnSession(req.SessionID)
+		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir); err != nil {
+			unlockSpawn()
+			return store.AgentRun{}, err
+		}
 		run := store.AgentRun{
 			SessionID:       req.SessionID,
 			Name:            req.Name,
@@ -933,13 +971,16 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			Status:          "starting",
 		}
 		if _, err := d.store.CreateAgentRun(run); err != nil {
+			unlockSpawn()
 			return store.AgentRun{}, fmt.Errorf("create agent run: %w", err)
 		}
+		unlockSpawn()
 	}
 
 	proc, err := d.spawnBridgeAgent(req)
 	if err != nil {
 		_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
+		_ = d.store.UpdateAgentRunOutcome(req.SessionID, req.Name, "failed")
 		return store.AgentRun{}, fmt.Errorf("spawn bridge: %w", err)
 	}
 
@@ -950,6 +991,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			_ = proc.Stop(2 * time.Second)
 			// Same reason as the HTTP cancellation path above.
 			_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
+			_ = d.store.UpdateAgentRunOutcome(req.SessionID, req.Name, "failed")
 			return store.AgentRun{}, fmt.Errorf("daemon shutting down; bridge spawn cancelled")
 		}
 		d.bridgeProcs[bridgeKey(req.SessionID, req.Name)] = proc
@@ -966,6 +1008,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		case <-proc.Done():
 			// bridge exited before posting any event — report failure with stderr tail
 			_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
+			_ = d.store.UpdateAgentRunOutcome(req.SessionID, req.Name, "failed")
 			d.bridgeMu.Lock()
 			delete(d.bridgeProcs, bridgeKey(req.SessionID, req.Name))
 			d.bridgeMu.Unlock()
