@@ -2,7 +2,7 @@ schema_version: "1"
 description: "QA — validates implementation against spec via browser and CLI testing"
 vendor: codex
 model: gpt-5.4
-max_turns: 50
+max_turns: 100
 max_duration: "30m"
 ephemeral: true
 workspace: inherit
