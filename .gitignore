@@ -1,5 +1,6 @@
 # Binary
 /belayer
+/belayer-landlock-exec
 /dist/
 /belayer-linux
 /belayer-linux-amd64
