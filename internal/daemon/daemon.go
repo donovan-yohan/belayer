@@ -1570,7 +1570,7 @@ func (d *Daemon) emitSessionDigest(w http.ResponseWriter, flusher http.Flusher, 
 
 	// Convert agent map to JSON-serialisable form with RFC3339 timestamps.
 	type agentDigestEntry struct {
-		LastActivity       string `json:"last_activity"`
+		LastActivity       string `json:"last_activity,omitempty"`
 		ToolCalls          int    `json:"tool_calls"`
 		Lifecycle          string `json:"lifecycle,omitempty"`
 		Outcome            string `json:"outcome,omitempty"`
@@ -1578,8 +1578,12 @@ func (d *Daemon) emitSessionDigest(w http.ResponseWriter, flusher http.Flusher, 
 	}
 	agentDigest := map[string]agentDigestEntry{}
 	for name, info := range agentMap {
+		lastActivity := ""
+		if !info.LastActivity.IsZero() {
+			lastActivity = info.LastActivity.UTC().Format(time.RFC3339)
+		}
 		agentDigest[name] = agentDigestEntry{
-			LastActivity:       info.LastActivity.UTC().Format(time.RFC3339),
+			LastActivity:       lastActivity,
 			ToolCalls:          info.ToolCalls,
 			Lifecycle:          info.Lifecycle,
 			Outcome:            info.Outcome,

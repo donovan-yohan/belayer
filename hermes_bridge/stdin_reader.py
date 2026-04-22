@@ -97,15 +97,16 @@ class StdinReader:
                 sender = cmd.get("from", "unknown")
                 log.info("Received interrupt from %s", sender)
                 self.interrupt_queue.put(cmd)
-                try:
-                    self._ack_interrupt(cmd)
-                except Exception as exc:
-                    log.warning("message_ack emission failed: %s", exc)
                 # Interrupt the current LLM turn; main loop will inject the message.
                 try:
                     self.agent.interrupt(cmd.get("content", "Interrupt requested."))
                 except Exception as exc:
                     log.warning("agent.interrupt() raised: %s", exc)
+                    continue
+                try:
+                    self._ack_interrupt(cmd)
+                except Exception as exc:
+                    log.warning("message_ack emission failed: %s", exc)
             else:
                 log.warning("Unknown stdin command type %r (ignored)", cmd_type)
 

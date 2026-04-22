@@ -956,8 +956,8 @@ func (s *Store) messagesForRecipientState(sessionID, recipientID, afterID, state
 		ORDER BY created_at ASC`, args...)
 	} else {
 		rows, err = s.db.Query(baseQuery+`
-		  AND created_at > (SELECT created_at FROM messages WHERE id = ?)
-		ORDER BY created_at ASC`, append(args, afterID)...)
+		  AND created_at > (SELECT created_at FROM messages WHERE id = ? AND session_id = ? AND recipient_id = ?)
+		ORDER BY created_at ASC`, append(args, afterID, sessionID, recipientID)...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store: query messages by recipient state: %w", err)

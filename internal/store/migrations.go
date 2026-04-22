@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // Migrate applies the schema to db idempotently. Safe to call on every Open.
@@ -165,10 +166,7 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 
-	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_messages_pending`); err != nil {
-		return err
-	}
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_pending
+	if err := ensureIndexSQL(db, "idx_messages_pending", `CREATE INDEX idx_messages_pending
 		ON messages(session_id, recipient_id, created_at)
 		WHERE delivered_at IS NULL`); err != nil {
 		return err
@@ -180,6 +178,30 @@ func Migrate(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+func ensureIndexSQL(db *sql.DB, name, createSQL string) error {
+	var existing sql.NullString
+	err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, name).Scan(&existing)
+	if err == sql.ErrNoRows {
+		_, err = db.Exec(createSQL)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if normalizeSQL(existing.String) == normalizeSQL(createSQL) {
+		return nil
+	}
+	if _, err := db.Exec(fmt.Sprintf("DROP INDEX IF EXISTS %s", name)); err != nil {
+		return err
+	}
+	_, err = db.Exec(createSQL)
+	return err
+}
+
+func normalizeSQL(sqlText string) string {
+	return strings.ToLower(strings.Join(strings.Fields(sqlText), " "))
 }
 
 // addColumnIfNotExists adds a column to a table if it doesn't already exist.

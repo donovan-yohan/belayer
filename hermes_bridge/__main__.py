@@ -556,6 +556,9 @@ def main() -> None:
         if pending:
             formatted, pending_message_ids = filter_and_format_messages(pending, socket_path, session_id, agent_id)
             if not formatted:
+                if pending_message_ids:
+                    post_message_ack(socket_path, session_id, agent_id, pending_message_ids)
+                    pending_message_ids = []
                 # All pending messages were empty-content; do not invoke model.
                 log.info("Skipping turn: all %d pending message(s) had empty content", len(pending))
             else:
@@ -646,6 +649,9 @@ def main() -> None:
                 if pending:
                     formatted, pending_message_ids = filter_and_format_messages(pending, socket_path, session_id, agent_id)
                     if not formatted:
+                        if pending_message_ids:
+                            post_message_ack(socket_path, session_id, agent_id, pending_message_ids)
+                            pending_message_ids = []
                         log.info("Idle poll: all %d pending message(s) had empty content; continuing to wait",
                                  len(pending))
                     else:

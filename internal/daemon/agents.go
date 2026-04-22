@@ -174,7 +174,11 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	unlockSpawn := d.lockSpawnSession(sessionID)
-	if err := d.enforceSpawnCapacity(sessionID, sess.WorkspaceDir); err != nil {
+	excludeName := ""
+	if priorErr == nil {
+		excludeName = req.Name
+	}
+	if err := d.enforceSpawnCapacity(sessionID, sess.WorkspaceDir, excludeName); err != nil {
 		unlockSpawn()
 		var limitErr *spawnLimitError
 		if errors.As(err, &limitErr) {
@@ -936,7 +940,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 
 	if priorErr == nil {
 		unlockSpawn := d.lockSpawnSession(req.SessionID)
-		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir); err != nil {
+		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir, req.Name); err != nil {
 			unlockSpawn()
 			return store.AgentRun{}, err
 		}
@@ -954,7 +958,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		unlockSpawn()
 	} else {
 		unlockSpawn := d.lockSpawnSession(req.SessionID)
-		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir); err != nil {
+		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir, ""); err != nil {
 			unlockSpawn()
 			return store.AgentRun{}, err
 		}
@@ -1048,7 +1052,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	return stored, nil
 }
 
-func (d *Daemon) enforceSpawnCapacity(sessionID, workdir string) error {
+func (d *Daemon) enforceSpawnCapacity(sessionID, workdir, excludeName string) error {
 	cfg, err := bridge.LoadProjectConfig(workdir)
 	if err != nil {
 		return err
@@ -1059,6 +1063,9 @@ func (d *Daemon) enforceSpawnCapacity(sessionID, workdir string) error {
 	}
 	liveAgents := 0
 	for _, run := range runs {
+		if excludeName != "" && run.Name == excludeName {
+			continue
+		}
 		lifecycle := lifecycleFromRunStatus(run.Status, d.isBridgeLive(sessionID, run.Name))
 		switch lifecycle {
 		case "starting", "running", "idle":

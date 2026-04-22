@@ -183,7 +183,7 @@ func (d *Daemon) handleBridgeBudgetExhausted(sessionID, agentName string, data m
 		Urgent:      true,
 		Timestamp:   time.Now().UTC(),
 	}
-	_, _ = d.store.CreateMessage(store.Message{
+	if _, err := d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
 		SenderID:    "system",
@@ -191,8 +191,12 @@ func (d *Daemon) handleBridgeBudgetExhausted(sessionID, agentName string, data m
 		Type:        string(broker.MessageStateChange),
 		Content:     content,
 		Urgent:      true,
-	})
-	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
+	}); err != nil {
+		log.Printf("ERROR: handleBridgeBudgetExhausted: failed to persist supervisor notification for session %s agent %s message %s: %v", sessionID, agentName, msgID, err)
+	}
+	if err := d.broker.Interrupt(sessionID, "supervisor", msg); err != nil {
+		log.Printf("WARNING: handleBridgeBudgetExhausted: failed to interrupt supervisor for session %s agent %s message %s: %v", sessionID, agentName, msgID, err)
+	}
 }
 
 func (d *Daemon) handleBridgeMessageAck(sessionID, agentName string, data map[string]any) {
@@ -773,6 +777,7 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 		// running but has no pending instruction.
 		log.Printf("ERROR: maybeRepromptForPersistence: CreateMessage failed for session %s agent supervisor: %v; falling through to escalation", sessionID, err)
 		_ = d.store.UpdateAgentRunStatus(sessionID, "supervisor", "incomplete")
+		_ = d.store.UpdateAgentRunOutcome(sessionID, "supervisor", "incomplete")
 		return false
 	}
 	// broker.Interrupt is best-effort live push; message already durably
