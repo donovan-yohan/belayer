@@ -1,0 +1,37 @@
+docs/AGENT_ARCHITECTURE.md
+  da3fe9752c17c7c3 18-103,177-181,221,237-239,241,243-247,251,253,255,257-261,264-267,288-303,306,308-310,312,314,335-339,341,352,570
+agents/README.md
+  da3fe9752c17c7c3 3-6,8-13,15,17-23,25-28,30-35,37-168
+hermes_bridge/README.md
+  da3fe9752c17c7c3 6
+docs/DEPLOYMENT.md
+  da3fe9752c17c7c3 92-95,101-105
+hermes_bridge/__main__.py
+  da3fe9752c17c7c3 349-351
+README.md
+  da3fe9752c17c7c3 5-44,51-53,55,63-64,67,71-90,93,95-109,111,113-115,117,119-134,136-137,139-189,191-197,202,204,206,219-226
+CLAUDE.md
+  da3fe9752c17c7c3 23-31,37,54,58-62
+hermes_bridge/http_client.py
+  da3fe9752c17c7c3 8,10-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "77be4bca33c99790666e34d39e805f5e1f883792",
+  "prompts": {
+    "da3fe9752c17c7c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f407c235-5626-4a0b-8e1e-e8b832c01df3",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 588,
+      "total_deletions": 310,
+      "accepted_lines": 572,
+      "overriden_lines": 0
+    }
+  }
+}
