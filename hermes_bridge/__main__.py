@@ -324,7 +324,8 @@ def main() -> None:
     if model:
         agent_kwargs["model"] = model
     if max_turns is not None:
-        agent_kwargs["max_turns"] = max_turns
+        # Hermes constrains turn budget via max_iterations on AIAgent.
+        agent_kwargs["max_iterations"] = max_turns
     if hermes_session_id:
         agent_kwargs["session_id"] = hermes_session_id
 

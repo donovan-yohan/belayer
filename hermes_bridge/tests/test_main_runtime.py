@@ -109,7 +109,7 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
     module.main()
 
     assert created_agents, "expected AIAgent to be constructed"
-    assert created_agents[0].kwargs["max_turns"] == 7
+    assert created_agents[0].kwargs["max_iterations"] == 7
 
     ack_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:message_ack"]
     assert len(ack_calls) == 1
@@ -146,7 +146,7 @@ def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
     module.main()
 
     assert created_agents, "expected AIAgent to be constructed"
-    assert created_agents[0].kwargs["max_turns"] == 9
+    assert created_agents[0].kwargs["max_iterations"] == 9
 
     budget_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:budget_exhausted"]
     assert len(budget_calls) == 1
