@@ -1,0 +1,29 @@
+README.md
+  adb2f848976ee108 54-61,67-69
+docs/AGENT_ARCHITECTURE.md
+  adb2f848976ee108 7-17,123-131
+internal/cli/init.go
+  adb2f848976ee108 141-144
+agents/README.md
+  adb2f848976ee108 1-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "404d0a67c6fe0388d5447ce5fedfb8664e5b2064",
+  "prompts": {
+    "adb2f848976ee108": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db400-2161-7d53-88f9-3be0fdc2da4b",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 60,
+      "total_deletions": 5,
+      "accepted_lines": 60,
+      "overriden_lines": 0
+    }
+  }
+}
