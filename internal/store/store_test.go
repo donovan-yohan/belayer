@@ -636,11 +636,6 @@ func TestMigrate_AgentRunsOutcomeColumn(t *testing.T) {
 	} else if !dflt.Valid || dflt.String != "'main'" {
 		t.Fatalf("kind default = %v, want 'main'", dflt)
 	}
-	if dflt, ok := seen["game_master"]; !ok {
-		t.Fatal("agent_runs missing game_master column")
-	} else if !dflt.Valid || dflt.String != "0" {
-		t.Fatalf("game_master default = %v, want 0", dflt)
-	}
 }
 
 func TestMigrate_MessageTimestampColumnsAndIndex(t *testing.T) {
@@ -911,7 +906,7 @@ func TestCreateAgentRun_OutcomeDefaultAndUpdate(t *testing.T) {
 	}
 }
 
-func TestCreateAgentRun_PersistsKindAndGameMaster(t *testing.T) {
+func TestCreateAgentRun_PersistsKind(t *testing.T) {
 	s := openMemory(t)
 
 	sessID, err := s.CreateSession(Session{Name: "kind-test"})
@@ -920,23 +915,19 @@ func TestCreateAgentRun_PersistsKindAndGameMaster(t *testing.T) {
 	}
 	if _, err := s.CreateAgentRun(AgentRun{
 		SessionID:  sessID,
-		Name:       "game-master",
+		Name:       "supervisor",
 		Role:       "supervisor",
 		Kind:       "main",
-		GameMaster: true,
 	}); err != nil {
 		t.Fatalf("CreateAgentRun: %v", err)
 	}
 
-	run, err := s.GetAgentRun(sessID, "game-master")
+	run, err := s.GetAgentRun(sessID, "supervisor")
 	if err != nil {
 		t.Fatalf("GetAgentRun: %v", err)
 	}
 	if run.Kind != "main" {
 		t.Fatalf("Kind = %q, want main", run.Kind)
-	}
-	if !run.GameMaster {
-		t.Fatal("expected GameMaster=true")
 	}
 
 	runs, err := s.ListAgentRuns(sessID)
@@ -946,8 +937,8 @@ func TestCreateAgentRun_PersistsKindAndGameMaster(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("expected 1 run, got %d", len(runs))
 	}
-	if runs[0].Kind != "main" || !runs[0].GameMaster {
-		t.Fatalf("ListAgentRuns returned kind=%q game_master=%v", runs[0].Kind, runs[0].GameMaster)
+	if runs[0].Kind != "main" {
+		t.Fatalf("ListAgentRuns returned kind=%q", runs[0].Kind)
 	}
 }
 

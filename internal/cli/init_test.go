@@ -29,7 +29,7 @@ func TestInitFirstRunScaffoldsDefaults(t *testing.T) {
 		}
 	}
 
-	wantAgents := []string{"backend-dev", "game-master", "pm", "qa", "reviewer", "supervisor", "web-dev"}
+	wantAgents := []string{"backend-dev", "pm", "qa", "reviewer", "supervisor", "web-dev"}
 	got, err := os.ReadDir(filepath.Join(belayerDir, "agents"))
 	if err != nil {
 		t.Fatalf("read agents dir: %v", err)
@@ -55,7 +55,6 @@ func TestInitFirstRunScaffoldsDefaults(t *testing.T) {
 
 	kinds := map[string]string{
 		"backend-dev": "main",
-		"game-master": "main",
 		"pm":          "side",
 		"qa":          "side",
 		"reviewer":    "side",
@@ -341,8 +340,8 @@ func TestAutoInitIfMissingScaffoldsAndAnnounces(t *testing.T) {
 	if !strings.Contains(out.String(), "Auto-initialized") {
 		t.Fatalf("expected auto-init notice, got: %s", out.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".belayer", "agents", "game-master", "system-prompt.md")); err != nil {
-		t.Fatalf("expected scaffolded game-master prompt: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, ".belayer", "agents", "supervisor", "system-prompt.md")); err != nil {
+		t.Fatalf("expected scaffolded supervisor prompt: %v", err)
 	}
 
 	// Second call must be silent.

@@ -35,7 +35,6 @@ func Migrate(db *sql.DB) error {
 			name           TEXT NOT NULL,
 			role           TEXT NOT NULL DEFAULT '',
 			kind           TEXT NOT NULL DEFAULT 'main',
-			game_master    INTEGER NOT NULL DEFAULT 0,
 			profile        TEXT NOT NULL DEFAULT '',
 			repo_scope     TEXT NOT NULL DEFAULT '',
 			workdir        TEXT NOT NULL DEFAULT '',
@@ -125,9 +124,6 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfNotExists(db, "agent_runs", "kind", "TEXT NOT NULL DEFAULT 'main'"); err != nil {
-		return err
-	}
-	if err := addColumnIfNotExists(db, "agent_runs", "game_master", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	if err := addColumnIfNotExists(db, "agent_runs", "branch", "TEXT NOT NULL DEFAULT ''"); err != nil {

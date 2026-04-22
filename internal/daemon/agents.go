@@ -34,7 +34,6 @@ type agentSpawnRequest struct {
 	Identity        string `json:"identity,omitempty"`
 	Role            string `json:"role"`
 	Kind            string `json:"kind,omitempty"`
-	GameMaster      *bool  `json:"game_master,omitempty"`
 	Profile         string `json:"profile"` // Hermes runtime profile (BELAYER_PROFILE / HERMES_HOME), independent of identity
 	Model           string `json:"model,omitempty"`
 	Message         string `json:"message,omitempty"`
@@ -97,37 +96,12 @@ func validateAgentKind(kind string) (string, error) {
 	}
 }
 
-func resolveAgentGameMaster(req agentSpawnRequest, kind string) (bool, error) {
-	if kind == "side" {
-		if req.GameMaster != nil && *req.GameMaster {
-			return false, fmt.Errorf("kind=side cannot be game_master")
-		}
-		return false, nil
-	}
-	if req.GameMaster != nil {
-		return *req.GameMaster, nil
-	}
-	switch strings.ToLower(strings.TrimSpace(req.Name)) {
-	case "supervisor", "game-master":
-		return true, nil
-	}
-	switch strings.ToLower(strings.TrimSpace(req.Role)) {
-	case "supervisor", "game-master":
-		return true, nil
-	}
-	return false, nil
-}
-
 func agentRunIsSide(run store.AgentRun) bool {
 	return normalizeAgentKind(run.Kind) == "side"
 }
 
 func agentRunIsMain(run store.AgentRun) bool {
 	return !agentRunIsSide(run)
-}
-
-func agentRunIsGameMaster(run store.AgentRun) bool {
-	return run.GameMaster || strings.EqualFold(run.Name, "supervisor") || strings.EqualFold(run.Name, "game-master") || strings.EqualFold(run.Role, "supervisor") || strings.EqualFold(run.Role, "game-master")
 }
 
 func (d *Daemon) lockSpawnSession(sessionID string) func() {
@@ -148,7 +122,6 @@ type agentRunResponse struct {
 	Name               string `json:"name"`
 	Role               string `json:"role"`
 	Kind               string `json:"kind"`
-	GameMaster         bool   `json:"game_master"`
 	Profile            string `json:"profile"`
 	RepoScope          string `json:"repo_scope"`
 	Workdir            string `json:"workdir"`
@@ -232,19 +205,10 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	if priorErr == nil && kind == "" {
 		kind, _ = validateAgentKind(prior.Kind)
 	}
-	if priorErr == nil && req.GameMaster == nil {
-		req.GameMaster = &prior.GameMaster
-	}
 	if kind == "" {
 		kind = "main"
 	}
-	gm, gmErr := resolveAgentGameMaster(req, kind)
-	if gmErr != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": gmErr.Error()})
-		return
-	}
 	req.Kind = kind
-	req.GameMaster = &gm
 
 	resuming := priorErr == nil && prior.HermesSessionID != ""
 
@@ -308,8 +272,8 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		if prior.Kind != req.Kind || prior.GameMaster != gm {
-			if err := d.store.UpdateAgentRunDisposition(sessionID, req.Name, req.Kind, gm); err != nil {
+		if prior.Kind != req.Kind {
+			if err := d.store.UpdateAgentRunKind(sessionID, req.Name, req.Kind); err != nil {
 				unlockSpawn()
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
@@ -322,7 +286,6 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			Name:            req.Name,
 			Role:            req.Role,
 			Kind:            req.Kind,
-			GameMaster:      gm,
 			Profile:         req.Profile,
 			RepoScope:       req.Repo,
 			Workdir:         req.Workdir,
@@ -419,12 +382,11 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		SessionID: sessionID,
 		Type:      "agent_spawned",
 		Data: mustJSON(map[string]any{
-			"agent":       req.Name,
-			"role":        req.Role,
-			"kind":        req.Kind,
-			"game_master": req.GameMaster != nil && *req.GameMaster,
-			"profile":     req.Profile,
-			"transport":   "bridge",
+			"agent":     req.Name,
+			"role":      req.Role,
+			"kind":      req.Kind,
+			"profile":   req.Profile,
+			"transport": "bridge",
 		}),
 	})
 	writeJSON(w, http.StatusCreated, stored)
@@ -463,7 +425,6 @@ func (d *Daemon) handleListAgents(w http.ResponseWriter, r *http.Request) {
 			Name:               run.Name,
 			Role:               run.Role,
 			Kind:               run.Kind,
-			GameMaster:         run.GameMaster,
 			Profile:            run.Profile,
 			RepoScope:          run.RepoScope,
 			Workdir:            run.Workdir,
@@ -832,11 +793,6 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	env := bridge.BuildEnv(cfg)
 	env = append(env, "BELAYER_AGENT_KIND="+req.Kind)
 	env = append(env, "BELAYER_AGENT_ARTIFACT_DIR="+filepath.ToSlash(filepath.Join(".belayer", "runs", req.SessionID, req.Name, "artifacts")))
-	if req.GameMaster != nil && *req.GameMaster {
-		env = append(env, "BELAYER_GAME_MASTER=1")
-	} else {
-		env = append(env, "BELAYER_GAME_MASTER=0")
-	}
 
 	// Use an io.Pipe for stdout so the scanner pump can tee bytes to the log
 	// writer while concurrently scanning for error markers. If we assigned
@@ -1071,18 +1027,10 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	if priorErr == nil && kind == "" {
 		kind, _ = validateAgentKind(prior.Kind)
 	}
-	if priorErr == nil && req.GameMaster == nil {
-		req.GameMaster = &prior.GameMaster
-	}
 	if kind == "" {
 		kind = "main"
 	}
-	gm, gmErr := resolveAgentGameMaster(req, kind)
-	if gmErr != nil {
-		return store.AgentRun{}, gmErr
-	}
 	req.Kind = kind
-	req.GameMaster = &gm
 	if priorErr == nil && prior.HermesSessionID != "" && req.HermesSessionID == "" {
 		req.HermesSessionID = prior.HermesSessionID
 		log.Printf("Resuming agent %s with hermes session %s", req.Name, req.HermesSessionID)
@@ -1109,8 +1057,8 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			unlockSpawn()
 			return store.AgentRun{}, fmt.Errorf("update agent outcome: %w", err)
 		}
-		if prior.Kind != req.Kind || prior.GameMaster != gm {
-			if err := d.store.UpdateAgentRunDisposition(req.SessionID, req.Name, req.Kind, gm); err != nil {
+		if prior.Kind != req.Kind {
+			if err := d.store.UpdateAgentRunKind(req.SessionID, req.Name, req.Kind); err != nil {
 				unlockSpawn()
 				return store.AgentRun{}, err
 			}
@@ -1127,7 +1075,6 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			Name:            req.Name,
 			Role:            req.Role,
 			Kind:            req.Kind,
-			GameMaster:      gm,
 			Profile:         req.Profile,
 			RepoScope:       req.Repo,
 			Workdir:         req.Workdir,
@@ -1204,12 +1151,11 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		SessionID: req.SessionID,
 		Type:      "agent_spawned",
 		Data: mustJSON(map[string]any{
-			"agent":       req.Name,
-			"role":        req.Role,
-			"kind":        req.Kind,
-			"game_master": req.GameMaster != nil && *req.GameMaster,
-			"profile":     req.Profile,
-			"transport":   "bridge",
+			"agent":     req.Name,
+			"role":      req.Role,
+			"kind":      req.Kind,
+			"profile":   req.Profile,
+			"transport": "bridge",
 		}),
 	})
 

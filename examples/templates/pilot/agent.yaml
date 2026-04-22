@@ -1,5 +1,5 @@
 schema_version: "1"
-description: "Pilot — main party lead / game-master alias across repos"
+description: "Pilot — main party lead across repos"
 kind: main
 vendor: claude
 model: opus

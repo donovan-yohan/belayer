@@ -137,8 +137,7 @@ func newRunStartCmd() *cobra.Command {
 			if _, err := c.UpdateSession(sess.ID, "running"); err != nil {
 				return fmt.Errorf("mark session running: %w", err)
 			}
-			gameMaster := true
-			if _, err := c.SpawnAgent(sess.ID, spawnAgentRequest{Name: "supervisor", Role: "supervisor", Profile: supervisorProfile, Workdir: supervisorWorkdir, GameMaster: &gameMaster}); err != nil {
+			if _, err := c.SpawnAgent(sess.ID, spawnAgentRequest{Name: "supervisor", Role: "supervisor", Profile: supervisorProfile, Workdir: supervisorWorkdir}); err != nil {
 				return fmt.Errorf("spawn supervisor: %w", err)
 			}
 			if _, err := c.SendMessage(sess.ID, "supervisor", task, "instruction", true); err != nil {

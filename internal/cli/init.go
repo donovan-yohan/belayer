@@ -137,8 +137,8 @@ func newInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Scaffold .belayer/ in the current project",
 		Long: `Create .belayer/{config.yaml,policies/,agents/} in the target directory
-and copy the shipped default agents (game-master, supervisor, pm, web-dev,
-backend-dev, qa, reviewer) into .belayer/agents/.
+and copy the shipped default agents (supervisor, pm, web-dev, backend-dev, qa,
+reviewer) into .belayer/agents/.
 
 Idempotent: re-running prints a notice and exits 0 without overwriting. Use
 --force to refresh .belayer/agents/ from the shipped defaults (useful when

@@ -1,17 +1,9 @@
 """Belayer coordination tools for Hermes agents.
 
-Canonical bridge tools are kind-aware:
-  - main peers: belayer_send, belayer_broadcast, belayer_check_mail
-  - game-master main: belayer_spawn_main, belayer_summon_side, belayer_finish
-  - all agents: belayer_report_status, belayer_register_artifact
-
-Deprecated aliases stay available on compatible kinds:
-  - belayer_send_message -> belayer_send
-  - belayer_create_artifact -> belayer_register_artifact
-  - belayer_spawn_agent -> belayer_summon_side
-
-Legacy completion-gate tools remain available to game-master mains for
-compatibility with older prompts and daemon flows.
+Registered tools are kind-aware, but the names are belayer-native:
+  - mains: belayer_send_message, belayer_broadcast, belayer_check_mail
+  - all agents: belayer_report_status, belayer_create_artifact
+  - role-specific tools come from the daemon-provided BELAYER_TOOLS allowlist
 
 Tool schemas follow the OpenAI function-calling format used by Hermes.
 Handlers receive kwargs matching schema property names (Hermes calling convention).
@@ -26,35 +18,6 @@ log = logging.getLogger("tools")
 
 KIND_MAIN = "main"
 KIND_SIDE = "side"
-
-MAIN_CANONICAL_TOOLS = {
-    "belayer_send",
-    "belayer_broadcast",
-    "belayer_check_mail",
-    "belayer_register_artifact",
-}
-
-GM_CANONICAL_TOOLS = MAIN_CANONICAL_TOOLS | {
-    "belayer_spawn_main",
-    "belayer_summon_side",
-    "belayer_finish",
-}
-
-LEGACY_SHARED_COMPAT_TOOLS = {
-    "belayer_send_message",
-    "belayer_create_artifact",
-}
-
-LEGACY_GM_COMPAT_TOOLS = {
-    "belayer_spawn_agent",
-    "belayer_request_completion",
-    "belayer_escalate_to_human",
-}
-
-LEGACY_PM_COMPAT_TOOLS = {
-    "belayer_approve_completion",
-    "belayer_reject_completion",
-}
 
 
 def _body_preview(body: str, limit: int = 200) -> str:
@@ -108,20 +71,6 @@ def _filter_messages(messages: list[dict]) -> tuple[str, list[str]]:
             ack_ids.append(msg_id)
     return _format_messages(valid), ack_ids
 
-
-def _mail_tool_description(tool_name: str) -> str:
-    if tool_name == "belayer_send":
-        return (
-            "Send direct mail to another main agent in this session. "
-            "Use interrupt=true for urgent delivery via stdin."
-        )
-    if tool_name == "belayer_broadcast":
-        return "Broadcast party-wide mail to every main agent except you."
-    if tool_name == "belayer_check_mail":
-        return "Poll your mailbox now. Pre-turn polling already happens automatically."
-    if tool_name == "belayer_register_artifact":
-        return "Register a durable artifact with the session artifact registry."
-    return tool_name
 
 # ---------------------------------------------------------------------------
 # Tool schemas
@@ -652,37 +601,6 @@ REJECT_COMPLETION_SCHEMA = {
     },
 }
 
-SEND_SCHEMA = {
-    "name": "belayer_send",
-    "description": (
-        "Send direct mail to another main agent in this Belayer session. "
-        "Use interrupt=true when the message must be surfaced at the top of the "
-        "recipient's next turn."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "to": {
-                "type": "string",
-                "description": "Session-local name of the recipient agent.",
-            },
-            "content": {
-                "type": "string",
-                "description": "Message body to deliver to the recipient.",
-            },
-            "interrupt": {
-                "type": "boolean",
-                "description": (
-                    "If true, send as an urgent interrupt. The recipient receives "
-                    "the message through stdin instead of queued mail."
-                ),
-                "default": False,
-            },
-        },
-        "required": ["to", "content"],
-    },
-}
-
 BROADCAST_SCHEMA = {
     "name": "belayer_broadcast",
     "description": (
@@ -714,97 +632,6 @@ CHECK_MAIL_SCHEMA = {
     },
 }
 
-REGISTER_ARTIFACT_SCHEMA = {
-    "name": "belayer_register_artifact",
-    "description": (
-        "Register a durable output with the session artifact registry. The file "
-        "must already exist; this records metadata so other agents can find it."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "kind": {
-                "type": "string",
-                "description": "Short artifact type tag, such as spec, design-doc, or report.",
-            },
-            "path": {
-                "type": "string",
-                "description": "Path to the artifact file relative to the workspace root.",
-            },
-            "summary": {
-                "type": "string",
-                "description": "Brief summary of what the artifact contains.",
-            },
-        },
-        "required": ["kind", "path"],
-    },
-}
-
-SPAWN_MAIN_SCHEMA = {
-    "name": "belayer_spawn_main",
-    "description": (
-        "Spawn a long-lived main peer into the session. Use this for another "
-        "party member that needs its own mailbox and ongoing coordination."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "name": {
-                "type": "string",
-                "description": "Session-local name for the spawned main agent.",
-            },
-            "identity": {
-                "type": "string",
-                "description": "Identity template directory to load for the spawned main.",
-            },
-            "profile": {
-                "type": "string",
-                "description": "Hermes runtime profile to launch under.",
-            },
-            "message": {
-                "type": "string",
-                "description": "Initial instruction for the spawned main agent.",
-            },
-            "branch": {
-                "type": "string",
-                "description": "Optional git branch for worktree isolation.",
-            },
-        },
-        "required": ["name", "profile", "message"],
-    },
-}
-
-SUMMON_SIDE_SCHEMA = {
-    "name": "belayer_summon_side",
-    "description": (
-        "Spawn a short-lived side worker for a scoped task. Side agents have no "
-        "queued mail surface and return via their terminal response."
-    ),
-    "parameters": SPAWN_MAIN_SCHEMA["parameters"],
-}
-
-FINISH_SCHEMA = {
-    "name": "belayer_finish",
-    "description": (
-        "Mark the game-master session complete. This is the canonical finale tool "
-        "for main game-master agents."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "summary": {
-                "type": "string",
-                "description": "Plain-language summary of what was accomplished.",
-            },
-            "spec_artifact": {
-                "type": "string",
-                "description": "Optional path to a spec or design-doc artifact.",
-            },
-        },
-        "required": ["summary"],
-    },
-}
-
 # ---------------------------------------------------------------------------
 # Handler factories
 # ---------------------------------------------------------------------------
@@ -812,36 +639,6 @@ FINISH_SCHEMA = {
 
 def make_send_message_handler(agent_id: str, session_id: str, socket_path: str):
     """Return a handler for belayer_send_message."""
-    return make_send_handler(agent_id, session_id, socket_path)
-
-
-def make_create_artifact_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_create_artifact."""
-    return make_register_artifact_handler(agent_id, session_id, socket_path)
-
-
-def make_report_status_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_report_status."""
-
-    def handler(args: dict, **kwargs) -> str:
-        status = args.get("status", "")
-        detail = args.get("detail", "")
-        event_data = json.dumps({"agent": agent_id, "status": status, "detail": detail})
-        status_code, body = unix_post(
-            socket_path,
-            f"/sessions/{session_id}/events",
-            {"type": f"agent_status:{status}", "data": event_data},
-        )
-        if status_code in (200, 201):
-            return f"Status reported: {status}."
-        log.warning("report_status %s failed (%d): %s", status, status_code, body[:200])
-        return f"[System] Daemon unavailable — status not broadcast. Continue local work. Error: {body[:200]}"
-
-    return handler
-
-
-def make_send_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_send."""
 
     def handler(args: dict, **kwargs) -> str:
         to = args.get("to", "")
@@ -881,6 +678,26 @@ def make_broadcast_handler(agent_id: str, session_id: str, socket_path: str):
     return handler
 
 
+def make_report_status_handler(agent_id: str, session_id: str, socket_path: str):
+    """Return a handler for belayer_report_status."""
+
+    def handler(args: dict, **kwargs) -> str:
+        status = args.get("status", "")
+        detail = args.get("detail", "")
+        event_data = json.dumps({"agent": agent_id, "status": status, "detail": detail})
+        status_code, body = unix_post(
+            socket_path,
+            f"/sessions/{session_id}/events",
+            {"type": f"agent_status:{status}", "data": event_data},
+        )
+        if status_code in (200, 201):
+            return f"Status reported: {status}."
+        log.warning("report_status %s failed (%d): %s", status, status_code, body[:200])
+        return f"[System] Daemon unavailable — status not broadcast. Continue local work. Error: {body[:200]}"
+
+    return handler
+
+
 def make_check_mail_handler(
     agent_id: str,
     session_id: str,
@@ -908,8 +725,8 @@ def make_check_mail_handler(
     return handler
 
 
-def make_register_artifact_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_register_artifact."""
+def make_create_artifact_handler(agent_id: str, session_id: str, socket_path: str):
+    """Return a handler for belayer_create_artifact."""
 
     def handler(args: dict, **kwargs) -> str:
         kind = args.get("kind", "")
@@ -922,7 +739,7 @@ def make_register_artifact_handler(agent_id: str, session_id: str, socket_path: 
         )
         if status == 201:
             return f"Artifact registered: {kind} at {path}."
-        log.warning("register_artifact %s@%s failed (%d): %s", kind, path, status, body[:200])
+        log.warning("create_artifact %s@%s failed (%d): %s", kind, path, status, body[:200])
         return (
             f"[System] Daemon unavailable — artifact not registered centrally. "
             f"Artifact saved locally at {path}. Error: {body[:200]}"
@@ -931,99 +748,37 @@ def make_register_artifact_handler(agent_id: str, session_id: str, socket_path: 
     return handler
 
 
-def make_spawn_main_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_spawn_main."""
-
-    def handler(args: dict, **kwargs) -> str:
-        name = args.get("name", "")
-        identity = args.get("identity", "") or name
-        profile = args.get("profile", "")
-        message = args.get("message", "")
-        branch = args.get("branch", "")
-        payload: dict = {
-            "name": name,
-            "identity": identity,
-            "role": identity,
-            "profile": profile,
-            "message": message,
-            "kind": "main",
-            "ephemeral": False,
-        }
-        if branch:
-            payload["branch"] = branch
-        status, body = unix_post(
-            socket_path,
-            f"/sessions/{session_id}/agents",
-            payload,
-        )
-        if status == 201:
-            extra = f" on branch '{branch}'" if branch else ""
-            id_suffix = f" (identity '{identity}')" if identity != name else ""
-            return f"Main agent '{name}'{id_suffix} spawned with profile '{profile}'{extra}."
-        log.warning("spawn_main %s failed (%d): %s", name, status, body[:200])
-        return f"[System] Failed to spawn main agent '{name}'. Error: {body[:200]}"
-
-    return handler
-
-
-def make_summon_side_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_summon_side."""
-
-    def handler(args: dict, **kwargs) -> str:
-        name = args.get("name", "")
-        identity = args.get("identity", "") or name
-        profile = args.get("profile", "")
-        message = args.get("message", "")
-        branch = args.get("branch", "")
-        payload: dict = {
-            "name": name,
-            "identity": identity,
-            "role": identity,
-            "profile": profile,
-            "message": message,
-            "kind": "side",
-            "ephemeral": True,
-        }
-        if branch:
-            payload["branch"] = branch
-        status, body = unix_post(
-            socket_path,
-            f"/sessions/{session_id}/agents",
-            payload,
-        )
-        if status == 201:
-            extra = f" on branch '{branch}'" if branch else ""
-            id_suffix = f" (identity '{identity}')" if identity != name else ""
-            return f"Side agent '{name}'{id_suffix} summoned with profile '{profile}'{extra}."
-        log.warning("summon_side %s failed (%d): %s", name, status, body[:200])
-        return f"[System] Failed to summon side agent '{name}'. Error: {body[:200]}"
-
-    return handler
-
-
-def make_finish_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_finish."""
-
-    def handler(args: dict, **kwargs) -> str:
-        summary = args.get("summary", "")
-        spec_artifact = args.get("spec_artifact", "")
-        status, body = unix_post(
-            socket_path,
-            f"/sessions/{session_id}/agents/{agent_id}/finish",
-            {"summary": summary, "spec_artifact": spec_artifact},
-        )
-        if status == 200:
-            return "Finish requested."
-        log.warning("finish failed (%d): %s", status, body[:200])
-        return f"[System] Failed to finish session. Error: {body[:200]}"
-
-    return handler
-
-
 def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
     """Return a handler for belayer_spawn_agent."""
 
-    return make_summon_side_handler(agent_id, session_id, socket_path)
+    def handler(args: dict, **kwargs) -> str:
+        name = args.get("name", "")
+        identity = args.get("identity", "") or name  # default to name for single-instance roles
+        profile = args.get("profile", "")
+        message = args.get("message", "")
+        branch = args.get("branch", "")
+        payload: dict = {
+            "name": name,
+            "identity": identity,
+            "role": identity,  # role tracks the identity template by default
+            "profile": profile,
+            "message": message,
+        }
+        if branch:
+            payload["branch"] = branch
+        status, body = unix_post(
+            socket_path,
+            f"/sessions/{session_id}/agents",
+            payload,
+        )
+        if status == 201:
+            extra = f" on branch '{branch}'" if branch else ""
+            id_suffix = f" (identity '{identity}')" if identity != name else ""
+            return f"Agent '{name}'{id_suffix} spawned with profile '{profile}'{extra}."
+        log.warning("spawn_agent %s failed (%d): %s", name, status, body[:200])
+        return f"[System] Failed to spawn agent '{name}'. Error: {body[:200]}"
+
+    return handler
 
 
 def make_request_completion_handler(agent_id: str, session_id: str, socket_path: str):
@@ -1181,15 +936,10 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
 # ---------------------------------------------------------------------------
 
 _TOOL_SPECS = {
-    "belayer_send": (SEND_SCHEMA, make_send_handler),
+    "belayer_send_message": (SEND_MESSAGE_SCHEMA, make_send_message_handler),
     "belayer_broadcast": (BROADCAST_SCHEMA, make_broadcast_handler),
     "belayer_check_mail": (CHECK_MAIL_SCHEMA, make_check_mail_handler),
-    "belayer_register_artifact": (REGISTER_ARTIFACT_SCHEMA, make_register_artifact_handler),
-    "belayer_spawn_main": (SPAWN_MAIN_SCHEMA, make_spawn_main_handler),
-    "belayer_summon_side": (SUMMON_SIDE_SCHEMA, make_summon_side_handler),
-    "belayer_finish": (FINISH_SCHEMA, make_finish_handler),
     "belayer_report_status": (REPORT_STATUS_SCHEMA, make_report_status_handler),
-    "belayer_send_message": (SEND_MESSAGE_SCHEMA, make_send_message_handler),
     "belayer_create_artifact": (CREATE_ARTIFACT_SCHEMA, make_create_artifact_handler),
     "belayer_spawn_agent": (SPAWN_AGENT_SCHEMA, make_spawn_agent_handler),
     "belayer_request_completion": (REQUEST_COMPLETION_SCHEMA, make_request_completion_handler),
@@ -1239,13 +989,12 @@ def register_belayer_tools(
     allowed_tools: list[str] | None = None,
     *,
     agent_kind: str = KIND_MAIN,
-    is_game_master: bool = False,
     turn_mail_ids: list[str] | None = None,
 ) -> None:
     """Register Belayer coordination tools on an AIAgent instance.
 
-    Kind determines the canonical surface; allowed_tools is retained for
-    compatibility but does not override the kind split.
+    Kind determines the baseline mail surface; allowed_tools grants
+    role-specific capabilities like spawn_agent or PM approval tools.
     """
     try:
         allowed_set = {str(tool) for tool in (allowed_tools or [])}
@@ -1257,45 +1006,29 @@ def register_belayer_tools(
     kind = (agent_kind or KIND_MAIN).strip().lower() or KIND_MAIN
     if kind not in (KIND_MAIN, KIND_SIDE):
         kind = KIND_MAIN
-    gm = bool(is_game_master)
 
-    canonical_tools = [tool for tool in ("belayer_report_status", "belayer_register_artifact")]
+    baseline_tools = ["belayer_report_status", "belayer_create_artifact"]
     if kind == KIND_MAIN:
-        canonical_tools.extend(["belayer_send", "belayer_broadcast", "belayer_check_mail"])
-        if gm:
-            canonical_tools.extend(["belayer_spawn_main", "belayer_summon_side", "belayer_finish"])
-
-    legacy_tools = list(LEGACY_SHARED_COMPAT_TOOLS)
-    if kind == KIND_MAIN and gm:
-        legacy_tools.extend(sorted(LEGACY_GM_COMPAT_TOOLS))
-    if allowed_set:
-        legacy_tools.extend(sorted(tool for tool in allowed_set if tool in LEGACY_PM_COMPAT_TOOLS))
+        baseline_tools.extend(["belayer_send_message", "belayer_broadcast", "belayer_check_mail"])
 
     registered = []
     seen = set()
-    for tool_name in canonical_tools + legacy_tools:
+    for tool_name in baseline_tools + allowed_preview:
         if tool_name in seen:
             continue
         seen.add(tool_name)
         if tool_name not in _TOOL_SPECS:
             continue
-        if tool_name in {"belayer_check_mail", "belayer_send", "belayer_broadcast", "belayer_send_message"} and kind != KIND_MAIN:
-            continue
-        if tool_name in {"belayer_spawn_main", "belayer_summon_side", "belayer_finish"} and not gm:
-            continue
-        if tool_name in LEGACY_GM_COMPAT_TOOLS and not gm:
-            continue
-        if tool_name in LEGACY_PM_COMPAT_TOOLS and tool_name not in allowed_set:
+        if tool_name in {"belayer_check_mail", "belayer_broadcast", "belayer_send_message"} and kind != KIND_MAIN:
             continue
         _register(agent, tool_name, agent_id, session_id, socket_path, turn_mail_ids=turn_mail_ids)
         registered.append(tool_name)
 
     log.info(
-        "Registered Belayer tools for agent=%s session=%s kind=%s gm=%s tools=%s allowed=%s",
+        "Registered Belayer tools for agent=%s session=%s kind=%s tools=%s allowed=%s",
         agent_id,
         session_id,
         kind,
-        gm,
         registered,
         allowed_preview,
     )

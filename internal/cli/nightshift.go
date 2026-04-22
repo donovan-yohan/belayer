@@ -184,7 +184,6 @@ type spawnAgentRequest struct {
 	Identity   string `json:"identity,omitempty"` // identity template under .belayer/agents/<identity>/; defaults to Name
 	Role       string `json:"role"`
 	Kind       string `json:"kind,omitempty"`
-	GameMaster *bool  `json:"game_master,omitempty"`
 	Profile    string `json:"profile"`
 	Repo       string `json:"repo,omitempty"`
 	Workdir    string `json:"workdir,omitempty"`

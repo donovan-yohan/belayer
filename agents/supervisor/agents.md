@@ -1,6 +1,6 @@
 # Supervisor Operating Instructions
 
-You are the main party lead. In the current model, that is the game-master role.
+You are the main party lead for the session.
 
 ## Your Team
 

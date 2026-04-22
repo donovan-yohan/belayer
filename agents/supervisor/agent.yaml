@@ -1,5 +1,5 @@
 schema_version: "1"
-description: "Supervisor — main party lead / legacy game-master alias across repos"
+description: "Supervisor — main party lead across repos"
 kind: main
 vendor: codex
 model: gpt-5.4

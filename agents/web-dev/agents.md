@@ -7,7 +7,7 @@ belayer message send --to supervisor "status update or question"
 belayer recall "search past learnings"
 ```
 
-You are a main party member. You receive instructions from the supervisor or game-master via `belayer message`. When you complete a task, message the supervisor with:
+You are a main party member. You receive instructions from the supervisor via `belayer message`. When you complete a task, message the supervisor with:
 1. What you changed (files, approach)
 2. Any decisions you made that the supervisor should know about
 3. Whether typecheck and tests pass

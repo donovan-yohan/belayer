@@ -82,7 +82,6 @@ def _set_required_env(monkeypatch, max_turns="7"):
     monkeypatch.delenv("BELAYER_SYSTEM_PROMPT", raising=False)
     monkeypatch.delenv("BELAYER_HERMES_SESSION_ID", raising=False)
     monkeypatch.delenv("BELAYER_EPHEMERAL", raising=False)
-    monkeypatch.delenv("BELAYER_GAME_MASTER", raising=False)
     monkeypatch.delenv("BELAYER_TRANSCRIPT_PATH", raising=False)
     monkeypatch.delenv("BELAYER_TOOLS", raising=False)
 

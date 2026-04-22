@@ -281,10 +281,7 @@ def main() -> None:
     agent_kind = os.environ.get("BELAYER_AGENT_KIND", "main").strip().lower() or "main"
     if agent_kind not in ("main", "side"):
         agent_kind = "main"
-    gm_env = os.environ.get("BELAYER_GAME_MASTER", "").strip().lower()
-    is_game_master = gm_env in ("1", "true", "yes", "on")
-    if not is_game_master:
-        is_game_master = role.lower() in ("supervisor", "game-master", "game_master", "gm")
+    is_supervisor = role.lower() == "supervisor"
     profile = os.environ.get("BELAYER_PROFILE", "")
     model = os.environ.get("BELAYER_MODEL", "")
     max_turns_env = os.environ.get("BELAYER_MAX_TURNS", "")
@@ -304,8 +301,8 @@ def main() -> None:
         ephemeral = ephemeral_override
 
     log.info(
-        "Starting bridge agent=%s session=%s role=%s kind=%s gm=%s profile=%s ephemeral=%s",
-        agent_id, session_id, role, agent_kind, is_game_master, profile or "(none)", ephemeral,
+        "Starting bridge agent=%s session=%s role=%s kind=%s supervisor=%s profile=%s ephemeral=%s",
+        agent_id, session_id, role, agent_kind, is_supervisor, profile or "(none)", ephemeral,
     )
 
     # --- Construct AIAgent -------------------------------------------------
@@ -476,7 +473,6 @@ def main() -> None:
             socket_path,
             allowed_tools=allowed_tools,
             agent_kind=agent_kind,
-            is_game_master=is_game_master,
             turn_mail_ids=turn_mail_ids,
         )
     except Exception as exc:
@@ -539,7 +535,6 @@ def main() -> None:
         {
             "role": role,
             "kind": agent_kind,
-            "game_master": is_game_master,
             "profile": profile,
             "hermes_session_id": agent.session_id,
         },
@@ -549,8 +544,8 @@ def main() -> None:
     if initial_message:
         base_user_message = initial_message
     elif agent_kind == "main":
-        if is_game_master:
-            base_user_message = "You are the game-master main agent. Begin your work."
+        if is_supervisor:
+            base_user_message = "You are the supervisor main agent. Begin your work."
         else:
             base_user_message = f"You are the {role} main agent. Begin your work."
     else:

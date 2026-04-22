@@ -244,9 +244,6 @@ func TestSpawnAgentAndListRoster(t *testing.T) {
 	if run.Kind != "main" {
 		t.Fatalf("expected main kind, got %q", run.Kind)
 	}
-	if !run.GameMaster {
-		t.Fatal("expected supervisor to be marked game_master")
-	}
 	if run.Status != "running" {
 		t.Fatalf("expected running status, got %q", run.Status)
 	}
@@ -259,8 +256,8 @@ func TestSpawnAgentAndListRoster(t *testing.T) {
 	if len(roster) != 1 || roster[0].Name != "supervisor" {
 		t.Fatalf("unexpected roster: %#v", roster)
 	}
-	if roster[0].Kind != "main" || !roster[0].GameMaster {
-		t.Fatalf("expected roster to include kind=main/game_master=true, got %#v", roster[0])
+	if roster[0].Kind != "main" {
+		t.Fatalf("expected roster to include kind=main, got %#v", roster[0])
 	}
 }
 
@@ -736,12 +733,12 @@ func TestInterruptToSideDoesNotCreateMailboxRow(t *testing.T) {
 func TestBroadcastPersistsOnlyForMainRecipients(t *testing.T) {
 	d := testDaemon(t)
 	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "broadcast-main-only"}))
-	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "gm", Role: "supervisor", Kind: "main", Profile: "default"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "supervisor", Role: "supervisor", Kind: "main", Profile: "default"})
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "backend", Role: "worker", Kind: "main", Profile: "default"})
 	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "reviewer", Role: "worker", Kind: "side", Profile: "default"})
 
 	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages/broadcast", broadcastMessageRequest{
-		From:    "gm",
+		From:    "supervisor",
 		Content: "party update",
 		Type:    "instruction",
 	})
@@ -756,9 +753,9 @@ func TestBroadcastPersistsOnlyForMainRecipients(t *testing.T) {
 	if len(backendMsgs) != 1 {
 		t.Fatalf("expected 1 backend broadcast row, got %d", len(backendMsgs))
 	}
-	gmMsgs, err := d.store.PendingMessages(created.ID, "gm", "")
+	gmMsgs, err := d.store.PendingMessages(created.ID, "supervisor", "")
 	if err != nil {
-		t.Fatalf("PendingMessages gm: %v", err)
+		t.Fatalf("PendingMessages supervisor: %v", err)
 	}
 	if len(gmMsgs) != 0 {
 		t.Fatalf("expected sender exclusion for broadcast, got %d", len(gmMsgs))
