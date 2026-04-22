@@ -233,3 +233,65 @@ def test_bridge_honors_ephemeral_env_override(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert created_agents[0].kwargs["ephemeral"] is False
+
+
+def test_completed_on_last_turn_is_not_marked_budget_exhausted(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="3")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "turns_used": 3,
+        "final_response": "done",
+        "last_message": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    budget_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:budget_exhausted"]
+    assert budget_calls == []
+
+    finished_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:finished"]
+    assert len(finished_calls) == 1
+    assert "reason" not in finished_calls[0].args[4]
+
+
+def test_non_positive_max_turns_is_ignored(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="0")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert "max_iterations" not in created_agents[0].kwargs

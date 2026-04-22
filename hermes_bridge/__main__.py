@@ -195,6 +195,8 @@ def result_budget_exhausted(result: dict, max_turns: int | None = None) -> bool:
     for key in ("_turn_exit_reason", "final_response", "last_message", "messages"):
         if _contains_budget_exhaustion(result.get(key)):
             return True
+    if result.get("completed") or result.get("failed"):
+        return False
     turns_used = result.get("turns_used")
     if max_turns is not None and turns_used == max_turns:
         log.warning(
@@ -288,7 +290,11 @@ def main() -> None:
     max_turns = None
     if max_turns_env:
         try:
-            max_turns = int(max_turns_env)
+            parsed = int(max_turns_env)
+            if parsed > 0:
+                max_turns = parsed
+            else:
+                log.warning("Ignoring non-positive BELAYER_MAX_TURNS=%r", max_turns_env)
         except ValueError:
             log.warning("Ignoring invalid BELAYER_MAX_TURNS=%r", max_turns_env)
     initial_message = _decode_nl(os.environ.get("BELAYER_MESSAGE", ""))

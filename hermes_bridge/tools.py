@@ -122,6 +122,13 @@ SEND_MESSAGE_SCHEMA = {
                     "they can act without a clarifying round-trip."
                 ),
             },
+            "interrupt": {
+                "type": "boolean",
+                "description": (
+                    "Set true to deliver this as an immediate interrupt instead of queued "
+                    "mail. Required when messaging side agents, which do not have a mailbox."
+                ),
+            },
         },
         "required": ["to", "content"],
     },

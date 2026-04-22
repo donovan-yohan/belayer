@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import types
 
-from hermes_bridge.tools import register_belayer_tools
+from hermes_bridge.tools import SEND_MESSAGE_SCHEMA, register_belayer_tools
 
 
 class _FakeRegistry:
@@ -122,3 +122,8 @@ def test_register_belayer_tools_honors_pm_allowlist(monkeypatch):
     assert "belayer_reject_completion" in names
     assert "belayer_send_message" not in names
     assert "belayer_spawn_agent" not in names
+
+
+def test_send_message_schema_exposes_interrupt_flag():
+    interrupt = SEND_MESSAGE_SCHEMA["parameters"]["properties"]["interrupt"]
+    assert interrupt["type"] == "boolean"
