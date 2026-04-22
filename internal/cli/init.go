@@ -28,12 +28,10 @@ const defaultConfigYAML = `# .belayer/config.yaml — runtime + sandbox configur
 log_level: standard
 
 # Sandbox driver. The 'noop' driver runs agents in the host environment with
-# no isolation. Switch to 'clamshell' (or another registered driver) and
-# point 'policy' at a file under .belayer/policies/ to enable isolation.
+# no isolation. Point 'mode' at another registered driver to enable isolation.
 #
 # sandbox:
-#   mode: clamshell
-#   policy: .belayer/policies/standard.yaml
+#   mode: noop
 
 # Runtime hooks. Belayer can bring an integration environment up/down around
 # a run (e.g. workbench services). The live-agent caps are enforced by the
@@ -55,7 +53,7 @@ runtime:
 #
 # skip_openrouter_probe: when true (default), hermes-agent skips the
 #   openrouter.ai metadata fetch at startup. This eliminates 20+ proxy-denied
-#   CONNECTs per run on clamshell sandboxes that do not whitelist openrouter.ai.
+#   CONNECTs per run on sandboxed deployments that do not whitelist openrouter.ai.
 #   Set to false only if your LLM vendor requires OpenRouter metadata at startup.
 #   Note: requires a complementary hermes-agent change to take effect — see
 #   docs/AGENT_ARCHITECTURE.md for details.
@@ -108,27 +106,6 @@ persistence_strategy:
 #   - /tmp/pnpm-store
 `
 
-// defaultPolicyYAML is a minimal placeholder so .belayer/policies/ is not
-// empty after init. It is not wired in by the default config; users opt in by
-// uncommenting the sandbox block in config.yaml.
-const defaultPolicyYAML = `# .belayer/policies/standard.yaml — placeholder clamshell policy.
-# 'belayer init' writes this so the policies/ directory has a starting point.
-# Replace with a real policy when you switch sandbox.mode to 'clamshell'.
-#
-# See docs/design-docs/ for the full policy schema.
-version: 5
-sandbox:
-  user: sandbox
-  group: sandbox
-  work_dir: /workspace
-process:
-  no_new_privileges: true
-  drop_capabilities: ['ALL']
-  read_only_rootfs: true
-network:
-  mode: proxy
-`
-
 func newInitCmd() *cobra.Command {
 	var target string
 	var force bool
@@ -136,16 +113,16 @@ func newInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold .belayer/ in the current project",
-		Long: `Create .belayer/{config.yaml,policies/,agents/} in the target directory
-and copy the shipped default agents (supervisor, pm, web-dev, backend-dev, qa,
-reviewer) into .belayer/agents/ as a starter team.
+		Long: `Create .belayer/{config.yaml,agents/} in the target directory and copy
+the shipped default agents (supervisor, pm, web-dev, backend-dev, qa, reviewer)
+into .belayer/agents/ as a starter team.
 
 The copied .belayer/agents/ tree is project-owned. Edit, delete, rename, or
 replace those identities in the consuming repo without changing belayer source.
 
 Idempotent: re-running prints a notice and exits 0 without overwriting. Use
 --force to refresh .belayer/agents/ from the shipped defaults (useful when
-upgrading belayer); existing config.yaml and policies/ are never overwritten.`,
+upgrading belayer); existing config.yaml is never overwritten.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 
@@ -204,10 +181,10 @@ type scaffoldResult struct {
 // routine, separated from the cobra command so `belayer run` can call it
 // directly.
 //
-// On re-init without --force, user-owned files (config.yaml, policies/,
-// agents/) are not touched — the CLI reports "already initialized".
-// hermes_bridge/ is no longer extracted here; the daemon extracts it to the
-// runtime dir at startup (see internal/cli/runtime.go).
+// On re-init without --force, user-owned files (config.yaml, agents/) are not
+// touched — the CLI reports "already initialized". hermes_bridge/ is no
+// longer extracted here; the daemon extracts it to the runtime dir at startup
+// (see internal/cli/runtime.go).
 func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 	var result scaffoldResult
 
@@ -220,7 +197,7 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 		return result, fmt.Errorf("stat %s: %w", belayerDir, err)
 	}
 
-	for _, sub := range []string{"", "policies", "agents"} {
+	for _, sub := range []string{"", "agents"} {
 		p := filepath.Join(belayerDir, sub)
 		if err := os.MkdirAll(p, 0o755); err != nil {
 			return result, fmt.Errorf("mkdir %s: %w", p, err)
@@ -239,7 +216,7 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 	}
 
 	// If already initialized and not --force, stop here — user-owned files
-	// (config.yaml, policies/, agents/) remain untouched.
+	// (config.yaml, agents/) remain untouched.
 	if result.alreadyInitialized && !force {
 		sort.Strings(result.created)
 		return result, nil
@@ -250,13 +227,6 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 		return result, err
 	} else if created {
 		result.created = append(result.created, "  + "+relativize(belayerDir, configPath))
-	}
-
-	policyPath := filepath.Join(belayerDir, "policies", "standard.yaml")
-	if created, err := writeIfMissing(policyPath, []byte(defaultPolicyYAML)); err != nil {
-		return result, err
-	} else if created {
-		result.created = append(result.created, "  + "+relativize(belayerDir, policyPath))
 	}
 
 	agentsRoot := filepath.Join(belayerDir, "agents")
@@ -415,8 +385,8 @@ func copyDefaultAgents(dst string, force bool) ([]string, error) {
 
 // writeIfMissing writes data to path only if path does not already exist.
 // Returns true when a file was created, false when one was already present.
-// Existing files are never touched — config.yaml and policies/ are
-// user-owned once init has run.
+// Existing files are never touched — config.yaml is user-owned once init
+// has run.
 func writeIfMissing(path string, data []byte) (bool, error) {
 	if _, err := os.Stat(path); err == nil {
 		return false, nil

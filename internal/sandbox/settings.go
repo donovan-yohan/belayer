@@ -17,9 +17,9 @@ const DefaultMode = "noop"
 
 // ModeOverrideEnv, when set in the daemon process env, takes precedence over
 // per-workspace config.yaml sandbox.mode. This is how an outer sandbox (e.g.
-// clamshell running the daemon inside a one-container-per-run image) tells
-// belayer "you're already sandboxed by me, use noop" without requiring every
-// downstream repo's .belayer/config.yaml to opt out of mode: clamshell.
+// a container-per-run image running the daemon inside it) tells belayer
+// "you're already sandboxed by me, use noop" without requiring every
+// downstream repo's .belayer/config.yaml to opt out of its own sandbox mode.
 const ModeOverrideEnv = "BELAYER_SANDBOX_MODE"
 
 // Settings holds the sandbox section of .belayer/config.yaml. A zero Settings

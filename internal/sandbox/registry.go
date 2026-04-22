@@ -8,9 +8,9 @@ import "fmt"
 //
 // The daemon resolves a per-session driver by asking Get(mode), where mode
 // comes from .belayer/config.yaml's sandbox.mode. A missing registration
-// surfaces as a clear error; this is how the clamshell stub turns
-// sandbox.mode: clamshell into a useful message when the real driver wasn't
-// compiled in.
+// surfaces as a clear error. A driver that is not compiled into the current
+// binary can opt to register a stub that reports unavailability from
+// Create/Exec/Stop instead of being absent from the registry entirely.
 type Registry struct {
 	drivers map[string]Driver
 }
@@ -43,9 +43,9 @@ func (r *Registry) Register(name string, d Driver) {
 }
 
 // Get returns the driver registered for name, or an error naming it when
-// nothing is registered. A driver registration with a stub (e.g. the
-// clamshell_stub on default builds) is NOT a Get error — Get only fails on
-// missing names. The stub reports unavailability from Create/Exec/Stop.
+// nothing is registered. A driver registration with a stub is NOT a Get
+// error — Get only fails on missing names. Stubs report unavailability from
+// Create/Exec/Stop.
 func (r *Registry) Get(name string) (Driver, error) {
 	if r == nil || r.drivers == nil {
 		return nil, fmt.Errorf("sandbox driver %q is not registered", name)

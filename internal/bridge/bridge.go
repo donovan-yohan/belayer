@@ -58,11 +58,11 @@ type Config struct {
 	Profile             string
 	Workdir             string
 	SocketPath          string   // daemon Unix socket path or http://host:port for TCP
-	HTTPProxy           string   // HTTP CONNECT proxy for clamshell (e.g. http://172.31.0.2:3128)
+	HTTPProxy           string   // HTTP CONNECT proxy for sandboxed deployments (e.g. clamshell: http://172.31.0.2:3128)
 	RunDir              string   // e.g. /workspace/.belayer/runs/{session}/{agent}
 	Model               string   // optional model override
 	MaxTurns            int      // optional turn cap forwarded to Hermes via BELAYER_MAX_TURNS
-	APIKey              string   // LLM provider API key (injected when Hermes config is unavailable, e.g. clamshell)
+	APIKey              string   // LLM provider API key (injected when Hermes config is unavailable in the sandbox)
 	BaseURL             string   // LLM provider base URL (e.g. https://opencode.ai/zen/go/v1)
 	Provider            string   // LLM provider name (e.g. "openai")
 	Message             string   // initial message/instructions for the agent

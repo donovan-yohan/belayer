@@ -14,7 +14,7 @@ type ProjectConfig struct {
 	// SkipOpenRouterProbe suppresses the HERMES_SKIP_OPENROUTER_PROBE env var
 	// injection when false. Default true: most providers do not need OpenRouter
 	// metadata; suppressing the probe eliminates 20+ proxy-denied CONNECTs per
-	// run when the clamshell egress policy does not whitelist openrouter.ai.
+	// run when a sandbox egress policy does not whitelist openrouter.ai.
 	//
 	// Set to false only when using a vendor that explicitly requires OpenRouter
 	// metadata at startup (e.g. a routing layer that resolves model IDs via

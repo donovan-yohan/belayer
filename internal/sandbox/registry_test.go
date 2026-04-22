@@ -20,20 +20,6 @@ func TestDefaultRegistryResolvesNoop(t *testing.T) {
 	}
 }
 
-func TestDefaultRegistryResolvesClamshellStub(t *testing.T) {
-	// The clamshell name is registered in all builds — the !clamshell stub
-	// on default builds, the real driver when -tags clamshell is set.
-	// Get must succeed either way; the stub surfaces unavailability from
-	// its methods, not from registry lookup.
-	d, err := sandbox.Default.Get("clamshell")
-	if err != nil {
-		t.Fatalf("Default.Get(\"clamshell\") returned error: %v", err)
-	}
-	if d == nil {
-		t.Fatal("Default.Get(\"clamshell\") returned nil driver")
-	}
-}
-
 func TestDefaultRegistryReturnsErrorForUnknownName(t *testing.T) {
 	_, err := sandbox.Default.Get("does-not-exist")
 	if err == nil {
