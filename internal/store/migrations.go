@@ -41,6 +41,7 @@ func Migrate(db *sql.DB) error {
 			transport      TEXT NOT NULL DEFAULT 'bridge',
 			tmux_session   TEXT NOT NULL DEFAULT '',
 			status         TEXT NOT NULL DEFAULT 'starting',
+			outcome        TEXT NOT NULL DEFAULT 'active',
 			created_at     DATETIME NOT NULL,
 			updated_at     DATETIME NOT NULL,
 			UNIQUE(session_id, name),
@@ -68,11 +69,11 @@ func Migrate(db *sql.DB) error {
 			content      TEXT NOT NULL,
 			urgent       INTEGER NOT NULL DEFAULT 0,
 			delivered    INTEGER NOT NULL DEFAULT 0,
+			delivered_at DATETIME,
+			acknowledged_at DATETIME,
 			created_at   DATETIME NOT NULL,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		)`,
-
-		`CREATE INDEX IF NOT EXISTS idx_messages_pending ON messages(session_id, recipient_id, delivered, created_at)`,
 
 		// FTS5 virtual table for full-text search over event type and data.
 		`CREATE VIRTUAL TABLE IF NOT EXISTS events_fts
@@ -139,6 +140,40 @@ func Migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfNotExists(db, "agent_runs", "last_destructive_cmd", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := addColumnIfNotExists(db, "agent_runs", "outcome", "TEXT NOT NULL DEFAULT 'active'"); err != nil {
+		return err
+	}
+	if err := addColumnIfNotExists(db, "messages", "delivered_at", "DATETIME"); err != nil {
+		return err
+	}
+	if err := addColumnIfNotExists(db, "messages", "acknowledged_at", "DATETIME"); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`UPDATE messages
+		SET delivered_at = COALESCE(delivered_at, created_at),
+		    delivered = CASE WHEN delivered_at IS NULL THEN delivered ELSE 1 END
+		WHERE delivered = 1 AND delivered_at IS NULL`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE messages
+		SET delivered = CASE WHEN delivered_at IS NULL THEN 0 ELSE 1 END`); err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(`DROP INDEX IF EXISTS idx_messages_pending`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_pending
+		ON messages(session_id, recipient_id, created_at)
+		WHERE delivered_at IS NULL`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_unacked
+		ON messages(session_id, recipient_id, created_at)
+		WHERE acknowledged_at IS NULL`); err != nil {
 		return err
 	}
 

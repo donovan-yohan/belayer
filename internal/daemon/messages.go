@@ -45,7 +45,7 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Reject messages to agents that have exited the session.
 	if target, err := d.store.GetAgentRun(id, req.To); err == nil {
-		if target.Status == "complete" || target.Status == "blocked" || target.Status == "incomplete" {
+		if target.Status == "complete" || target.Status == "blocked" || target.Status == "incomplete" || target.Status == "exited" {
 			writeJSON(w, http.StatusGone, map[string]string{
 				"error": "agent '" + req.To + "' has exited (status: " + target.Status + "). Use belayer_spawn_agent to re-spawn with conversation history.",
 			})
@@ -87,7 +87,7 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		// Check if target is a bridge agent; if so, write to stdin directly.
 		targetRun, runErr := d.store.GetAgentRun(id, req.To)
 		if runErr == nil && targetRun.Transport == "bridge" {
-			if bridgeErr := d.interruptBridgeAgent(id, req.To, from, req.Content); bridgeErr != nil {
+			if bridgeErr := d.interruptBridgeAgent(id, req.To, msgID, from, req.Content); bridgeErr != nil {
 				// Bridge proc not tracked (e.g. already exited) — fall back to broker
 				// so the message is still delivered if anything is still subscribed.
 				_ = d.broker.Interrupt(id, req.To, msg)
@@ -170,24 +170,61 @@ func (d *Daemon) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	forAgent := r.URL.Query().Get("for")
+	state := r.URL.Query().Get("state")
 	if forAgent != "" {
 		// Pull-based delivery for bridge agents.
 		afterID := r.URL.Query().Get("after")
 		pending := r.URL.Query().Get("pending") == "true"
 
-		messages, err := d.store.PendingMessages(id, forAgent, afterID)
+		var (
+			messages []store.Message
+			err      error
+		)
+		if state == "unacked" {
+			messages, err = d.store.UnackedMessages(id, forAgent, afterID)
+		} else {
+			messages, err = d.store.PendingMessages(id, forAgent, afterID)
+		}
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 
 		// Mark as delivered so they are not returned on the next poll.
-		if pending {
+		if pending && len(messages) > 0 {
+			ids := make([]string, 0, len(messages))
 			for _, msg := range messages {
-				_ = d.store.MarkDelivered(msg.ID)
+				ids = append(ids, msg.ID)
 			}
+			_ = d.store.MarkDelivered(ids...)
 		}
 
+		writeJSON(w, http.StatusOK, messages)
+		return
+	}
+
+	if state == "unacked" {
+		runs, err := d.store.ListAgentRuns(id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		var messages []store.Message
+		seen := map[string]struct{}{}
+		for _, run := range runs {
+			unacked, err := d.store.UnackedMessages(id, run.Name, "")
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			for _, msg := range unacked {
+				if _, ok := seen[msg.ID]; ok {
+					continue
+				}
+				seen[msg.ID] = struct{}{}
+				messages = append(messages, msg)
+			}
+		}
 		writeJSON(w, http.StatusOK, messages)
 		return
 	}
@@ -210,4 +247,17 @@ func (d *Daemon) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, messages)
+}
+
+func (d *Daemon) handleAckMessage(w http.ResponseWriter, r *http.Request) {
+	messageID := strings.TrimSpace(r.PathValue("mid"))
+	if messageID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "message id is required"})
+		return
+	}
+	if err := d.store.MarkAcknowledged(messageID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged", "id": messageID})
 }

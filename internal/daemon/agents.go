@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +58,36 @@ type finishAgentRequest struct {
 	SpecArtifact string `json:"spec_artifact,omitempty"`
 }
 
+type spawnLimitError struct {
+	Cap        int
+	LiveAgents int
+}
+
+func (e *spawnLimitError) Error() string {
+	return fmt.Sprintf("cap reached (%d live agents); retire one before spawning", e.Cap)
+}
+
+type agentRunResponse struct {
+	ID                 string `json:"id"`
+	SessionID          string `json:"session_id"`
+	Name               string `json:"name"`
+	Role               string `json:"role"`
+	Profile            string `json:"profile"`
+	RepoScope          string `json:"repo_scope"`
+	Workdir            string `json:"workdir"`
+	Branch             string `json:"branch"`
+	WorktreePath       string `json:"worktree_path"`
+	Transport          string `json:"transport"`
+	TmuxSession        string `json:"tmux_session"`
+	HermesSessionID    string `json:"hermes_session_id"`
+	Status             string `json:"status"`
+	Outcome            string `json:"outcome"`
+	DestructiveActions int    `json:"destructive_actions,omitempty"`
+	LastDestructiveCmd string `json:"last_destructive_cmd,omitempty"`
+	PendingMailCount   int    `json:"pending_mail_count,omitempty"`
+	UnackedMailCount   int    `json:"unacked_mail_count,omitempty"`
+}
+
 func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("id")
 	sess, err := d.store.GetSession(sessionID)
@@ -86,6 +118,21 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	req.SessionID = sessionID
+
+	if err := d.enforceSpawnCapacity(sessionID, sess.WorkspaceDir); err != nil {
+		var limitErr *spawnLimitError
+		if errors.As(err, &limitErr) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":       limitErr.Error(),
+				"code":        "max_concurrent_agents",
+				"limit":       limitErr.Cap,
+				"live_agents": limitErr.LiveAgents,
+			})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 
 	// Resolve workdir from session repos when repo scope is set but workdir is not.
 	if req.Workdir == "" && req.Repo != "" {
@@ -255,7 +302,40 @@ func (d *Daemon) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, runs)
+	states := d.agentSurfaceStates(sessionID)
+	resp := make([]agentRunResponse, 0, len(runs))
+	for _, run := range runs {
+		state := states[run.Name]
+		pendingCount := 0
+		if pending, err := d.store.PendingMessages(sessionID, run.Name, ""); err == nil {
+			pendingCount = len(pending)
+		}
+		unackedCount := 0
+		if unacked, err := d.store.UnackedMessages(sessionID, run.Name, ""); err == nil {
+			unackedCount = len(unacked)
+		}
+		resp = append(resp, agentRunResponse{
+			ID:                 run.ID,
+			SessionID:          run.SessionID,
+			Name:               run.Name,
+			Role:               run.Role,
+			Profile:            run.Profile,
+			RepoScope:          run.RepoScope,
+			Workdir:            run.Workdir,
+			Branch:             run.Branch,
+			WorktreePath:       run.WorktreePath,
+			Transport:          run.Transport,
+			TmuxSession:        run.TmuxSession,
+			HermesSessionID:    run.HermesSessionID,
+			Status:             state.Lifecycle,
+			Outcome:            state.Outcome,
+			DestructiveActions: run.DestructiveActions,
+			LastDestructiveCmd: run.LastDestructiveCmd,
+			PendingMailCount:   pendingCount,
+			UnackedMailCount:   unackedCount,
+		})
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
@@ -300,13 +380,16 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := "complete"
+	outcome := "succeeded"
 	if req.Blocked {
 		status = "blocked"
+		outcome = "blocked"
 	}
 	if err := d.store.UpdateAgentRunStatus(sessionID, name, status); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	_ = d.store.UpdateAgentRunOutcome(sessionID, name, outcome)
 	run, err := d.store.GetAgentRun(sessionID, name)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -403,6 +486,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// project-local-over-shipped resolution as the system prompt.
 	var belayerTools []string
 	agentModel := req.Model // explicit spawn request takes precedence
+	agentMaxTurns := 0
 	for _, yamlPath := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "agent.yaml") {
 		data, err := os.ReadFile(yamlPath)
 		if err != nil {
@@ -416,6 +500,14 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "model:") && agentModel == "" {
 				agentModel = strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
+				inTools = false
+				continue
+			}
+			if strings.HasPrefix(trimmed, "max_turns:") && agentMaxTurns == 0 {
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "max_turns:"))
+				if n, convErr := strconv.Atoi(raw); convErr == nil && n > 0 {
+					agentMaxTurns = n
+				}
 				inTools = false
 				continue
 			}
@@ -525,6 +617,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		Role:            req.Role,
 		Profile:         req.Profile,
 		Model:           agentModel,
+		MaxTurns:        agentMaxTurns,
 		APIKey:          d.config.BridgeAPIKey,
 		BaseURL:         d.config.BridgeBaseURL,
 		Provider:        d.config.BridgeProvider,
@@ -704,6 +797,7 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 		// Bridge exited without sending bridge:finished — mark as blocked.
 		exitErr := proc.ExitErr()
 		_ = d.store.UpdateAgentRunStatus(run.SessionID, run.Name, "blocked")
+		_ = d.store.UpdateAgentRunOutcome(run.SessionID, run.Name, "failed")
 		_ = d.store.LogEvent(store.SessionEvent{
 			SessionID: run.SessionID,
 			Type:      "agent_exited_without_finish",
@@ -760,7 +854,7 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 }
 
 // interruptBridgeAgent sends an interrupt command to a bridge agent's stdin.
-func (d *Daemon) interruptBridgeAgent(sessionID, agentName, from, content string) error {
+func (d *Daemon) interruptBridgeAgent(sessionID, agentName, messageID, from, content string) error {
 	d.bridgeMu.RLock()
 	proc := d.bridgeProcs[bridgeKey(sessionID, agentName)]
 	d.bridgeMu.RUnlock()
@@ -768,7 +862,7 @@ func (d *Daemon) interruptBridgeAgent(sessionID, agentName, from, content string
 	if proc == nil {
 		return fmt.Errorf("no bridge process for %s/%s", sessionID, agentName)
 	}
-	return proc.Interrupt(from, content)
+	return proc.InterruptMessage(messageID, from, content)
 }
 
 // takeExistingBridge atomically removes and returns any bridge process
@@ -793,6 +887,9 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	sess, err := d.store.GetSession(req.SessionID)
 	if err != nil {
 		return store.AgentRun{}, fmt.Errorf("session not found: %w", err)
+	}
+	if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir); err != nil {
+		return store.AgentRun{}, err
 	}
 
 	// Resolve workdir from session.
@@ -906,6 +1003,29 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	})
 
 	return stored, nil
+}
+
+func (d *Daemon) enforceSpawnCapacity(sessionID, workdir string) error {
+	cfg, err := bridge.LoadProjectConfig(workdir)
+	if err != nil {
+		return err
+	}
+	runs, err := d.store.ListAgentRuns(sessionID)
+	if err != nil {
+		return err
+	}
+	liveAgents := 0
+	for _, run := range runs {
+		lifecycle := lifecycleFromRunStatus(run.Status, d.isBridgeLive(sessionID, run.Name))
+		switch lifecycle {
+		case "starting", "running", "idle":
+			liveAgents++
+		}
+	}
+	if liveAgents >= cfg.MaxConcurrentAgents {
+		return &spawnLimitError{Cap: cfg.MaxConcurrentAgents, LiveAgents: liveAgents}
+	}
+	return nil
 }
 
 func repoNames(repos map[string]string) []string {
@@ -1124,4 +1244,3 @@ func validateAgentName(name string) error {
 	}
 	return nil
 }
-

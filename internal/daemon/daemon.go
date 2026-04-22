@@ -226,6 +226,12 @@ type Daemon struct {
 	cursorSweepStop chan struct{}
 }
 
+type agentSurfaceState struct {
+	Lifecycle   string
+	Outcome     string
+	LastEventAt time.Time
+}
+
 // New creates a Daemon with the given config. Call Start to begin serving.
 func New(cfg Config) (*Daemon, error) {
 	// Fail fast on a misconfigured default log level so operators see the error
@@ -242,6 +248,15 @@ func New(cfg Config) (*Daemon, error) {
 	st, err := store.Open(cfg.DBPath)
 	if err != nil {
 		return nil, fmt.Errorf("daemon: open store: %w", err)
+	}
+	if sessions, listErr := st.ListSessions(); listErr == nil {
+		for _, sess := range sessions {
+			if _, rollbackErr := st.RollbackUnacked(sess.ID); rollbackErr != nil {
+				log.Printf("daemon: rollback unacked messages for session %s: %v", sess.ID, rollbackErr)
+			}
+		}
+	} else {
+		log.Printf("daemon: list sessions for unacked rollback: %v", listErr)
 	}
 
 	keepaliveInterval := cfg.SSEKeepaliveInterval
@@ -312,6 +327,7 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("POST /sessions/{id}/messages", d.handleSendMessage)
 	mux.HandleFunc("POST /sessions/{id}/messages/broadcast", d.handleBroadcastMessage)
 	mux.HandleFunc("GET /sessions/{id}/messages", d.handleListMessages)
+	mux.HandleFunc("POST /sessions/{id}/messages/{mid}/ack", d.handleAckMessage)
 	mux.HandleFunc("POST /sessions/{id}/agents", d.handleSpawnAgent)
 	mux.HandleFunc("GET /sessions/{id}/agents", d.handleListAgents)
 	mux.HandleFunc("POST /sessions/{id}/agents/{name}/finish", d.handleFinishAgent)
@@ -1499,10 +1515,14 @@ func (d *Daemon) emitSessionDigest(w http.ResponseWriter, flusher http.Flusher, 
 
 	// Derive agent activity: last_activity timestamp and tool_calls count.
 	type agentInfo struct {
-		LastActivity time.Time `json:"last_activity"`
-		ToolCalls    int       `json:"tool_calls"`
+		LastActivity       time.Time `json:"last_activity"`
+		ToolCalls          int       `json:"tool_calls"`
+		Lifecycle          string    `json:"lifecycle,omitempty"`
+		Outcome            string    `json:"outcome,omitempty"`
+		DestructiveActions int       `json:"destructive_actions,omitempty"`
 	}
 	agentMap := map[string]*agentInfo{}
+	surfaceStates := d.agentSurfaceStates(sessionID)
 
 	phase := "unknown"
 	for _, evt := range events {
@@ -1527,16 +1547,36 @@ func (d *Daemon) emitSessionDigest(w http.ResponseWriter, flusher http.Flusher, 
 		}
 	}
 
+	if runs, err := d.store.ListAgentRuns(sessionID); err == nil {
+		for _, run := range runs {
+			info, ok := agentMap[run.Name]
+			if !ok {
+				info = &agentInfo{}
+				agentMap[run.Name] = info
+			}
+			state := surfaceStates[run.Name]
+			info.Lifecycle = state.Lifecycle
+			info.Outcome = state.Outcome
+			info.DestructiveActions = run.DestructiveActions
+		}
+	}
+
 	// Convert agent map to JSON-serialisable form with RFC3339 timestamps.
 	type agentDigestEntry struct {
-		LastActivity string `json:"last_activity"`
-		ToolCalls    int    `json:"tool_calls"`
+		LastActivity       string `json:"last_activity"`
+		ToolCalls          int    `json:"tool_calls"`
+		Lifecycle          string `json:"lifecycle,omitempty"`
+		Outcome            string `json:"outcome,omitempty"`
+		DestructiveActions int    `json:"destructive_actions,omitempty"`
 	}
 	agentDigest := map[string]agentDigestEntry{}
 	for name, info := range agentMap {
 		agentDigest[name] = agentDigestEntry{
-			LastActivity: info.LastActivity.UTC().Format(time.RFC3339),
-			ToolCalls:    info.ToolCalls,
+			LastActivity:       info.LastActivity.UTC().Format(time.RFC3339),
+			ToolCalls:          info.ToolCalls,
+			Lifecycle:          info.Lifecycle,
+			Outcome:            info.Outcome,
+			DestructiveActions: info.DestructiveActions,
 		}
 	}
 
@@ -1547,6 +1587,126 @@ func (d *Daemon) emitSessionDigest(w http.ResponseWriter, flusher http.Flusher, 
 	})
 	fmt.Fprintf(w, "event: session_digest\ndata: %s\n\n", digestData)
 	flusher.Flush()
+}
+
+func (d *Daemon) agentSurfaceStates(sessionID string) map[string]agentSurfaceState {
+	states := map[string]agentSurfaceState{}
+
+	events, err := d.store.QueryEvents(sessionID)
+	if err == nil {
+		for _, evt := range events {
+			agent := extractAgentName(evt.Data)
+			if agent == "" || agent == "unknown" {
+				continue
+			}
+			state := states[agent]
+			if evt.Timestamp.After(state.LastEventAt) {
+				state.LastEventAt = evt.Timestamp
+			}
+			if outcome := outcomeFromEvent(evt.Type, evt.Data); outcome != "" {
+				state.Outcome = outcome
+			}
+			states[agent] = state
+		}
+	}
+
+	runs, err := d.store.ListAgentRuns(sessionID)
+	if err != nil {
+		return states
+	}
+	for _, run := range runs {
+		state := states[run.Name]
+		live := d.isBridgeLive(sessionID, run.Name)
+		state.Lifecycle = lifecycleFromRunStatus(run.Status, live)
+		state.Outcome = chooseOutcome(run, state.Outcome)
+		states[run.Name] = state
+	}
+	return states
+}
+
+func (d *Daemon) isBridgeLive(sessionID, agentName string) bool {
+	d.bridgeMu.RLock()
+	defer d.bridgeMu.RUnlock()
+	proc := d.bridgeProcs[bridgeKey(sessionID, agentName)]
+	return proc != nil
+}
+
+func lifecycleFromRunStatus(status string, live bool) string {
+	switch status {
+	case "starting":
+		return "starting"
+	case "running", "pending_verification":
+		return "running"
+	case "stopping":
+		return "stopping"
+	case "idle":
+		return "idle"
+	case "exited":
+		return "exited"
+	case "complete", "blocked", "incomplete", "failed", "budget_exhausted", "stalled":
+		if live {
+			return "idle"
+		}
+		return "exited"
+	default:
+		if live {
+			return "running"
+		}
+		return status
+	}
+}
+
+func chooseOutcome(run store.AgentRun, fallback string) string {
+	if run.Outcome != "" {
+		return run.Outcome
+	}
+	if fallback != "" {
+		return fallback
+	}
+	switch run.Status {
+	case "complete":
+		return "succeeded"
+	case "blocked":
+		return "blocked"
+	case "incomplete":
+		return "incomplete"
+	case "failed":
+		return "failed"
+	case "budget_exhausted":
+		return "budget_exhausted"
+	default:
+		return "active"
+	}
+}
+
+func outcomeFromEvent(eventType, data string) string {
+	switch eventType {
+	case "bridge:budget_exhausted":
+		return "budget_exhausted"
+	case "bridge:failed":
+		return "failed"
+	case "bridge:finished":
+		return "succeeded"
+	case "agent_status:incomplete":
+		return "incomplete"
+	case "agent_finished":
+		var payload struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(data), &payload); err == nil {
+			switch payload.Status {
+			case "complete":
+				return "succeeded"
+			case "blocked":
+				return "blocked"
+			case "incomplete":
+				return "incomplete"
+			case "failed":
+				return "failed"
+			}
+		}
+	}
+	return ""
 }
 
 // parseEventCursor parses ?after=, ?wait=, ?before=, and ?limit= query params

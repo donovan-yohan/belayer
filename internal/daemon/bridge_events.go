@@ -41,8 +41,14 @@ func (d *Daemon) processBridgeEvent(sessionID, eventType, data string) {
 	switch eventType {
 	case "bridge:started":
 		d.handleBridgeStarted(sessionID, agentName, eventData)
+	case "bridge:idle":
+		d.handleBridgeIdle(sessionID, agentName)
 	case "bridge:finished":
 		d.handleBridgeFinished(sessionID, agentName, eventData)
+	case "bridge:budget_exhausted":
+		d.handleBridgeBudgetExhausted(sessionID, agentName, eventData)
+	case "bridge:message_ack":
+		d.handleBridgeMessageAck(eventData)
 	case "bridge:failed":
 		d.handleBridgeFailed(sessionID, agentName, eventData)
 	case "bridge:clarification_needed":
@@ -65,6 +71,12 @@ func (d *Daemon) handleBridgeStarted(sessionID, agentName string, data map[strin
 	hermesSessionID, _ := data["hermes_session_id"].(string)
 	if hermesSessionID != "" {
 		_ = d.store.UpdateAgentRunHermesSessionID(sessionID, agentName, hermesSessionID)
+	}
+}
+
+func (d *Daemon) handleBridgeIdle(sessionID, agentName string) {
+	if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "idle"); err != nil {
+		log.Printf("WARNING: handleBridgeIdle: failed to update %s in session %s: %v", agentName, sessionID, err)
 	}
 }
 
@@ -121,9 +133,15 @@ func (d *Daemon) handleBridgeToolStarted(sessionID, agentName string, data map[s
 func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[string]any) {
 	// Don't overwrite "incomplete" — the agent already reported it couldn't finish.
 	current, err := d.store.GetAgentRun(sessionID, agentName)
-	if err != nil || current.Status != "incomplete" {
+	preserveTerminal := err == nil && current.Outcome != "" && current.Outcome != "active" && current.Outcome != "succeeded"
+	if (err != nil || current.Status != "incomplete") && !preserveTerminal {
 		if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "complete"); err != nil {
 			log.Printf("ERROR: handleBridgeFinished: failed to update agent %s status in session %s: %v", agentName, sessionID, err)
+		}
+	}
+	if err == nil && current.Outcome == "active" {
+		if updateErr := d.store.UpdateAgentRunOutcome(sessionID, agentName, "succeeded"); updateErr != nil {
+			log.Printf("WARNING: handleBridgeFinished: failed to set outcome for %s in session %s: %v", agentName, sessionID, updateErr)
 		}
 	}
 
@@ -140,6 +158,60 @@ func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[stri
 
 	// Check if the session is now stalled (all agents done, no completion approval).
 	d.checkSessionStalled(sessionID)
+}
+
+func (d *Daemon) handleBridgeBudgetExhausted(sessionID, agentName string, data map[string]any) {
+	_ = d.store.UpdateAgentRunStatus(sessionID, agentName, "exited")
+	_ = d.store.UpdateAgentRunOutcome(sessionID, agentName, "budget_exhausted")
+
+	content := fmt.Sprintf(
+		"Agent %s exhausted its turn budget (%v/%v). Its last message: %q. Decide whether to respawn, retire, or continue without it.",
+		agentName,
+		data["turns_used"],
+		data["max_turns"],
+		data["last_message"],
+	)
+
+	msgID := uuid.New().String()
+	msg := broker.Message{
+		ID:          msgID,
+		SessionID:   sessionID,
+		SenderID:    "system",
+		RecipientID: "supervisor",
+		Type:        broker.MessageStateChange,
+		Content:     content,
+		Urgent:      true,
+		Timestamp:   time.Now().UTC(),
+	}
+	_, _ = d.store.CreateMessage(store.Message{
+		ID:          msgID,
+		SessionID:   sessionID,
+		SenderID:    "system",
+		RecipientID: "supervisor",
+		Type:        string(broker.MessageStateChange),
+		Content:     content,
+		Urgent:      true,
+	})
+	_ = d.broker.Interrupt(sessionID, "supervisor", msg)
+}
+
+func (d *Daemon) handleBridgeMessageAck(data map[string]any) {
+	rawIDs, _ := data["ids"].([]any)
+	if len(rawIDs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(rawIDs))
+	for _, raw := range rawIDs {
+		if id := strings.TrimSpace(fmt.Sprint(raw)); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if err := d.store.MarkAcknowledged(ids...); err != nil {
+		log.Printf("WARNING: handleBridgeMessageAck: failed to acknowledge messages %v: %v", ids, err)
+	}
 }
 
 // checkSupervisorExitedEarly emits a warning if the supervisor exits while
@@ -291,6 +363,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 		if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "incomplete"); err != nil {
 			log.Printf("ERROR: processAgentStatusEvent: failed to update agent %s to incomplete in session %s: %v", agentName, sessionID, err)
 		}
+		_ = d.store.UpdateAgentRunOutcome(sessionID, agentName, "incomplete")
 
 		// If the supervisor reports incomplete, check the persistence gate
 		// before escalating. This mirrors how the PM gate intercepts a
@@ -386,6 +459,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 
 func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string]any) {
 	_ = d.store.UpdateAgentRunStatus(sessionID, agentName, "blocked")
+	_ = d.store.UpdateAgentRunOutcome(sessionID, agentName, "failed")
 
 	// Check if this was the last active agent.
 	d.checkSessionStalled(sessionID)
@@ -647,6 +721,12 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 	// Render the strategy back to the supervisor as an urgent state change.
 	// The supervisor already has the list in its spawn message, but restating
 	// it here makes the reprompt self-contained in the live message stream.
+	if path, err := d.WriteHandoffArtifact(sessionID); err != nil {
+		log.Printf("maybeRepromptForPersistence: write handoff artifact failed for session %s: %v", sessionID, err)
+	} else if err := d.registerHandoffArtifact(sessionID, path); err != nil {
+		log.Printf("maybeRepromptForPersistence: register handoff artifact failed for session %s: %v", sessionID, err)
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "You reported status=incomplete but the persistence_strategy (source: %s) has not been executed: no persistence-notes artifact is registered in this session.\n\n", source)
 	b.WriteString("Execute each step below, THEN call belayer_report_status with status=incomplete again:\n")

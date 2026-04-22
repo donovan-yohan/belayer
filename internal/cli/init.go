@@ -36,16 +36,17 @@ log_level: standard
 #   policy: .belayer/policies/standard.yaml
 
 # Runtime hooks. Belayer can bring an integration environment up/down around
-# a run (e.g. workbench services). When omitted, runs do not provision an
-# environment — agents work directly against whatever is already running.
+# a run (e.g. workbench services). The live-agent cap is enforced by the
+# daemon even when no runtime hooks are configured.
 #
-# runtime:
-#   up: ./scripts/workbench-up.sh
-#   health: ./scripts/workbench-health.sh
-#   down: ./scripts/workbench-down.sh
-#   endpoints:
-#     - name: api
-#       url: http://localhost:8080
+runtime:
+  max_concurrent_agents: 15
+  # up: ./scripts/workbench-up.sh
+  # health: ./scripts/workbench-health.sh
+  # down: ./scripts/workbench-down.sh
+  # endpoints:
+  #   - name: api
+  #     url: http://localhost:8080
 
 # Bridge settings. Controls how bridge subprocesses are configured.
 #

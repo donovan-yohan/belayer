@@ -96,6 +96,65 @@ func TestBridgeFailedUpdatesAgentStatusToBlocked(t *testing.T) {
 	}
 }
 
+func TestBridgeBudgetExhaustedSetsExitedAndNotifiesSupervisor(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "worker", "supervisor")
+
+	rr := postBridgeEvent(t, d, sessionID, "bridge:budget_exhausted", map[string]any{
+		"agent":        "worker",
+		"turns_used":   12,
+		"max_turns":    12,
+		"last_message": "still trying to untangle the migration",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	run, err := d.store.GetAgentRun(sessionID, "worker")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.Status != "exited" {
+		t.Fatalf("expected status=exited, got %q", run.Status)
+	}
+
+	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
+	if err != nil {
+		t.Fatalf("PendingMessages: %v", err)
+	}
+	var found bool
+	for _, msg := range msgs {
+		if msg.RecipientID == "supervisor" &&
+			strings.Contains(msg.Content, "exhausted its turn budget") &&
+			strings.Contains(msg.Content, "12/12") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected budget-exhausted mail to supervisor, got %#v", msgs)
+	}
+
+	listRR := doRequest(t, d, "GET", "/sessions/"+sessionID+"/agents", nil)
+	if listRR.Code != http.StatusOK {
+		t.Fatalf("list agents: expected 200, got %d: %s", listRR.Code, listRR.Body.String())
+	}
+	var decoded []map[string]any
+	if err := json.NewDecoder(listRR.Body).Decode(&decoded); err != nil {
+		t.Fatalf("decode list agents: %v", err)
+	}
+	if len(decoded) != 2 {
+		t.Fatalf("expected 2 agent rows, got %d", len(decoded))
+	}
+	for _, row := range decoded {
+		if row["name"] == "worker" {
+			if row["outcome"] != "budget_exhausted" {
+				t.Fatalf("worker outcome = %v, want budget_exhausted", row["outcome"])
+			}
+		}
+	}
+}
+
 // TestBridgeFinishedForNonPlannerUpdatesStatusOnly verifies that a
 // bridge:finished event from a non-supervisor agent updates its status to
 // "complete" but does NOT auto-generate a message to the supervisor.
@@ -839,6 +898,29 @@ func TestSupervisorIncompleteRepromptedWhenNoPersistenceArtifact(t *testing.T) {
 	}
 	if !foundMsg {
 		t.Fatalf("expected urgent reprompt message to supervisor, got %#v", msgs)
+	}
+
+	sessMeta, err := d.store.GetSession(sessID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	handoffPath := filepath.Join(sessMeta.WorkspaceDir, ".belayer", "runs", sessID, "handoff.md")
+	if _, err := os.Stat(handoffPath); err != nil {
+		t.Fatalf("expected handoff artifact at %s: %v", handoffPath, err)
+	}
+	artifacts, err := d.store.ListArtifacts(sessID)
+	if err != nil {
+		t.Fatalf("ListArtifacts: %v", err)
+	}
+	var foundHandoff bool
+	for _, artifact := range artifacts {
+		if artifact.Kind == "handoff" && artifact.Path == ".belayer/runs/"+sessID+"/handoff.md" {
+			foundHandoff = true
+			break
+		}
+	}
+	if !foundHandoff {
+		t.Fatalf("expected handoff artifact registration, got %#v", artifacts)
 	}
 }
 

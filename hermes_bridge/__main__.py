@@ -132,10 +132,11 @@ def filter_and_format_messages(
     socket_path: str,
     session_id: str,
     agent_id: str,
-) -> str:
-    """Drop empty-content messages, post one batched bridge:warning if any are dropped, and format the rest."""
+) -> tuple[str, list[str]]:
+    """Drop empty-content messages, warn on drops, format the rest, and collect ack IDs."""
     valid = []
     dropped = []
+    ack_ids: list[str] = []
     for msg in messages:
         content = _msg_field(msg, "Content", "content")
         if not content.strip():
@@ -145,6 +146,9 @@ def filter_and_format_messages(
             })
             continue
         valid.append(msg)
+        msg_id = _msg_field(msg, "ID", "id")
+        if msg_id:
+            ack_ids.append(msg_id)
     if dropped:
         post_event(
             socket_path, session_id, agent_id,
@@ -152,7 +156,18 @@ def filter_and_format_messages(
             {"kind": "empty_message_dropped", "count": len(dropped), "dropped": dropped},
         )
         log.warning("Dropped %d empty message(s): %s", len(dropped), dropped)
-    return format_messages(valid)
+    return format_messages(valid), ack_ids
+
+
+def post_message_ack(socket_path: str, session_id: str, agent_id: str, ids: list[str]) -> None:
+    """Emit a bridge:message_ack event for a turn's consumed message IDs."""
+    if not ids:
+        return
+    post_event(
+        socket_path, session_id, agent_id,
+        "bridge:message_ack",
+        {"ids": ids},
+    )
 
 
 def extract_turn_usage(result: dict) -> dict:
@@ -203,6 +218,13 @@ def main() -> None:
     role = os.environ.get("BELAYER_ROLE", "specialist")
     profile = os.environ.get("BELAYER_PROFILE", "")
     model = os.environ.get("BELAYER_MODEL", "")
+    max_turns_env = os.environ.get("BELAYER_MAX_TURNS", "")
+    max_turns = None
+    if max_turns_env:
+        try:
+            max_turns = int(max_turns_env)
+        except ValueError:
+            log.warning("Ignoring invalid BELAYER_MAX_TURNS=%r", max_turns_env)
     initial_message = _decode_nl(os.environ.get("BELAYER_MESSAGE", ""))
     system_prompt = _decode_nl(os.environ.get("BELAYER_SYSTEM_PROMPT", ""))
     hermes_session_id = os.environ.get("BELAYER_HERMES_SESSION_ID", "")
@@ -299,6 +321,8 @@ def main() -> None:
         agent_kwargs["api_mode"] = runtime_api_mode
     if model:
         agent_kwargs["model"] = model
+    if max_turns is not None:
+        agent_kwargs["max_turns"] = max_turns
     if hermes_session_id:
         agent_kwargs["session_id"] = hermes_session_id
 
@@ -399,7 +423,7 @@ def main() -> None:
 
     # --- Start stdin reader ------------------------------------------------
     stdin_queue: queue.Queue = queue.Queue()
-    stdin_reader = StdinReader(agent, stdin_queue)
+    stdin_reader = StdinReader(agent, stdin_queue, socket_path, session_id, agent_id)
     stdin_reader.start()
 
     # --- Start heartbeat thread -------------------------------------------
@@ -436,11 +460,12 @@ def main() -> None:
 
     # --- Outer conversation loop -------------------------------------------
     user_message = initial_message or f"You are the {role} agent. Begin your work."
+    pending_message_ids: list[str] = []
 
     # Check for messages that were queued before this agent was spawned.
     pending = fetch_pending_messages(socket_path, session_id, agent_id)
     if pending:
-        queued = filter_and_format_messages(pending, socket_path, session_id, agent_id)
+        queued, pending_message_ids = filter_and_format_messages(pending, socket_path, session_id, agent_id)
         if queued:
             user_message = f"{user_message}\n\n{queued}"
             valid_count = queued.count("\n\n") + 1
@@ -465,6 +490,34 @@ def main() -> None:
         turn_usage = extract_turn_usage(result)
         if turn_usage:
             post_event(socket_path, session_id, agent_id, "bridge:turn_usage", turn_usage)
+
+        if pending_message_ids:
+            post_message_ack(socket_path, session_id, agent_id, pending_message_ids)
+            pending_message_ids = []
+
+        if result.get("budget_exhausted"):
+            turns_used = result.get("turns_used")
+            final_response = str(result.get("final_response", ""))[:500]
+            last_message = str(result.get("last_message", result.get("final_response", "")))[:500]
+            post_event(
+                socket_path, session_id, agent_id,
+                "bridge:budget_exhausted",
+                {
+                    "turns_used": turns_used,
+                    "max_turns": max_turns,
+                    "last_message": last_message,
+                },
+            )
+            post_event(
+                socket_path, session_id, agent_id,
+                "bridge:finished",
+                {
+                    "reason": "budget_exhausted",
+                    "final_response": final_response,
+                    "last_message": last_message,
+                },
+            )
+            break
 
         # --- Interrupted turn: check for urgent message from stdin ---------
         if result.get("interrupted"):
@@ -498,7 +551,7 @@ def main() -> None:
         # --- Check for non-urgent messages from other agents ---------------
         pending = fetch_pending_messages(socket_path, session_id, agent_id)
         if pending:
-            formatted = filter_and_format_messages(pending, socket_path, session_id, agent_id)
+            formatted, pending_message_ids = filter_and_format_messages(pending, socket_path, session_id, agent_id)
             if not formatted:
                 # All pending messages were empty-content; do not invoke model.
                 log.info("Skipping turn: all %d pending message(s) had empty content", len(pending))
@@ -588,7 +641,7 @@ def main() -> None:
                 # Poll for pending messages.
                 pending = fetch_pending_messages(socket_path, session_id, agent_id)
                 if pending:
-                    formatted = filter_and_format_messages(pending, socket_path, session_id, agent_id)
+                    formatted, pending_message_ids = filter_and_format_messages(pending, socket_path, session_id, agent_id)
                     if not formatted:
                         log.info("Idle poll: all %d pending message(s) had empty content; continuing to wait",
                                  len(pending))

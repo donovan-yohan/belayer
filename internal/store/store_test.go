@@ -600,6 +600,82 @@ func TestMigrate_Idempotent(t *testing.T) {
 	}
 }
 
+func TestMigrate_AgentRunsOutcomeColumn(t *testing.T) {
+	s := openMemory(t)
+
+	rows, err := s.DB().Query("PRAGMA table_info(agent_runs)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(agent_runs): %v", err)
+	}
+	defer rows.Close()
+
+	seen := map[string]sql.NullString{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan agent_runs schema: %v", err)
+		}
+		seen[name] = dflt
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate agent_runs schema: %v", err)
+	}
+
+	dflt, ok := seen["outcome"]
+	if !ok {
+		t.Fatal("agent_runs missing outcome column")
+	}
+	if !dflt.Valid || dflt.String != "'active'" {
+		t.Fatalf("outcome default = %v, want 'active'", dflt)
+	}
+}
+
+func TestMigrate_MessageTimestampColumnsAndIndex(t *testing.T) {
+	s := openMemory(t)
+
+	rows, err := s.DB().Query("PRAGMA table_info(messages)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(messages): %v", err)
+	}
+	defer rows.Close()
+
+	seen := map[string]sql.NullString{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			t.Fatalf("scan messages schema: %v", err)
+		}
+		seen[name] = dflt
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate messages schema: %v", err)
+	}
+
+	for _, col := range []string{"delivered_at", "acknowledged_at"} {
+		dflt, ok := seen[col]
+		if !ok {
+			t.Fatalf("messages missing %s column", col)
+		}
+		if dflt.Valid {
+			t.Fatalf("%s default = %v, want NULL", col, dflt)
+		}
+	}
+
+	var indexSQL string
+	if err := s.DB().QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_pending'`).Scan(&indexSQL); err != nil {
+		t.Fatalf("read idx_messages_pending: %v", err)
+	}
+	if !strings.Contains(indexSQL, "delivered_at IS NULL") {
+		t.Fatalf("idx_messages_pending SQL %q does not use delivered_at IS NULL", indexSQL)
+	}
+}
+
 // TestUpdateAgentRunHermesSessionID verifies that hermes_session_id is persisted
 // and round-trips correctly via GetAgentRun.
 func TestUpdateAgentRunHermesSessionID(t *testing.T) {
@@ -776,6 +852,181 @@ func TestPendingMessages_AfterID(t *testing.T) {
 	}
 	if pending[1].Content != "third" {
 		t.Errorf("pending[1]: got %q, want %q", pending[1].Content, "third")
+	}
+}
+
+func TestCreateAgentRun_OutcomeDefaultAndUpdate(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "outcome-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := s.CreateAgentRun(AgentRun{
+		SessionID: sessID,
+		Name:      "planner",
+	}); err != nil {
+		t.Fatalf("CreateAgentRun: %v", err)
+	}
+
+	run, err := s.GetAgentRun(sessID, "planner")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.Outcome != "active" {
+		t.Fatalf("Outcome after create = %q, want %q", run.Outcome, "active")
+	}
+
+	if err := s.UpdateAgentRunOutcome(sessID, "planner", "budget_exhausted"); err != nil {
+		t.Fatalf("UpdateAgentRunOutcome: %v", err)
+	}
+
+	run, err = s.GetAgentRun(sessID, "planner")
+	if err != nil {
+		t.Fatalf("GetAgentRun after update: %v", err)
+	}
+	if run.Outcome != "budget_exhausted" {
+		t.Fatalf("Outcome after update = %q, want %q", run.Outcome, "budget_exhausted")
+	}
+
+	runs, err := s.ListAgentRuns(sessID)
+	if err != nil {
+		t.Fatalf("ListAgentRuns: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 agent run, got %d", len(runs))
+	}
+	if runs[0].Outcome != "budget_exhausted" {
+		t.Fatalf("ListAgentRuns outcome = %q, want %q", runs[0].Outcome, "budget_exhausted")
+	}
+}
+
+func TestMessageStateHelpers_DeliveryAckAndRollback(t *testing.T) {
+	s := openMemory(t)
+
+	sessID, err := s.CreateSession(Session{Name: "state-test"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	id1, err := s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "supervisor",
+		RecipientID: "worker",
+		Content:     "first",
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage 1: %v", err)
+	}
+	id2, err := s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "supervisor",
+		RecipientID: "worker",
+		Content:     "second",
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage 2: %v", err)
+	}
+
+	pending, err := s.PendingMessages(sessID, "worker", "")
+	if err != nil {
+		t.Fatalf("PendingMessages initial: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("expected 2 queued messages, got %d", len(pending))
+	}
+	unacked, err := s.UnackedMessages(sessID, "worker", "")
+	if err != nil {
+		t.Fatalf("UnackedMessages initial: %v", err)
+	}
+	if len(unacked) != 2 {
+		t.Fatalf("expected 2 unacked messages, got %d", len(unacked))
+	}
+
+	if err := s.MarkDelivered(id1, id2); err != nil {
+		t.Fatalf("MarkDelivered: %v", err)
+	}
+
+	pending, err = s.PendingMessages(sessID, "worker", "")
+	if err != nil {
+		t.Fatalf("PendingMessages after delivery: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected 0 queued messages after delivery, got %d", len(pending))
+	}
+	unacked, err = s.UnackedMessages(sessID, "worker", "")
+	if err != nil {
+		t.Fatalf("UnackedMessages after delivery: %v", err)
+	}
+	if len(unacked) != 2 {
+		t.Fatalf("expected 2 delivered-but-unacked messages, got %d", len(unacked))
+	}
+
+	msgs, err := s.ListMessagesInSession(sessID)
+	if err != nil {
+		t.Fatalf("ListMessagesInSession after delivery: %v", err)
+	}
+	for _, msg := range msgs {
+		if msg.DeliveredAt == nil {
+			t.Fatalf("message %q missing delivered_at after MarkDelivered", msg.ID)
+		}
+		if msg.AcknowledgedAt != nil {
+			t.Fatalf("message %q unexpectedly acknowledged before MarkAcknowledged", msg.ID)
+		}
+	}
+
+	if err := s.MarkAcknowledged(id1, id2); err != nil {
+		t.Fatalf("MarkAcknowledged: %v", err)
+	}
+
+	unacked, err = s.UnackedMessages(sessID, "worker", "")
+	if err != nil {
+		t.Fatalf("UnackedMessages after ack: %v", err)
+	}
+	if len(unacked) != 0 {
+		t.Fatalf("expected 0 unacked messages after ack, got %d", len(unacked))
+	}
+
+	msgs, err = s.ListMessagesInSession(sessID)
+	if err != nil {
+		t.Fatalf("ListMessagesInSession after ack: %v", err)
+	}
+	for _, msg := range msgs {
+		if msg.AcknowledgedAt == nil {
+			t.Fatalf("message %q missing acknowledged_at after MarkAcknowledged", msg.ID)
+		}
+	}
+
+	id3, err := s.CreateMessage(Message{
+		SessionID:   sessID,
+		SenderID:    "supervisor",
+		RecipientID: "worker",
+		Content:     "third",
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage 3: %v", err)
+	}
+	if err := s.MarkDelivered(id3); err != nil {
+		t.Fatalf("MarkDelivered third: %v", err)
+	}
+
+	rolledBack, err := s.RollbackUnacked(sessID)
+	if err != nil {
+		t.Fatalf("RollbackUnacked: %v", err)
+	}
+	if rolledBack != 1 {
+		t.Fatalf("RollbackUnacked rolled back %d rows, want 1", rolledBack)
+	}
+
+	pending, err = s.PendingMessages(sessID, "worker", "")
+	if err != nil {
+		t.Fatalf("PendingMessages after rollback: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 queued message after rollback, got %d", len(pending))
+	}
+	if pending[0].ID != id3 {
+		t.Fatalf("pending message after rollback = %q, want %q", pending[0].ID, id3)
 	}
 }
 

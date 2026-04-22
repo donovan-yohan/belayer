@@ -103,6 +103,29 @@ func TestInitWritesLogLevelStandardToConfig(t *testing.T) {
 	}
 }
 
+func TestInitScaffoldsRuntimeMaxConcurrentAgents(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newInitCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--target", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	cfg, err := os.ReadFile(filepath.Join(dir, ".belayer", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	got := string(cfg)
+	if !strings.Contains(got, "\nruntime:\n") {
+		t.Fatalf("expected runtime block in config.yaml, got:\n%s", got)
+	}
+	if !strings.Contains(got, "max_concurrent_agents: 15") {
+		t.Fatalf("expected max_concurrent_agents scaffold, got:\n%s", got)
+	}
+}
+
 func TestInitIdempotentReRun(t *testing.T) {
 	dir := t.TempDir()
 
