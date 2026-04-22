@@ -51,14 +51,22 @@ Three layers:
 
 ## Agent identity
 
-Agent identities live in `agents/<name>/` (shipped defaults) and `.belayer/agents/<name>/`
-(project-local override; `belayer init` scaffolds it). Each directory contains:
+Belayer ships a starter team under `agents/`, and `belayer init` copies that
+tree into the consuming project at `.belayer/agents/`.
+
+Treat the project-local copy as the real runtime source of truth. The shipped
+defaults in this repo are examples and onboarding scaffolding, not a normative
+team definition for every belayer consumer.
+
+Agent identities live in `.belayer/agents/<name>/` at runtime. Each directory contains:
 
 - `agent.yaml` .. vendor, model, tier, ephemeral flag
 - `system-prompt.md` .. the agent's soul (injected as ephemeral_system_prompt)
 - `agents.md` .. operating instructions, tools, workflows
 
-Default team: supervisor, pm, web-dev, backend-dev, qa, reviewer.
+The default starter team is: supervisor, pm, web-dev, backend-dev, qa, reviewer.
+You can edit, delete, rename, or replace them in your own `.belayer/agents/`
+tree without changing belayer source.
 
 ## CLI
 

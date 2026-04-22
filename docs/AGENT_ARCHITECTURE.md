@@ -4,6 +4,17 @@ How agents communicate, coordinate, and stay alive inside a Belayer run.
 
 ---
 
+## Scope
+
+This document describes belayer's runtime model and the shipped default
+workflow. It does **not** mean every consuming project should use the exact
+same agent team.
+
+Belayer ships starter identities under `agents/`, and `belayer init` copies
+them into the consuming repo at `.belayer/agents/`. That project-local tree is
+owned by the consuming project. Edit it there instead of changing belayer
+source just to customize your team's roles, prompts, or tool access.
+
 ## Agent toolbox
 
 Every Hermes agent starts with a base set of tools from the harness (file editing, bash, search, etc.). Belayer injects seven additional tools via the bridge at spawn time. These are the coordination primitives that let agents talk to each other through the session bus instead of through raw terminal output.
@@ -109,7 +120,15 @@ flowchart TB
     spec_hermes <-->|"stdin/stdout JSON\n+ HTTP over Unix socket"| daemon
 ```
 
-The supervisor is always the first agent spawned. It reads the spec, decomposes work, and spawns specialists (frontend, backend, qa, reviewer, etc.) as needed. The PM is never spawned by the supervisor — the daemon auto-spawns it when the supervisor calls `belayer_request_completion`, creating an adversarial verification step that the supervisor cannot skip.
+In the shipped default flow, the supervisor is the first agent spawned. It
+reads the spec, decomposes work, and spawns specialists (frontend, backend,
+qa, reviewer, etc.) as needed. The PM is never spawned by the supervisor — the
+daemon auto-spawns it when the supervisor calls `belayer_request_completion`,
+creating an adversarial verification step that the supervisor cannot skip.
+
+Those specialist identities are defaults, not framework requirements. A
+consumer project can replace them with its own roles in `.belayer/agents/`
+without changing belayer itself.
 
 ### What the daemon owns
 

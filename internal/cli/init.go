@@ -138,7 +138,10 @@ func newInitCmd() *cobra.Command {
 		Short: "Scaffold .belayer/ in the current project",
 		Long: `Create .belayer/{config.yaml,policies/,agents/} in the target directory
 and copy the shipped default agents (supervisor, pm, web-dev, backend-dev, qa,
-reviewer) into .belayer/agents/.
+reviewer) into .belayer/agents/ as a starter team.
+
+The copied .belayer/agents/ tree is project-owned. Edit, delete, rename, or
+replace those identities in the consuming repo without changing belayer source.
 
 Idempotent: re-running prints a notice and exits 0 without overwriting. Use
 --force to refresh .belayer/agents/ from the shipped defaults (useful when
