@@ -675,6 +675,51 @@ func TestProcessAgentStatusIncompleteSpecialistNotifiesSupervisor(t *testing.T) 
 	}
 }
 
+// TestProcessAgentStatusIncompleteSideUsesSystemSender verifies that a side
+// agent cannot populate the supervisor inbox with a side-surface sender ID.
+func TestProcessAgentStatusIncompleteSideUsesSystemSender(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor")
+	_, err := d.store.CreateAgentRun(store.AgentRun{
+		SessionID: sessionID,
+		Name:      "pm",
+		Role:      "pm",
+		Kind:      "side",
+		Profile:   "default",
+		Status:    "running",
+		Transport: "tmux",
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentRun side: %v", err)
+	}
+	_ = d.store.UpdateSessionStatus(sessionID, "running")
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "pm",
+		"status": "incomplete",
+		"detail": "side surface",
+	})
+	d.processAgentStatusEvent(sessionID, "agent_status:incomplete", string(data))
+
+	msgs, err := d.store.PendingMessages(sessionID, "supervisor", "")
+	if err != nil {
+		t.Fatalf("PendingMessages: %v", err)
+	}
+	found := false
+	for _, m := range msgs {
+		if m.RecipientID == "supervisor" && m.Content != "" && strings.Contains(m.Content, "side surface") {
+			if m.SenderID != "system" {
+				t.Fatalf("expected side-surface notification to be system-sent, got sender=%q msg=%#v", m.SenderID, m)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected supervisor notification from side agent, got %#v", msgs)
+	}
+}
+
 // TestProcessAgentStatusIncompleteSupervisorSendsNoSelfMessage verifies that
 // when the supervisor itself reports incomplete, no self-directed broker
 // message is generated (the session-escalation path handles it).
@@ -718,6 +763,52 @@ func TestProcessAgentStatusMissingAgentFieldDoesNotPanic(t *testing.T) {
 	sessionID := setupSessionWithAgents(t, d, "worker")
 
 	d.processAgentStatusEvent(sessionID, "agent_status:incomplete", `{"detail":"no agent"}`)
+}
+
+// TestProcessAgentStatusDoneMarksIdleAndUpdatesRoster verifies that the daemon
+// reconciles agent_status:done immediately so roster reads do not lag behind
+// the bridge event stream.
+func TestProcessAgentStatusDoneMarksIdleAndUpdatesRoster(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "worker")
+
+	data, _ := json.Marshal(map[string]any{
+		"agent":  "worker",
+		"status": "done",
+	})
+	d.processAgentStatusEvent(sessionID, "agent_status:done", string(data))
+
+	run, err := d.store.GetAgentRun(sessionID, "worker")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if run.Status != "idle" {
+		t.Fatalf("expected agent_status:done to reconcile to idle, got %q", run.Status)
+	}
+
+	rr := doRequest(t, d, "GET", "/sessions/"+sessionID+"/agents", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected roster fetch to succeed, got %d: %s", rr.Code, rr.Body.String())
+	}
+	agents := decodeJSON[[]store.AgentRun](t, rr)
+	if len(agents) != 1 || agents[0].Status != "idle" {
+		t.Fatalf("expected roster to reflect idle status immediately, got %#v", agents)
+	}
+
+	events, err := d.store.QueryEvents(sessionID)
+	if err != nil {
+		t.Fatalf("QueryEvents: %v", err)
+	}
+	found := false
+	for _, e := range events {
+		if e.Type == "agent_status_done" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected agent_status_done event to be logged")
+	}
 }
 
 // --- Tests for handleBridgeFinished status overwrite guard ---

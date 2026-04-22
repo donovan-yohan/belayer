@@ -192,7 +192,9 @@ func (d *Daemon) registerHandoffArtifact(sessionID, absolutePath string) error {
 func (d *Daemon) collectUnackedMessages(sessionID string, runs []store.AgentRun) []store.Message {
 	recipients := map[string]struct{}{"supervisor": {}}
 	for _, run := range runs {
-		recipients[run.Name] = struct{}{}
+		if agentRunIsMain(run) {
+			recipients[run.Name] = struct{}{}
+		}
 	}
 	var messages []store.Message
 	for recipient := range recipients {

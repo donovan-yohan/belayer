@@ -33,6 +33,8 @@ type agentSpawnRequest struct {
 	// off the same identity (e.g. Name="reviewer-1", Identity="reviewer").
 	Identity        string `json:"identity,omitempty"`
 	Role            string `json:"role"`
+	Kind            string `json:"kind,omitempty"`
+	GameMaster      *bool  `json:"game_master,omitempty"`
 	Profile         string `json:"profile"` // Hermes runtime profile (BELAYER_PROFILE / HERMES_HOME), independent of identity
 	Model           string `json:"model,omitempty"`
 	Message         string `json:"message,omitempty"`
@@ -62,10 +64,70 @@ type finishAgentRequest struct {
 type spawnLimitError struct {
 	Cap        int
 	LiveAgents int
+	Code       string
+	Message    string
 }
 
 func (e *spawnLimitError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
 	return fmt.Sprintf("cap reached (%d live agents); retire one before spawning", e.Cap)
+}
+
+func normalizeAgentKind(kind string) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	switch kind {
+	case "", "main":
+		return "main"
+	case "side":
+		return "side"
+	default:
+		return kind
+	}
+}
+
+func validateAgentKind(kind string) (string, error) {
+	normalized := normalizeAgentKind(kind)
+	switch normalized {
+	case "main", "side":
+		return normalized, nil
+	default:
+		return "", fmt.Errorf("kind must be main or side")
+	}
+}
+
+func resolveAgentGameMaster(req agentSpawnRequest, kind string) (bool, error) {
+	if kind == "side" {
+		if req.GameMaster != nil && *req.GameMaster {
+			return false, fmt.Errorf("kind=side cannot be game_master")
+		}
+		return false, nil
+	}
+	if req.GameMaster != nil {
+		return *req.GameMaster, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(req.Name)) {
+	case "supervisor", "game-master":
+		return true, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(req.Role)) {
+	case "supervisor", "game-master":
+		return true, nil
+	}
+	return false, nil
+}
+
+func agentRunIsSide(run store.AgentRun) bool {
+	return normalizeAgentKind(run.Kind) == "side"
+}
+
+func agentRunIsMain(run store.AgentRun) bool {
+	return !agentRunIsSide(run)
+}
+
+func agentRunIsGameMaster(run store.AgentRun) bool {
+	return run.GameMaster || strings.EqualFold(run.Name, "supervisor") || strings.EqualFold(run.Name, "game-master") || strings.EqualFold(run.Role, "supervisor") || strings.EqualFold(run.Role, "game-master")
 }
 
 func (d *Daemon) lockSpawnSession(sessionID string) func() {
@@ -85,6 +147,8 @@ type agentRunResponse struct {
 	SessionID          string `json:"session_id"`
 	Name               string `json:"name"`
 	Role               string `json:"role"`
+	Kind               string `json:"kind"`
+	GameMaster         bool   `json:"game_master"`
 	Profile            string `json:"profile"`
 	RepoScope          string `json:"repo_scope"`
 	Workdir            string `json:"workdir"`
@@ -130,6 +194,15 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	kind := ""
+	if req.Kind != "" {
+		var kindErr error
+		kind, kindErr = validateAgentKind(req.Kind)
+		if kindErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": kindErr.Error()})
+			return
+		}
+	}
 	req.SessionID = sessionID
 
 	// Resolve workdir from session repos when repo scope is set but workdir is not.
@@ -156,6 +229,23 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	// If it exists, carry over its Hermes session ID for resume and update
 	// the existing row instead of creating a new one (UNIQUE constraint).
 	prior, priorErr := d.store.GetAgentRun(sessionID, req.Name)
+	if priorErr == nil && kind == "" {
+		kind, _ = validateAgentKind(prior.Kind)
+	}
+	if priorErr == nil && req.GameMaster == nil {
+		req.GameMaster = &prior.GameMaster
+	}
+	if kind == "" {
+		kind = "main"
+	}
+	gm, gmErr := resolveAgentGameMaster(req, kind)
+	if gmErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": gmErr.Error()})
+		return
+	}
+	req.Kind = kind
+	req.GameMaster = &gm
+
 	resuming := priorErr == nil && prior.HermesSessionID != ""
 
 	if resuming && req.HermesSessionID == "" {
@@ -178,13 +268,13 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	if priorErr == nil {
 		excludeName = req.Name
 	}
-	if err := d.enforceSpawnCapacity(sessionID, sess.WorkspaceDir, excludeName); err != nil {
+	if err := d.enforceSpawnCapacity(sessionID, sess.WorkspaceDir, excludeName, req.Kind); err != nil {
 		unlockSpawn()
 		var limitErr *spawnLimitError
 		if errors.As(err, &limitErr) {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"error":       limitErr.Error(),
-				"code":        "max_concurrent_agents",
+				"code":        limitErr.Code,
 				"limit":       limitErr.Cap,
 				"live_agents": limitErr.LiveAgents,
 			})
@@ -200,6 +290,14 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		if req.Branch == "" && prior.Branch != "" {
 			req.Branch = prior.Branch
 		}
+		if kind == "" {
+			kind = prior.Kind
+		}
+		if prior.Kind != "" && kind != prior.Kind {
+			unlockSpawn()
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "kind cannot change for an existing agent run"})
+			return
+		}
 		if err := d.store.UpdateAgentRunStatus(sessionID, req.Name, "starting"); err != nil {
 			unlockSpawn()
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -210,12 +308,21 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		if prior.Kind != req.Kind || prior.GameMaster != gm {
+			if err := d.store.UpdateAgentRunDisposition(sessionID, req.Name, req.Kind, gm); err != nil {
+				unlockSpawn()
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+		}
 	} else {
 		// No prior run — create a new row.
 		run := store.AgentRun{
 			SessionID:       sessionID,
 			Name:            req.Name,
 			Role:            req.Role,
+			Kind:            req.Kind,
+			GameMaster:      gm,
 			Profile:         req.Profile,
 			RepoScope:       req.Repo,
 			Workdir:         req.Workdir,
@@ -311,11 +418,13 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessionID,
 		Type:      "agent_spawned",
-		Data: mustJSON(map[string]string{
-			"agent":     req.Name,
-			"role":      req.Role,
-			"profile":   req.Profile,
-			"transport": "bridge",
+		Data: mustJSON(map[string]any{
+			"agent":       req.Name,
+			"role":        req.Role,
+			"kind":        req.Kind,
+			"game_master": req.GameMaster != nil && *req.GameMaster,
+			"profile":     req.Profile,
+			"transport":   "bridge",
 		}),
 	})
 	writeJSON(w, http.StatusCreated, stored)
@@ -337,18 +446,24 @@ func (d *Daemon) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	for _, run := range runs {
 		state := states[run.Name]
 		pendingCount := 0
-		if pending, err := d.store.PendingMessages(sessionID, run.Name, ""); err == nil {
-			pendingCount = len(pending)
+		if agentRunIsMain(run) {
+			if pending, err := d.store.PendingMessages(sessionID, run.Name, ""); err == nil {
+				pendingCount = len(pending)
+			}
 		}
 		unackedCount := 0
-		if unacked, err := d.store.UnackedMessages(sessionID, run.Name, ""); err == nil {
-			unackedCount = len(unacked)
+		if agentRunIsMain(run) {
+			if unacked, err := d.store.UnackedMessages(sessionID, run.Name, ""); err == nil {
+				unackedCount = len(unacked)
+			}
 		}
 		resp = append(resp, agentRunResponse{
 			ID:                 run.ID,
 			SessionID:          run.SessionID,
 			Name:               run.Name,
 			Role:               run.Role,
+			Kind:               run.Kind,
+			GameMaster:         run.GameMaster,
 			Profile:            run.Profile,
 			RepoScope:          run.RepoScope,
 			Workdir:            run.Workdir,
@@ -398,8 +513,8 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 			}),
 		})
 		d.handleBridgeCompletionRequested(sessionID, name, map[string]any{
-			"agent":        name,
-			"summary":      req.Summary,
+			"agent":         name,
+			"summary":       req.Summary,
 			"spec_artifact": req.SpecArtifact,
 		})
 		writeJSON(w, http.StatusOK, map[string]string{
@@ -436,7 +551,11 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 	})
 	if name != "supervisor" {
 		content := fmt.Sprintf("%s marked work as %s. Summary: %s", name, status, req.Summary)
-		msg := broker.Message{SessionID: sessionID, SenderID: name, RecipientID: "supervisor", Type: broker.MessageStateChange, Content: content, Timestamp: time.Now().UTC(), Urgent: req.Blocked}
+		sender := name
+		if agentRunIsSide(run) {
+			sender = "system"
+		}
+		msg := broker.Message{SessionID: sessionID, SenderID: sender, RecipientID: "supervisor", Type: broker.MessageStateChange, Content: content, Timestamp: time.Now().UTC(), Urgent: req.Blocked}
 		if req.Blocked {
 			_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 		} else {
@@ -711,6 +830,13 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// Build command and environment using bridge pure functions.
 	argv := bridge.BuildCmd(cfg)
 	env := bridge.BuildEnv(cfg)
+	env = append(env, "BELAYER_AGENT_KIND="+req.Kind)
+	env = append(env, "BELAYER_AGENT_ARTIFACT_DIR="+filepath.ToSlash(filepath.Join(".belayer", "runs", req.SessionID, req.Name, "artifacts")))
+	if req.GameMaster != nil && *req.GameMaster {
+		env = append(env, "BELAYER_GAME_MASTER=1")
+	} else {
+		env = append(env, "BELAYER_GAME_MASTER=0")
+	}
 
 	// Use an io.Pipe for stdout so the scanner pump can tee bytes to the log
 	// writer while concurrently scanning for error markers. If we assigned
@@ -776,10 +902,10 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 					continue
 				}
 				eventData := mustJSON(map[string]string{
-					"agent":           run.Name,
-					"error":           se.Line,
-					"stdout_marker":   se.Pattern,
-					"source":          "stdout_scanner",
+					"agent":         run.Name,
+					"error":         se.Line,
+					"stdout_marker": se.Pattern,
+					"source":        "stdout_scanner",
 				})
 				_ = d.store.LogEvent(store.SessionEvent{
 					SessionID: run.SessionID,
@@ -931,8 +1057,32 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		req.Workdir = sess.WorkspaceDir
 	}
 
+	kind := ""
+	if req.Kind != "" {
+		var kindErr error
+		kind, kindErr = validateAgentKind(req.Kind)
+		if kindErr != nil {
+			return store.AgentRun{}, kindErr
+		}
+	}
+
 	// Check for prior run (resume support).
 	prior, priorErr := d.store.GetAgentRun(req.SessionID, req.Name)
+	if priorErr == nil && kind == "" {
+		kind, _ = validateAgentKind(prior.Kind)
+	}
+	if priorErr == nil && req.GameMaster == nil {
+		req.GameMaster = &prior.GameMaster
+	}
+	if kind == "" {
+		kind = "main"
+	}
+	gm, gmErr := resolveAgentGameMaster(req, kind)
+	if gmErr != nil {
+		return store.AgentRun{}, gmErr
+	}
+	req.Kind = kind
+	req.GameMaster = &gm
 	if priorErr == nil && prior.HermesSessionID != "" && req.HermesSessionID == "" {
 		req.HermesSessionID = prior.HermesSessionID
 		log.Printf("Resuming agent %s with hermes session %s", req.Name, req.HermesSessionID)
@@ -940,12 +1090,16 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 
 	if priorErr == nil {
 		unlockSpawn := d.lockSpawnSession(req.SessionID)
-		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir, req.Name); err != nil {
+		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir, req.Name, req.Kind); err != nil {
 			unlockSpawn()
 			return store.AgentRun{}, err
 		}
 		if req.Branch == "" && prior.Branch != "" {
 			req.Branch = prior.Branch
+		}
+		if prior.Kind != "" && req.Kind != prior.Kind {
+			unlockSpawn()
+			return store.AgentRun{}, fmt.Errorf("kind cannot change for an existing agent run")
 		}
 		if err := d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "starting"); err != nil {
 			unlockSpawn()
@@ -955,10 +1109,16 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			unlockSpawn()
 			return store.AgentRun{}, fmt.Errorf("update agent outcome: %w", err)
 		}
+		if prior.Kind != req.Kind || prior.GameMaster != gm {
+			if err := d.store.UpdateAgentRunDisposition(req.SessionID, req.Name, req.Kind, gm); err != nil {
+				unlockSpawn()
+				return store.AgentRun{}, err
+			}
+		}
 		unlockSpawn()
 	} else {
 		unlockSpawn := d.lockSpawnSession(req.SessionID)
-		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir, ""); err != nil {
+		if err := d.enforceSpawnCapacity(req.SessionID, sess.WorkspaceDir, "", req.Kind); err != nil {
 			unlockSpawn()
 			return store.AgentRun{}, err
 		}
@@ -966,6 +1126,8 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			SessionID:       req.SessionID,
 			Name:            req.Name,
 			Role:            req.Role,
+			Kind:            req.Kind,
+			GameMaster:      gm,
 			Profile:         req.Profile,
 			RepoScope:       req.Repo,
 			Workdir:         req.Workdir,
@@ -1041,19 +1203,21 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: req.SessionID,
 		Type:      "agent_spawned",
-		Data: mustJSON(map[string]string{
-			"agent":     req.Name,
-			"role":      req.Role,
-			"profile":   req.Profile,
-			"transport": "bridge",
+		Data: mustJSON(map[string]any{
+			"agent":       req.Name,
+			"role":        req.Role,
+			"kind":        req.Kind,
+			"game_master": req.GameMaster != nil && *req.GameMaster,
+			"profile":     req.Profile,
+			"transport":   "bridge",
 		}),
 	})
 
 	return stored, nil
 }
 
-func (d *Daemon) enforceSpawnCapacity(sessionID, workdir, excludeName string) error {
-	cfg, err := bridge.LoadProjectConfig(workdir)
+func (d *Daemon) enforceSpawnCapacity(sessionID, workdir, excludeName, kind string) error {
+	caps, splitMode, err := d.spawnCapsForWorkdir(workdir)
 	if err != nil {
 		return err
 	}
@@ -1061,7 +1225,8 @@ func (d *Daemon) enforceSpawnCapacity(sessionID, workdir, excludeName string) er
 	if err != nil {
 		return err
 	}
-	liveAgents := 0
+	liveMain := 0
+	liveSide := 0
 	for _, run := range runs {
 		if excludeName != "" && run.Name == excludeName {
 			continue
@@ -1069,13 +1234,134 @@ func (d *Daemon) enforceSpawnCapacity(sessionID, workdir, excludeName string) er
 		lifecycle := lifecycleFromRunStatus(run.Status, d.isBridgeLive(sessionID, run.Name))
 		switch lifecycle {
 		case "starting", "running", "idle":
-			liveAgents++
+			if agentRunIsSide(run) {
+				liveSide++
+			} else {
+				liveMain++
+			}
 		}
 	}
-	if liveAgents >= cfg.MaxConcurrentAgents {
-		return &spawnLimitError{Cap: cfg.MaxConcurrentAgents, LiveAgents: liveAgents}
+
+	if !splitMode {
+		liveAgents := liveMain + liveSide
+		if liveAgents >= caps.legacy {
+			return &spawnLimitError{Cap: caps.legacy, LiveAgents: liveAgents, Code: "max_concurrent_agents"}
+		}
+		return nil
+	}
+
+	if liveSide >= caps.sides {
+		if normalizeAgentKind(kind) == "side" {
+			return &spawnLimitError{
+				Cap:        caps.sides,
+				LiveAgents: liveSide,
+				Code:       "max_concurrent_sides",
+				Message:    fmt.Sprintf("side summon cap reached (%d live sides); retire one before summoning", caps.sides),
+			}
+		}
+	}
+	if liveMain >= caps.mains {
+		if normalizeAgentKind(kind) != "side" {
+			return &spawnLimitError{
+				Cap:        caps.mains,
+				LiveAgents: liveMain,
+				Code:       "max_concurrent_mains",
+				Message:    fmt.Sprintf("main agent cap reached (%d live mains); retire one before spawning", caps.mains),
+			}
+		}
+	}
+	if normalizeAgentKind(kind) == "side" {
+		sideSummons, err := d.countSideSummons(sessionID)
+		if err != nil {
+			return err
+		}
+		if sideSummons >= caps.sideSummons {
+			return &spawnLimitError{
+				Cap:        caps.sideSummons,
+				LiveAgents: sideSummons,
+				Code:       "max_side_summons_per_session",
+				Message:    fmt.Sprintf("side summon budget reached (%d summons this session); do not summon more sides", caps.sideSummons),
+			}
+		}
 	}
 	return nil
+}
+
+func (d *Daemon) countSideSummons(sessionID string) (int, error) {
+	events, err := d.store.QueryEvents(sessionID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, evt := range events {
+		if evt.Type != "agent_spawned" {
+			continue
+		}
+		var payload struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal([]byte(evt.Data), &payload); err != nil {
+			continue
+		}
+		if normalizeAgentKind(payload.Kind) == "side" {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (d *Daemon) spawnCapsForWorkdir(workdir string) (spawnCapsConfig, bool, error) {
+	caps := spawnCapsConfig{
+		legacy:      d.config.MaxConcurrentAgents,
+		mains:       d.config.MaxConcurrentMains,
+		sides:       d.config.MaxConcurrentSides,
+		sideSummons: d.config.MaxSideSummonsPerSession,
+	}
+	loaded, err := LoadRuntimeCaps(workdir)
+	if err != nil {
+		return caps, false, err
+	}
+	if loaded.MaxConcurrentAgents > 0 {
+		caps.legacy = loaded.MaxConcurrentAgents
+	}
+	if loaded.MaxConcurrentMains > 0 {
+		caps.mains = loaded.MaxConcurrentMains
+	}
+	if loaded.MaxConcurrentSides > 0 {
+		caps.sides = loaded.MaxConcurrentSides
+	}
+	if loaded.MaxSideSummonsPerSession > 0 {
+		caps.sideSummons = loaded.MaxSideSummonsPerSession
+	}
+	if caps.mains == 0 && caps.sides == 0 && caps.sideSummons == 0 {
+		if caps.legacy <= 0 {
+			caps.legacy = 15
+		}
+		return caps, false, nil
+	}
+	if caps.mains <= 0 {
+		caps.mains = caps.legacy
+		if caps.mains <= 0 {
+			caps.mains = 15
+		}
+	}
+	if caps.sides <= 0 {
+		caps.sides = caps.legacy
+		if caps.sides <= 0 {
+			caps.sides = 15
+		}
+	}
+	if caps.sideSummons <= 0 {
+		caps.sideSummons = 30
+	}
+	return caps, true, nil
+}
+
+type spawnCapsConfig struct {
+	legacy      int
+	mains       int
+	sides       int
+	sideSummons int
 }
 
 func repoNames(repos map[string]string) []string {

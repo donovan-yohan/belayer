@@ -168,8 +168,54 @@ def post_message_ack(socket_path: str, session_id: str, agent_id: str, ids: list
     post_event(
         socket_path, session_id, agent_id,
         "bridge:message_ack",
-        {"ids": ids},
+        {"ids": list(ids)},
     )
+
+
+_BUDGET_EXHAUSTED_MARKERS = (
+    "Iteration budget exhausted",
+    "⚠️ Iteration budget exhausted",
+)
+
+
+def _contains_budget_exhaustion(value: object) -> bool:
+    if isinstance(value, str):
+        return any(marker in value for marker in _BUDGET_EXHAUSTED_MARKERS)
+    if isinstance(value, dict):
+        return any(_contains_budget_exhaustion(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_budget_exhaustion(item) for item in value)
+    return False
+
+
+def result_budget_exhausted(result: dict, max_turns: int | None = None) -> bool:
+    """Return True when Hermes exhausted its turn budget, even on the max_iterations path."""
+    if result.get("budget_exhausted"):
+        return True
+    for key in ("_turn_exit_reason", "final_response", "last_message", "messages"):
+        if _contains_budget_exhaustion(result.get(key)):
+            return True
+    turns_used = result.get("turns_used")
+    if max_turns is not None and turns_used == max_turns:
+        log.warning(
+            "Treating turns_used=%s at max_turns=%s as budget exhaustion because Hermes did not set budget_exhausted",
+            turns_used,
+            max_turns,
+        )
+        return True
+    return False
+
+
+def fetch_and_format_pending_messages(
+    socket_path: str,
+    session_id: str,
+    agent_id: str,
+) -> tuple[str, list[str]]:
+    """Fetch pending mail for the next turn and return formatted text plus ack IDs."""
+    pending = fetch_pending_messages(socket_path, session_id, agent_id)
+    if not pending:
+        return "", []
+    return filter_and_format_messages(pending, socket_path, session_id, agent_id)
 
 
 def extract_turn_usage(result: dict) -> dict:
@@ -218,6 +264,13 @@ def main() -> None:
 
     run_dir = os.environ.get("BELAYER_RUN_DIR", "")
     role = os.environ.get("BELAYER_ROLE", "specialist")
+    agent_kind = os.environ.get("BELAYER_AGENT_KIND", "main").strip().lower() or "main"
+    if agent_kind not in ("main", "side"):
+        agent_kind = "main"
+    gm_env = os.environ.get("BELAYER_GAME_MASTER", "").strip().lower()
+    is_game_master = gm_env in ("1", "true", "yes", "on")
+    if not is_game_master:
+        is_game_master = role.lower() in ("supervisor", "game-master", "game_master", "gm")
     profile = os.environ.get("BELAYER_PROFILE", "")
     model = os.environ.get("BELAYER_MODEL", "")
     max_turns_env = os.environ.get("BELAYER_MAX_TURNS", "")
@@ -230,11 +283,14 @@ def main() -> None:
     initial_message = _decode_nl(os.environ.get("BELAYER_MESSAGE", ""))
     system_prompt = _decode_nl(os.environ.get("BELAYER_SYSTEM_PROMPT", ""))
     hermes_session_id = os.environ.get("BELAYER_HERMES_SESSION_ID", "")
-    ephemeral = os.environ.get("BELAYER_EPHEMERAL", "true").lower() != "false"
+    if agent_kind == "main":
+        ephemeral = False
+    else:
+        ephemeral = True
 
     log.info(
-        "Starting bridge agent=%s session=%s role=%s profile=%s ephemeral=%s",
-        agent_id, session_id, role, profile or "(none)", ephemeral,
+        "Starting bridge agent=%s session=%s role=%s kind=%s gm=%s profile=%s ephemeral=%s",
+        agent_id, session_id, role, agent_kind, is_game_master, profile or "(none)", ephemeral,
     )
 
     # --- Construct AIAgent -------------------------------------------------
@@ -328,6 +384,7 @@ def main() -> None:
         agent_kwargs["max_iterations"] = max_turns
     if hermes_session_id:
         agent_kwargs["session_id"] = hermes_session_id
+    agent_kwargs["ephemeral"] = ephemeral
 
     try:
         agent = AIAgent(**agent_kwargs)
@@ -395,8 +452,18 @@ def main() -> None:
     # --- Register Belayer tools --------------------------------------------
     allowed_tools_env = os.environ.get("BELAYER_TOOLS", "")
     allowed_tools = [t.strip() for t in allowed_tools_env.split(",") if t.strip()] if allowed_tools_env else None
+    turn_mail_ids: list[str] = []
     try:
-        register_belayer_tools(agent, agent_id, session_id, socket_path, allowed_tools=allowed_tools)
+        register_belayer_tools(
+            agent,
+            agent_id,
+            session_id,
+            socket_path,
+            allowed_tools=allowed_tools,
+            agent_kind=agent_kind,
+            is_game_master=is_game_master,
+            turn_mail_ids=turn_mail_ids,
+        )
     except Exception as exc:
         log.error("Failed to register Belayer tools: %s", exc)
         post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
@@ -456,34 +523,60 @@ def main() -> None:
         "bridge:started",
         {
             "role": role,
+            "kind": agent_kind,
+            "game_master": is_game_master,
             "profile": profile,
             "hermes_session_id": agent.session_id,
         },
     )
 
     # --- Outer conversation loop -------------------------------------------
-    user_message = initial_message or f"You are the {role} agent. Begin your work."
-    pending_message_ids: list[str] = []
+    if initial_message:
+        base_user_message = initial_message
+    elif agent_kind == "main":
+        if is_game_master:
+            base_user_message = "You are the game-master main agent. Begin your work."
+        else:
+            base_user_message = f"You are the {role} main agent. Begin your work."
+    else:
+        base_user_message = f"You are the {role} side agent. Begin your work."
 
-    # Check for messages that were queued before this agent was spawned.
-    pending = fetch_pending_messages(socket_path, session_id, agent_id)
-    if pending:
-        queued, pending_message_ids = filter_and_format_messages(pending, socket_path, session_id, agent_id)
-        if queued:
-            user_message = f"{user_message}\n\n{queued}"
-            valid_count = queued.count("\n\n") + 1
-            log.info("Prepended %d valid pre-queued message(s) to initial turn (%d total fetched)",
-                     valid_count, len(pending))
+    terminal_event_emitted = False
+
+    def _post_terminal_event(event_type: str, data: dict) -> None:
+        nonlocal terminal_event_emitted
+        if terminal_event_emitted:
+            log.debug("Skipping duplicate terminal event %s", event_type)
+            return
+        terminal_event_emitted = True
+        post_event(socket_path, session_id, agent_id, event_type, data)
+
+    def _assemble_turn_user_message(base_message: str) -> str:
+        if agent_kind != "main":
+            return base_message
+        formatted, mail_ids = fetch_and_format_pending_messages(socket_path, session_id, agent_id)
+        if mail_ids:
+            turn_mail_ids.extend(mail_ids)
+        if not formatted:
+            return base_message
+        valid_count = formatted.count("\n\n") + 1
+        log.info("Prepending %d pending mail message(s) to this turn", valid_count)
+        if base_message:
+            return f"{base_message}\n\n{formatted}"
+        return formatted
+
+    user_message = base_user_message
 
     while True:
+        turn_user_message = _assemble_turn_user_message(user_message)
         try:
             result = agent.run_conversation(
-                user_message=user_message,
+                user_message=turn_user_message,
                 conversation_history=conversation_history,
             )
         except Exception as exc:
             log.error("run_conversation crashed: %s", exc)
-            post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
+            _post_terminal_event("bridge:failed", {"error": str(exc)})
             break
 
         # Carry history forward for subsequent turns.
@@ -494,11 +587,11 @@ def main() -> None:
         if turn_usage:
             post_event(socket_path, session_id, agent_id, "bridge:turn_usage", turn_usage)
 
-        if pending_message_ids:
-            post_message_ack(socket_path, session_id, agent_id, pending_message_ids)
-            pending_message_ids = []
+        if turn_mail_ids:
+            post_message_ack(socket_path, session_id, agent_id, turn_mail_ids)
+            turn_mail_ids.clear()
 
-        if result.get("budget_exhausted"):
+        if result_budget_exhausted(result, max_turns=max_turns):
             turns_used = result.get("turns_used")
             final_response = str(result.get("final_response", ""))[:500]
             last_message = str(result.get("last_message", result.get("final_response", "")))[:500]
@@ -511,8 +604,7 @@ def main() -> None:
                     "last_message": last_message,
                 },
             )
-            post_event(
-                socket_path, session_id, agent_id,
+            _post_terminal_event(
                 "bridge:finished",
                 {
                     "reason": "budget_exhausted",
@@ -544,33 +636,15 @@ def main() -> None:
             except queue.Empty:
                 # Interrupted but no pending stdin command — treat as stop.
                 log.info("Interrupted with no queued message; treating as stop")
-                post_event(
-                    socket_path, session_id, agent_id,
+                _post_terminal_event(
                     "bridge:finished",
                     {"reason": "interrupted"},
                 )
                 break
 
-        # --- Check for non-urgent messages from other agents ---------------
-        pending = fetch_pending_messages(socket_path, session_id, agent_id)
-        if pending:
-            formatted, pending_message_ids = filter_and_format_messages(pending, socket_path, session_id, agent_id)
-            if not formatted:
-                if pending_message_ids:
-                    post_message_ack(socket_path, session_id, agent_id, pending_message_ids)
-                    pending_message_ids = []
-                # All pending messages were empty-content; do not invoke model.
-                log.info("Skipping turn: all %d pending message(s) had empty content", len(pending))
-            else:
-                user_message = formatted
-                log.info("Continuing with %d valid pending message(s) (%d total fetched)",
-                         formatted.count("\n\n") + 1 if formatted else 0, len(pending))
-                continue
-
         # --- Terminal states -----------------------------------------------
         if result.get("failed"):
-            post_event(
-                socket_path, session_id, agent_id,
+            _post_terminal_event(
                 "bridge:failed",
                 {"final_response": str(result.get("final_response", ""))[:500]},
             )
@@ -578,8 +652,7 @@ def main() -> None:
 
         if result.get("completed"):
             if ephemeral:
-                post_event(
-                    socket_path, session_id, agent_id,
+                _post_terminal_event(
                     "bridge:finished",
                     {"final_response": str(result.get("final_response", ""))[:500]},
                 )
@@ -617,8 +690,7 @@ def main() -> None:
                     interrupt_msg = stdin_queue.get_nowait()
                     if interrupt_msg.get("type") == "stop":
                         log.info("Received stop command while idle")
-                        post_event(
-                            socket_path, session_id, agent_id,
+                        _post_terminal_event(
                             "bridge:finished",
                             {"reason": "stopped"},
                         )
@@ -645,26 +717,21 @@ def main() -> None:
                     pass
 
                 # Poll for pending messages.
-                pending = fetch_pending_messages(socket_path, session_id, agent_id)
-                if pending:
-                    formatted, pending_message_ids = filter_and_format_messages(pending, socket_path, session_id, agent_id)
-                    if not formatted:
-                        if pending_message_ids:
-                            post_message_ack(socket_path, session_id, agent_id, pending_message_ids)
-                            pending_message_ids = []
-                        log.info("Idle poll: all %d pending message(s) had empty content; continuing to wait",
-                                 len(pending))
-                    else:
-                        valid_count = formatted.count("\n\n") + 1
-                        user_message = (
-                            "[System] You have been idle waiting for specialist agents. "
-                            "One or more have reported in. Process their updates and continue "
-                            "coordinating the session (verify work, merge branches, spawn next agents, create PRs, etc.).\n\n"
-                            + formatted
-                        )
-                        log.info("Resuming from idle with %d valid pending message(s) (%d total fetched)",
-                                 valid_count, len(pending))
-                        break
+                formatted, mail_ids = fetch_and_format_pending_messages(socket_path, session_id, agent_id)
+                if mail_ids:
+                    turn_mail_ids.extend(mail_ids)
+                if formatted:
+                    valid_count = formatted.count("\n\n") + 1
+                    user_message = (
+                        "[System] You have been idle waiting for specialist agents. "
+                        "One or more have reported in. Process their updates and continue "
+                        "coordinating the session (verify work, merge branches, spawn next agents, create PRs, etc.).\n\n"
+                        + formatted
+                    )
+                    log.info("Resuming from idle with %d valid pending message(s)", valid_count)
+                    break
+                if mail_ids:
+                    log.info("Idle poll: all %d pending message(s) had empty content; continuing to wait", len(mail_ids))
 
                 # Peer-awareness: only advance the idle counter when all peer
                 # agents are in a terminal state. While any peer is still
@@ -740,8 +807,7 @@ def main() -> None:
                     "agent_status:incomplete",
                     {"status": "incomplete", "detail": detail},
                 )
-                post_event(
-                    socket_path, session_id, agent_id,
+                _post_terminal_event(
                     "bridge:finished",
                     {"reason": reason},
                 )

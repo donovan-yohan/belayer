@@ -180,19 +180,21 @@ func newFinishCmd() *cobra.Command {
 }
 
 type spawnAgentRequest struct {
-	Name     string `json:"name"`
-	Identity string `json:"identity,omitempty"` // identity template under .belayer/agents/<identity>/; defaults to Name
-	Role     string `json:"role"`
-	Profile  string `json:"profile"`
-	Repo     string `json:"repo,omitempty"`
-	Workdir  string `json:"workdir,omitempty"`
-	Branch   string `json:"branch,omitempty"` // git branch for worktree-isolated spawns
+	Name       string `json:"name"`
+	Identity   string `json:"identity,omitempty"` // identity template under .belayer/agents/<identity>/; defaults to Name
+	Role       string `json:"role"`
+	Kind       string `json:"kind,omitempty"`
+	GameMaster *bool  `json:"game_master,omitempty"`
+	Profile    string `json:"profile"`
+	Repo       string `json:"repo,omitempty"`
+	Workdir    string `json:"workdir,omitempty"`
+	Branch     string `json:"branch,omitempty"` // git branch for worktree-isolated spawns
 }
 
 type AgentRunView struct {
 	store.AgentRun
-	PendingMailCount int    `json:"pending_mail_count,omitempty"`
-	UnackedMailCount int    `json:"unacked_mail_count,omitempty"`
+	PendingMailCount int `json:"pending_mail_count,omitempty"`
+	UnackedMailCount int `json:"unacked_mail_count,omitempty"`
 }
 
 type finishAgentRequest struct {

@@ -36,11 +36,14 @@ log_level: standard
 #   policy: .belayer/policies/standard.yaml
 
 # Runtime hooks. Belayer can bring an integration environment up/down around
-# a run (e.g. workbench services). The live-agent cap is enforced by the
+# a run (e.g. workbench services). The live-agent caps are enforced by the
 # daemon even when no runtime hooks are configured.
 #
 runtime:
-  max_concurrent_agents: 15
+  # Split party caps: mains are long-lived peers; sides are short-lived summons.
+  max_concurrent_mains: 8
+  max_concurrent_sides: 15
+  max_side_summons_per_session: 30
   # up: ./scripts/workbench-up.sh
   # health: ./scripts/workbench-health.sh
   # down: ./scripts/workbench-down.sh
@@ -134,8 +137,8 @@ func newInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Scaffold .belayer/ in the current project",
 		Long: `Create .belayer/{config.yaml,policies/,agents/} in the target directory
-and copy the shipped default agents (supervisor, pm, web-dev, backend-dev, qa,
-reviewer) into .belayer/agents/.
+and copy the shipped default agents (game-master, supervisor, pm, web-dev,
+backend-dev, qa, reviewer) into .belayer/agents/.
 
 Idempotent: re-running prints a notice and exits 0 without overwriting. Use
 --force to refresh .belayer/agents/ from the shipped defaults (useful when

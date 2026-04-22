@@ -67,6 +67,13 @@ func (d *Daemon) processBridgeEvent(sessionID, eventType, data string) {
 	// bridge:session_usage — log-only, no side effects needed.
 }
 
+func (d *Daemon) notificationSender(sessionID, agentName string) string {
+	if run, ok := d.agentRunByName(sessionID, agentName); ok && agentRunIsSide(run) {
+		return "system"
+	}
+	return agentName
+}
+
 func (d *Daemon) handleBridgeStarted(sessionID, agentName string, data map[string]any) {
 	hermesSessionID, _ := data["hermes_session_id"].(string)
 	if hermesSessionID != "" {
@@ -173,10 +180,11 @@ func (d *Daemon) handleBridgeBudgetExhausted(sessionID, agentName string, data m
 	)
 
 	msgID := uuid.New().String()
+	sender := d.notificationSender(sessionID, agentName)
 	msg := broker.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    "system",
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        broker.MessageStateChange,
 		Content:     content,
@@ -186,7 +194,7 @@ func (d *Daemon) handleBridgeBudgetExhausted(sessionID, agentName string, data m
 	if _, err := d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    "system",
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        string(broker.MessageStateChange),
 		Content:     content,
@@ -426,10 +434,11 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 				content += ". Detail: " + detail
 			}
 			msgID := uuid.New().String()
+			sender := d.notificationSender(sessionID, agentName)
 			msg := broker.Message{
 				ID:          msgID,
 				SessionID:   sessionID,
-				SenderID:    agentName,
+				SenderID:    sender,
 				RecipientID: "supervisor",
 				Type:        broker.MessageStateChange,
 				Content:     content,
@@ -439,7 +448,7 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 			_, _ = d.store.CreateMessage(store.Message{
 				ID:          msgID,
 				SessionID:   sessionID,
-				SenderID:    agentName,
+				SenderID:    sender,
 				RecipientID: "supervisor",
 				Type:        string(broker.MessageStateChange),
 				Content:     content,
@@ -454,6 +463,19 @@ func (d *Daemon) processAgentStatusEvent(sessionID, eventType, data string) {
 			// call returns immediately because at least one agent (supervisor) is
 			// still active.
 			d.checkSessionStalled(sessionID)
+		}
+	case "agent_status:done":
+		if err := d.store.UpdateAgentRunStatus(sessionID, agentName, "idle"); err != nil {
+			log.Printf("ERROR: processAgentStatusEvent: failed to update agent %s to idle in session %s: %v", agentName, sessionID, err)
+		}
+		if err := d.store.LogEvent(store.SessionEvent{
+			SessionID: sessionID,
+			Type:      "agent_status_done",
+			Data: mustJSON(map[string]string{
+				"agent": agentName,
+			}),
+		}); err != nil {
+			log.Printf("WARNING: processAgentStatusEvent: failed to log agent_status_done for %s in session %s: %v", agentName, sessionID, err)
 		}
 
 	default:
@@ -479,10 +501,11 @@ func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string
 	}
 
 	msgID := uuid.New().String()
+	sender := d.notificationSender(sessionID, agentName)
 	msg := broker.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        broker.MessageStateChange,
 		Content:     content,
@@ -494,7 +517,7 @@ func (d *Daemon) handleBridgeFailed(sessionID, agentName string, data map[string
 	_, _ = d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        string(broker.MessageStateChange),
 		Content:     content,
@@ -517,10 +540,11 @@ func (d *Daemon) handleBridgeClarification(sessionID, agentName string, data map
 
 	content := agentName + " needs clarification: " + question
 	msgID := uuid.New().String()
+	sender := d.notificationSender(sessionID, agentName)
 	msg := broker.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        broker.MessageInputNeeded,
 		Content:     content,
@@ -531,7 +555,7 @@ func (d *Daemon) handleBridgeClarification(sessionID, agentName string, data map
 	_, _ = d.store.CreateMessage(store.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        string(broker.MessageInputNeeded),
 		Content:     content,
@@ -889,6 +913,7 @@ If gaps exist: call belayer_reject_completion with the specific gaps so the supe
 			SessionID: sessionID,
 			Name:      "pm",
 			Role:      "pm",
+			Kind:      "side",
 			Profile:   "default",
 			Message:   pmMessage,
 		})
@@ -1072,10 +1097,11 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		rejectionCount+1, maxRejectionCycles, gapList,
 	)
 	msgID := uuid.New().String()
+	sender := d.notificationSender(sessionID, agentName)
 	msg := broker.Message{
 		ID:          msgID,
 		SessionID:   sessionID,
-		SenderID:    agentName,
+		SenderID:    sender,
 		RecipientID: "supervisor",
 		Type:        broker.MessageStateChange,
 		Content:     content,
@@ -1083,7 +1109,7 @@ func (d *Daemon) handleBridgeCompletionRejected(sessionID, agentName string, dat
 		Timestamp:   time.Now().UTC(),
 	}
 	_, _ = d.store.CreateMessage(store.Message{
-		ID: msgID, SessionID: sessionID, SenderID: agentName,
+		ID: msgID, SessionID: sessionID, SenderID: sender,
 		RecipientID: "supervisor", Type: string(broker.MessageStateChange),
 		Content: content, Urgent: true,
 	})

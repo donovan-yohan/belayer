@@ -75,12 +75,14 @@ def _set_required_env(monkeypatch, max_turns="7"):
     monkeypatch.setenv("BELAYER_AGENT_ID", "agent-1")
     monkeypatch.setenv("BELAYER_SOCKET", "/tmp/belayer.sock")
     monkeypatch.setenv("BELAYER_ROLE", "implementer")
+    monkeypatch.setenv("BELAYER_AGENT_KIND", "main")
     monkeypatch.setenv("BELAYER_PROFILE", "default")
     monkeypatch.setenv("BELAYER_MAX_TURNS", max_turns)
     monkeypatch.delenv("BELAYER_MESSAGE", raising=False)
     monkeypatch.delenv("BELAYER_SYSTEM_PROMPT", raising=False)
     monkeypatch.delenv("BELAYER_HERMES_SESSION_ID", raising=False)
     monkeypatch.delenv("BELAYER_EPHEMERAL", raising=False)
+    monkeypatch.delenv("BELAYER_GAME_MASTER", raising=False)
     monkeypatch.delenv("BELAYER_TRANSCRIPT_PATH", raising=False)
     monkeypatch.delenv("BELAYER_TOOLS", raising=False)
 
@@ -91,8 +93,10 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
 
     created_agents = []
     result = {
-        "completed": True,
+        "budget_exhausted": True,
+        "turns_used": 1,
         "final_response": "done",
+        "last_message": "done",
         "messages": [],
     }
     _patch_bridge_runtime(
@@ -110,10 +114,14 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert created_agents[0].kwargs["max_iterations"] == 7
+    assert "[Message from peer]: hello" in created_agents[0].last_run["user_message"]
 
     ack_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:message_ack"]
     assert len(ack_calls) == 1
     assert ack_calls[0].args[4]["ids"] == ["msg-1"]
+
+    budget_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:budget_exhausted"]
+    assert len(budget_calls) == 1
 
     finished_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:finished"]
     assert len(finished_calls) == 1
@@ -125,7 +133,6 @@ def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
 
     created_agents = []
     result = {
-        "budget_exhausted": True,
         "turns_used": 9,
         "last_message": "still refactoring",
         "final_response": "still refactoring",
@@ -157,3 +164,42 @@ def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
     finished_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:finished"]
     assert len(finished_calls) == 1
     assert finished_calls[0].args[4]["reason"] == "budget_exhausted"
+
+
+def test_side_kind_skips_mail_polling(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_AGENT_KIND", "side")
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[{"ID": "msg-side", "SenderID": "peer", "Content": "ignore me"}],
+        created_agents=created_agents,
+    )
+
+    fetch_calls = []
+
+    def _fail_fetch(*args, **kwargs):
+        fetch_calls.append((args, kwargs))
+        raise AssertionError("side agents must not poll queued mail")
+
+    monkeypatch.setattr(module, "fetch_pending_messages", _fail_fetch)
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert created_agents[0].kwargs["ephemeral"] is True
+    assert fetch_calls == []
+
+    finished_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:finished"]
+    assert len(finished_calls) == 1

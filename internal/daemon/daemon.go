@@ -74,8 +74,8 @@ type Config struct {
 	// BridgeAPIKey, BridgeBaseURL, BridgeProvider are injected as BELAYER_API_KEY /
 	// BELAYER_BASE_URL / BELAYER_PROVIDER into every bridge subprocess. Used in
 	// clamshell mode where the sandbox user has no Hermes provider configured.
-	BridgeAPIKey  string
-	BridgeBaseURL string
+	BridgeAPIKey   string
+	BridgeBaseURL  string
 	BridgeProvider string
 
 	// SkipOpenRouterProbe, when true (the default when loaded from
@@ -84,6 +84,19 @@ type Config struct {
 	// startup. Set false only when using a vendor that requires OpenRouter
 	// metadata. See bridge.Config.SkipOpenRouterProbe and docs/AGENT_ARCHITECTURE.md.
 	SkipOpenRouterProbe bool
+
+	// MaxConcurrentAgents preserves the legacy single-cap behavior for older
+	// config files that only set runtime.max_concurrent_agents.
+	MaxConcurrentAgents int
+	// MaxConcurrentMains caps live main agents when the split-cap config is in
+	// use. Zero means "fall back to MaxConcurrentAgents or the default".
+	MaxConcurrentMains int
+	// MaxConcurrentSides caps live side summons when the split-cap config is in
+	// use. Zero means "fall back to MaxConcurrentAgents or the default".
+	MaxConcurrentSides int
+	// MaxSideSummonsPerSession caps total side spawns per session when the split
+	// config is in use. Zero means "use the default".
+	MaxSideSummonsPerSession int
 
 	// AuthToken, if non-empty, is the bearer token required on all TCP requests
 	// except GET /health. If TCPAddr is set and AuthToken is empty, New()
@@ -215,12 +228,12 @@ type Daemon struct {
 	spawnSessionLocks map[string]*sync.Mutex
 
 	// Lifecycle / shutdown fields.
-	draining               atomic.Bool   // set at start of Shutdown; readable by /health and SSE handlers
-	archiver               *archiveManager
-	archiveDrainTimeout    time.Duration // max time Phase 3 archive drain may run
-	shutdownHTTPTimeout    time.Duration // max time HTTP servers get to drain in-flight requests
-	sseKeepaliveInterval   time.Duration // interval for SSE ": keep-alive" comments (default 15s)
-	sseDigestInterval      time.Duration // interval for session_digest control frames (default 60s)
+	draining             atomic.Bool // set at start of Shutdown; readable by /health and SSE handlers
+	archiver             *archiveManager
+	archiveDrainTimeout  time.Duration // max time Phase 3 archive drain may run
+	shutdownHTTPTimeout  time.Duration // max time HTTP servers get to drain in-flight requests
+	sseKeepaliveInterval time.Duration // interval for SSE ": keep-alive" comments (default 15s)
+	sseDigestInterval    time.Duration // interval for session_digest control frames (default 60s)
 
 	// SSE subscriber registry. Populated by handleStreamEvents; drained by
 	// announceDraining on Shutdown. Protected by sseMu.
@@ -273,21 +286,21 @@ func New(cfg Config) (*Daemon, error) {
 	digestInterval := 60 * time.Second
 
 	d := &Daemon{
-		store:                st,
-		config:               cfg,
-		daemonInstanceID:     uuid.NewString(),
-		tools:                make(map[string][]agent.ToolSpec),
-		spawnSessionLocks:    make(map[string]*sync.Mutex),
+		store:                      st,
+		config:                     cfg,
+		daemonInstanceID:           uuid.NewString(),
+		tools:                      make(map[string][]agent.ToolSpec),
+		spawnSessionLocks:          make(map[string]*sync.Mutex),
 		bridgeProcs:                make(map[string]*bridge.Process),
 		bridgeShuttingDownSessions: make(map[string]bool),
-		sessionSandboxes:     make(map[string]sessionSandbox),
-		sseSubscribers:       make(map[*sseSubscriber]struct{}),
-		startCtx:             context.Background(),
-		archiveDrainTimeout:  30 * time.Second,
-		shutdownHTTPTimeout:  5 * time.Second,
-		sseKeepaliveInterval: keepaliveInterval,
-		sseDigestInterval:    digestInterval,
-		cursorSweepStop:      make(chan struct{}),
+		sessionSandboxes:           make(map[string]sessionSandbox),
+		sseSubscribers:             make(map[*sseSubscriber]struct{}),
+		startCtx:                   context.Background(),
+		archiveDrainTimeout:        30 * time.Second,
+		shutdownHTTPTimeout:        5 * time.Second,
+		sseKeepaliveInterval:       keepaliveInterval,
+		sseDigestInterval:          digestInterval,
+		cursorSweepStop:            make(chan struct{}),
 	}
 	d.archiver = newArchiveManager(st, d.daemonInstanceID)
 

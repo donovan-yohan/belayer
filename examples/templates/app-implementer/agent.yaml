@@ -1,5 +1,6 @@
 schema_version: "1"
-description: "App implementer — writes code in extend-app (Node/TypeScript/rspack)"
+description: "App implementer — main agent that writes code in extend-app (Node/TypeScript/rspack)"
+kind: main
 vendor: opencode
 model: kimi-k2.5
 max_turns: 100

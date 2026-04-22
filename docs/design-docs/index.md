@@ -16,3 +16,6 @@
 ## Current Designs
 
 - [Observability log tiers and API design](2026-04-19-observability-log-tiers-and-api-design.md) — Tiered logging (standard/verbose/trace), consolidated CLI+HTTP API, SSE with digests, per-agent spill files, Nightshift-friendly archives (2026-04-19)
+- [Agent runtime state and mail acks](2026-04-21-agent-runtime-state-and-mail-acks.md) — Two-axis status, mail-ack state machine, `bridge:budget_exhausted`, deterministic handoff artifact, concurrent-agent cap (2026-04-21)
+- [Agent identity / activation split](2026-04-21-agent-identity-activation-split.md) — Forward-looking: separate durable identity from ephemeral subprocess activation (deferred until runtime-state lands) (2026-04-21)
+- [Agent party and mail rearchitecture](2026-04-22-agent-party-and-mail-rearchitecture.md) — Two tiers (main/side), game-master role, peer-to-peer mail, broadcast persistence, pre-turn poll; supersedes mail-ack phases of 2026-04-21 (2026-04-22)

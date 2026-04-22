@@ -29,7 +29,7 @@ func TestInitFirstRunScaffoldsDefaults(t *testing.T) {
 		}
 	}
 
-	wantAgents := []string{"backend-dev", "pm", "qa", "reviewer", "supervisor", "web-dev"}
+	wantAgents := []string{"backend-dev", "game-master", "pm", "qa", "reviewer", "supervisor", "web-dev"}
 	got, err := os.ReadDir(filepath.Join(belayerDir, "agents"))
 	if err != nil {
 		t.Fatalf("read agents dir: %v", err)
@@ -50,6 +50,25 @@ func TestInitFirstRunScaffoldsDefaults(t *testing.T) {
 		sp := filepath.Join(belayerDir, "agents", name, "system-prompt.md")
 		if _, err := os.Stat(sp); err != nil {
 			t.Fatalf("expected %s: %v", sp, err)
+		}
+	}
+
+	kinds := map[string]string{
+		"backend-dev": "main",
+		"game-master": "main",
+		"pm":          "side",
+		"qa":          "side",
+		"reviewer":    "side",
+		"supervisor":  "main",
+		"web-dev":     "main",
+	}
+	for name, kind := range kinds {
+		cfg, err := os.ReadFile(filepath.Join(belayerDir, "agents", name, "agent.yaml"))
+		if err != nil {
+			t.Fatalf("read %s agent.yaml: %v", name, err)
+		}
+		if !strings.Contains(string(cfg), "\nkind: "+kind+"\n") {
+			t.Fatalf("expected %s to declare kind %q, got:\n%s", name, kind, string(cfg))
 		}
 	}
 }
@@ -103,7 +122,7 @@ func TestInitWritesLogLevelStandardToConfig(t *testing.T) {
 	}
 }
 
-func TestInitScaffoldsRuntimeMaxConcurrentAgents(t *testing.T) {
+func TestInitScaffoldsSplitRuntimeCaps(t *testing.T) {
 	dir := t.TempDir()
 	cmd := newInitCmd()
 	cmd.SetOut(&bytes.Buffer{})
@@ -121,8 +140,14 @@ func TestInitScaffoldsRuntimeMaxConcurrentAgents(t *testing.T) {
 	if !strings.Contains(got, "\nruntime:\n") {
 		t.Fatalf("expected runtime block in config.yaml, got:\n%s", got)
 	}
-	if !strings.Contains(got, "\nruntime:\n  max_concurrent_agents: 15\n") {
-		t.Fatalf("expected max_concurrent_agents scaffold, got:\n%s", got)
+	for _, want := range []string{
+		"max_concurrent_mains: 8",
+		"max_concurrent_sides: 15",
+		"max_side_summons_per_session: 30",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q scaffold, got:\n%s", want, got)
+		}
 	}
 }
 
@@ -316,8 +341,8 @@ func TestAutoInitIfMissingScaffoldsAndAnnounces(t *testing.T) {
 	if !strings.Contains(out.String(), "Auto-initialized") {
 		t.Fatalf("expected auto-init notice, got: %s", out.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".belayer", "agents", "supervisor", "system-prompt.md")); err != nil {
-		t.Fatalf("expected scaffolded supervisor prompt: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, ".belayer", "agents", "game-master", "system-prompt.md")); err != nil {
+		t.Fatalf("expected scaffolded game-master prompt: %v", err)
 	}
 
 	// Second call must be silent.

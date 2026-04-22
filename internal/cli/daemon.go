@@ -134,6 +134,14 @@ func newDaemonCmd() *cobra.Command {
 				return fmt.Errorf("load bridge config: %w", err)
 			}
 			cfg.SkipOpenRouterProbe = bridgeCfg.SkipOpenRouterProbe
+			if caps, err := daemon.LoadRuntimeCaps(wd); err != nil {
+				return fmt.Errorf("load runtime caps: %w", err)
+			} else {
+				cfg.MaxConcurrentAgents = caps.MaxConcurrentAgents
+				cfg.MaxConcurrentMains = caps.MaxConcurrentMains
+				cfg.MaxConcurrentSides = caps.MaxConcurrentSides
+				cfg.MaxSideSummonsPerSession = caps.MaxSideSummonsPerSession
+			}
 
 			// If the workdir has a .belayer/ directory, also bind a Unix socket
 			// there so clamshell bridge subprocesses can reach the daemon via the

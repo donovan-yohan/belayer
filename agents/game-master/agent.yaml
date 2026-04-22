@@ -1,5 +1,5 @@
 schema_version: "1"
-description: "Supervisor — main party lead / legacy game-master alias across repos"
+description: "Game-master — main party lead for coordination, summon budgets, and finale"
 kind: main
 vendor: codex
 model: gpt-5.4

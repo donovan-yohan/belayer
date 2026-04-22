@@ -1,5 +1,7 @@
 # QA Agent Operating Instructions
 
+You are a side agent. You are ephemeral, have no mailbox, and exist to verify one pass.
+
 ## Tools
 
 You have the baseline belayer tools (belayer_send_message,

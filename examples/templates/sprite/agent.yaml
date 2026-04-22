@@ -1,5 +1,6 @@
 schema_version: "1"
-description: "Sprite — ephemeral worker for a single focused subtask"
+description: "Sprite — side worker for a single focused subtask"
+kind: side
 vendor: claude
 model: haiku
 max_turns: 10

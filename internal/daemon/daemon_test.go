@@ -36,24 +36,24 @@ func testDaemon(t *testing.T) *Daemon {
 	reg := &sandbox.Registry{}
 	reg.Register(sandbox.DefaultMode, &sandbox.Noop{})
 	d := &Daemon{
-		store:                st,
-		config:               Config{},
-		daemonInstanceID:     "test-daemon-instance",
-		tools:                make(map[string][]agent.ToolSpec),
-		spawnSessionLocks:    make(map[string]*sync.Mutex),
+		store:                      st,
+		config:                     Config{},
+		daemonInstanceID:           "test-daemon-instance",
+		tools:                      make(map[string][]agent.ToolSpec),
+		spawnSessionLocks:          make(map[string]*sync.Mutex),
 		bridgeProcs:                make(map[string]*bridge.Process),
 		bridgeShuttingDownSessions: make(map[string]bool),
-		sessionSandboxes:     make(map[string]sessionSandbox),
-		sseSubscribers:       make(map[*sseSubscriber]struct{}),
-		sandboxDrivers:       reg,
-		runtime:              &runtime.Noop{},
-		startCtx:             context.Background(),
-		archiver:             newArchiveManager(st, "test-instance"),
-		archiveDrainTimeout:  30 * time.Second,
-		shutdownHTTPTimeout:  5 * time.Second,
-		sseKeepaliveInterval: 15 * time.Second,
-		sseDigestInterval:    60 * time.Second,
-		cursorSweepStop:      make(chan struct{}),
+		sessionSandboxes:           make(map[string]sessionSandbox),
+		sseSubscribers:             make(map[*sseSubscriber]struct{}),
+		sandboxDrivers:             reg,
+		runtime:                    &runtime.Noop{},
+		startCtx:                   context.Background(),
+		archiver:                   newArchiveManager(st, "test-instance"),
+		archiveDrainTimeout:        30 * time.Second,
+		shutdownHTTPTimeout:        5 * time.Second,
+		sseKeepaliveInterval:       15 * time.Second,
+		sseDigestInterval:          60 * time.Second,
+		cursorSweepStop:            make(chan struct{}),
 	}
 	d.broker = broker.NewMemoryBroker(st)
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) { return nil, nil }
@@ -108,7 +108,6 @@ func doRequest(t *testing.T, d *Daemon, method, path string, body any) *httptest
 	d.server.Handler.ServeHTTP(rr, req)
 	return rr
 }
-
 
 func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder) T {
 	t.Helper()
@@ -242,6 +241,12 @@ func TestSpawnAgentAndListRoster(t *testing.T) {
 	if run.Name != "supervisor" || run.Profile != "nightshift-supervisor" {
 		t.Fatalf("unexpected agent run: %#v", run)
 	}
+	if run.Kind != "main" {
+		t.Fatalf("expected main kind, got %q", run.Kind)
+	}
+	if !run.GameMaster {
+		t.Fatal("expected supervisor to be marked game_master")
+	}
 	if run.Status != "running" {
 		t.Fatalf("expected running status, got %q", run.Status)
 	}
@@ -253,6 +258,9 @@ func TestSpawnAgentAndListRoster(t *testing.T) {
 	roster := decodeJSON[[]store.AgentRun](t, rosterRR)
 	if len(roster) != 1 || roster[0].Name != "supervisor" {
 		t.Fatalf("unexpected roster: %#v", roster)
+	}
+	if roster[0].Kind != "main" || !roster[0].GameMaster {
+		t.Fatalf("expected roster to include kind=main/game_master=true, got %#v", roster[0])
 	}
 }
 
@@ -663,6 +671,104 @@ func TestListMessagesWithoutForReturnsEventLog(t *testing.T) {
 		if !strings.HasPrefix(e.Type, "message_") {
 			t.Errorf("unexpected non-message event type %q in message list", e.Type)
 		}
+	}
+}
+
+func TestListMessagesRejectsSideInbox(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "side-inbox"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "side-worker", Role: "worker", Kind: "side", Profile: "default"})
+
+	rr := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=side-worker&pending=true", nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for side inbox poll, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "sides have no inbox") {
+		t.Fatalf("expected side inbox error, got: %s", rr.Body.String())
+	}
+}
+
+func TestSendMessageRejectsSideOutbox(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "side-outbox"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "side-worker", Role: "worker", Kind: "side", Profile: "default"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "main-worker", Role: "worker", Kind: "main", Profile: "default"})
+
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{
+		To:      "main-worker",
+		Content: "hello from side",
+		Type:    "instruction",
+		From:    "side-worker",
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for side outbox, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "side agents have no outbox") {
+		t.Fatalf("expected side outbox error, got: %s", rr.Body.String())
+	}
+}
+
+func TestInterruptToSideDoesNotCreateMailboxRow(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "side-interrupt"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "side-worker", Role: "worker", Kind: "side", Profile: "default"})
+
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{
+		To:        "side-worker",
+		Content:   "urgent side update",
+		Type:      "instruction",
+		From:      "operator",
+		Interrupt: true,
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for side interrupt, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	msgs, err := d.store.PendingMessages(created.ID, "side-worker", "")
+	if err != nil {
+		t.Fatalf("PendingMessages: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no mailbox rows for side interrupts, got %d", len(msgs))
+	}
+}
+
+func TestBroadcastPersistsOnlyForMainRecipients(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "broadcast-main-only"}))
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "gm", Role: "supervisor", Kind: "main", Profile: "default"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "backend", Role: "worker", Kind: "main", Profile: "default"})
+	doRequest(t, d, "POST", "/sessions/"+created.ID+"/agents", agentSpawnRequest{Name: "reviewer", Role: "worker", Kind: "side", Profile: "default"})
+
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages/broadcast", broadcastMessageRequest{
+		From:    "gm",
+		Content: "party update",
+		Type:    "instruction",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for broadcast, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	backendMsgs, err := d.store.PendingMessages(created.ID, "backend", "")
+	if err != nil {
+		t.Fatalf("PendingMessages backend: %v", err)
+	}
+	if len(backendMsgs) != 1 {
+		t.Fatalf("expected 1 backend broadcast row, got %d", len(backendMsgs))
+	}
+	gmMsgs, err := d.store.PendingMessages(created.ID, "gm", "")
+	if err != nil {
+		t.Fatalf("PendingMessages gm: %v", err)
+	}
+	if len(gmMsgs) != 0 {
+		t.Fatalf("expected sender exclusion for broadcast, got %d", len(gmMsgs))
+	}
+	reviewerMsgs, err := d.store.PendingMessages(created.ID, "reviewer", "")
+	if err != nil {
+		t.Fatalf("PendingMessages reviewer: %v", err)
+	}
+	if len(reviewerMsgs) != 0 {
+		t.Fatalf("expected no side recipient rows for broadcast, got %d", len(reviewerMsgs))
 	}
 }
 

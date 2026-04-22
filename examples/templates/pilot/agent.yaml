@@ -1,5 +1,6 @@
 schema_version: "1"
-description: "Pilot — orchestrates implementation across repos"
+description: "Pilot — main party lead / game-master alias across repos"
+kind: main
 vendor: claude
 model: opus
 max_turns: 200

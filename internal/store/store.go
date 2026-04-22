@@ -51,10 +51,12 @@ type AgentRun struct {
 	SessionID       string    `json:"session_id"`
 	Name            string    `json:"name"`
 	Role            string    `json:"role"`
+	Kind            string    `json:"kind"`
+	GameMaster      bool      `json:"game_master"`
 	Profile         string    `json:"profile"`
 	RepoScope       string    `json:"repo_scope"`
 	Workdir         string    `json:"workdir"`
-	Branch          string    `json:"branch"` // git branch the agent works on (empty = no worktree)
+	Branch          string    `json:"branch"`        // git branch the agent works on (empty = no worktree)
 	WorktreePath    string    `json:"worktree_path"` // filesystem path of the git worktree (empty = shared workdir)
 	Transport       string    `json:"transport"`
 	TmuxSession     string    `json:"tmux_session"`
@@ -274,14 +276,17 @@ func (s *Store) CreateAgentRun(run AgentRun) (string, error) {
 	if run.Outcome == "" {
 		run.Outcome = "active"
 	}
+	if run.Kind == "" {
+		run.Kind = "main"
+	}
 	if run.Transport == "" {
 		run.Transport = "bridge"
 	}
 
 	_, err := s.db.Exec(
-		`INSERT INTO agent_runs (id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.SessionID, run.Name, run.Role, run.Profile, run.RepoScope, run.Workdir, run.Branch, run.WorktreePath, run.Transport, run.TmuxSession, run.HermesSessionID, run.Status, run.Outcome, run.CreatedAt, run.UpdatedAt,
+		`INSERT INTO agent_runs (id, session_id, name, role, kind, game_master, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.SessionID, run.Name, run.Role, run.Kind, boolToInt(run.GameMaster), run.Profile, run.RepoScope, run.Workdir, run.Branch, run.WorktreePath, run.Transport, run.TmuxSession, run.HermesSessionID, run.Status, run.Outcome, run.CreatedAt, run.UpdatedAt,
 	)
 	if err != nil {
 		return "", fmt.Errorf("store: create agent run: %w", err)
@@ -292,15 +297,17 @@ func (s *Store) CreateAgentRun(run AgentRun) (string, error) {
 // GetAgentRun retrieves a single agent run by session + name.
 func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
 	row := s.db.QueryRow(
-		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
+		`SELECT id, session_id, name, role, COALESCE(kind,'main'), COALESCE(game_master,0), profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
 		 FROM agent_runs WHERE session_id = ? AND name = ?`, sessionID, name,
 	)
 	var run AgentRun
 	var createdAt, updatedAt string
-	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &run.Outcome, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd)
+	var gameMasterInt int
+	err := row.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Kind, &gameMasterInt, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &run.Outcome, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd)
 	if err != nil {
 		return AgentRun{}, fmt.Errorf("store: get agent run: %w", err)
 	}
+	run.GameMaster = gameMasterInt != 0
 	run.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	run.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 	return run, nil
@@ -309,7 +316,7 @@ func (s *Store) GetAgentRun(sessionID, name string) (AgentRun, error) {
 // ListAgentRuns returns all agent runs for a session ordered by created_at.
 func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, name, role, profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
+		`SELECT id, session_id, name, role, COALESCE(kind,'main'), COALESCE(game_master,0), profile, repo_scope, workdir, branch, worktree_path, transport, tmux_session, hermes_session_id, status, outcome, created_at, updated_at, COALESCE(destructive_actions,0), COALESCE(last_destructive_cmd,'')
 		 FROM agent_runs WHERE session_id = ? ORDER BY created_at ASC`, sessionID,
 	)
 	if err != nil {
@@ -321,9 +328,11 @@ func (s *Store) ListAgentRuns(sessionID string) ([]AgentRun, error) {
 	for rows.Next() {
 		var run AgentRun
 		var createdAt, updatedAt string
-		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &run.Outcome, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd); err != nil {
+		var gameMasterInt int
+		if err := rows.Scan(&run.ID, &run.SessionID, &run.Name, &run.Role, &run.Kind, &gameMasterInt, &run.Profile, &run.RepoScope, &run.Workdir, &run.Branch, &run.WorktreePath, &run.Transport, &run.TmuxSession, &run.HermesSessionID, &run.Status, &run.Outcome, &createdAt, &updatedAt, &run.DestructiveActions, &run.LastDestructiveCmd); err != nil {
 			return nil, fmt.Errorf("store: list agent runs scan: %w", err)
 		}
+		run.GameMaster = gameMasterInt != 0
 		run.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 		run.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 		runs = append(runs, run)
@@ -379,6 +388,13 @@ func (s *Store) UpdateAgentRunTmuxSession(sessionID, name, tmuxSession string) e
 	return nil
 }
 
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
 // UpdateAgentRunWorktree updates the branch and worktree_path for an agent run.
 func (s *Store) UpdateAgentRunWorktree(sessionID, name, branch, worktreePath string) error {
 	_, err := s.db.Exec(
@@ -399,6 +415,21 @@ func (s *Store) UpdateAgentRunHermesSessionID(sessionID, name, hermesSessionID s
 	)
 	if err != nil {
 		return fmt.Errorf("store: update agent run hermes session id: %w", err)
+	}
+	return nil
+}
+
+// UpdateAgentRunDisposition updates the kind and game_master flags for an agent run.
+func (s *Store) UpdateAgentRunDisposition(sessionID, name, kind string, gameMaster bool) error {
+	if kind == "" {
+		kind = "main"
+	}
+	_, err := s.db.Exec(
+		`UPDATE agent_runs SET kind = ?, game_master = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
+		kind, boolToInt(gameMaster), time.Now().UTC(), sessionID, name,
+	)
+	if err != nil {
+		return fmt.Errorf("store: update agent run disposition: %w", err)
 	}
 	return nil
 }
@@ -863,7 +894,7 @@ WHERE 1=1`)
 
 // scanEvents reads event rows into a slice. Each row must provide 9 columns:
 // id, session_id, timestamp, type, data,
-// COALESCE(trace_file,''), COALESCE(trace_offset,0), COALESCE(trace_length,0),
+// COALESCE(trace_file,”), COALESCE(trace_offset,0), COALESCE(trace_length,0),
 // trace_file IS NOT NULL (boolean indicating whether trace columns are set).
 func scanEvents(rows *sql.Rows) ([]SessionEvent, error) {
 	var events []SessionEvent
