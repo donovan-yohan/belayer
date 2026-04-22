@@ -3,7 +3,7 @@
 Per-agent bridge subprocess for Belayer. Spawned by the Go daemon via
 `python -m hermes_bridge`. Wraps a Hermes `AIAgent` and pipes its activity
 back to the daemon over a Unix socket (or HTTP CONNECT proxy inside a
-clamshell sandbox).
+sandboxed deployment).
 
 ## Runtime dependencies
 

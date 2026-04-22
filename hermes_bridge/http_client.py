@@ -5,10 +5,10 @@ Supports Unix socket paths, direct HTTP URLs, and HTTP-CONNECT-proxied URLs.
 - Unix socket (e.g. /path/to/daemon.sock): used in noop sandbox mode.
 - Direct HTTP URL (e.g. http://172.17.0.1:7523): used when the host gateway
   is directly reachable from the container.
-- CONNECT-proxied HTTP URL: used inside clamshell sandboxes where the host
+- CONNECT-proxied HTTP URL: used inside sandboxed deployments where the host
   gateway is not directly routable. Set BELAYER_HTTP_PROXY=http://host:port
-  to route daemon calls through an HTTP CONNECT proxy (clamshell transparent
-  proxy at 172.31.0.2:3128).
+  to route daemon calls through an HTTP CONNECT proxy (e.g. the clamshell
+  driver's transparent proxy at 172.31.0.2:3128).
 """
 
 import json

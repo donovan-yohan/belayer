@@ -15,6 +15,92 @@ them into the consuming repo at `.belayer/agents/`. That project-local tree is
 owned by the consuming project. Edit it there instead of changing belayer
 source just to customize your team's roles, prompts, or tool access.
 
+---
+
+## Two kinds of agent: main and side
+
+Every agent has `kind: main | side` in its `agent.yaml`. The distinction is
+one axis: *does the agent have a mailbox?*
+
+```mermaid
+flowchart TB
+    subgraph party["The party (inside one session)"]
+        direction LR
+        Sup["supervisor<br/>kind: main"]:::main
+        Dev1["backend-dev<br/>kind: main"]:::main
+        Dev2["web-dev<br/>kind: main"]:::main
+    end
+
+    subgraph summons["Summoned sides (ephemeral)"]
+        direction LR
+        PM["pm<br/>kind: side"]:::side
+        QA["qa<br/>kind: side"]:::side
+        Rev["reviewer<br/>kind: side"]:::side
+    end
+
+    Sup <-->|"direct mail"| Dev1
+    Sup <-->|"direct mail"| Dev2
+    Dev1 <-->|"peer-to-peer mail"| Dev2
+    Sup -->|"spawn + await"| PM
+    Sup -->|"spawn + await"| QA
+    Sup -->|"spawn + await"| Rev
+
+    classDef main fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
+    classDef side fill:#1a2a3a,stroke:#58a6ff,color:#c9d1d9
+    style party fill:#161b22,stroke:#3fb950,color:#c9d1d9
+    style summons fill:#161b22,stroke:#58a6ff,color:#c9d1d9
+```
+
+**Main.** Long-lived party member. Has inbox + outbox. Polls mail before
+every turn. Accepts broadcasts. Accepts mid-flight interrupts via stdin.
+Peers message each other directly — no supervisor hop required.
+
+**Side.** Short-lived worker with a single scoped task. *No* mailbox.
+Receives its task in the spawn message, produces output via `final_response`
+plus registered artifacts, and exits. The only mail surface a side has is an
+interrupt (`--interrupt` writes to the side's stdin).
+
+### Tool surface per kind
+
+| Tool                           | main (peer) | main (party lead) | side |
+|--------------------------------|:-----------:|:-----------------:|:----:|
+| `belayer_report_status`        | ✓           | ✓                 | ✓    |
+| `belayer_create_artifact`      | ✓           | ✓                 | ✓    |
+| `belayer_send_message`         | ✓           | ✓                 | ✗    |
+| `belayer_broadcast`            | ✓           | ✓                 | ✗    |
+| `belayer_check_mail`           | ✓           | ✓                 | ✗    |
+| `belayer_spawn_agent`          | ✗           | ✓ (opt-in)        | ✗    |
+| `belayer_request_completion`   | ✗           | ✓ (opt-in)        | ✗    |
+| `belayer_escalate_to_human`    | ✗           | ✓ (opt-in)        | ✗    |
+| `belayer_approve_completion`   | ✗           | ✗                 | ✓ (PM only) |
+| `belayer_reject_completion`    | ✗           | ✗                 | ✓ (PM only) |
+
+The mail tools (`send_message`, `broadcast`, `check_mail`) are automatic for
+every `kind: main` and withheld from every `kind: side`. Role-specific tools
+(`spawn_agent`, completion-gate tools) are opt-in via
+`agent.yaml#belayer_tools:` and enforced at registration time — an identity
+that does not declare a tool spawns without it.
+
+The party lead is just a main that declares `belayer_spawn_agent` +
+`belayer_request_completion`. It is a prompt/tool disposition, not a third
+kind. The shipped default team uses `supervisor` as the party lead.
+
+### Shipped default team
+
+| Identity       | Kind  | Why                                                       |
+|----------------|-------|-----------------------------------------------------------|
+| `supervisor`   | main  | Party lead; spawns peers, coordinates, gates ship.        |
+| `backend-dev`  | main  | Backend/API implementer. Worktree-isolated per spawn.     |
+| `web-dev`      | main  | Frontend/web implementer. Worktree-isolated per spawn.    |
+| `pm`           | side  | Spec-vs-reality gate, auto-spawned by daemon on `finish`. |
+| `qa`           | side  | Outside-in validation (browser/CLI/real APIs).            |
+| `reviewer`     | side  | Diff/plan reviewer with structured verdicts.              |
+
+See `agents/README.md` for the customization guide and `examples/templates/`
+for alternative team shapes (pilot + sprites + per-repo implementers).
+
+---
+
 ## Agent toolbox
 
 Every Hermes agent starts with a base set of tools from the harness (file editing, bash, search, etc.). Belayer injects seven additional tools via the bridge at spawn time. These are the coordination primitives that let agents talk to each other through the session bus instead of through raw terminal output.
@@ -88,7 +174,11 @@ Agents never communicate by writing to shared files or reading each other's term
 
 The daemon is a Go process running on a Unix socket. It owns the session state and routes all inter-agent communication.
 
-Every run has two mandatory agents — the **supervisor** and the **PM** — plus zero or more specialist agents spawned by the supervisor at runtime. The supervisor orchestrates work; the PM gates completion. Everything else is dynamic.
+Every run has one **party lead** (a `kind: main` agent with `belayer_spawn_agent`
++ `belayer_request_completion`, conventionally `supervisor`) plus zero or more
+specialist agents (mains or sides) spawned by the party lead at runtime. A
+**PM** side is auto-spawned by the daemon when the party lead calls
+`belayer_request_completion`, to gate completion. Everything else is dynamic.
 
 ```mermaid
 flowchart TB
@@ -128,7 +218,7 @@ creating an adversarial verification step that the supervisor cannot skip.
 
 Those specialist identities are defaults, not framework requirements. A
 consumer project can replace them with its own roles in `.belayer/agents/`
-without changing belayer itself.
+without changing the framework source.
 
 ### What the daemon owns
 
@@ -144,28 +234,37 @@ without changing belayer itself.
 
 ## Message delivery
 
-Two delivery paths depending on urgency:
+Only `kind: main` agents have a mailbox. Sides are excluded from both mail
+endpoints — sending to a side is a 400 at the daemon unless `urgent=1`
+(interrupt), and a side has no outbox to originate from.
 
-### Non-urgent (pull-based)
+Two delivery paths depending on urgency.
 
-Most messages. The agent picks them up between conversation turns.
+### Non-urgent (pre-turn poll)
+
+Most mail. The bridge polls the mailbox as part of **every** pre-turn input
+assembly. Messages sent mid-turn are delivered at the next turn boundary, not
+deferred to completion.
 
 ```mermaid
 sequenceDiagram
-    participant A as Specialist A
+    participant A as Peer main A
     participant D as Daemon
-    participant P as Supervisor
+    participant B as Peer main B
 
-    A->>D: POST /messages {to: "supervisor", content: "done"}
+    A->>D: POST /messages {to: "B", content: "..."}
     Note over D: Store in messages table,<br/>log message_sent event
-    Note over P: ...finishes current turn...
-    P->>D: GET /messages?for=supervisor&pending=true
-    D->>P: [{from: "A", content: "done"}]
-    Note over D: Mark as delivered
-    Note over P: Inject as next user turn
+    Note over B: Finishes current turn
+    B->>D: GET /messages?for=B&pending=true
+    D->>B: [{from: "A", content: "..."}]
+    Note over D: Mark delivered
+    Note over B: Inject at top of next user turn;<br/>ack at turn-end via bridge:message_ack
 ```
 
-The broker debounces non-urgent messages with a 2-second window. If a specialist fires three messages in quick succession, the supervisor sees them coalesced into one delivery. Reduces interruption noise during fast agent turns.
+The broker debounces non-urgent messages with a 2-second window; three
+messages in quick succession land as one pre-turn injection on the recipient.
+Worst-case delivery latency = one turn of the recipient — fast enough for
+peer Q&A ("what schema does `/mcp` return?") between mains.
 
 ### Urgent (push via stdin)
 
@@ -186,15 +285,33 @@ sequenceDiagram
 
 The daemon writes directly to the bridge subprocess's stdin pipe. The bridge's `StdinReader` thread picks it up, queues it, and calls `agent.interrupt()` to halt the current LLM generation. The interrupted turn returns immediately, and the urgent message becomes the next user turn.
 
+Interrupt is also the only mail path a side supports: `send_message --to
+<side> --interrupt` writes to the side's stdin. Non-urgent mail to a side is
+rejected by the daemon — sides have no inbox to receive into.
+
+### Broadcast
+
+`belayer_broadcast` fans out party-wide. `handleBroadcastMessage` writes one
+`messages` row per `kind: main` in the session (excluding sender) with
+`recipient_id` set to that main's name. Mains pull broadcasts through the
+same pre-turn poll as direct mail; the ack state machine applies
+per-recipient. A main that joins the session late still sees earlier
+broadcasts queued for it — broadcast persistence is per-subscriber, not
+in-memory fan-out.
+
+Sides are excluded from broadcast fan-out by construction.
+
 ---
 
-## Agent lifecycle: supervisor vs. specialists
+## Agent lifecycle: party mains vs. summoned sides
 
-Two distinct lifecycle models exist inside a single run:
+Two distinct lifecycle models exist inside a single run. The shape maps
+onto `kind`: mains live through the run as peer party members; sides are
+spawn-and-complete.
 
-### The supervisor (non-ephemeral, always-on)
+### Party mains (non-ephemeral, always-on)
 
-The supervisor stays alive for the entire run. It is the only agent that can spawn other agents. When a specialist finishes and reports back, the supervisor is already there, waiting.
+The party lead (and any peer main) stays alive for the entire run. The party lead is the only agent that can spawn other agents — the `belayer_spawn_agent` tool is opt-in via `agent.yaml#belayer_tools:` and by convention declared only on the lead. When a specialist finishes and reports back, the party lead is already there, waiting.
 
 ```mermaid
 stateDiagram-v2
@@ -215,9 +332,13 @@ The **incomplete** state is distinct from both **complete** (work finished) and 
 
 The supervisor doesn't burn tokens while idling. It's not running inference. It's a Python process sleeping in a poll loop, ready to resume the Hermes conversation the moment work arrives.
 
-### Specialists (ephemeral, spawn-and-complete)
+Any peer main (`backend-dev`, `web-dev`, a custom main) follows the same
+lifecycle. They idle between turns when their task is done, wake on mail or
+interrupt, and stay available for the rest of the run.
 
-Specialists are spawned by the supervisor for a specific task. They do the work, report back, and exit.
+### Sides (ephemeral, spawn-and-complete)
+
+Sides are spawned by the party lead for a specific task. They do the work, report back, and exit.
 
 ```mermaid
 stateDiagram-v2
@@ -228,7 +349,7 @@ stateDiagram-v2
     Running --> Incomplete: Cannot finish, escalates to human
 ```
 
-Specialists are ephemeral by default (`ephemeral=true`). When their task is done, the bridge posts `bridge:finished` and the process exits. If a specialist gets stuck, it can report `incomplete` to escalate — the daemon logs an `agent_escalated` event and the supervisor is notified.
+Sides are ephemeral by default (`ephemeral: true`). When their task is done, the bridge posts `bridge:finished` and the process exits. If a side gets stuck, it can report `incomplete` to escalate — the daemon logs an `agent_escalated` event and the party lead is notified.
 
 But their **names persist**. The `agent_runs` table keeps the row. If the supervisor needs to assign more work to the same role, it spawns with the same name. The daemon detects the prior run, carries over the `HermesSessionID`, and the specialist resumes with its full conversation history.
 
@@ -446,7 +567,7 @@ The daemon injects environment variables into every bridge subprocess at spawn t
 
 #### `HERMES_SKIP_OPENROUTER_PROBE`
 
-Set to `1` by default. Suppresses the `openrouter.ai/api/v1/models` metadata fetch that hermes-agent performs at startup, which causes 20+ proxy-denied `CONNECT` requests per run on clamshell sandboxes where the egress policy does not whitelist `openrouter.ai`.
+Set to `1` by default. Suppresses the `openrouter.ai/api/v1/models` metadata fetch that hermes-agent performs at startup, which causes 20+ proxy-denied `CONNECT` requests per run on sandboxed deployments whose egress policy does not whitelist `openrouter.ai`.
 
 **When to disable:** Only if your LLM vendor requires OpenRouter metadata at startup (e.g. a routing layer that resolves model IDs via the OpenRouter catalog). To opt out, add the following to `.belayer/config.yaml`:
 

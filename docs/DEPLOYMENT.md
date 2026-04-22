@@ -89,18 +89,20 @@ that applies the Landlock ruleset and then `exec`-replaces itself with the
 actual bridge command. It must be on `PATH` when `confine_agent_writes: true` is
 active.
 
-**For deployment images (Nightshift worker, clamshell):** bake
-`belayer-landlock-exec` into the image alongside `belayer`. The binary is built
-from `cmd/belayer-landlock-exec/` and cross-compiles cleanly with:
+**For sandboxed deployment images (Nightshift worker, container-per-run
+drivers, etc.):** bake `belayer-landlock-exec` into the image alongside
+`belayer`. The binary is built from `cmd/belayer-landlock-exec/` and
+cross-compiles cleanly with:
 
 ```sh
 GOOS=linux GOARCH=arm64 go build -o belayer-landlock-exec ./cmd/belayer-landlock-exec
 ```
 
-**TODO (clamshell image):** The clamshell Dockerfile (`docker/` or the
-external clamshell image build) needs `belayer-landlock-exec` added to `/usr/local/bin`.
-This is tracked as a follow-up; Landlock confinement is ineffective in the
-clamshell topology until the binary is present in the container image.
+**TODO (container-per-run images):** The container-per-run sandbox drivers
+(including `clamshell`) need `belayer-landlock-exec` added to `/usr/local/bin`
+in their image builds (`docker/` or the driver's external image pipeline).
+Tracked as a follow-up; Landlock confinement is ineffective in container-per-run
+topologies until the binary is present in the image.
 
 ### What is and is not protected
 
