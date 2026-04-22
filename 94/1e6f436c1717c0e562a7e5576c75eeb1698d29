@@ -1,0 +1,174 @@
+hermes_bridge/tests/test_tools_registry.py
+  adb2f848976ee108 1-133
+internal/daemon/daemon.go
+  852a334aa4990bcb 77-78,88-100,231-236,289-293,296-303
+internal/daemon/runtime_caps.go
+  852a334aa4990bcb 1-67
+agents/backend-dev/system-prompt.md
+  adb2f848976ee108 1,3
+internal/cli/daemon.go
+  adb2f848976ee108 137-144
+agents/supervisor/agent.yaml
+  adb2f848976ee108 2-3
+examples/templates/sprite/agent.yaml
+  adb2f848976ee108 2-3
+examples/templates/app-implementer/agents.md
+  adb2f848976ee108 10
+agents/pm/agent.yaml
+  adb2f848976ee108 2-3
+examples/templates/reviewer/agents.md
+  adb2f848976ee108 10-13,31
+examples/templates/app-implementer/agent.yaml
+  adb2f848976ee108 2-3
+agents/supervisor/agents.md
+  adb2f848976ee108 3-4
+internal/daemon/messages_surface_test.go
+  adb2f848976ee108 1-112
+internal/store/store_test.go
+  adb2f848976ee108 634-643,914-950
+examples/templates/sprite/system-prompt.md
+  adb2f848976ee108 1
+internal/daemon/bridge_events_test.go
+  adb2f848976ee108 678-722,768-811
+agents/pm/system-prompt.md
+  adb2f848976ee108 1
+internal/cli/init.go
+  adb2f848976ee108 39,43-46,140-141
+docs/design-docs/2026-04-22-agent-party-and-mail-rearchitecture.md
+  ebd2fe56b22daf38 1-479
+agents/qa/agent.yaml
+  adb2f848976ee108 2-3
+internal/store/migrations.go
+  adb2f848976ee108 37-38,127-130
+examples/templates/api-implementer/agents.md
+  adb2f848976ee108 10
+agents/game-master/agents.md
+  adb2f848976ee108 1-7
+examples/templates/app-implementer/system-prompt.md
+  adb2f848976ee108 1,3
+agents/qa/system-prompt.md
+  adb2f848976ee108 1
+hermes_bridge/tests/test_main_runtime.py
+  adb2f848976ee108 78,85,96-97,99,117,123-125,167-205
+internal/daemon/agents_cap_test.go
+  adb2f848976ee108 40-144
+agents/game-master/agent.yaml
+  adb2f848976ee108 1-13
+docs/design-docs/2026-04-21-agent-identity-activation-split.md
+  ebd2fe56b22daf38 1-299
+agents/web-dev/system-prompt.md
+  adb2f848976ee108 1,3
+agents/reviewer/system-prompt.md
+  adb2f848976ee108 1,70-73
+examples/templates/pilot/system-prompt.md
+  adb2f848976ee108 1
+internal/daemon/daemon_test.go
+  852a334aa4990bcb 39-43,46-56,244-249,262-264,677-771
+examples/templates/pilot/agent.yaml
+  adb2f848976ee108 2-3
+docs/exec-plans/active/2026-04-21-agent-runtime-state-and-mail-acks.md
+  ebd2fe56b22daf38 1-465
+internal/daemon/agents.go
+  852a334aa4990bcb 68,72-74,277,516-517,905-908,1121,1254-1260,1263-1272,1279-1284
+  adb2f848976ee108 36-37,67,78-132,150-151,197-205,232-248,271,293-300,311-317,324-325,421-427,449-452,455-458,465-466,554-558,833-839,1060-1068,1071-1085,1093,1100-1103,1112-1116,1129-1130,1206-1212,1219-1220,1228-1229,1237-1253,1273-1278,1285,1290-1364
+agents/backend-dev/agents.md
+  adb2f848976ee108 10
+examples/templates/pilot/agents.md
+  adb2f848976ee108 3-4
+internal/cli/nightshift.go
+  852a334aa4990bcb 183-191,196-197
+examples/templates/reviewer/system-prompt.md
+  adb2f848976ee108 1
+internal/daemon/messages.go
+  852a334aa4990bcb 6,16-41,73-77,86-89,108-129,136,186-189,198-200,203-223,226-230,248-251,284,291-292,336-356
+examples/templates/sprite/agents.md
+  adb2f848976ee108 3-4
+internal/cli/init_test.go
+  adb2f848976ee108 32,55-73,125,143-150,344-345
+agents/backend-dev/agent.yaml
+  adb2f848976ee108 2-3
+internal/daemon/handoff.go
+  adb2f848976ee108 195-197
+hermes_bridge/tools.py
+  adb2f848976ee108 3-14,23,27-125,655-807,815-844,849,853,856-860,866-912,925,934-935,938-954,956-957,959-964,969-970,974,981,984-985,997-1018,1023-1028,1183-1190,1192,1202,1210-1222,1230-1286,1289,1292-1295
+agents/game-master/system-prompt.md
+  adb2f848976ee108 1-5
+hermes_bridge/__main__.py
+  adb2f848976ee108 171,175-220,267-273,286-289,292-293,387,455,457-466,526-527,534-568,571,574,579,590-592,594,607,639,647,655,693,720-734,810
+agents/web-dev/agent.yaml
+  adb2f848976ee108 2-3
+agents/supervisor/system-prompt.md
+  adb2f848976ee108 1
+agents/qa/agents.md
+  adb2f848976ee108 3-4
+agents/web-dev/agents.md
+  adb2f848976ee108 10
+examples/templates/api-implementer/agent.yaml
+  adb2f848976ee108 2-3
+examples/templates/api-implementer/system-prompt.md
+  adb2f848976ee108 1,3
+examples/templates/reviewer/agent.yaml
+  adb2f848976ee108 2-3
+docs/design-docs/index.md
+  ebd2fe56b22daf38 19-21
+internal/daemon/bridge_events.go
+  adb2f848976ee108 70-76,183,187,197,437,441,451,467-479,504,508,520,543,547,558,916,1100,1104,1112
+internal/store/store.go
+  852a334aa4990bcb 54-55,59,279-281,287-289,300,305-306,310,319,331-332,335,391-397,422-436,897
+agents/reviewer/agents.md
+  adb2f848976ee108 3-4,8-9
+docs/design-docs/2026-04-21-agent-runtime-state-and-mail-acks.md
+  ebd2fe56b22daf38 1-293
+internal/cli/run.go
+  adb2f848976ee108 140-141
+agents/reviewer/agent.yaml
+  adb2f848976ee108 2-3
+agents/pm/agents.md
+  adb2f848976ee108 3-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "941e6f436c1717c0e562a7e5576c75eeb1698d29",
+  "prompts": {
+    "852a334aa4990bcb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db402-b1a8-7003-9288-947481811a88",
+        "model": "gpt-5.4-mini"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 431,
+      "total_deletions": 95,
+      "accepted_lines": 431,
+      "overriden_lines": 0
+    },
+    "adb2f848976ee108": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db400-2161-7d53-88f9-3be0fdc2da4b",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1652,
+      "total_deletions": 242,
+      "accepted_lines": 1638,
+      "overriden_lines": 0
+    },
+    "ebd2fe56b22daf38": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db297-98ff-7363-9a48-31e6c780ce3c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1539,
+      "total_deletions": 0,
+      "accepted_lines": 1539,
+      "overriden_lines": 0
+    }
+  }
+}
