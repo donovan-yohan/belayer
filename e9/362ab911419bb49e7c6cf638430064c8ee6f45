@@ -1,0 +1,25 @@
+hermes_bridge/tests/test_main_runtime.py
+  ebd2fe56b22daf38 112,149
+hermes_bridge/__main__.py
+  ebd2fe56b22daf38 327-328
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "e9362ab911419bb49e7c6cf638430064c8ee6f45",
+  "prompts": {
+    "ebd2fe56b22daf38": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019db297-98ff-7363-9a48-31e6c780ce3c",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1062,
+      "total_deletions": 3,
+      "accepted_lines": 1062,
+      "overriden_lines": 0
+    }
+  }
+}
