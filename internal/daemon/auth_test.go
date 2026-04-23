@@ -308,3 +308,39 @@ func TestAuth_WrongLengthTokenTakesSameTimeAsCorrectLength(t *testing.T) {
 	}
 }
 
+// TestAuth_ExemptsWebUI verifies that GET /ui/index.html on the TCP listener
+// succeeds without an Authorization header.
+func TestAuth_ExemptsWebUI(t *testing.T) {
+	_, port := startDaemonWithTCP(t, Config{
+		TCPAddr:   "127.0.0.1:0",
+		AuthToken: "test123",
+	})
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/ui/index.html", port))
+	if err != nil {
+		t.Fatalf("GET /ui/index.html: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+// TestAuth_QueryParamToken verifies that a GET request with ?token=<valid>
+// is accepted even when the Authorization header is absent.
+func TestAuth_QueryParamToken(t *testing.T) {
+	_, port := startDaemonWithTCP(t, Config{
+		TCPAddr:   "127.0.0.1:0",
+		AuthToken: "test123",
+	})
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/sessions?token=test123", port))
+	if err != nil {
+		t.Fatalf("GET /sessions?token=...: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+

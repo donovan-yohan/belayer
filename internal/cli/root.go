@@ -41,6 +41,7 @@ over SQLite.`,
 	cmd.AddCommand(
 		newVersionCmd(),
 		newDaemonCmd(),
+		newDashboardCmd(),
 		newSessionCmd(),
 		newLogsCmd(),
 		newStatusCmd(),

@@ -522,7 +522,7 @@ func TestInitGitignoreUpgradeIsNoOpWhenAllEntriesPresent(t *testing.T) {
 	}
 }
 
-// TestResolveRuntimeDirPrecedence verifies the env var and XDG resolution order.
+// TestResolveRuntimeDirPrecedence verifies the env var, config, workspace, and XDG resolution order.
 func TestResolveRuntimeDirPrecedence(t *testing.T) {
 	t.Setenv("BELAYER_RUNTIME_DIR", "")
 	t.Setenv("XDG_STATE_HOME", "")
@@ -546,6 +546,18 @@ func TestResolveRuntimeDirPrecedence(t *testing.T) {
 		}
 		if got != "/xdg/state/belayer/runtime" {
 			t.Fatalf("expected /xdg/state/belayer/runtime, got %q", got)
+		}
+	})
+
+	t.Run("workspace_default", func(t *testing.T) {
+		workspaceDir := t.TempDir()
+		got, err := resolveRuntimeDir(workspaceDir)
+		if err != nil {
+			t.Fatalf("resolveRuntimeDir: %v", err)
+		}
+		want := filepath.Join(workspaceDir, ".belayer", "runtime")
+		if got != want {
+			t.Fatalf("expected %q, got %q", want, got)
 		}
 	})
 

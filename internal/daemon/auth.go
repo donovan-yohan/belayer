@@ -94,7 +94,15 @@ func (d *Daemon) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// /ui/ and /ui/* are exempt — static assets must load without a token.
+		if strings.HasPrefix(r.URL.Path, "/ui/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		auth := r.Header.Get("Authorization")
+		if auth == "" && r.Method == http.MethodGet {
+			auth = "Bearer " + r.URL.Query().Get("token")
+		}
 		if !strings.HasPrefix(auth, "Bearer ") {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing bearer token"})
 			return

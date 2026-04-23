@@ -38,27 +38,33 @@ func newDaemonCmd() *cobra.Command {
 		Short: "Start the belayer daemon",
 		Long:  "Starts the long-running belayer supervisor on a Unix socket." + ChannelsFooter,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Resolve working directory first — drives all defaults.
+			wd := workdir
+			if wd == "" {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return fmt.Errorf("resolve working directory: %w", err)
+				}
+				wd = cwd
+			}
+
 			// Load .belayer.env files into the daemon process environment so
 			// bridge subprocesses inherit provider credentials (e.g. OPENCODE_GO_API_KEY).
 			// Workspace-scoped file is loaded first so it takes precedence over home.
-			wd0 := workdir
-			if wd0 == "" {
-				if cwd, err := os.Getwd(); err == nil {
-					wd0 = cwd
-				}
-			}
-			if wd0 != "" {
-				loadEnvFile(filepath.Join(wd0, ".belayer", ".belayer.env"))
-			}
+			loadEnvFile(filepath.Join(wd, ".belayer", ".belayer.env"))
 			home, _ := os.UserHomeDir()
 			loadEnvFile(filepath.Join(home, ".belayer.env"))
 
 			cfg := daemon.DefaultConfig()
 			if socketPath != "" {
 				cfg.SocketPath = socketPath
+			} else {
+				cfg.SocketPath = filepath.Join(wd, ".belayer", "daemon.sock")
 			}
 			if dbPath != "" {
 				cfg.DBPath = dbPath
+			} else {
+				cfg.DBPath = filepath.Join(wd, ".belayer", "belayer.db")
 			}
 			if belayerRoot != "" {
 				cfg.BelayerRoot = belayerRoot
@@ -67,11 +73,11 @@ func newDaemonCmd() *cobra.Command {
 			// Resolve the runtime dir and extract the embedded hermes_bridge package.
 			// This must happen before daemon.New so bridge subprocesses spawned
 			// immediately after Start have the package available.
-			runtimeDir, err := resolveRuntimeDir(wd0)
+			runtimeDir, err := resolveRuntimeDir(wd)
 			if err != nil {
 				return fmt.Errorf("resolve runtime dir: %w", err)
 			}
-			if err := extractBridgeToRuntimeDir(runtimeDir, wd0); err != nil {
+			if err := extractBridgeToRuntimeDir(runtimeDir, wd); err != nil {
 				return fmt.Errorf("extract bridge to runtime dir: %w", err)
 			}
 			cfg.RuntimeDir = runtimeDir
@@ -102,14 +108,6 @@ func newDaemonCmd() *cobra.Command {
 				cfg.ConfineAgentWrites = true
 			}
 
-			wd := workdir
-			if wd == "" {
-				cwd, err := os.Getwd()
-				if err != nil {
-					return fmt.Errorf("resolve working directory: %w", err)
-				}
-				wd = cwd
-			}
 			rtCfg, err := runtime.LoadConfig(wd)
 			if err != nil {
 				return err
@@ -140,12 +138,14 @@ func newDaemonCmd() *cobra.Command {
 				cfg.MaxSideSummonsPerSession = caps.MaxSideSummonsPerSession
 			}
 
-			// If the workdir has a .belayer/ directory, also bind a Unix socket
-			// there so sandboxed bridge subprocesses can reach the daemon via the
-			// bind-mounted workspace path (/workspace/.belayer/daemon.sock).
+			// If the primary socket is not already inside the workspace, also bind
+			// a workspace-local Unix socket so sandboxed bridge subprocesses can
+			// reach the daemon via the bind-mounted path.
 			wsSock := filepath.Join(wd, ".belayer", "daemon.sock")
-			if _, err := os.Stat(filepath.Dir(wsSock)); err == nil {
-				cfg.WorkspaceSockPath = wsSock
+			if cfg.SocketPath != wsSock {
+				if _, err := os.Stat(filepath.Dir(wsSock)); err == nil {
+					cfg.WorkspaceSockPath = wsSock
+				}
 			}
 
 			d, err := daemon.New(cfg)
@@ -161,8 +161,8 @@ func newDaemonCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&socketPath, "socket", "", "Unix socket path (default ~/.belayer/daemon.sock)")
-	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite database path (default ~/.belayer/belayer.db)")
+	cmd.Flags().StringVar(&socketPath, "socket", "", "Unix socket path (default <workdir>/.belayer/daemon.sock)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite database path (default <workdir>/.belayer/belayer.db)")
 	cmd.Flags().StringVar(&belayerRoot, "belayer-root", "", "Path to belayer repo root (for hermes_bridge PYTHONPATH)")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Workspace directory (for .belayer/config.yaml lookup; default cwd)")
 	cmd.Flags().StringVar(&tcpAddr, "tcp-addr", "", "Also bind a TCP listener (e.g. 0.0.0.0:7523) for sandboxed container access")

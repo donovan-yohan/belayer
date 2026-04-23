@@ -17,8 +17,9 @@ import (
 //
 //  1. $BELAYER_RUNTIME_DIR env var (clamshell: preset to /opt/belayer/runtime)
 //  2. Optional runtime_dir field in .belayer/config.yaml (workspaceDir may be "")
-//  3. $XDG_STATE_HOME/belayer/runtime if $XDG_STATE_HOME is set
-//  4. $HOME/.local/state/belayer/runtime (always available fallback)
+//  3. <workspaceDir>/.belayer/runtime when workspaceDir is non-empty
+//  4. $XDG_STATE_HOME/belayer/runtime if $XDG_STATE_HOME is set
+//  5. $HOME/.local/state/belayer/runtime (always available fallback)
 func resolveRuntimeDir(workspaceDir string) (string, error) {
 	// 1. Explicit env override.
 	if v := strings.TrimSpace(os.Getenv("BELAYER_RUNTIME_DIR")); v != "" {
@@ -43,12 +44,17 @@ func resolveRuntimeDir(workspaceDir string) (string, error) {
 		}
 	}
 
-	// 3. $XDG_STATE_HOME/belayer/runtime
+	// 3. Workspace-local default.
+	if workspaceDir != "" {
+		return filepath.Join(workspaceDir, ".belayer", "runtime"), nil
+	}
+
+	// 4. $XDG_STATE_HOME/belayer/runtime
 	if xdg := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); xdg != "" {
 		return filepath.Join(xdg, "belayer", "runtime"), nil
 	}
 
-	// 4. $HOME/.local/state/belayer/runtime
+	// 5. $HOME/.local/state/belayer/runtime
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve runtime dir: $HOME unavailable: %w", err)

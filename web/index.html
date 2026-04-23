@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Belayer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">Belayer <span id="daemon-id">—</span></div>
+    <div class="session-title">
+      <span id="active-session-name">No session</span>
+      <span id="active-session-status" class="status-badge hidden">—</span>
+    </div>
+    <div>
+      <span id="sse-status" class="sse-dot disconnected">Offline</span>
+    </div>
+  </header>
+
+  <div id="draining-banner" class="banner">Daemon is draining — sessions will archive soon</div>
+
+  <aside class="sidebar">
+    <div class="section">
+      <div class="section-header">
+        Sessions
+        <span id="conn-status" class="sse-dot disconnected" title="Connection status"></span>
+      </div>
+      <div class="section-body">
+        <ul id="sessions-list"></ul>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header collapsible" id="filters-toggle">
+        Filters
+        <span class="chevron">▼</span>
+      </div>
+      <div id="filters-body" class="section-body">
+        <div class="filter-group">
+          <div class="filter-label">Event Types</div>
+          <div class="filter-chips">
+            <span class="chip active" data-filter="session_">session_*</span>
+            <span class="chip active" data-filter="agent_">agent_*</span>
+            <span class="chip active" data-filter="bridge:">bridge:*</span>
+            <span class="chip active" data-filter="message_">message_*</span>
+            <span class="chip active" data-filter="artifact_">artifact_*</span>
+            <span class="chip active" data-filter="tool_">tool_*</span>
+            <span class="chip active" data-filter="completion_">completion_*</span>
+            <span class="chip active" data-filter="pm_">pm_*</span>
+            <span class="chip active" data-filter="warning:">warning:*</span>
+            <span class="chip active" data-filter="node_">node_*</span>
+            <span class="chip active" data-filter="trace:">trace:*</span>
+            <span class="chip active" data-filter="custom_event">custom_event</span>
+          </div>
+        </div>
+        <div class="filter-group" id="agent-filters">
+          <div class="filter-label">Agents</div>
+          <div class="filter-chips">
+            <span class="chip">all</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="center">
+    <nav class="tabs">
+      <button class="tab active" data-tab="events">Events</button>
+      <button class="tab" data-tab="messages">Messages</button>
+      <button class="tab" data-tab="toolcalls">Tool Calls</button>
+    </nav>
+
+    <div class="tab-content active" id="tab-events">
+      <div id="events-feed" class="event-feed"></div>
+    </div>
+    <div class="tab-content" id="tab-messages">
+      <div id="messages-feed" class="message-list"></div>
+    </div>
+    <div class="tab-content" id="tab-toolcalls">
+      <div id="toolcalls-feed"></div>
+    </div>
+  </section>
+
+  <aside class="rightbar">
+    <div class="section">
+      <div class="section-header">Agent Roster</div>
+      <div class="section-body">
+        <ul id="agent-roster"></ul>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Session Metadata</div>
+      <div class="section-body">
+        <dl id="session-meta"></dl>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Artifacts</div>
+      <div class="section-body">
+        <ul id="artifacts-list"></ul>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

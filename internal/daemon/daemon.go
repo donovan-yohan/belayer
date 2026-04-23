@@ -366,6 +366,8 @@ func New(cfg Config) (*Daemon, error) {
 	mux.HandleFunc("GET /sessions/{id}/transcripts", d.handleListTranscripts)
 	mux.HandleFunc("GET /sessions/{id}/transcripts/{agent}", d.handleTranscriptContent)
 	mux.HandleFunc("GET /sessions/{id}/traces", d.handleListTraces)
+	mux.HandleFunc("GET /ui/{$}", d.handleWebUI)
+	mux.HandleFunc("GET /ui/{path...}", d.handleWebUI)
 
 	// Set up auth token for TCP listener. Use the configured token, or
 	// auto-generate one when TCPAddr is set without an explicit token.
@@ -824,6 +826,7 @@ var healthCapabilities = struct {
 	ArtifactsBytes   bool     `json:"artifacts_bytes"`
 	LinkNext         bool     `json:"link_next"`
 	LogLevels        []string `json:"log_levels"`
+	WebUI            bool     `json:"web_ui"`
 }{
 	SearchPredicates: []string{"q", "session", "type_prefix", "agent", "after", "before"},
 	ArchiveHTTP:      true,
@@ -837,6 +840,7 @@ var healthCapabilities = struct {
 	ArtifactsBytes:   true,
 	LinkNext:         true,
 	LogLevels:        []string{"standard", "verbose", "trace"},
+	WebUI:            true,
 }
 
 type healthResponse struct {

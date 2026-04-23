@@ -84,6 +84,8 @@ func testDaemon(t *testing.T) *Daemon {
 	mux.HandleFunc("POST /sessions/{id}/tools", d.handleRegisterTool)
 	mux.HandleFunc("GET /sessions/{id}/tools", d.handleListTools)
 	mux.HandleFunc("POST /sessions/{id}/tools/{name}", d.handleExecuteTool)
+	mux.HandleFunc("GET /ui/{$}", d.handleWebUI)
+	mux.HandleFunc("GET /ui/{path...}", d.handleWebUI)
 	d.server = &http.Server{Handler: mux}
 	// Wait for in-flight archiver goroutines before closing the store so that
 	// async terminal-archive workers don't race store.Close / t.TempDir cleanup.

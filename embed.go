@@ -21,3 +21,9 @@ var DefaultAgents embed.FS
 //
 //go:embed all:hermes_bridge
 var DefaultBridge embed.FS
+
+// WebUI is the zero-build web dashboard shipped inside the belayer binary.
+// Served at /ui/ when the daemon is running.
+//
+//go:embed all:web
+var WebUI embed.FS

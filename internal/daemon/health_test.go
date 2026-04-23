@@ -83,6 +83,7 @@ func TestHealth_AdvertisesFullCapabilityManifest(t *testing.T) {
 			ArtifactsBytes   bool     `json:"artifacts_bytes"`
 			LinkNext         bool     `json:"link_next"`
 			LogLevels        []string `json:"log_levels"`
+			WebUI            bool     `json:"web_ui"`
 		} `json:"capabilities"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -103,6 +104,7 @@ func TestHealth_AdvertisesFullCapabilityManifest(t *testing.T) {
 		{"traces", c.Traces},
 		{"artifacts_bytes", c.ArtifactsBytes},
 		{"link_next", c.LinkNext},
+		{"web_ui", c.WebUI},
 	} {
 		if !tc.got {
 			t.Errorf("capability %q: expected true, got false", tc.name)
