@@ -71,6 +71,7 @@ type Config struct {
 	BelayerRoot         string   // directory containing hermes_bridge/ package (for PYTHONPATH)
 	Ephemeral           bool     // true = exit on task completion, false = stay alive for more work
 	BelayerTools        []string // role-specific belayer tools from agent.yaml
+	EnabledToolsets     []string // hermes toolsets to enable for this agent (e.g. ["file", "code_execution"])
 	TranscriptPath      string   // absolute path to per-agent JSONL; empty = capture disabled (standard log level)
 	LogLevel            string   // "standard", "verbose", or "trace"; empty treated as "standard"
 	SkipOpenRouterProbe bool     // when true, injects HERMES_SKIP_OPENROUTER_PROBE=1 to suppress the openrouter metadata fetch at bridge startup
@@ -199,6 +200,12 @@ func BuildEnv(cfg Config) []string {
 	}
 	if cfg.Provider != "" {
 		env = appendEnv(env, "BELAYER_PROVIDER", cfg.Provider)
+	}
+	if len(cfg.EnabledToolsets) > 0 {
+		env = appendEnv(env, "BELAYER_ENABLED_TOOLSETS", strings.Join(cfg.EnabledToolsets, ","))
+	}
+	if len(cfg.BelayerTools) > 0 {
+		env = appendEnv(env, "BELAYER_TOOLS", strings.Join(cfg.BelayerTools, ","))
 	}
 	if cfg.Message != "" {
 		env = appendEnv(env, "BELAYER_MESSAGE", cfg.Message)

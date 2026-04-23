@@ -592,9 +592,10 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		}
 	}
 
-	// Load belayer_tools and model from <agent-dir>/agent.yaml if it exists. Same
-	// project-local-over-shipped resolution as the system prompt.
+	// Load belayer_tools, enabled_toolsets, and model from <agent-dir>/agent.yaml
+	// if it exists. Same project-local-over-shipped resolution as the system prompt.
 	var belayerTools []string
+	var enabledToolsets []string
 	agentModel := req.Model // explicit spawn request takes precedence
 	agentMaxTurns := 0
 	for _, yamlPath := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "agent.yaml") {
@@ -604,13 +605,16 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		}
 		// Simple line-based parse — avoid YAML library dependency.
 		// Looks for "belayer_tools:" then collects "  - tool_name" lines.
+		// Also reads "enabled_toolsets:" with the same list syntax.
 		// Also reads "model: <value>" for the default model.
 		inTools := false
+		inToolsets := false
 		for _, line := range splitLines(string(data)) {
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "model:") && agentModel == "" {
 				agentModel = strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
 				inTools = false
+				inToolsets = false
 				continue
 			}
 			if strings.HasPrefix(trimmed, "max_turns:") && agentMaxTurns == 0 {
@@ -619,12 +623,22 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 					agentMaxTurns = n
 				}
 				inTools = false
+				inToolsets = false
 				continue
 			}
 			if trimmed == "belayer_tools:" || trimmed == "belayer_tools: []" {
 				inTools = true
+				inToolsets = false
 				if trimmed == "belayer_tools: []" {
-					break // explicit empty list
+					continue // explicit empty list
+				}
+				continue
+			}
+			if trimmed == "enabled_toolsets:" || trimmed == "enabled_toolsets: []" {
+				inToolsets = true
+				inTools = false
+				if trimmed == "enabled_toolsets: []" {
+					continue // explicit empty list
 				}
 				continue
 			}
@@ -633,11 +647,19 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 					tool := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
 					belayerTools = append(belayerTools, tool)
 				} else {
-					break // end of list
+					inTools = false
+				}
+			}
+			if inToolsets {
+				if strings.HasPrefix(trimmed, "- ") {
+					ts := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+					enabledToolsets = append(enabledToolsets, ts)
+				} else {
+					inToolsets = false
 				}
 			}
 		}
-		log.Printf("Loaded agent.yaml from %s for agent %s (identity=%s): model=%q tools=%v", yamlPath, req.Name, identity, agentModel, belayerTools)
+		log.Printf("Loaded agent.yaml from %s for agent %s (identity=%s): model=%q tools=%v toolsets=%v", yamlPath, req.Name, identity, agentModel, belayerTools, enabledToolsets)
 		break
 	}
 
@@ -748,6 +770,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		// destroy the module required for spawning peer bridges.
 		BelayerRoot:         d.config.RuntimeDir,
 		BelayerTools:        belayerTools,
+		EnabledToolsets:     enabledToolsets,
 		TranscriptPath:      transcriptPath,
 		LogLevel:            sess.LogLevel,
 		SkipOpenRouterProbe: d.config.SkipOpenRouterProbe,
