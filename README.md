@@ -214,6 +214,47 @@ belayer status              Running sessions overview
 belayer recall              Full-text event search
 ```
 
+## Web UI
+
+Belayer ships two web interfaces — no build step, dark theme, vanilla JS.
+
+### Per-daemon UI
+
+When the daemon binds a TCP listener, it serves an embedded dashboard at `/ui/`:
+
+```bash
+belayer daemon --tcp-addr 0.0.0.0:7523
+# open http://localhost:7523/ui/ in your browser
+```
+
+- **Live SSE stream** of session events, messages, and agent activity
+- **Three-panel layout**: sessions list, event timeline, agent roster
+- **Color-coded agents** by identity
+- No npm, no bundler — assets are embedded in the Go binary
+
+### Multi-daemon dashboard
+
+Aggregate multiple daemons into a single UI:
+
+```bash
+# 1. Write a config file
+cat > dashboard.yaml <<'YAML'
+daemons:
+  - name: extend-api
+    url: http://localhost:7523
+    token: <auth-token>
+  - name: relay-ide
+    url: http://localhost:7524
+    token: <auth-token>
+YAML
+
+# 2. Start the dashboard
+belayer dashboard --config dashboard.yaml --port 7525
+# open http://localhost:7525/ui/
+```
+
+The dashboard is a thin reverse-proxy + static-file server. It holds no state — all session data is fetched live from the configured daemons.
+
 ## Docs
 
 - `docs/AGENT_ARCHITECTURE.md` — agent toolbox, main/side model, mail, PM gate
