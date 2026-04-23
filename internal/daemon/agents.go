@@ -626,19 +626,35 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 				inToolsets = false
 				continue
 			}
-			if trimmed == "belayer_tools:" || trimmed == "belayer_tools: []" {
-				inTools = true
+			if strings.HasPrefix(trimmed, "belayer_tools:") {
+				inTools = false
 				inToolsets = false
-				if trimmed == "belayer_tools: []" {
-					continue // explicit empty list
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "belayer_tools:"))
+				switch {
+				case raw == "":
+					inTools = true
+				case raw == "[]":
+					// explicit empty list
+				default:
+					if items := parseInlineYAMLList(raw); items != nil {
+						belayerTools = append(belayerTools, items...)
+					}
 				}
 				continue
 			}
-			if trimmed == "enabled_toolsets:" || trimmed == "enabled_toolsets: []" {
-				inToolsets = true
+			if strings.HasPrefix(trimmed, "enabled_toolsets:") {
+				inToolsets = false
 				inTools = false
-				if trimmed == "enabled_toolsets: []" {
-					continue // explicit empty list
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "enabled_toolsets:"))
+				switch {
+				case raw == "":
+					inToolsets = true
+				case raw == "[]":
+					// explicit empty list
+				default:
+					if items := parseInlineYAMLList(raw); items != nil {
+						enabledToolsets = append(enabledToolsets, items...)
+					}
 				}
 				continue
 			}
@@ -1445,6 +1461,29 @@ func splitLines(s string) []string {
 		s = s[i+1:]
 	}
 	return lines
+}
+
+// parseInlineYAMLList extracts comma-separated items from an inline YAML list
+// like `[file, code_execution]` or `["a", 'b']`. Returns nil if the raw string
+// does not start with '[' and end with ']'.
+func parseInlineYAMLList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+		return nil
+	}
+	inner := strings.TrimSpace(raw[1 : len(raw)-1])
+	if inner == "" {
+		return []string{}
+	}
+	var out []string
+	for _, item := range strings.Split(inner, ",") {
+		item = strings.TrimSpace(item)
+		item = strings.Trim(item, `"'`)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // buildAgentInitialMessage prepends a workspace context header to the agent's

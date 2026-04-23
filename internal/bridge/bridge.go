@@ -201,12 +201,9 @@ func BuildEnv(cfg Config) []string {
 	if cfg.Provider != "" {
 		env = appendEnv(env, "BELAYER_PROVIDER", cfg.Provider)
 	}
-	if len(cfg.EnabledToolsets) > 0 {
-		env = appendEnv(env, "BELAYER_ENABLED_TOOLSETS", strings.Join(cfg.EnabledToolsets, ","))
-	}
-	if len(cfg.BelayerTools) > 0 {
-		env = appendEnv(env, "BELAYER_TOOLS", strings.Join(cfg.BelayerTools, ","))
-	}
+	// Always emit toolset/tool vars to override any parent env leakage.
+	env = appendEnv(env, "BELAYER_ENABLED_TOOLSETS", strings.Join(cfg.EnabledToolsets, ","))
+	env = appendEnv(env, "BELAYER_TOOLS", strings.Join(cfg.BelayerTools, ","))
 	if cfg.Message != "" {
 		env = appendEnv(env, "BELAYER_MESSAGE", cfg.Message)
 	}
@@ -218,9 +215,6 @@ func BuildEnv(cfg Config) []string {
 	}
 	if !cfg.Ephemeral {
 		env = appendEnv(env, "BELAYER_EPHEMERAL", "false")
-	}
-	if len(cfg.BelayerTools) > 0 {
-		env = appendEnv(env, "BELAYER_TOOLS", strings.Join(cfg.BelayerTools, ","))
 	}
 	if cfg.TranscriptPath != "" {
 		env = appendEnv(env, "BELAYER_TRANSCRIPT_PATH", cfg.TranscriptPath)

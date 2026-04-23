@@ -817,17 +817,24 @@ func TestBuildEnvOmitsOptionalVars(t *testing.T) {
 		"BELAYER_MESSAGE",
 		"BELAYER_SYSTEM_PROMPT",
 		"BELAYER_HERMES_SESSION_ID",
-		"BELAYER_TOOLS",
 		"BELAYER_TRANSCRIPT_PATH",
 	} {
 		if _, ok := envMap[key]; ok {
 			t.Errorf("expected %s to be absent from env, but it was set", key)
 		}
 	}
+	// BELAYER_TOOLS and BELAYER_ENABLED_TOOLSETS are always emitted (even empty)
+	// to prevent parent env leakage.
+	for _, key := range []string{"BELAYER_TOOLS", "BELAYER_ENABLED_TOOLSETS"} {
+		if _, ok := envMap[key]; !ok {
+			t.Errorf("expected %s to be present in env (even when empty)", key)
+		}
+	}
 }
 
-// TestBelayerToolsEnvVarOmittedWhenEmpty verifies that BELAYER_TOOLS is not
-// set when the tool list is empty (baseline-only agents).
+// TestBelayerToolsEnvVarOmittedWhenEmpty verifies that BELAYER_TOOLS is set to
+// an empty string when the tool list is empty (baseline-only agents), ensuring
+// parent env leakage is prevented.
 func TestBelayerToolsEnvVarOmittedWhenEmpty(t *testing.T) {
 	cfg := Config{
 		SessionID:    "sess-abc",
@@ -853,8 +860,73 @@ func TestBelayerToolsEnvVarOmittedWhenEmpty(t *testing.T) {
 	}
 	output := string(logData)
 
-	if strings.Contains(output, "BELAYER_TOOLS=") {
-		t.Errorf("expected BELAYER_TOOLS to be absent from env, but found it in output")
+	if !strings.Contains(output, "BELAYER_TOOLS=") {
+		t.Errorf("expected BELAYER_TOOLS to be present in env (empty string to prevent leakage)")
+	}
+}
+
+// TestEnabledToolsetsEnvVarInjected verifies that EnabledToolsets are passed as
+// a comma-separated BELAYER_ENABLED_TOOLSETS env var.
+func TestEnabledToolsetsEnvVarInjected(t *testing.T) {
+	cfg := Config{
+		SessionID:       "sess-abc",
+		AgentID:         "supervisor",
+		Role:            "supervisor",
+		Profile:         "default",
+		Workdir:         t.TempDir(),
+		SocketPath:      "/tmp/test.sock",
+		RunDir:          t.TempDir(),
+		EnabledToolsets: []string{"file", "code_execution"},
+		Cmd:             []string{"env"},
+	}
+
+	p, err := Spawn(cfg)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	<-p.Done()
+
+	logData, err := os.ReadFile(cfg.RunDir + "/bridge-stdout.log")
+	if err != nil {
+		t.Fatalf("read stdout log: %v", err)
+	}
+	output := string(logData)
+
+	expected := "BELAYER_ENABLED_TOOLSETS=file,code_execution"
+	if !strings.Contains(output, expected) {
+		t.Errorf("expected %q in env output\ngot:\n%s", expected, output)
+	}
+}
+
+// TestEnabledToolsetsEnvVarEmpty verifies that BELAYER_ENABLED_TOOLSETS is
+// present even when the list is empty, preventing parent env leakage.
+func TestEnabledToolsetsEnvVarEmpty(t *testing.T) {
+	cfg := Config{
+		SessionID:       "sess-abc",
+		AgentID:         "worker",
+		Role:            "implementer",
+		Profile:         "default",
+		Workdir:         t.TempDir(),
+		SocketPath:      "/tmp/test.sock",
+		RunDir:          t.TempDir(),
+		EnabledToolsets: nil,
+		Cmd:             []string{"env"},
+	}
+
+	p, err := Spawn(cfg)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	<-p.Done()
+
+	logData, err := os.ReadFile(cfg.RunDir + "/bridge-stdout.log")
+	if err != nil {
+		t.Fatalf("read stdout log: %v", err)
+	}
+	output := string(logData)
+
+	if !strings.Contains(output, "BELAYER_ENABLED_TOOLSETS=") {
+		t.Errorf("expected BELAYER_ENABLED_TOOLSETS to be present in env (empty string to prevent leakage)")
 	}
 }
 
