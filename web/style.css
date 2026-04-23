@@ -224,8 +224,20 @@ html, body {
   color: var(--accent);
 }
 
-/* Center tabs */
-.tabs {
+  .status-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .status-text {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  /* Center tabs */
+  .tabs {
   display: flex;
   background: var(--bg-1);
   border-bottom: 1px solid var(--border);

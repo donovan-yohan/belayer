@@ -662,15 +662,13 @@ ${escapeHtml(JSON.stringify(t, null, 2))}
 
   // --- UI helpers ---
   function setSSEStatus(status) {
-    const el = document.getElementById('sse-status');
-    if (!el) return;
-    el.className = 'sse-dot ' + status;
-    el.textContent = status === 'connected' ? 'Live' : status === 'reconnecting' ? 'Reconnecting…' : 'Offline';
+    const dot = document.getElementById('sse-dot');
+    const text = document.getElementById('sse-status');
+    if (dot) dot.className = 'sse-dot ' + status;
+    if (text) text.textContent = status === 'connected' ? 'Live' : status === 'reconnecting' ? 'Reconnecting…' : 'Offline';
 
-    const dot = document.getElementById('conn-status');
-    if (dot) {
-      dot.className = 'sse-dot ' + status;
-    }
+    const conn = document.getElementById('conn-status');
+    if (conn) conn.className = 'sse-dot ' + status;
   }
 
   function showBanner(text, severity) {
