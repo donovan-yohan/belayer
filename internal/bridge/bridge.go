@@ -201,8 +201,14 @@ func BuildEnv(cfg Config) []string {
 	if cfg.Provider != "" {
 		env = appendEnv(env, "BELAYER_PROVIDER", cfg.Provider)
 	}
-	// Always emit toolset/tool vars to override any parent env leakage.
-	env = appendEnv(env, "BELAYER_ENABLED_TOOLSETS", strings.Join(cfg.EnabledToolsets, ","))
+	// Always emit toolset/tool vars to prevent parent env leakage.
+	// __all__ sentinel means "not configured" (no restriction); anything else
+	// is an explicit list (empty string = zero toolsets).
+	if cfg.EnabledToolsets != nil {
+		env = appendEnv(env, "BELAYER_ENABLED_TOOLSETS", strings.Join(cfg.EnabledToolsets, ","))
+	} else {
+		env = appendEnv(env, "BELAYER_ENABLED_TOOLSETS", "__all__")
+	}
 	env = appendEnv(env, "BELAYER_TOOLS", strings.Join(cfg.BelayerTools, ","))
 	if cfg.Message != "" {
 		env = appendEnv(env, "BELAYER_MESSAGE", cfg.Message)

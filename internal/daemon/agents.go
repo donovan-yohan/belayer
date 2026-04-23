@@ -629,6 +629,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 			if strings.HasPrefix(trimmed, "belayer_tools:") {
 				inTools = false
 				inToolsets = false
+				belayerTools = []string{} // mark as explicitly configured
 				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "belayer_tools:"))
 				switch {
 				case raw == "":
@@ -645,6 +646,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 			if strings.HasPrefix(trimmed, "enabled_toolsets:") {
 				inToolsets = false
 				inTools = false
+				enabledToolsets = []string{} // mark as explicitly configured
 				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "enabled_toolsets:"))
 				switch {
 				case raw == "":

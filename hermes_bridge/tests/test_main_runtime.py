@@ -351,4 +351,32 @@ def test_main_ignores_empty_enabled_toolsets_env(monkeypatch):
     module.main()
 
     assert created_agents, "expected AIAgent to be constructed"
+    assert created_agents[0].kwargs["enabled_toolsets"] == []
+
+
+def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "__all__")
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
     assert "enabled_toolsets" not in created_agents[0].kwargs
