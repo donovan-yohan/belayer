@@ -7,8 +7,8 @@ Supports Unix socket paths, direct HTTP URLs, and HTTP-CONNECT-proxied URLs.
   is directly reachable from the container.
 - CONNECT-proxied HTTP URL: used inside sandboxed deployments where the host
   gateway is not directly routable. Set BELAYER_HTTP_PROXY=http://host:port
-  to route daemon calls through an HTTP CONNECT proxy (e.g. the clamshell
-  driver's transparent proxy at 172.31.0.2:3128).
+  to route daemon calls through an HTTP CONNECT proxy (e.g. a container-per-run
+  driver's transparent egress proxy).
 """
 
 import json

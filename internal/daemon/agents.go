@@ -720,6 +720,9 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	}
 
 	socketPath := d.config.SocketPath
+	if ss.mode != sandbox.DefaultMode && d.config.WorkspaceSockPath != "" {
+		socketPath = d.config.WorkspaceSockPath
+	}
 	log.Printf("spawn %s: mode=%q socketPath=%q tcpPort=%d", req.Name, ss.mode, socketPath, d.tcpPort)
 	cfg := bridge.Config{
 		SessionID:       req.SessionID,

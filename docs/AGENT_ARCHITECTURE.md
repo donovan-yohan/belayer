@@ -103,7 +103,7 @@ for alternative team shapes (pilot + sprites + per-repo implementers).
 
 ## Agent toolbox
 
-Every Hermes agent starts with a base set of tools from the harness (file editing, bash, search, etc.). Belayer injects seven additional tools via the bridge at spawn time. These are the coordination primitives that let agents talk to each other through the session bus instead of through raw terminal output.
+Every Hermes agent starts with a base set of tools from the harness (file editing, bash, search, etc.). Belayer injects coordination tools via the bridge at spawn time. Availability depends on `kind` plus the identity's `belayer_tools` allowlist.
 
 ```mermaid
 flowchart TB
@@ -126,9 +126,12 @@ flowchart TB
     subgraph belayer_tools["Belayer Coordination Tools (injected at spawn)"]
         direction LR
         send["belayer_send_message\nto · content"]
+        broadcast["belayer_broadcast\ncontent"]
+        mail["belayer_check_mail"]
         artifact["belayer_create_artifact\nkind · path · summary?"]
         status["belayer_report_status\nstatus · detail?"]
         spawn["belayer_spawn_agent\nname · profile · message · branch?"]
+        escalate["belayer_escalate_to_human\nreason"]
     end
 
     subgraph completion_tools["Completion Gate Tools (injected at spawn)"]
@@ -141,9 +144,12 @@ flowchart TB
     style hermes fill:#161b22,stroke:#30363d,color:#c9d1d9
     style belayer_tools fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
     style send fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
+    style broadcast fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
+    style mail fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
     style artifact fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
     style status fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
     style spawn fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
+    style escalate fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
     style completion_tools fill:#1a2a3a,stroke:#58a6ff,color:#c9d1d9
     style request fill:#1a2a3a,stroke:#58a6ff,color:#c9d1d9
     style approve fill:#1a2a3a,stroke:#58a6ff,color:#c9d1d9
@@ -154,17 +160,22 @@ flowchart TB
 
 | Tool | Parameters | What it does |
 |------|-----------|--------------|
-| `belayer_send_message` | `to` (agent name), `content` (string) | Direct message to another agent via the session bus |
+| `belayer_send_message` | `to` (agent name), `content` (string) | Direct message to another agent via the session bus (main only) |
+| `belayer_broadcast` | `content` (string) | Party-wide message to every main (main only) |
+| `belayer_check_mail` | — | Poll for queued messages and broadcasts (main only) |
 | `belayer_create_artifact` | `kind`, `path`, `summary?` | Register a durable output (contract, report, task-graph, etc.) |
 | `belayer_report_status` | `status` (working/blocked/done/needs-review), `detail?` | Publish lifecycle state to the session bus |
 | `belayer_spawn_agent` | `name`, `profile`, `message`, `branch?` | Dynamically spawn a specialist agent (supervisor only) |
 | `belayer_request_completion` | `summary`, `spec_artifact?` | Signal work is done, trigger PM verification (supervisor only) |
 | `belayer_approve_completion` | `verification_report` | Approve the run after spec verification (PM only) |
 | `belayer_reject_completion` | `verification_report`, `gap_list` | Reject the run with gaps for supervisor to fix (PM only) |
+| `belayer_escalate_to_human` | `reason` (string) | Halt the run and flag for human review (supervisor only) |
 
 The base Hermes tools let an agent do work (read files, write code, run commands). The Belayer coordination tools let an agent coordinate (send messages, register outputs, report status, spawn teammates). The completion gate tools enforce spec verification before a run can close.
 
-Each agent template declares which belayer tools it receives via the `belayer_tools` field in `agent.yaml`. Three baseline tools (send_message, report_status, create_artifact) are always registered. Role-specific tools are only available to agents whose templates declare them. The supervisor can spawn agents and request completion. Only the PM can approve or reject a run. This is enforced at registration time — agents never see tools they aren't authorized to use.
+Each agent template declares role-specific tools via the `belayer_tools` field in `agent.yaml`. `report_status` and `create_artifact` are universal baseline tools registered on every agent. Mail tools (`send_message`, `broadcast`, `check_mail`) are registered only for `kind: main`. Role-specific tools are only available to identities that declare them. The supervisor can spawn agents, request completion, and escalate to human. Only the PM can approve or reject a run. This is enforced at registration time — agents never see tools they aren't authorized to use.
+
+Side agents do not receive mail tools; they receive their task in the spawn message and return via `final_response` plus artifacts.
 
 Agents never communicate by writing to shared files or reading each other's terminal output. All coordination flows through Belayer's session bus.
 
@@ -295,9 +306,9 @@ rejected by the daemon — sides have no inbox to receive into.
 `messages` row per `kind: main` in the session (excluding sender) with
 `recipient_id` set to that main's name. Mains pull broadcasts through the
 same pre-turn poll as direct mail; the ack state machine applies
-per-recipient. A main that joins the session late still sees earlier
-broadcasts queued for it — broadcast persistence is per-subscriber, not
-in-memory fan-out.
+per-recipient. Only mains present in the roster at broadcast time receive
+rows; a main that joins later will not receive earlier broadcasts unless
+the sender rebroadcasts.
 
 Sides are excluded from broadcast fan-out by construction.
 
@@ -319,14 +330,14 @@ stateDiagram-v2
     Starting --> Running: bridge:started
     Running --> Idle: Task done, waiting for specialists
     Idle --> Running: Specialist reports in (message or interrupt)
-    Idle --> Incomplete: Idle timeout (5 min), no response
+    Idle --> Incomplete: Idle timeout (15 min), no response
     Running --> Complete: belayer finish → PM approval
     Running --> Blocked: Unrecoverable error
     Running --> Incomplete: Agent decides it cannot finish
     Idle --> Complete: Stop command
 ```
 
-When the supervisor completes a task, it enters an **idle loop**: polling every 5 seconds for new messages, listening on stdin for interrupts. If a specialist sends a message, the supervisor wakes up and continues. If nothing happens for 5 minutes, the supervisor exits as **incomplete** — this is not a successful completion, it means no specialist reported back.
+When the supervisor completes a task, it enters an **idle loop**: polling every 5 seconds for new messages, listening on stdin for interrupts. If a specialist sends a message, the supervisor wakes up and continues. If nothing happens for 15 minutes, the supervisor exits as **incomplete** — this is not a successful completion, it means no specialist reported back.
 
 The **incomplete** state is distinct from both **complete** (work finished) and **blocked** (unrecoverable error). It means the agent made progress but could not finish — either due to idle timeout, getting stuck in a loop, or making a deliberate decision to escalate. When the supervisor reports incomplete, the daemon transitions the session to `needs_human_review`. Any agent can report incomplete via `belayer_report_status(status="incomplete")`.
 
@@ -823,16 +834,17 @@ section; the supervisor-side planning contract is in
 
 Agents receive belayer tools in two layers:
 
-1. **Baseline tools** — always registered on every agent:
-   `belayer_send_message`, `belayer_report_status`,
-   `belayer_create_artifact`. Registered unconditionally in
-   `hermes_bridge/tools.py#register_belayer_tools` from the
-   `BASELINE_TOOLS` set.
-2. **Role-specific tools** — opt-in via `agent.yaml#belayer_tools:`:
+1. **Universal baseline tools** — always registered on every agent:
+   `belayer_report_status`, `belayer_create_artifact`.
+2. **Main-mail tools** — registered only for `kind: main`:
+   `belayer_send_message`, `belayer_broadcast`, `belayer_check_mail`.
+3. **Role-specific tools** — opt-in via `agent.yaml#belayer_tools:`:
    - `belayer_spawn_agent` — supervisor only
    - `belayer_request_completion` — supervisor only
    - `belayer_approve_completion`, `belayer_reject_completion` — PM only
    - `belayer_escalate_to_human` — supervisor only (last-resort stop)
+
+Side agents (`kind: side`) do not receive mail tools. They receive their task in the spawn message and return via `final_response` plus artifacts.
 
 The daemon reads `belayer_tools` from the spawning agent's
 `agent.yaml`, passes the allowlist to the bridge subprocess via

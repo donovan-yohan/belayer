@@ -49,7 +49,7 @@ full coordination model.
 go build ./cmd/belayer
 
 # In your project repo:
-belayer init                     # scaffold .belayer/ (config, policies, agents)
+belayer init                     # scaffold .belayer/ (config, agents)
 belayer daemon                   # start the daemon
 
 # Launch a run (creates session, spawns supervisor via Hermes bridge)
@@ -112,7 +112,7 @@ themselves are yours.
 
 `.belayer/agents/` is project-owned. Edit, rename, delete, or replace
 identities. `belayer init --force` refreshes the shipped defaults without
-touching `config.yaml` or `policies/`.
+touching `config.yaml`.
 
 ### Example: add a `data-eng` main
 
@@ -198,7 +198,7 @@ Three layers:
 
 ## CLI
 
-```
+```bash
 belayer init                Scaffold .belayer/ in the current project
 belayer daemon              Start the daemon
 belayer run start           Create session + spawn supervisor

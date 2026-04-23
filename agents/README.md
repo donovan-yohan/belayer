@@ -5,7 +5,7 @@ framework contract — the framework itself does not require any of these
 names to exist. What the framework requires is the *shape* of an identity
 directory:
 
-```
+```text
 .belayer/agents/<name>/
 ├── agent.yaml          # vendor, model, kind, tool allowlist
 ├── system-prompt.md    # the agent's soul (injected via ephemeral_system_prompt)
@@ -93,14 +93,15 @@ $EDITOR .belayer/agents/reviewer/system-prompt.md
 
 Next spawn picks up the change; no daemon restart needed.
 
-### Delete an identity you don't need
+### Stop using an identity you don't need
 
 ```bash
 rm -r .belayer/agents/qa
 ```
 
-Remove the reference from your supervisor's prompt too — otherwise it will
-try to spawn a name that no longer resolves.
+Remove the reference from your supervisor's prompt too. Deleting the local
+directory only removes your project override; an explicit spawn of `qa` can
+still fall back to the shipped default identity.
 
 ### Rename an identity
 

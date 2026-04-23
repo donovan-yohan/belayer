@@ -255,7 +255,7 @@ func scaffold(belayerDir string, force bool) (scaffoldResult, error) {
 // generated and should not be committed. The hermes_bridge Python package is
 // NOT stored here — it lives in the daemon's runtime dir
 // (default $XDG_STATE_HOME/belayer/runtime) so workspace agents cannot destroy
-// it. Only agents/, config.yaml, and policies/ are committed.
+// it. Only agents/ and config.yaml are committed.
 const (
 	gitignoreHeader        = "# belayer — per-run state (.belayer/ contains runs/ and worktrees/; hermes_bridge is in runtime dir)"
 	gitignoreUpgradeHeader = "# belayer — added on upgrade"
