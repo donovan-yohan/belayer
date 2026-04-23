@@ -719,8 +719,11 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		}
 	}
 
-	socketPath := bridgeSocketPath(ss.mode, d.config.SocketPath, d.config.DockerHostGateway, d.tcpPort, d.config.WorkspaceSockPath)
-	log.Printf("spawn %s: mode=%q socketPath=%q tcpPort=%d gateway=%q", req.Name, ss.mode, socketPath, d.tcpPort, d.config.DockerHostGateway)
+	socketPath := d.config.SocketPath
+	if ss.mode != sandbox.DefaultMode && d.config.WorkspaceSockPath != "" {
+		socketPath = d.config.WorkspaceSockPath
+	}
+	log.Printf("spawn %s: mode=%q socketPath=%q tcpPort=%d", req.Name, ss.mode, socketPath, d.tcpPort)
 	cfg := bridge.Config{
 		SessionID:       req.SessionID,
 		AgentID:         req.Name,
@@ -750,23 +753,6 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		SkipOpenRouterProbe: d.config.SkipOpenRouterProbe,
 		WriteRoots:          writeRoots,
 		ConfineWrites:       d.config.ConfineAgentWrites,
-	}
-	// In clamshell mode the bridge runs inside the Docker container where the
-	// host hermes venv path doesn't exist; use the container's system python3.
-	// Also inject proxy vars so LLM API calls route through the egress broker.
-	// BelayerRoot is overridden to the container's view of the runtime dir
-	// bind-mounted into the container so `python3 -m hermes_bridge` resolves.
-	if ss.mode == "clamshell" {
-		cfg.Cmd = []string{"python3", "-m", "hermes_bridge"}
-		cfg.HTTPProxy = "http://proxy.internal:3128"
-		cfg.BelayerRoot = "/opt/belayer/runtime"
-		// The bridge runs inside the container where the host workspace is
-		// mounted at /workspace. Translate transcriptPath (built from the host
-		// path) so the bridge can actually open it; otherwise transcript capture
-		// silently fails for verbose clamshell runs.
-		if cfg.TranscriptPath != "" && sess.WorkspaceDir != "" {
-			cfg.TranscriptPath = translateHostPathToContainer(cfg.TranscriptPath, sess.WorkspaceDir)
-		}
 	}
 	// Universal fallback: when RuntimeDir was not set (e.g. tests that skip the
 	// CLI wiring path) AND BELAYER_RUNTIME_DIR is unset, fall back to legacy
@@ -1423,30 +1409,6 @@ func agentIdentityPaths(workdir, belayerRoot, identity, file string) []string {
 	return paths
 }
 
-// bridgeSocketPath returns the socket path/URL to use as BELAYER_SOCKET for a
-// bridge subprocess. For clamshell sandboxes the bridge runs inside a Docker
-// container and accesses the daemon via a Unix socket in the bind-mounted
-// workspace directory (/workspace/.belayer/daemon.sock). Falls back to the
-// TCP gateway URL if the workspace socket path was not configured.
-//
-// The container-side /workspace path is a clamshell convention enforced by the
-// sandbox driver (see sandbox/clamshell.go:sandboxWorkspace). If that constant
-// ever changes, this function must be updated in lockstep.
-func bridgeSocketPath(mode, unixPath, dockerGateway string, tcpPort int, workspaceSockPath string) string {
-	if mode != "clamshell" {
-		return unixPath
-	}
-	// Prefer workspace Unix socket: the workspace is bind-mounted into the
-	// container at /workspace, so the container-side path is always this.
-	if workspaceSockPath != "" {
-		return "/workspace/.belayer/daemon.sock"
-	}
-	// Fallback: TCP listener via Docker host gateway.
-	if tcpPort > 0 {
-		return fmt.Sprintf("http://%s:%d", dockerGateway, tcpPort)
-	}
-	return unixPath
-}
 
 func splitLines(s string) []string {
 	var lines []string
@@ -1460,30 +1422,6 @@ func splitLines(s string) []string {
 		s = s[i+1:]
 	}
 	return lines
-}
-
-// translateHostPathToContainer rewrites a host path under hostWorkspace to
-// the clamshell container's /workspace mount. Paths not under hostWorkspace
-// (or non-absolute paths) are returned unchanged. Mirrors
-// sandbox.translateDir, which is unexported.
-func translateHostPathToContainer(hostPath, hostWorkspace string) string {
-	if hostPath == "" || hostWorkspace == "" {
-		return hostPath
-	}
-	if !filepath.IsAbs(hostPath) {
-		return hostPath
-	}
-	rel, err := filepath.Rel(hostWorkspace, hostPath)
-	if err != nil {
-		return hostPath
-	}
-	if rel == "." {
-		return "/workspace"
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return hostPath
-	}
-	return "/workspace/" + filepath.ToSlash(rel)
 }
 
 // buildAgentInitialMessage prepends a workspace context header to the agent's

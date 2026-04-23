@@ -83,23 +83,3 @@ func TestSpawnAgent_RejectsIdentityTraversal(t *testing.T) {
 	}
 }
 
-func TestTranslateHostPathToContainer(t *testing.T) {
-	cases := []struct {
-		hostPath      string
-		hostWorkspace string
-		want          string
-	}{
-		{"", "/host/ws", ""},
-		{"/host/ws/.belayer/runs/s/transcripts/a.jsonl", "/host/ws", "/workspace/.belayer/runs/s/transcripts/a.jsonl"},
-		{"/host/ws", "/host/ws", "/workspace"},
-		{"/other/path", "/host/ws", "/other/path"},
-		{"relative/path", "/host/ws", "relative/path"},
-		{"/host/ws/file", "", "/host/ws/file"},
-	}
-	for _, tc := range cases {
-		got := translateHostPathToContainer(tc.hostPath, tc.hostWorkspace)
-		if got != tc.want {
-			t.Errorf("translateHostPathToContainer(%q, %q) = %q, want %q", tc.hostPath, tc.hostWorkspace, got, tc.want)
-		}
-	}
-}

@@ -22,11 +22,9 @@ func TestInitFirstRunScaffoldsDefaults(t *testing.T) {
 	}
 
 	belayerDir := filepath.Join(dir, ".belayer")
-	for _, rel := range []string{"config.yaml", "policies/standard.yaml"} {
-		p := filepath.Join(belayerDir, rel)
-		if _, err := os.Stat(p); err != nil {
-			t.Fatalf("expected %s to exist: %v", p, err)
-		}
+	configPath := filepath.Join(belayerDir, "config.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("expected %s to exist: %v", configPath, err)
 	}
 
 	wantAgents := []string{"backend-dev", "pm", "qa", "reviewer", "supervisor", "web-dev"}

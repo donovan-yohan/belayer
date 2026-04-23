@@ -2,17 +2,57 @@
 
 Run-local agent control plane for Nightshift.
 
-Belayer coordinates planner + specialist agents inside a single worker run. One session, one daemon, one request at a time. Agents communicate through a message broker, register artifacts, and fire events. The Hermes bridge spawns and manages each agent as a subprocess.
+Belayer coordinates a supervisor + specialist agents inside a single worker run.
+One session, one daemon, one request at a time. Agents communicate through a
+message broker, register artifacts, and fire events. The Hermes bridge spawns
+and manages each agent as a subprocess.
+
+## The agent model: mains and sides
+
+Every agent is one of two kinds. The distinction is whether the agent has a
+mailbox.
+
+- **Main** — long-lived party member. Has inbox + outbox. Polls mail before
+  every turn. Accepts broadcasts. Participates in peer-to-peer dialogue.
+  Examples: `supervisor`, `backend-dev`, `web-dev`.
+- **Side** — short-lived worker with a single scoped task. No mailbox. Takes
+  its task in the initial spawn message, produces output via `final_response`
+  and registered artifacts, and exits. Examples: `pm`, `qa`, `reviewer`.
+
+```mermaid
+flowchart LR
+    Supervisor["supervisor<br/>kind: main"]:::main
+    Backend["backend-dev<br/>kind: main"]:::main
+    Web["web-dev<br/>kind: main"]:::main
+    PM["pm<br/>kind: side"]:::side
+    QA["qa<br/>kind: side"]:::side
+    Rev["reviewer<br/>kind: side"]:::side
+
+    Supervisor <-->|"peer mail"| Backend
+    Supervisor <-->|"peer mail"| Web
+    Backend <-->|"peer mail"| Web
+    Supervisor -->|"summon (spawn-and-await)"| PM
+    Supervisor -->|"summon"| QA
+    Supervisor -->|"summon"| Rev
+
+    classDef main fill:#1a3a2a,stroke:#3fb950,color:#c9d1d9
+    classDef side fill:#1a2a3a,stroke:#58a6ff,color:#c9d1d9
+```
+
+Mains talk to each other directly — no supervisor hop required. Sides are
+spawned for a task, do it, exit. See `docs/AGENT_ARCHITECTURE.md` for the
+full coordination model.
 
 ## Quick start
 
 ```bash
 go build ./cmd/belayer
 
-# Start the daemon
-belayer daemon
+# In your project repo:
+belayer init                     # scaffold .belayer/ (config, agents)
+belayer daemon                   # start the daemon
 
-# Launch a run (creates session, spawns planner via Hermes bridge)
+# Launch a run (creates session, spawns supervisor via Hermes bridge)
 belayer run start --task "Add rate limiting to /api/v1/cards" --workdir /path/to/repo
 
 # Monitor
@@ -20,61 +60,150 @@ belayer status
 belayer logs <session-id> -f
 belayer roster --session <session-id>
 
-# Agents communicate through the daemon
-belayer message send --to planner --content "API tests passing"
+# Agents coordinate through the daemon
+belayer message send --to supervisor --content "API tests passing"
 belayer artifact create --kind spec --path docs/spec.md
 
-# Planner signals done, PM verifies
+# Supervisor signals done, PM verifies
 belayer finish "All spec items implemented"
 ```
 
-## How it works
+## How a run flows
 
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant D as Daemon
+    participant Sup as supervisor (main)
+    participant Dev as backend-dev / web-dev (main)
+    participant PM as pm (side)
+
+    Op->>D: belayer run start --task "..."
+    D->>Sup: spawn (reads .belayer/agents/supervisor/)
+    Sup->>D: belayer_spawn_agent(web-dev, backend-dev, ...)
+    D->>Dev: spawn as peer mains (worktree isolated)
+    Sup<<->>Dev: direct peer mail (mid-turn)
+    Dev->>D: belayer_send_message(to=supervisor, "done, PR #42")
+    Sup->>D: belayer_request_completion("spec satisfied")
+    D->>PM: auto-spawn PM side (adversarial verifier)
+    PM->>D: approve | reject (up to 3 cycles)
+    D->>Op: session complete | needs_human_review
 ```
-belayer run start
-  -> daemon creates session + SQLite event log
-  -> spawns planner via Hermes bridge (python -m hermes_bridge)
-  -> planner reads spec, spawns specialists via belayer_spawn_agent tool
-  -> specialists write code, send messages, register artifacts
-  -> planner calls belayer finish
-  -> daemon auto-spawns PM agent for spec-vs-reality verification
-  -> PM approves (session complete) or rejects (gap list back to planner, up to 3 cycles)
+
+## The default team
+
+`belayer init` scaffolds `.belayer/` and copies the shipped starter team into
+`.belayer/agents/`. The default roster:
+
+| Identity       | Kind  | Role                                                |
+|----------------|-------|-----------------------------------------------------|
+| `supervisor`   | main  | Party lead. Spawns, coordinates, calls `finish`.    |
+| `backend-dev`  | main  | Backend/API implementer. Worktree-isolated.         |
+| `web-dev`      | main  | Frontend/web implementer. Worktree-isolated.        |
+| `pm`           | side  | Adversarial spec-vs-reality verifier (completion gate). |
+| `qa`           | side  | Outside-in validation: browser/CLI/real APIs.       |
+| `reviewer`     | side  | Diff / plan reviewer with structured verdicts.      |
+
+None of these names are baked into belayer. The framework contract is
+`.belayer/agents/<name>/{agent.yaml, system-prompt.md, agents.md}` — the names
+themselves are yours.
+
+## Customizing your team
+
+`.belayer/agents/` is project-owned. Edit, rename, delete, or replace
+identities. `belayer init --force` refreshes the shipped defaults without
+touching `config.yaml`.
+
+### Example: add a `data-eng` main
+
+```bash
+mkdir -p .belayer/agents/data-eng
+cat > .belayer/agents/data-eng/agent.yaml <<'YAML'
+schema_version: "1"
+description: "Data engineer — main implementer for ETL pipelines"
+kind: main
+vendor: codex
+model: gpt-5.4
+max_turns: 100
+max_duration: "2h"
+ephemeral: false
+workspace: inherit
+belayer_tools: []
+YAML
+# system-prompt.md + agents.md follow the same pattern as backend-dev/
 ```
+
+After that, your supervisor can `belayer_spawn_agent(identity="data-eng", ...)`
+and the new peer joins the party with a mailbox.
+
+### Example: swap in a stricter reviewer
+
+```bash
+# Option A: edit in place
+$EDITOR .belayer/agents/reviewer/system-prompt.md
+
+# Option B: replace entirely
+rm -r .belayer/agents/reviewer
+cp -r ~/my-templates/strict-reviewer .belayer/agents/reviewer
+```
+
+The daemon reads `.belayer/agents/<name>/` first, falls back to the shipped
+copy only if your project-local tree does not define the name. That means you
+can slim the team (delete `qa/` if your project has no UI) or add your own
+(`docs-writer/`, `sre/`, `release-manager/`) without touching belayer source.
+
+### `agent.yaml` fields
+
+| Field             | Purpose                                                   |
+|-------------------|-----------------------------------------------------------|
+| `kind`            | `main` or `side`. Controls mailbox + tool surface.        |
+| `vendor` / `model`| LLM vendor + model ID (Hermes resolves).                  |
+| `max_turns`       | Budget cap; bridge emits `bridge:budget_exhausted` at limit. |
+| `max_duration`    | Wallclock cap.                                            |
+| `ephemeral`       | `true` for sides (exit on completion), `false` for mains. |
+| `workspace`       | `inherit` (shared cwd), `none`, or a named sub-workspace. |
+| `belayer_tools`   | Opt-in role-specific tools (see below).                   |
+
+Baseline tools are registered automatically per kind. Add to `belayer_tools`
+only when an identity needs a role-specific capability.
+
+| Tool                           | Who gets it                     |
+|--------------------------------|---------------------------------|
+| `belayer_report_status`        | everyone (baseline)             |
+| `belayer_create_artifact`      | everyone (baseline)             |
+| `belayer_send_message`         | mains (baseline)                |
+| `belayer_broadcast`            | mains (baseline)                |
+| `belayer_check_mail`           | mains (baseline)                |
+| `belayer_spawn_agent`          | supervisor (opt-in)             |
+| `belayer_request_completion`   | supervisor (opt-in)             |
+| `belayer_escalate_to_human`    | supervisor (opt-in)             |
+| `belayer_approve_completion`   | pm (opt-in)                     |
+| `belayer_reject_completion`    | pm (opt-in)                     |
+
+See `examples/templates/` for alternative starter teams (pilot + sprites +
+per-repo implementers) and `docs/AGENT_ARCHITECTURE.md` for the full spawn,
+mail, and completion-gate contracts.
 
 ## Architecture
 
 Three layers:
 
-1. **Session bus** .. Go daemon on a Unix socket, SQLite store. Sessions, roster, messages, events, artifacts.
-2. **Hermes driver** .. Bridge subprocess wraps Hermes AIAgent. Identity injected via `ephemeral_system_prompt`, coordination tools registered at spawn.
-3. **Bridge transport** .. Python subprocess lifecycle: heartbeats, exit detection, event streaming over stdout.
-
-## Agent identity
-
-Belayer ships a starter team under `agents/`, and `belayer init` copies that
-tree into the consuming project at `.belayer/agents/`.
-
-Treat the project-local copy as the real runtime source of truth. The shipped
-defaults in this repo are examples and onboarding scaffolding, not a normative
-team definition for every belayer consumer.
-
-Agent identities live in `.belayer/agents/<name>/` at runtime. Each directory contains:
-
-- `agent.yaml` .. vendor, model, tier, ephemeral flag
-- `system-prompt.md` .. the agent's soul (injected as ephemeral_system_prompt)
-- `agents.md` .. operating instructions, tools, workflows
-
-The default starter team is: supervisor, pm, web-dev, backend-dev, qa, reviewer.
-You can edit, delete, rename, or replace them in your own `.belayer/agents/`
-tree without changing belayer source.
+1. **Session bus** — Go daemon on a Unix socket, SQLite store. Sessions,
+   roster, messages, events, artifacts.
+2. **Hermes driver** — Bridge subprocess wraps Hermes `AIAgent`. Identity
+   injected via `ephemeral_system_prompt`, coordination tools registered at
+   spawn.
+3. **Bridge transport** — Python subprocess lifecycle: heartbeats, exit
+   detection, event streaming over stdout.
 
 ## CLI
 
-```
+```bash
+belayer init                Scaffold .belayer/ in the current project
 belayer daemon              Start the daemon
-belayer run start           Create session + spawn planner
+belayer run start           Create session + spawn supervisor
 belayer spawn               Spawn an agent mid-session
-belayer finish              Signal work complete (triggers PM gate for planner)
+belayer finish              Signal work complete (triggers PM gate)
 belayer roster              List active agents
 belayer message             Send/broadcast/list messages
 belayer request-completion  Explicit PM gate trigger
@@ -87,8 +216,14 @@ belayer recall              Full-text event search
 
 ## Docs
 
-- `docs/AGENT_ARCHITECTURE.md` .. agent toolbox, coordination model, completion gate
-- `docs/design-docs/` .. detailed design decisions (see index.md)
+- `docs/AGENT_ARCHITECTURE.md` — agent toolbox, main/side model, mail, PM gate
+- `docs/DEPLOYMENT.md` — topologies, trust model, credentials, sockets
+- `docs/PHILOSOPHY.md` — the six runtime interfaces
+- `docs/LOG_FORMAT.md` — event schema, SSE, archive format
+- `docs/OBSERVABILITY.md` — operator guide
+- `docs/design-docs/` — detailed design decisions (see `index.md`)
+- `agents/README.md` — shipped starter team overview
+- `examples/templates/` — alternative team templates
 
 ## Development
 

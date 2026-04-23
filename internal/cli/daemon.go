@@ -27,7 +27,7 @@ func loadEnvFile(path string) {
 }
 
 func newDaemonCmd() *cobra.Command {
-	var socketPath, dbPath, belayerRoot, workdir, tcpAddr, dockerGateway string
+	var socketPath, dbPath, belayerRoot, workdir, tcpAddr string
 	var bridgeAPIKey, bridgeBaseURL, bridgeProvider string
 	var logLevel, authToken string
 	var corsOrigins []string
@@ -80,9 +80,6 @@ func newDaemonCmd() *cobra.Command {
 			if tcpAddr != "" {
 				cfg.TCPAddr = tcpAddr
 			}
-			if dockerGateway != "" {
-				cfg.DockerHostGateway = dockerGateway
-			}
 			if bridgeAPIKey != "" {
 				cfg.BridgeAPIKey = bridgeAPIKey
 			}
@@ -128,7 +125,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 			// Load bridge config (skip_openrouter_probe etc.) from .belayer/config.yaml.
 			// Default: SkipOpenRouterProbe=true — suppresses the openrouter metadata
-			// probe that causes proxy-denied CONNECTs on clamshell sandboxes.
+			// probe that causes proxy-denied CONNECTs on sandboxed deployments.
 			bridgeCfg, err := bridge.LoadProjectConfig(wd)
 			if err != nil {
 				return fmt.Errorf("load bridge config: %w", err)
@@ -144,7 +141,7 @@ func newDaemonCmd() *cobra.Command {
 			}
 
 			// If the workdir has a .belayer/ directory, also bind a Unix socket
-			// there so clamshell bridge subprocesses can reach the daemon via the
+			// there so sandboxed bridge subprocesses can reach the daemon via the
 			// bind-mounted workspace path (/workspace/.belayer/daemon.sock).
 			wsSock := filepath.Join(wd, ".belayer", "daemon.sock")
 			if _, err := os.Stat(filepath.Dir(wsSock)); err == nil {
@@ -168,10 +165,9 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite database path (default ~/.belayer/belayer.db)")
 	cmd.Flags().StringVar(&belayerRoot, "belayer-root", "", "Path to belayer repo root (for hermes_bridge PYTHONPATH)")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Workspace directory (for .belayer/config.yaml lookup; default cwd)")
-	cmd.Flags().StringVar(&tcpAddr, "tcp-addr", "", "Also bind a TCP listener (e.g. 0.0.0.0:7523) for clamshell container access")
+	cmd.Flags().StringVar(&tcpAddr, "tcp-addr", "", "Also bind a TCP listener (e.g. 0.0.0.0:7523) for sandboxed container access")
 	cmd.Flags().StringVar(&tcpAddr, "bind", "", "Alias of --tcp-addr: also bind a TCP listener (e.g. 0.0.0.0:7523)")
-	cmd.Flags().StringVar(&dockerGateway, "docker-gateway", "", "Docker host gateway IP for clamshell bridge access (default 172.17.0.1)")
-	cmd.Flags().StringVar(&bridgeAPIKey, "bridge-api-key", "", "LLM provider API key injected into bridge subprocesses (for clamshell where sandbox has no Hermes config)")
+	cmd.Flags().StringVar(&bridgeAPIKey, "bridge-api-key", "", "LLM provider API key injected into bridge subprocesses (for sandboxes with no Hermes config on the container user)")
 	cmd.Flags().StringVar(&bridgeBaseURL, "bridge-base-url", "", "LLM provider base URL injected into bridge subprocesses (e.g. https://opencode.ai/zen/go/v1)")
 	cmd.Flags().StringVar(&bridgeProvider, "bridge-provider", "", "LLM provider name injected into bridge subprocesses (e.g. openai)")
 	cmd.Flags().StringVar(&logLevel, "log-level", "", "Default log level for new sessions (standard|verbose|trace). Overridable per-run via `belayer run start --log-level` or BELAYER_LOG_LEVEL.")

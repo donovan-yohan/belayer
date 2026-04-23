@@ -10,7 +10,6 @@ Belayer is the control plane for ONE run. It does not impose an isolation bounda
 |----------|-----------------|-------------|-----------------|
 | **Host-native** (dev laptop) | None — agents run as the current OS user | Working directory is the only boundary; full filesystem access | Unix socket only (`~/.belayer/daemon.sock`); no network by default |
 | **Nightshift worker** (production) | Outer container (provided by Nightshift); one container per run | Container boundary enforced by Nightshift; Belayer trusts everything inside | Unix socket inside container + optional TCP (`--bind`) for external observability |
-| **Clamshell** (legacy) | Docker per-session sandbox with MITM egress proxy | Agents in Docker; daemon on host VM; proxy enforces egress allowlist | Daemon on host VM reachable via bind-mounted workspace socket or Docker host gateway |
 
 The outer topology — not Belayer — is responsible for isolating agent processes from each other and from the host. Belayer reads and writes the working directory freely; it has no concept of "this directory is off-limits."
 
@@ -89,18 +88,19 @@ that applies the Landlock ruleset and then `exec`-replaces itself with the
 actual bridge command. It must be on `PATH` when `confine_agent_writes: true` is
 active.
 
-**For deployment images (Nightshift worker, clamshell):** bake
-`belayer-landlock-exec` into the image alongside `belayer`. The binary is built
-from `cmd/belayer-landlock-exec/` and cross-compiles cleanly with:
+**For sandboxed deployment images (Nightshift worker, container-per-run
+drivers, etc.):** bake `belayer-landlock-exec` into the image alongside
+`belayer`. The binary is built from `cmd/belayer-landlock-exec/` and
+cross-compiles cleanly with:
 
 ```sh
 GOOS=linux GOARCH=arm64 go build -o belayer-landlock-exec ./cmd/belayer-landlock-exec
 ```
 
-**TODO (clamshell image):** The clamshell Dockerfile (`docker/` or the
-external clamshell image build) needs `belayer-landlock-exec` added to `/usr/local/bin`.
-This is tracked as a follow-up; Landlock confinement is ineffective in the
-clamshell topology until the binary is present in the container image.
+**TODO (container-per-run images):** Any container-per-run sandbox driver
+added in the future needs `belayer-landlock-exec` baked into `/usr/local/bin`
+of its image. Landlock confinement is ineffective in container-per-run
+topologies until the binary is present in the image.
 
 ### What is and is not protected
 

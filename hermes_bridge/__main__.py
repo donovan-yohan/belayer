@@ -346,8 +346,9 @@ def main() -> None:
 
     # --- Override/supplement with BELAYER_* provider vars --------------------
     # These are injected by the daemon when the sandbox user has no Hermes config
-    # (e.g. clamshell). API key always overrides (container user may have an
-    # invalid key). Base URL and provider only apply when not already resolved.
+    # (e.g. sandboxed container deployments). API key always overrides (container
+    # user may have an invalid key). Base URL and provider only apply when not
+    # already resolved.
     belayer_api_key = os.environ.get("BELAYER_API_KEY", "")
     belayer_base_url = os.environ.get("BELAYER_BASE_URL", "")
     belayer_provider = os.environ.get("BELAYER_PROVIDER", "")
