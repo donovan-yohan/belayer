@@ -405,15 +405,20 @@ def main() -> None:
         agent_kwargs["session_id"] = hermes_session_id
 
     # Parse enabled_toolsets from env (comma-separated list of toolset names).
-    # When set, restricts the agent to only tools from those toolsets.
-    # Example: "file,code_execution" gives the agent read_file, write_file, patch,
-    # search_files, and execute_code only.
+    # __all__ sentinel means "not configured" → no restriction.
+    # Empty string means explicitly empty list → zero toolsets.
+    # Non-empty list restricts to those toolsets.
     enabled_toolsets_env = os.environ.get("BELAYER_ENABLED_TOOLSETS", "")
-    if enabled_toolsets_env:
+    if enabled_toolsets_env == "__all__":
+        pass  # field not configured; no restriction
+    elif enabled_toolsets_env != "":
         enabled_toolsets = [t.strip() for t in enabled_toolsets_env.split(",") if t.strip()]
-        if enabled_toolsets:
-            agent_kwargs["enabled_toolsets"] = enabled_toolsets
-            log.info("Restricting agent to toolsets: %s", enabled_toolsets)
+        agent_kwargs["enabled_toolsets"] = enabled_toolsets
+        log.info("Restricting agent to toolsets: %s", enabled_toolsets)
+    else:
+        # explicit empty list (e.g. enabled_toolsets: [])
+        agent_kwargs["enabled_toolsets"] = []
+        log.info("Restricting agent to toolsets: []")
 
     try:
         agent = AIAgent(**agent_kwargs)

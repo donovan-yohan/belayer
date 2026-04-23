@@ -84,6 +84,7 @@ def _set_required_env(monkeypatch, max_turns="7"):
     monkeypatch.delenv("BELAYER_EPHEMERAL", raising=False)
     monkeypatch.delenv("BELAYER_TRANSCRIPT_PATH", raising=False)
     monkeypatch.delenv("BELAYER_TOOLS", raising=False)
+    monkeypatch.delenv("BELAYER_ENABLED_TOOLSETS", raising=False)
 
 
 def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
@@ -295,3 +296,87 @@ def test_non_positive_max_turns_is_ignored(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert "max_iterations" not in created_agents[0].kwargs
+
+
+def test_main_honors_enabled_toolsets_env(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "file, code_execution")
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert created_agents[0].kwargs["enabled_toolsets"] == ["file", "code_execution"]
+
+
+def test_main_ignores_empty_enabled_toolsets_env(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "")
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert created_agents[0].kwargs["enabled_toolsets"] == []
+
+
+def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "__all__")
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert "enabled_toolsets" not in created_agents[0].kwargs
