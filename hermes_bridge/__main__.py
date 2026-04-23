@@ -403,13 +403,6 @@ def main() -> None:
         agent_kwargs["max_iterations"] = max_turns
     if hermes_session_id:
         agent_kwargs["session_id"] = hermes_session_id
-    # Only pass ephemeral if AIAgent supports it (newer Hermes versions)
-    import inspect
-    aiagent_sig = inspect.signature(AIAgent.__init__)
-    if "ephemeral" in aiagent_sig.parameters:
-        agent_kwargs["ephemeral"] = ephemeral
-    else:
-        log.debug("AIAgent does not support ephemeral parameter, skipping")
 
     try:
         agent = AIAgent(**agent_kwargs)
