@@ -1,0 +1,40 @@
+hermes_bridge/tests/test_main_runtime.py
+  ddae31e619e6d959 383-419
+internal/daemon/bridge_events_test.go
+  ddae31e619e6d959 1187-1254
+hermes_bridge/__main__.py
+  ddae31e619e6d959 105-129,801-802,811,814-815,842
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ecba62f3b661ae7db435248eea630591756b9515",
+  "prompts": {
+    "ddae31e619e6d959": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2fec1a36-5e43-41b9-b7d8-c69a0545ad4b",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 136,
+      "total_deletions": 17,
+      "accepted_lines": 136,
+      "overriden_lines": 0
+    },
+    "f501cc4009a45d39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1e257162-065a-46e6-9913-53e824d96a1c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 2,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
