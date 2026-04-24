@@ -434,6 +434,24 @@ def make_transcript_writer(
         return None
 
 
+def wire_callbacks(agent, callbacks: dict) -> dict:
+    """Wire callbacks onto an AIAgent instance with validation.
+
+    Returns a dict of {attr: status} where status is 'wired' or 'missing'.
+    Logs a warning for missing attributes so we notice if Hermes renames
+    a callback in a future release.
+    """
+    results: dict = {}
+    for attr, fn in callbacks.items():
+        if hasattr(agent, attr):
+            setattr(agent, attr, fn)
+            results[attr] = "wired"
+        else:
+            log.warning("Callback %s not found on AIAgent; skipping", attr)
+            results[attr] = "missing"
+    return results
+
+
 def start_heartbeat_thread(socket_path: str, session_id: str, agent_id: str, interval: int = 30) -> threading.Event:
     """Start a daemon thread that sends periodic heartbeats.
 

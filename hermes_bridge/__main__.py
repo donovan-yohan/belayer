@@ -39,7 +39,7 @@ except ImportError:
     sys.exit(1)
 
 from hermes_bridge.tools import register_belayer_tools
-from hermes_bridge.callbacks import make_callbacks, make_transcript_writer, post_event, start_heartbeat_thread
+from hermes_bridge.callbacks import make_callbacks, make_transcript_writer, post_event, start_heartbeat_thread, wire_callbacks
 from hermes_bridge.stdin_reader import StdinReader
 from hermes_bridge.http_client import unix_get
 
@@ -322,62 +322,40 @@ def main() -> None:
         else:
             log.warning("Profile dir %s not found, using default", profile_home)
 
-    # --- Resolve runtime credentials (token refresh, etc.) ------------------
-    # The TUI does this via resolve_runtime_provider() before constructing
-    # AIAgent. Without it, OAuth tokens (e.g. Codex) may be stale/expired
-    # and the headless AIAgent path does not refresh them on its own.
-    runtime_api_key = None
-    runtime_base_url = None
-    runtime_provider = None
-    runtime_api_mode = None
-    try:
-        from hermes_cli.runtime_provider import resolve_runtime_provider
-        runtime = resolve_runtime_provider()
-        runtime_api_key = runtime.get("api_key")
-        runtime_base_url = runtime.get("base_url")
-        runtime_provider = runtime.get("provider")
-        runtime_api_mode = runtime.get("api_mode")
-        log.info(
-            "Resolved runtime provider=%s base_url=%s api_mode=%s",
-            runtime_provider, runtime_base_url, runtime_api_mode,
-        )
-    except Exception as exc:
-        log.warning("Could not resolve runtime provider: %s (falling back to AIAgent defaults)", exc)
-
-    # --- Override/supplement with BELAYER_* provider vars --------------------
-    # These are injected by the daemon when the sandbox user has no Hermes config
-    # (e.g. sandboxed container deployments). API key always overrides (container
-    # user may have an invalid key). Base URL and provider only apply when not
-    # already resolved.
-    belayer_api_key = os.environ.get("BELAYER_API_KEY", "")
-    belayer_base_url = os.environ.get("BELAYER_BASE_URL", "")
-    belayer_provider = os.environ.get("BELAYER_PROVIDER", "")
-    if belayer_api_key:
-        runtime_api_key = belayer_api_key
-        log.info("Using BELAYER_API_KEY for LLM provider")
-    if belayer_base_url and not runtime_base_url:
-        runtime_base_url = belayer_base_url
-        log.info("Using BELAYER_BASE_URL=%s for LLM provider (fallback)", belayer_base_url)
-    if belayer_provider and not runtime_provider:
-        runtime_provider = belayer_provider
-        log.info("Using BELAYER_PROVIDER=%s for LLM provider (fallback)", belayer_provider)
-
-    # --- Resolve model from Hermes config if not explicitly set --------------
-    if not model:
+    # --- Resolve model, passthroughs, and construct AIAgent ------------------
+    # Hermes 0.11+ loads credentials, base_url, provider, and api_mode from
+    # the active profile (HERMES_HOME) via the transport layer. Auth refresh
+    # (OAuth, token rotation) is handled by the transport, not the bridge.
+    # We only override via BELAYER_* env vars when the daemon explicitly
+    # injects them for sandboxed/container deployments that lack a profile.
+    model = os.environ.get("BELAYER_MODEL", "")
+    max_turns_env = os.environ.get("BELAYER_MAX_TURNS", "")
+    max_turns = None
+    if max_turns_env:
         try:
-            from hermes_cli.config import load_config
-            cfg = load_config()
-            model_cfg = cfg.get("model", {})
-            if isinstance(model_cfg, dict):
-                model = model_cfg.get("default", "")
-            elif isinstance(model_cfg, str):
-                model = model_cfg
-        except Exception as exc:
-            log.warning("Could not load model from Hermes config: %s", exc)
+            parsed = int(max_turns_env)
+            if parsed > 0:
+                max_turns = parsed
+            else:
+                log.warning("Ignoring non-positive BELAYER_MAX_TURNS=%r", max_turns_env)
+        except ValueError:
+            log.warning("Ignoring invalid BELAYER_MAX_TURNS=%r", max_turns_env)
 
-    # --- Shared SessionDB for persistence and resume -------------------------
-    # Use the root ~/.hermes/state.db regardless of HERMES_HOME so all bridge
-    # sessions are visible in `hermes sessions list` alongside CLI sessions.
+    # Parse enabled_toolsets from env (comma-separated list of toolset names).
+    # __all__ sentinel means "not configured" → no restriction.
+    # Empty string means explicitly empty list → zero toolsets.
+    # Non-empty list restricts to those toolsets.
+    enabled_toolsets_env = os.environ.get("BELAYER_ENABLED_TOOLSETS", "")
+    enabled_toolsets = None
+    if enabled_toolsets_env == "__all__":
+        pass  # field not configured; no restriction
+    elif enabled_toolsets_env != "":
+        enabled_toolsets = [t.strip() for t in enabled_toolsets_env.split(",") if t.strip()]
+    else:
+        # explicit empty list (e.g. enabled_toolsets: [])
+        enabled_toolsets = []
+
+    # --- Shared SessionDB for persistence and resume -----------------------
     from pathlib import Path
     session_db = SessionDB(db_path=Path.home() / ".hermes" / "state.db")
 
@@ -388,14 +366,6 @@ def main() -> None:
     }
     if system_prompt:
         agent_kwargs["ephemeral_system_prompt"] = system_prompt
-    if runtime_api_key:
-        agent_kwargs["api_key"] = runtime_api_key
-    if runtime_base_url:
-        agent_kwargs["base_url"] = runtime_base_url
-    if runtime_provider:
-        agent_kwargs["provider"] = runtime_provider
-    if runtime_api_mode:
-        agent_kwargs["api_mode"] = runtime_api_mode
     if model:
         agent_kwargs["model"] = model
     if max_turns is not None:
@@ -403,22 +373,22 @@ def main() -> None:
         agent_kwargs["max_iterations"] = max_turns
     if hermes_session_id:
         agent_kwargs["session_id"] = hermes_session_id
-
-    # Parse enabled_toolsets from env (comma-separated list of toolset names).
-    # __all__ sentinel means "not configured" → no restriction.
-    # Empty string means explicitly empty list → zero toolsets.
-    # Non-empty list restricts to those toolsets.
-    enabled_toolsets_env = os.environ.get("BELAYER_ENABLED_TOOLSETS", "")
-    if enabled_toolsets_env == "__all__":
-        pass  # field not configured; no restriction
-    elif enabled_toolsets_env != "":
-        enabled_toolsets = [t.strip() for t in enabled_toolsets_env.split(",") if t.strip()]
+    if enabled_toolsets is not None:
         agent_kwargs["enabled_toolsets"] = enabled_toolsets
         log.info("Restricting agent to toolsets: %s", enabled_toolsets)
-    else:
-        # explicit empty list (e.g. enabled_toolsets: [])
-        agent_kwargs["enabled_toolsets"] = []
-        log.info("Restricting agent to toolsets: []")
+
+    # Sandbox passthrough: daemon injects these when the container user has
+    # no Hermes profile. Only pass through when explicitly set.
+    _PROVIDER_OVERRIDES = (
+        ("api_key", "BELAYER_API_KEY"),
+        ("base_url", "BELAYER_BASE_URL"),
+        ("provider", "BELAYER_PROVIDER"),
+    )
+    for key, env_name in _PROVIDER_OVERRIDES:
+        val = os.environ.get(env_name, "")
+        if val:
+            agent_kwargs[key] = val
+            log.info("Using %s for LLM %s", env_name, key)
 
     try:
         agent = AIAgent(**agent_kwargs)
@@ -427,11 +397,10 @@ def main() -> None:
         post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
         sys.exit(1)
 
-    # Fix: Hermes injects a keepalive-only httpx.Client (via _create_openai_client)
-    # which wipes proxy mounts even when HTTPS_PROXY is set. Additionally, Hermes
-    # closes the OpenAI client on rebuilds, which closes any shared http_client.
-    # Solution: monkey-patch _create_openai_client to always build a fresh proxy
-    # client per OpenAI client instance, so each Hermes rebuild gets its own client.
+    # TODO(upstream-hermes): Remove once transports handle HTTPS_PROXY.
+    # Hermes 0.11's transport ABC should eventually handle proxy config per-
+    # transport. Until then, monkey-patch _create_openai_client to inject a
+    # proxy-aware httpx.Client for OpenAI-format transports.
     _proxy_url = os.environ.get("HTTPS_PROXY", "") or os.environ.get("https_proxy", "")
     if _proxy_url and hasattr(agent, "_create_openai_client"):
         try:
@@ -521,8 +490,10 @@ def main() -> None:
         transcript_writer=transcript_writer,
         log_level=log_level,
     )
-    for attr, fn in callbacks.items():
-        setattr(agent, attr, fn)
+    wired = wire_callbacks(agent, callbacks)
+    missing = [k for k, v in wired.items() if v == "missing"]
+    if missing:
+        log.warning("Missing callbacks on AIAgent: %s", ", ".join(missing))
 
     # --- Start stdin reader ------------------------------------------------
     stdin_queue: queue.Queue = queue.Queue()
