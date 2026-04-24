@@ -102,6 +102,31 @@ def fetch_roster(socket_path: str, session_id: str) -> list[dict] | None:
     return data
 
 
+# Lifecycle values the daemon's roster JSON emits while a peer is not yet
+# terminal. See lifecycleFromRunStatus in internal/daemon/daemon.go: it folds
+# run.Status="pending_verification" down to "running", so the wire-level set
+# is just {starting, running}. Other lifecycle values (stopping, idle,
+# exited) mean the peer is winding down or done — supervisor should let the
+# idle countdown advance.
+_ACTIVE_PEER_LIFECYCLES = ("starting", "running")
+
+
+def active_peers(roster: list[dict], self_id: str) -> list[dict]:
+    """Return roster rows for peers (not self) still in a non-terminal lifecycle.
+
+    The daemon serialises agentRunResponse with lowercase JSON keys
+    (`name`, `status`) — see internal/daemon/agents.go. Reading
+    `r.get("Status")` would always be None and silently mark every peer
+    as terminal, which is exactly the false idle-timeout bug this
+    helper guards against.
+    """
+    return [
+        r for r in roster
+        if r.get("name") != self_id
+        and r.get("status") in _ACTIVE_PEER_LIFECYCLES
+    ]
+
+
 def _msg_field(msg: dict, *keys: str) -> str:
     """Return the first non-empty string value found among the given keys.
 
@@ -732,8 +757,8 @@ def main() -> None:
                 # Identity note: BELAYER_AGENT_ID is the agent *name*
                 # (e.g. "supervisor"), not a UUID — the daemon sets
                 # AgentID = req.Name when spawning the bridge (see
-                # internal/daemon/agents.go). The roster JSON exposes both
-                # `ID` (UUID) and `Name`; compare against Name.
+                # internal/daemon/agents.go). Roster JSON keys are
+                # lowercase (`name`, `status`); see active_peers() above.
                 roster = fetch_roster(socket_path, session_id)
                 if roster is None:
                     # Daemon unreachable or malformed response. We can't
@@ -742,22 +767,11 @@ def main() -> None:
                     # ceiling continue to tick so we don't wait forever on
                     # a truly dead daemon.
                     log.debug("Roster fetch failed; holding idle counter steady")
-                    active_peers = []  # unknown, treated as none-known for logging
+                    active_peer_rows = []  # unknown, treated as none-known for logging
                     waited = 0
                 else:
-                    peers = [r for r in roster if r.get("Name") != agent_id]
-                    # Active = anything the daemon considers not-yet-terminal.
-                    # The daemon emits "starting" during sandbox boot / hermes
-                    # warm-up, then flips to "running" once the bridge reports
-                    # in, and "pending_verification" while the PM adjudicates;
-                    # all three count as active so we don't idle-timeout a
-                    # supervisor while a peer is booting, executing, or awaiting
-                    # verification.
-                    active_peers = [
-                        r for r in peers
-                        if r.get("Status") in ("starting", "running", "pending_verification")
-                    ]
-                    peers_still_active = len(active_peers) > 0
+                    active_peer_rows = active_peers(roster, agent_id)
+                    peers_still_active = len(active_peer_rows) > 0
 
                     if peers_still_active:
                         if not was_waiting_on_peers:
@@ -784,7 +798,7 @@ def main() -> None:
                     )
                     reason = "idle_timeout"
                 else:
-                    active_count = len(active_peers)
+                    active_count = len(active_peer_rows)
                     detail = (
                         f"Absolute idle ceiling ({absolute_timeout}s) reached with "
                         f"{active_count} peer(s) still marked running. Suspected "
