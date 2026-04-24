@@ -160,11 +160,13 @@ func buildCLITree(t *testing.T, root string) cmdTree {
 // toolNameRe matches lines like:  "name": "belayer_foo_bar",
 var toolNameRe = regexp.MustCompile(`"name":\s*"(belayer_[a-z_]+)"`)
 
-// parseToolNames returns the set of registered belayer_* tool names found in
-// the hermes_bridge/tools.py schema dicts.
+// parseToolNames returns the set of registered belayer_* tool names found
+// in the Hermes plugin's schema dicts. The plugin replaced
+// hermes_bridge/tools.py in the phase-2 migration; the source of truth is
+// now plugins/belayer/tools.py.
 func parseToolNames(t *testing.T, root string) map[string]bool {
 	t.Helper()
-	toolsPath := filepath.Join(root, "hermes_bridge", "tools.py")
+	toolsPath := filepath.Join(root, "plugins", "belayer", "tools.py")
 	f, err := os.Open(toolsPath)
 	if err != nil {
 		t.Fatalf("cannot open %s: %v", toolsPath, err)

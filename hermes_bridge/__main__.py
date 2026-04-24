@@ -38,7 +38,6 @@ except ImportError:
     )
     sys.exit(1)
 
-from hermes_bridge.tools import register_belayer_tools
 from hermes_bridge.callbacks import make_callbacks, make_transcript_writer, post_event, start_heartbeat_thread, wire_callbacks
 from hermes_bridge.stdin_reader import StdinReader
 from hermes_bridge.http_client import unix_get
@@ -465,24 +464,24 @@ def main() -> None:
     # short-circuit this loop on the daemon side (see belayer status output
     # after bridge exits without completion).
 
-    # --- Register Belayer tools --------------------------------------------
-    allowed_tools_env = os.environ.get("BELAYER_TOOLS", "")
-    allowed_tools = [t.strip() for t in allowed_tools_env.split(",") if t.strip()] if allowed_tools_env else None
-    turn_mail_ids: list[str] = []
+    # --- Belayer tools: owned by the Hermes plugin -----------------------
+    # Tools are registered into the global tool registry by the belayer
+    # plugin's register(ctx), which Hermes fires during discover_plugins()
+    # — triggered as a side effect of `from run_agent import AIAgent`
+    # earlier in this file. By the time AIAgent.__init__ ran above, the
+    # registry was populated and the tools are already in agent.tools via
+    # get_tool_definitions(). See plugins/belayer/__init__.py.
+    #
+    # We still need access to the plugin's per-turn mail-id buffer because
+    # the check_mail handler appends to it and the end-of-turn cleanup
+    # below acks those ids back to the daemon. The plugin namespace
+    # (hermes_plugins.belayer) is populated in sys.modules by the loader.
     try:
-        register_belayer_tools(
-            agent,
-            agent_id,
-            session_id,
-            socket_path,
-            allowed_tools=allowed_tools,
-            agent_kind=agent_kind,
-            turn_mail_ids=turn_mail_ids,
-        )
+        from hermes_plugins import belayer as belayer_plugin  # type: ignore[import]
+        turn_mail_ids = belayer_plugin._TURN_MAIL_IDS
     except Exception as exc:
-        log.error("Failed to register Belayer tools: %s", exc)
-        post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
-        sys.exit(1)
+        log.warning("Belayer plugin not loaded (continuing without its tool surface): %s", exc)
+        turn_mail_ids = []
 
     # --- Open transcript writer (verbose sessions only) --------------------
     # Must be created before make_callbacks so the writer can be passed into

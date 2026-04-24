@@ -1,121 +1,92 @@
-"""Belayer Hermes plugin.
+"""Belayer Hermes plugin — registers the full belayer_* tool surface.
 
-Registers Belayer session-bus tools into the Hermes tool registry at plugin
-discovery time, so they land in AIAgent.tools via get_tool_definitions()
-rather than being appended after construction (the legacy path in
-hermes_bridge/tools.py).
+At Hermes plugin discovery time, register() reads BELAYER_* env vars set
+by the Go daemon and registers only the tools permitted by (a) agent kind
+(main gets mailbox surfaces; side does not) and (b) the per-agent allowlist
+from .belayer/agents/<identity>/agent.yaml (passed through as the
+BELAYER_TOOLS comma-separated env var).
 
-Phase 1 scope: belayer_broadcast only. Remaining tools (send_message,
-check_mail, spawn_agent, request_completion, etc.) still registered by the
-bridge's register_belayer_tools() until subsequent phases migrate them.
+The schemas and handler factories live in plugins.belayer.tools so they
+can be exercised by unit tests without pulling the Hermes plugin context
+machinery into the import graph.
 
-Env vars consumed at register() time (set by the Go daemon when spawning
-the bridge subprocess — see internal/bridge/bridge.go:BuildEnv):
-
-  BELAYER_SESSION_ID     — active session id
-  BELAYER_AGENT_ID       — this agent's name within the session
-  BELAYER_SOCKET         — UNIX socket path for daemon HTTP RPC
-  BELAYER_AGENT_KIND     — "main" or "side" (gates mailbox tools)
-
-Each bridge subprocess is a fresh Python process, so register() reads fresh
-env vars each time — no cross-session leak.
+Per-turn state (check_mail's accumulated ack ids) lives at module level so
+the bridge subprocess can drain it between turns — see pop_turn_mail_ids
+below.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import socket
-from typing import Any, Dict, Optional
+from typing import List
+
+from .tools import (
+    BASELINE_TOOLS,
+    KIND_MAIN,
+    KIND_SIDE,
+    MAIL_TOOLS,
+    TOOL_SPECS,
+)
 
 logger = logging.getLogger(__name__)
 
-KIND_MAIN = "main"
-KIND_SIDE = "side"
+# Mutable per-turn buffer for check_mail. The plugin handler appends
+# consumed message IDs here; the bridge's end-of-turn cleanup imports this
+# module by name and calls pop_turn_mail_ids() to drain and ack them.
+_TURN_MAIL_IDS: List[str] = []
 
 
-def _unix_post(socket_path: str, path: str, payload: Dict[str, Any]) -> tuple[int, str]:
-    """POST JSON to a UNIX-socket HTTP endpoint.
-
-    Kept inline to avoid importing from hermes_bridge, which lives in a
-    different runtime dir and is not guaranteed to be on PYTHONPATH when the
-    plugin loads. Mirrors hermes_bridge/http_client.py:unix_post.
+def pop_turn_mail_ids() -> List[str]:
+    """Return (and clear) the list of message IDs consumed by check_mail
+    since the last pop. Called by the bridge between turns so it can ack
+    them to the daemon in a single batch POST.
     """
-    body = json.dumps(payload).encode("utf-8")
-    request = (
-        f"POST {path} HTTP/1.1\r\n"
-        f"Host: localhost\r\n"
-        f"Content-Type: application/json\r\n"
-        f"Content-Length: {len(body)}\r\n"
-        f"Connection: close\r\n"
-        f"\r\n"
-    ).encode("utf-8") + body
-
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(5.0)
-    try:
-        s.connect(socket_path)
-        s.sendall(request)
-        chunks: list[bytes] = []
-        while True:
-            chunk = s.recv(4096)
-            if not chunk:
-                break
-            chunks.append(chunk)
-    finally:
-        s.close()
-
-    raw = b"".join(chunks).decode("utf-8", errors="replace")
-    header, _, body_str = raw.partition("\r\n\r\n")
-    status_line = header.split("\r\n", 1)[0] if header else ""
-    parts = status_line.split(" ", 2)
-    status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
-    return status, body_str
+    ids = list(_TURN_MAIL_IDS)
+    _TURN_MAIL_IDS.clear()
+    return ids
 
 
-BROADCAST_SCHEMA = {
-    "name": "belayer_broadcast",
-    "description": (
-        "Broadcast a message to every main agent in the session except the sender. "
-        "Broadcasts are for party-wide announcements, not private follow-up."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "content": {
-                "type": "string",
-                "description": "Message body to broadcast to the party.",
-            },
-        },
-        "required": ["content"],
-    },
-}
+def _parse_allowed_tools(raw: str) -> list[str]:
+    """Parse BELAYER_TOOLS env var (comma-separated tool names) into a list.
+
+    The daemon sets this from the agent's agent.yaml belayer_tools allowlist.
+    Empty string means "no role-specific tools beyond the kind baseline".
+    """
+    if not raw:
+        return []
+    return [t.strip() for t in raw.split(",") if t.strip()]
 
 
-def _make_broadcast_handler(agent_id: str, session_id: str, socket_path: str):
-    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
-        args = args or {}
-        content = args.get("content", "")
-        status, body = _unix_post(
-            socket_path,
-            f"/sessions/{session_id}/messages/broadcast",
-            {"content": content, "from": agent_id, "type": "instruction"},
-        )
-        if status == 201:
-            return "Broadcast sent."
-        logger.warning("belayer_broadcast failed (%d): %s", status, body[:200])
-        return f"[System] Failed to broadcast message. Error: {body[:200]}"
-
-    return handler
+def _register_tool(ctx, tool_name: str, agent_id: str, session_id: str, socket_path: str) -> None:
+    schema, factory = TOOL_SPECS[tool_name]
+    if tool_name == "belayer_check_mail":
+        handler = factory(agent_id, session_id, socket_path, _TURN_MAIL_IDS)
+    else:
+        handler = factory(agent_id, session_id, socket_path)
+    ctx.register_tool(
+        name=schema["name"],
+        toolset="belayer",
+        schema=schema,
+        handler=handler,
+        description=schema["description"],
+    )
 
 
 def register(ctx) -> None:
-    """Plugin entry point called by Hermes PluginManager.
+    """Plugin entry point — called by Hermes PluginManager at discovery.
 
-    Reads per-session env vars set by the Go daemon and conditionally
-    registers tools based on agent kind (main vs side). Side agents skip
-    mailbox surfaces; side and main both get baseline tools in later phases.
+    Reads the same env vars the bridge sets at subprocess exec time and
+    mirrors the legacy register_belayer_tools() gating logic:
+
+      - main agents get BASELINE_TOOLS + MAIL_TOOLS + allowlist
+      - side agents get BASELINE_TOOLS + allowlist (allowlist items in
+        MAIL_TOOLS are filtered out — side agents have no mailbox)
+
+    If BELAYER_SESSION_ID / BELAYER_AGENT_ID / BELAYER_SOCKET are unset,
+    the plugin returns without registering anything. This makes it safe to
+    leave enabled in hermes globally: an interactive `hermes` session with
+    no Belayer env is a plain Hermes session.
     """
     session_id = os.environ.get("BELAYER_SESSION_ID", "")
     agent_id = os.environ.get("BELAYER_AGENT_ID", "")
@@ -123,27 +94,40 @@ def register(ctx) -> None:
     kind = (os.environ.get("BELAYER_AGENT_KIND", KIND_MAIN) or KIND_MAIN).strip().lower()
     if kind not in (KIND_MAIN, KIND_SIDE):
         kind = KIND_MAIN
+    allowed = _parse_allowed_tools(os.environ.get("BELAYER_TOOLS", ""))
 
     if not (session_id and agent_id and socket_path):
-        # Not running inside a Belayer bridge — no-op. This makes the plugin
-        # safe to enable globally: it registers nothing unless BELAYER_* env
-        # vars signal a real session context.
         logger.debug(
             "belayer plugin: no BELAYER_* env vars; skipping registration (session=%r agent=%r)",
             session_id, agent_id,
         )
         return
 
-    # belayer_broadcast — main agents only; side agents have no mailbox.
+    # Compose the enabled tool set: baseline + (mailbox if main) + allowlist.
+    enabled: list[str] = list(BASELINE_TOOLS)
     if kind == KIND_MAIN:
-        ctx.register_tool(
-            name=BROADCAST_SCHEMA["name"],
-            toolset="belayer",
-            schema=BROADCAST_SCHEMA,
-            handler=_make_broadcast_handler(agent_id, session_id, socket_path),
-            description=BROADCAST_SCHEMA["description"],
-        )
-        logger.info(
-            "belayer plugin: registered belayer_broadcast for agent=%s session=%s",
-            agent_id, session_id,
-        )
+        enabled.extend(MAIL_TOOLS)
+    for tool in allowed:
+        if tool in enabled:
+            continue
+        if tool not in TOOL_SPECS:
+            logger.warning("belayer plugin: unknown tool %r in allowlist; skipping", tool)
+            continue
+        # Mail-surface tools are main-only regardless of allowlist. A side
+        # agent with 'belayer_broadcast' in its agent.yaml is a misconfig
+        # we silently correct rather than panic on.
+        if tool in MAIL_TOOLS and kind != KIND_MAIN:
+            logger.debug("belayer plugin: dropping mail-surface tool %r for side agent", tool)
+            continue
+        enabled.append(tool)
+
+    for tool in enabled:
+        try:
+            _register_tool(ctx, tool, agent_id, session_id, socket_path)
+        except Exception as exc:
+            logger.warning("belayer plugin: failed to register %s: %s", tool, exc)
+
+    logger.info(
+        "belayer plugin: registered %d tools for agent=%s session=%s kind=%s tools=%s",
+        len(enabled), agent_id, session_id, kind, enabled,
+    )
