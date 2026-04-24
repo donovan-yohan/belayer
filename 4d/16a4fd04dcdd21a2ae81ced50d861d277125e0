@@ -1,0 +1,25 @@
+docs/AGENT_ARCHITECTURE.md
+  f501cc4009a45d39 795-797,853-861
+CLAUDE.md
+  f501cc4009a45d39 20,46-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4d16a4fd04dcdd21a2ae81ced50d861d277125e0",
+  "prompts": {
+    "f501cc4009a45d39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1e257162-065a-46e6-9913-53e824d96a1c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 16,
+      "total_deletions": 8,
+      "accepted_lines": 1035,
+      "overriden_lines": 0
+    }
+  }
+}
