@@ -65,7 +65,11 @@ def _patch_bridge_runtime(monkeypatch, module, result, pending_messages=None, cr
 
     monkeypatch.setattr(module, "fetch_pending_messages", _fetch_pending_messages)
     monkeypatch.setattr(module, "make_callbacks", lambda *args, **kwargs: {})
-    monkeypatch.setattr(module, "register_belayer_tools", lambda *args, **kwargs: None)
+    # register_belayer_tools was removed in phase 2 — tools are now owned
+    # by the plugins.belayer package which hermes discovers at AIAgent
+    # import time. The bridge's fallback `from hermes_plugins import
+    # belayer as belayer_plugin` is tolerated to fail in tests (bridge
+    # logs a warning and falls back to an empty turn_mail_ids list).
     monkeypatch.setattr(module, "start_heartbeat_thread", lambda *args, **kwargs: types.SimpleNamespace(set=lambda: None))
     monkeypatch.setattr(module, "StdinReader", DummyReader)
 
