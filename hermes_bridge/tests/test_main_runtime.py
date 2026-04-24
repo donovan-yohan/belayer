@@ -380,3 +380,40 @@ def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert "enabled_toolsets" not in created_agents[0].kwargs
+
+
+def test_active_peers_uses_lowercase_json_keys(monkeypatch):
+    """Regression: roster JSON keys are lowercase (`name`, `status`).
+
+    Reading them as `Name`/`Status` silently classifies every peer as
+    terminal, which made the supervisor's idle countdown tick forward
+    even while specialists were actively running tools — producing a
+    false `agent_status:incomplete` after idle_timeout despite live
+    work.
+    """
+    module = _load_main_module(monkeypatch)
+    roster = [
+        {"name": "supervisor", "status": "running"},
+        {"name": "extend-api-dev", "status": "running"},
+        {"name": "research", "status": "starting"},
+        {"name": "qa", "status": "exited"},
+        {"name": "old-pm", "status": "idle"},
+    ]
+
+    rows = module.active_peers(roster, "supervisor")
+    names = sorted(r["name"] for r in rows)
+
+    assert names == ["extend-api-dev", "research"], (
+        "supervisor should be excluded; only starting/running peers count "
+        f"as active, got {names}"
+    )
+
+
+def test_active_peers_ignores_capitalised_keys(monkeypatch):
+    """If something feeds capitalised keys, treat them as unknown (not active)."""
+    module = _load_main_module(monkeypatch)
+    roster = [
+        {"Name": "extend-api-dev", "Status": "running"},
+    ]
+
+    assert module.active_peers(roster, "supervisor") == []

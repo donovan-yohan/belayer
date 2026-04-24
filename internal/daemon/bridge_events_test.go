@@ -1184,3 +1184,71 @@ func TestBridgeFinishedDoesNotOverwriteIncomplete(t *testing.T) {
 		t.Fatalf("expected agent status=incomplete (not overwritten by bridge:finished), got %q", run.Status)
 	}
 }
+
+// TestRosterJSONShapeIsBridgeContract pins the wire shape of the
+// /sessions/{id}/agents endpoint that hermes_bridge.__main__.active_peers
+// reads. The bridge filters peers using lowercase JSON keys (`name`,
+// `status`) and expects `status` to be a single lifecycle token (no
+// `/<outcome>` suffix; the composite is CLI-display-only via
+// rosterStatus()). If a future change capitalises the keys or fuses
+// status+outcome into a composite string, the bridge's idle loop will
+// silently classify every peer as terminal and trigger a false
+// agent_status:incomplete after idle_timeout — see the case-mismatch
+// regression that produced this test.
+func TestRosterJSONShapeIsBridgeContract(t *testing.T) {
+	d := testDaemon(t)
+	sessionID := setupSessionWithAgents(t, d, "supervisor", "extend-api-dev")
+
+	rr := doRequest(t, d, "GET", "/sessions/"+sessionID+"/agents", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("roster fetch: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Decode as a generic map so we observe the on-the-wire keys, not
+	// Go's case-insensitive struct unmarshal.
+	var rows []map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode roster: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 roster rows, got %d", len(rows))
+	}
+
+	for _, row := range rows {
+		// 1. Lowercase keys must be present (bridge reads them directly).
+		name, hasName := row["name"]
+		if !hasName {
+			t.Fatalf("roster row missing lowercase `name` key (bridge contract): %#v", row)
+		}
+		status, hasStatus := row["status"]
+		if !hasStatus {
+			t.Fatalf("roster row missing lowercase `status` key (bridge contract): %#v", row)
+		}
+
+		// 2. Capitalised keys must NOT appear (would mask presence of
+		//    correct lowercase keys behind Go struct quirks).
+		if _, ok := row["Name"]; ok {
+			t.Fatalf("roster row exposes capitalised `Name` key — bridge expects lowercase only: %#v", row)
+		}
+		if _, ok := row["Status"]; ok {
+			t.Fatalf("roster row exposes capitalised `Status` key — bridge expects lowercase only: %#v", row)
+		}
+
+		// 3. `status` must be a single lifecycle token, never a
+		//    composite "<status>/<outcome>" string. The CLI builds
+		//    that composite for display only (see rosterStatus in
+		//    internal/cli/nightshift.go); the wire stays separate.
+		statusStr, ok := status.(string)
+		if !ok {
+			t.Fatalf("`status` for %v is not a string: %T = %#v", name, status, status)
+		}
+		if strings.Contains(statusStr, "/") {
+			t.Fatalf("`status` for %v is composite %q — must be a single lifecycle token; outcome belongs in the separate `outcome` field", name, statusStr)
+		}
+
+		// 4. `outcome` lives as its own field, not fused into `status`.
+		if _, ok := row["outcome"]; !ok {
+			t.Fatalf("roster row missing `outcome` field for %v (bridge contract — outcome must stay separate from status): %#v", name, row)
+		}
+	}
+}
