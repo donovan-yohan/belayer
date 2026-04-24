@@ -1,0 +1,7 @@
+name: belayer
+version: 0.1.0
+description: Belayer session-bus tools (broadcast, messaging, spawn, completion gate) that let agents coordinate through the Belayer daemon.
+author: Belayer
+kind: standalone
+provides_tools:
+  - belayer_broadcast

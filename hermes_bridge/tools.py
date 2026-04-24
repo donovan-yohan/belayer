@@ -958,9 +958,12 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
 # Registration
 # ---------------------------------------------------------------------------
 
+# belayer_broadcast is registered by the Hermes plugin at
+# plugins/belayer/__init__.py (phase 1 migration). It is intentionally
+# absent from _TOOL_SPECS so register_belayer_tools does not double-register
+# it. Remaining tools migrate in subsequent phases.
 _TOOL_SPECS = {
     "belayer_send_message": (SEND_MESSAGE_SCHEMA, make_send_message_handler),
-    "belayer_broadcast": (BROADCAST_SCHEMA, make_broadcast_handler),
     "belayer_check_mail": (CHECK_MAIL_SCHEMA, make_check_mail_handler),
     "belayer_report_status": (REPORT_STATUS_SCHEMA, make_report_status_handler),
     "belayer_create_artifact": (CREATE_ARTIFACT_SCHEMA, make_create_artifact_handler),
@@ -1032,7 +1035,10 @@ def register_belayer_tools(
 
     baseline_tools = ["belayer_report_status", "belayer_create_artifact"]
     if kind == KIND_MAIN:
-        baseline_tools.extend(["belayer_send_message", "belayer_broadcast", "belayer_check_mail"])
+        # belayer_broadcast moved to the Hermes plugin (plugins/belayer/)
+        # during phase 1; the plugin registers it during discovery, before
+        # AIAgent reads the tool registry.
+        baseline_tools.extend(["belayer_send_message", "belayer_check_mail"])
 
     registered = []
     seen = set()
@@ -1042,7 +1048,7 @@ def register_belayer_tools(
         seen.add(tool_name)
         if tool_name not in _TOOL_SPECS:
             continue
-        if tool_name in {"belayer_check_mail", "belayer_broadcast", "belayer_send_message"} and kind != KIND_MAIN:
+        if tool_name in {"belayer_check_mail", "belayer_send_message"} and kind != KIND_MAIN:
             continue
         _register(agent, tool_name, agent_id, session_id, socket_path, turn_mail_ids=turn_mail_ids)
         registered.append(tool_name)

@@ -51,9 +51,11 @@ def test_register_belayer_tools_for_main(monkeypatch):
     )
 
     names = {call["name"] for call in fake_registry.calls}
+    # belayer_broadcast was migrated to the Hermes plugin
+    # (plugins/belayer/__init__.py) in phase 1; the bridge's
+    # register_belayer_tools no longer emits it.
     assert names == {
         "belayer_send_message",
-        "belayer_broadcast",
         "belayer_check_mail",
         "belayer_create_artifact",
         "belayer_report_status",
