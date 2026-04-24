@@ -1,0 +1,35 @@
+hermes_bridge/tests/test_main_runtime.py
+  f501cc4009a45d39 68-72
+plugins/belayer/tests/test_plugin_register.py
+  f501cc4009a45d39 4-6,11,15-20,45,47,49-60,65-72,75-76,78-143,148-150,153-155,168,170,175-176,179-181,183-194,197,200-207,210-241,243-254,256,259-262,264-268,271-417
+internal/agentlint/agentlint_test.go
+  f501cc4009a45d39 163-166,169
+plugins/belayer/__init__.py
+  f501cc4009a45d39 1,3-7,9-11,13-15,22,24-30,32,34-37,40-43,45-48,50-73,77-80,82-89,97,106-107,109-133
+plugins/belayer/plugin.yaml
+  f501cc4009a45d39 2-3,7,9-16
+hermes_bridge/__main__.py
+  f501cc4009a45d39 485-496,498-499,501-502
+plugins/belayer/tools.py
+  f501cc4009a45d39 1-1019
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "3c02ad112b6bb18c109ab8cc957a8574a73cc679",
+  "prompts": {
+    "f501cc4009a45d39": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1e257162-065a-46e6-9913-53e824d96a1c",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1506,
+      "total_deletions": 243,
+      "accepted_lines": 1495,
+      "overriden_lines": 0
+    }
+  }
+}
