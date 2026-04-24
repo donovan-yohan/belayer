@@ -21,9 +21,10 @@ type ProjectConfig struct {
 	// the OpenRouter catalog).
 	SkipOpenRouterProbe bool `yaml:"skip_openrouter_probe"`
 
-	// MaxConcurrentAgents is the daemon-enforced upper bound for live agents
-	// in a session. It is read from runtime.max_concurrent_agents in the
-	// project config and defaults to 15 when unset.
+	// MaxConcurrentAgents is the legacy single-cap setting. The daemon now
+	// enforces split caps (max_concurrent_mains / max_concurrent_sides) and
+	// only falls back to this value when the split caps are not configured.
+	// Kept for backwards compatibility with old config.yaml files.
 	MaxConcurrentAgents int `yaml:"max_concurrent_agents"`
 }
 
