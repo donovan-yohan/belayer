@@ -27,3 +27,12 @@ var DefaultBridge embed.FS
 //
 //go:embed all:web
 var WebUI embed.FS
+
+// DefaultPlugins is the Hermes 0.11+ plugin tree shipped inside the belayer
+// binary. Extracted to $HERMES_HOME/plugins/ at daemon startup so the
+// Hermes plugin loader (which scans that directory) can discover them.
+// The extractor filters __pycache__/ and *.pyc to avoid leaking host
+// bytecode into the user's plugin directory.
+//
+//go:embed all:plugins
+var DefaultPlugins embed.FS

@@ -27,6 +27,6 @@ packages = ["hermes_bridge"]
 "hermes_bridge" = "hermes_bridge"
 
 [tool.pytest.ini_options]
-testpaths = ["hermes_bridge/tests"]
+testpaths = ["hermes_bridge/tests", "plugins/belayer/tests"]
 pythonpath = ["."]
 addopts = "-ra"

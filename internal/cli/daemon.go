@@ -83,6 +83,22 @@ func newDaemonCmd() *cobra.Command {
 			cfg.RuntimeDir = runtimeDir
 			fmt.Fprintf(cmd.OutOrStdout(), "belayer runtime dir: %s\n", runtimeDir)
 
+			// Install the Belayer Hermes plugin into $HERMES_HOME/plugins/
+			// and ensure it is enabled in config.yaml. Idempotent; edits
+			// config only when the plugin is missing from the list.
+			if hermesHome, hhErr := resolveHermesHome(); hhErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warn: could not resolve HERMES_HOME for plugin install: %v\n", hhErr)
+			} else {
+				if err := extractPluginsToHermesHome(hermesHome); err != nil {
+					return fmt.Errorf("extract belayer hermes plugin: %w", err)
+				}
+				if changed, err := ensureHermesPluginEnabled(hermesHome, "belayer"); err != nil {
+					return fmt.Errorf("enable belayer hermes plugin: %w", err)
+				} else if changed {
+					fmt.Fprintf(cmd.OutOrStdout(), "enabled 'belayer' plugin in %s/config.yaml\n", hermesHome)
+				}
+			}
+
 			if tcpAddr != "" {
 				cfg.TCPAddr = tcpAddr
 			}
