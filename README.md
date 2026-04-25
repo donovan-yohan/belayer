@@ -43,6 +43,28 @@ Mains talk to each other directly — no supervisor hop required. Sides are
 spawned for a task, do it, exit. See `docs/AGENT_ARCHITECTURE.md` for the
 full coordination model.
 
+## Requirements
+
+| Dependency | Version | Notes |
+|------------|---------|-------|
+| Go         | 1.22+   | Build toolchain for the daemon binary. |
+| Python     | 3.10+   | Runs the per-agent bridge subprocess. |
+| Hermes     | 0.11+   | LLM driver. Belayer ships a Hermes plugin (`plugins/belayer/`) that is auto-installed into `$HERMES_HOME/plugins/belayer/` on first daemon start. Older Hermes versions lacked the plugin surface and are no longer supported. |
+| Linux kernel | 5.19+ (optional) | Required for Landlock v2 write-confinement (see `docs/DEPLOYMENT.md`). |
+
+The daemon resolves Hermes from `$HERMES_HOME` (or `~/.hermes` by default).
+The Python bridge imports Hermes modules from `$HERMES_HOME/hermes-agent/` and
+the Hermes venv at `$HERMES_HOME/hermes-agent/venv/`. Override with
+`HERMES_AGENT_PATH` to point at a development checkout.
+
+On daemon start, Belayer:
+
+1. Extracts its embedded plugin tree into `$HERMES_HOME/plugins/belayer/` (idempotent; SHA-matched).
+2. Adds `belayer` to `plugins.enabled` in `$HERMES_HOME/config.yaml` if missing.
+
+Set `BELAYER_REQUIRE_HERMES_PLUGIN=1` to make plugin install failures abort
+the daemon (default is to log a warning and continue).
+
 ## Quick start
 
 ```bash
@@ -50,7 +72,7 @@ go build ./cmd/belayer
 
 # In your project repo:
 belayer init                     # scaffold .belayer/ (config, agents)
-belayer daemon                   # start the daemon
+belayer daemon                   # start the daemon (also installs the Hermes plugin)
 
 # Launch a run (creates session, spawns supervisor via Hermes bridge)
 belayer run start --task "Add rate limiting to /api/v1/cards" --workdir /path/to/repo

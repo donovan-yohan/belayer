@@ -45,7 +45,7 @@ flags. Default config schema (including `exit_conditions`) is generated
 from `internal/cli/init.go`. Agent tool surface (baseline + role-specific)
 is defined by the Hermes plugin at `plugins/belayer/tools.py` and gated
 by `plugins/belayer/__init__.py:register()` based on agent kind +
-BELAYER_TOOLS allowlist.
+`BELAYER_TOOLS` allowlist.
 
 ## Agent identity
 

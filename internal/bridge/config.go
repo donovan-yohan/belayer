@@ -21,10 +21,12 @@ type ProjectConfig struct {
 	// the OpenRouter catalog).
 	SkipOpenRouterProbe bool `yaml:"skip_openrouter_probe"`
 
-	// MaxConcurrentAgents is the legacy single-cap setting. The daemon now
-	// enforces split caps (max_concurrent_mains / max_concurrent_sides) and
-	// only falls back to this value when the split caps are not configured.
-	// Kept for backwards compatibility with old config.yaml files.
+	// MaxConcurrentAgents is the legacy single-cap setting loaded from
+	// runtime.max_concurrent_agents. The daemon enforces split caps via
+	// LoadRuntimeCaps (max_concurrent_mains / max_concurrent_sides) and only
+	// falls back to this single-cap value when the split caps are absent.
+	// Kept here for backwards compatibility with old config.yaml files and
+	// for any bridge consumers that still read the legacy single-cap value.
 	MaxConcurrentAgents int `yaml:"max_concurrent_agents"`
 }
 

@@ -476,12 +476,20 @@ def main() -> None:
     # the check_mail handler appends to it and the end-of-turn cleanup
     # below acks those ids back to the daemon. The plugin namespace
     # (hermes_plugins.belayer) is populated in sys.modules by the loader.
+    #
+    # Use the plugin's public pop_turn_mail_ids() drain helper rather than
+    # touching its private buffer, so the bridge↔plugin contract stays at the
+    # documented surface and the plugin is free to change its internal
+    # buffering without breaking the bridge.
+    turn_mail_ids: list[str] = []
     try:
         from hermes_plugins import belayer as belayer_plugin  # type: ignore[import]
-        turn_mail_ids = belayer_plugin._TURN_MAIL_IDS
+        pop_plugin_mail_ids = belayer_plugin.pop_turn_mail_ids
     except Exception as exc:
         log.warning("Belayer plugin not loaded (continuing without its tool surface): %s", exc)
-        turn_mail_ids = []
+
+        def pop_plugin_mail_ids() -> list[str]:
+            return []
 
     # --- Open transcript writer (verbose sessions only) --------------------
     # Must be created before make_callbacks so the writer can be passed into
@@ -602,6 +610,9 @@ def main() -> None:
         if turn_usage:
             post_event(socket_path, session_id, agent_id, "bridge:turn_usage", turn_usage)
 
+        # Drain anything check_mail consumed during the just-finished turn,
+        # then ack everything (preface-poll ids extended above + plugin drain).
+        turn_mail_ids.extend(pop_plugin_mail_ids())
         if turn_mail_ids:
             post_message_ack(socket_path, session_id, agent_id, turn_mail_ids)
             turn_mail_ids.clear()

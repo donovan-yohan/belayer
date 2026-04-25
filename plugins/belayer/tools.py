@@ -17,10 +17,13 @@ the right session.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
+import os
 import socket
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -29,61 +32,65 @@ KIND_SIDE = "side"
 
 
 # ---------------------------------------------------------------------------
-# HTTP helpers (UNIX socket to Belayer daemon)
+# HTTP helpers (Belayer daemon: unix socket, direct HTTP, or HTTP-CONNECT proxy)
 # ---------------------------------------------------------------------------
+#
+# Mirrors hermes_bridge.http_client so plugin works in clamshell/sandboxed
+# deployments where BELAYER_SOCKET is an http:// URL (optionally tunneled via
+# BELAYER_HTTP_PROXY). Kept inline (not imported from hermes_bridge) because
+# the bridge package lives in a separate runtime dir and is not guaranteed to
+# be importable when the plugin loads inside the Hermes process.
+
+
+def _is_http_url(socket_path: str) -> bool:
+    return socket_path.startswith("http://")
+
+
+def _make_conn(socket_path: str) -> http.client.HTTPConnection:
+    if _is_http_url(socket_path):
+        parsed = urlparse(socket_path)
+        proxy_url = os.environ.get("BELAYER_HTTP_PROXY", "")
+        if proxy_url:
+            proxy = urlparse(proxy_url)
+            conn = http.client.HTTPConnection(proxy.hostname, proxy.port or 3128, timeout=5.0)
+            conn.set_tunnel(parsed.hostname, parsed.port or 80)
+            return conn
+        return http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=5.0)
+    conn = http.client.HTTPConnection("localhost", timeout=5.0)
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(5.0)
+    s.connect(socket_path)
+    conn.sock = s
+    return conn
 
 
 def unix_post(socket_path: str, path: str, payload: Dict[str, Any]) -> tuple[int, str]:
-    """POST JSON to a UNIX-socket HTTP endpoint on the Belayer daemon.
-
-    Kept inline (rather than imported from hermes_bridge.http_client) so the
-    plugin has no dependency on the bridge package — the bridge package
-    lives in a separate runtime dir and is not guaranteed to be importable
-    when the plugin loads inside a Hermes process.
-    """
-    body = json.dumps(payload).encode("utf-8")
-    request = (
-        f"POST {path} HTTP/1.1\r\n"
-        f"Host: localhost\r\n"
-        f"Content-Type: application/json\r\n"
-        f"Content-Length: {len(body)}\r\n"
-        f"Connection: close\r\n"
-        f"\r\n"
-    ).encode("utf-8") + body
-    return _send_request(socket_path, request)
+    """POST JSON to the Belayer daemon over unix socket, HTTP, or proxied HTTP."""
+    try:
+        conn = _make_conn(socket_path)
+        body = json.dumps(payload).encode("utf-8")
+        conn.request("POST", path, body=body, headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        resp_body = resp.read().decode("utf-8", errors="replace")
+        conn.close()
+        return resp.status, resp_body
+    except Exception as exc:
+        logger.debug("unix_post %s failed: %s", path, exc)
+        return 0, str(exc)
 
 
 def unix_get(socket_path: str, path: str) -> tuple[int, str]:
-    """GET a UNIX-socket HTTP endpoint on the Belayer daemon."""
-    request = (
-        f"GET {path} HTTP/1.1\r\n"
-        f"Host: localhost\r\n"
-        f"Connection: close\r\n"
-        f"\r\n"
-    ).encode("utf-8")
-    return _send_request(socket_path, request)
-
-
-def _send_request(socket_path: str, request: bytes) -> tuple[int, str]:
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(5.0)
+    """GET from the Belayer daemon over unix socket, HTTP, or proxied HTTP."""
     try:
-        s.connect(socket_path)
-        s.sendall(request)
-        chunks: list[bytes] = []
-        while True:
-            chunk = s.recv(4096)
-            if not chunk:
-                break
-            chunks.append(chunk)
-    finally:
-        s.close()
-    raw = b"".join(chunks).decode("utf-8", errors="replace")
-    header, _, body = raw.partition("\r\n\r\n")
-    status_line = header.split("\r\n", 1)[0] if header else ""
-    parts = status_line.split(" ", 2)
-    status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
-    return status, body
+        conn = _make_conn(socket_path)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        resp_body = resp.read().decode("utf-8", errors="replace")
+        conn.close()
+        return resp.status, resp_body
+    except Exception as exc:
+        logger.debug("unix_get %s failed: %s", path, exc)
+        return 0, str(exc)
 
 
 # ---------------------------------------------------------------------------

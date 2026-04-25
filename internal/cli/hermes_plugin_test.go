@@ -239,6 +239,46 @@ func TestInjectEnabledPlugin_InlineList_AlreadyEnabled(t *testing.T) {
 	}
 }
 
+// TestInjectEnabledPlugin_FourSpaceIndent_AlreadyEnabled guards against the
+// regression where any indentation under plugins: that wasn't exactly two
+// spaces was treated as "no enabled: present", causing a duplicate enabled:
+// block to be injected and the resulting config.yaml to be invalid.
+func TestInjectEnabledPlugin_FourSpaceIndent_AlreadyEnabled(t *testing.T) {
+	in := []string{
+		"plugins:",
+		"    enabled:",
+		"        - belayer",
+		"        - foo",
+	}
+	out, changed := injectEnabledPlugin(in, "belayer")
+	if changed {
+		t.Errorf("expected no change when 4-space-indented enabled: already includes plugin; got:\n%s", strings.Join(out, "\n"))
+	}
+}
+
+// TestInjectEnabledPlugin_FourSpaceIndent_AppendItem guards the corresponding
+// append path: a 4-space-indented enabled: list must have new items appended
+// at the same indent level as existing items, not at a hard-coded 6 spaces.
+func TestInjectEnabledPlugin_FourSpaceIndent_AppendItem(t *testing.T) {
+	in := []string{
+		"plugins:",
+		"    enabled:",
+		"        - foo",
+	}
+	out, changed := injectEnabledPlugin(in, "belayer")
+	if !changed {
+		t.Fatal("expected change to append item to 4-space-indented list")
+	}
+	got := strings.Join(out, "\n")
+	if !strings.Contains(got, "        - belayer") {
+		t.Errorf("expected belayer appended at 8-space indent (matching - foo); got:\n%s", got)
+	}
+	// Must not contain a duplicate enabled: block.
+	if strings.Count(got, "enabled:") != 1 {
+		t.Errorf("expected exactly one enabled: key; got:\n%s", got)
+	}
+}
+
 // --- ensureHermesPluginEnabled -------------------------------------------
 
 func TestEnsureHermesPluginEnabled_CreatesMissingConfig(t *testing.T) {

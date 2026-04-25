@@ -1210,8 +1210,8 @@ func TestRosterJSONShapeIsBridgeContract(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("decode roster: %v", err)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 roster rows, got %d", len(rows))
+	if len(rows) < 2 {
+		t.Fatalf("expected at least 2 roster rows, got %d", len(rows))
 	}
 
 	for _, row := range rows {

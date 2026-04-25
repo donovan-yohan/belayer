@@ -110,23 +110,33 @@ func syncEmbeddedPlugin(pluginsRoot, pluginName string) error {
 		return fmt.Errorf("extract plugin %s: walk: %w", pluginName, err)
 	}
 
-	// Prune stale files within this plugin's dir only.
+	// Prune stale files within this plugin's dir only. Surface walk and
+	// remove errors so a partially-upgraded plugin (caused by perms or
+	// read-only files) is reported during daemon startup instead of silently
+	// leaving stragglers behind.
 	type stalePath struct {
 		path  string
 		isDir bool
 	}
 	var stale []stalePath
-	_ = filepath.WalkDir(dstRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil || path == dstRoot {
+	if err := filepath.WalkDir(dstRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == dstRoot {
 			return nil
 		}
 		if _, ok := embeddedPaths[path]; !ok {
 			stale = append(stale, stalePath{path, d.IsDir()})
 		}
 		return nil
-	})
+	}); err != nil {
+		return fmt.Errorf("extract plugin %s: prune walk: %w", pluginName, err)
+	}
 	for i := len(stale) - 1; i >= 0; i-- {
-		_ = os.Remove(stale[i].path)
+		if err := os.Remove(stale[i].path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("extract plugin %s: remove stale %s: %w", pluginName, stale[i].path, err)
+		}
 	}
 
 	return nil
@@ -204,13 +214,18 @@ func injectEnabledPlugin(lines []string, pluginName string) ([]string, bool) {
 		return append(lines, addition...), true
 	}
 
-	// Find the enabled: sub-key within the plugins: block.
+	// Find the enabled: sub-key within the plugins: block. We accept any
+	// indentation deeper than the plugins: line so a config that uses
+	// 4-space (or tab) indenting under plugins: is recognised correctly,
+	// rather than treated as missing and duplicated.
 	enabledIdx := -1
 	enabledIndent := ""
-	childIndent := pluginsIndent + "  "
+	defaultChildIndent := pluginsIndent + "  "
 	// Find the end of the plugins: block (next line at pluginsIndent level
-	// that isn't blank).
+	// that isn't blank). Track the first non-blank child line's indentation
+	// so a subsequent insert keeps the file's existing convention.
 	blockEnd := len(lines)
+	observedChildIndent := ""
 	for i := pluginsIdx + 1; i < len(lines); i++ {
 		line := lines[i]
 		if strings.TrimSpace(line) == "" {
@@ -221,10 +236,18 @@ func injectEnabledPlugin(lines []string, pluginName string) ([]string, bool) {
 			blockEnd = i
 			break
 		}
-		if leading == childIndent && strings.HasPrefix(strings.TrimLeft(line, " \t"), "enabled:") {
+		if observedChildIndent == "" || len(leading) < len(observedChildIndent) {
+			observedChildIndent = leading
+		}
+		if strings.HasPrefix(strings.TrimLeft(line, " \t"), "enabled:") {
 			enabledIdx = i
 			enabledIndent = leading
 		}
+	}
+
+	childIndent := observedChildIndent
+	if childIndent == "" {
+		childIndent = defaultChildIndent
 	}
 
 	if enabledIdx == -1 {
@@ -240,7 +263,12 @@ func injectEnabledPlugin(lines []string, pluginName string) ([]string, bool) {
 	}
 
 	// Case 4: enabled: list exists. Scan list items under it, check for name.
-	listIndent := enabledIndent + "  "
+	// Track the actual indent the existing list items use so an append
+	// preserves the file's convention (e.g. 8-space indent under a
+	// 4-space-indented enabled:), rather than always inserting at
+	// enabledIndent+"  ".
+	listItemIndent := ""
+	minListIndent := enabledIndent + " "
 	listEnd := blockEnd
 	for i := enabledIdx + 1; i < blockEnd; i++ {
 		line := lines[i]
@@ -248,18 +276,24 @@ func injectEnabledPlugin(lines []string, pluginName string) ([]string, bool) {
 			continue
 		}
 		leading := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-		if !strings.HasPrefix(leading, listIndent) {
+		if !strings.HasPrefix(leading, minListIndent) {
 			listEnd = i
 			break
 		}
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "- ") {
+			if listItemIndent == "" {
+				listItemIndent = leading
+			}
 			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "-"))
 			item = strings.Trim(item, `"'`)
 			if item == pluginName {
 				return lines, false // already enabled
 			}
 		}
+	}
+	if listItemIndent == "" {
+		listItemIndent = enabledIndent + "  "
 	}
 
 	// Inline list ("enabled: [a, b]") — bail on the safe side.
@@ -299,8 +333,8 @@ func injectEnabledPlugin(lines []string, pluginName string) ([]string, bool) {
 		return out, true
 	}
 
-	// Block list — insert our item at listEnd.
-	newItem := listIndent + "- " + pluginName
+	// Block list — insert our item at listEnd at the same indent as existing items.
+	newItem := listItemIndent + "- " + pluginName
 	out := append([]string{}, lines[:listEnd]...)
 	out = append(out, newItem)
 	out = append(out, lines[listEnd:]...)

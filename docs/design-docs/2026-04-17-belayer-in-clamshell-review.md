@@ -1,10 +1,12 @@
 ---
-status: current
+status: historical
 ---
 
 # Belayer-in-Clamshell — Run Review
 
-> Status: Active during exec of `docs/exec-plans/active/2026-04-17-belayer-in-clamshell.md`.
+> Status: Historical — the exec plan this review accompanied has been
+> archived. Kept as a snapshot of decisions made during the clamshell
+> integration so future Belayer/Clamshell work has the assumption context.
 > Purpose: give reviewers a single doc summarizing assumptions made, what changed, where Clamshell ends and Belayer begins, and how Belayer could be decoupled from Clamshell.
 >
 > **Note on file paths (2026-04-17):** Deployment artifacts referenced in the

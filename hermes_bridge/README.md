@@ -13,6 +13,14 @@ venv at `~/.hermes/hermes-agent/venv/`. The daemon's spawn logic resolves
 that path and points `PYTHONPATH` at the hermes-agent source tree (see
 `internal/bridge/bridge.go`).
 
+**Hermes 0.11+** is required: the `belayer_*` tool surface is registered by
+the Belayer Hermes plugin (`plugins/belayer/`) at plugin discovery time,
+which depends on the plugin manager added in 0.11. The bridge no longer
+calls a `register_belayer_tools()` shim — when `from run_agent import AIAgent`
+runs, the plugin loader populates `agent.tools` for us. The bridge then uses
+the plugin's `pop_turn_mail_ids()` helper to drain `check_mail` ack ids
+between turns.
+
 This package declares `dependencies = []` so it can be installed into any
 venv for development or test without pulling down the full LLM stack.
 
