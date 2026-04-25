@@ -1,0 +1,47 @@
+internal/daemon/bridge_events_test.go
+  14f56b0b244932df 1213-1214
+README.md
+  14f56b0b244932df 46-67,75
+plugins/belayer/tools.py
+  14f56b0b244932df 20,23,26,35,37-64,68-79,83,85-93
+internal/cli/hermes_plugin.go
+  14f56b0b244932df 113-116,122-126,133-135,137-139,217-220,223,225-226,228,239-242,248-252,266-271,279,285-287,295-297,336-337
+internal/bridge/config.go
+  14f56b0b244932df 24-29
+hermes_bridge/__main__.py
+  14f56b0b244932df 479-484,487,490-492,613-615
+hermes_bridge/README.md
+  14f56b0b244932df 16-23
+internal/cli/daemon.go
+  14f56b0b244932df 89-97,100-102,105-113
+docs/AGENT_ARCHITECTURE.md
+  14f56b0b244932df 784
+docs/design-docs/2026-04-17-belayer-in-clamshell-review.md
+  14f56b0b244932df 2,7-9
+internal/cli/hermes_plugin_test.go
+  14f56b0b244932df 242-281
+skills/belayer-agent/SKILL.md
+  14f56b0b244932df 38,71
+CLAUDE.md
+  14f56b0b244932df 48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "963f5c42a7d00a35eeed43b596e73ae1c5f23a34",
+  "prompts": {
+    "14f56b0b244932df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "af018d39-a9a1-49f1-a970-66b18273d2c0",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 2062,
+      "total_deletions": 603,
+      "accepted_lines": 1664,
+      "overriden_lines": 0
+    }
+  }
+}
