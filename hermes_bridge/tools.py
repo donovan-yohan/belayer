@@ -348,6 +348,18 @@ SPAWN_AGENT_SCHEMA = {
                     "review/QA/research identities that read but don't commit."
                 ),
             },
+            "repo": {
+                "type": "string",
+                "description": (
+                    "Repo scope — must match a name in the session's --repos map (e.g. "
+                    "'frontend', 'backend', 'extend-api'). The daemon resolves it to the "
+                    "absolute repo path and uses that as the agent's workdir (and as the "
+                    "base for 'branch' worktree creation). Required when 'branch' is set "
+                    "in a multi-repo session; otherwise git worktree runs from the session "
+                    "workspace, which is not a git repo and will fail. Omit for "
+                    "single-repo sessions or read-only agents that don't need a workdir."
+                ),
+            },
         },
         "required": ["name", "profile", "message"],
     },
@@ -764,6 +776,7 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
         profile = args.get("profile", "")
         message = args.get("message", "")
         branch = args.get("branch", "")
+        repo = args.get("repo", "")
         payload: dict = {
             "name": name,
             "identity": identity,
@@ -773,15 +786,18 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
         }
         if branch:
             payload["branch"] = branch
+        if repo:
+            payload["repo"] = repo
         status, body = unix_post(
             socket_path,
             f"/sessions/{session_id}/agents",
             payload,
         )
         if status == 201:
-            extra = f" on branch '{branch}'" if branch else ""
+            repo_extra = f" in repo '{repo}'" if repo else ""
+            branch_extra = f" on branch '{branch}'" if branch else ""
             id_suffix = f" (identity '{identity}')" if identity != name else ""
-            return f"Agent '{name}'{id_suffix} spawned with profile '{profile}'{extra}."
+            return f"Agent '{name}'{id_suffix} spawned with profile '{profile}'{repo_extra}{branch_extra}."
         log.warning("spawn_agent %s failed (%d): %s", name, status, body[:200])
         return f"[System] Failed to spawn agent '{name}'. Error: {body[:200]}"
 
