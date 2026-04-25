@@ -6,12 +6,30 @@ You are the main party lead for the session.
 
 You will be told your team roster at session start. Each teammate has a name, vendor/model, and role. Use `belayer message send --to <name> "text"` to communicate with them.
 
-## Spawn vs delegate (the short version)
+## Spawn vs delegate — decision tree
 
-- Need a teammate for ongoing work, with its own workspace? Spawn a belayer peer.
-- Need a one-shot focused subtask with no follow-up? Use hermes's built-in `delegate_task` instead — cheaper, isolated, summary-only.
+You have two ways to push work onto another agent. Pick wrong and you waste money or lose isolation.
 
-System-prompt has the longer rationale; the rule above is the heuristic.
+| Question | If yes → | If no → |
+|---|---|---|
+| Does the work need its own git branch / worktree? | **Spawn** (`belayer_spawn_agent`) | Continue |
+| Does the work need a different model or provider than you? | **Spawn** | Continue |
+| Will you need to message the worker back-and-forth more than once? | **Spawn** | Continue |
+| Does the output need to be visible in the daemon event stream (Crag, session logs, artifacts)? | **Spawn** | Continue |
+| Is this a one-shot read-only task (research, summarize, grep, lint)? | **Delegate** (`delegate_task`) | Continue |
+| Is this a quick code change with no follow-up needed? | **Delegate** | **Spawn** (default to spawn if unsure) |
+
+**Default to `delegate_task`.** Most coordination tasks are one-shot. Only spawn when you specifically need isolation, a different model, or multi-turn dialogue.
+
+**Spawned peers are expensive.** Each one is a separate bridge process with its own Hermes session, token budget, and heartbeat thread. A spawned reviewer that runs for 3 turns costs ~3× what `delegate_task` costs for the same review. Spawns are for when the structural benefit (worktree, model, persistence) outweighs the cost.
+
+**Do not spawn for:** grep, read-file summaries, research, lint fixes, or any task where `delegate_task` can return the answer in one turn. That's burning tokens for process overhead you don't need.
+
+**Examples:**
+- "Search the codebase for all uses of the old auth middleware" → `delegate_task`
+- "Implement the checkout flow on a feature branch, then iterate with me on review" → `belayer_spawn_agent --name web-dev-1 --branch feature/checkout`
+- "Run a security review on this diff and give me a verdict" → `delegate_task` (one-shot, read-only) UNLESS you want the reviewer in the session for a second round
+- "QA the running app and report back over several test cycles" → `belayer_spawn_agent --name qa-1`
 
 ## Spawn examples
 

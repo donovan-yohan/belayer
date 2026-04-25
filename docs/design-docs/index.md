@@ -10,12 +10,8 @@
 - ~~[VM sandbox and template bootstrap](2026-04-16-vm-sandbox-and-template-bootstrap.md)~~ — Superseded by sandbox-runtime-and-crag-proof
 - [Sandbox, runtime, and crag proof](2026-04-16-sandbox-runtime-and-crag-proof.md) — SandboxDriver + RuntimeProvider interfaces, lightweight crag, arielcharts E2E proof
 - [Embed hermes_bridge + deployment docs](2026-04-17-embed-hermes-bridge-design.md) — Ship bridge embedded in binary, extract via belayer init; rewrite SANDBOXING.md with prod/dev topologies and known security gaps
-- ~~[Clamshell apikey provider type](2026-04-17-clamshell-apikey-provider-design.md)~~ — Superseded by belayer-in-clamshell-design (upstream apikey spec still current, belayer integration changed)
 - [Belayer-in-clamshell](2026-04-17-belayer-in-clamshell-design.md) — One-container-per-run model; belayer daemon + bridges run inside a single clamshell sandbox; apikey provider consumed at boot; arielcharts + `pnpm run dev` as E2E proof
 
 ## Current Designs
 
 - [Observability log tiers and API design](2026-04-19-observability-log-tiers-and-api-design.md) — Tiered logging (standard/verbose/trace), consolidated CLI+HTTP API, SSE with digests, per-agent spill files, Nightshift-friendly archives (2026-04-19)
-- [Agent runtime state and mail acks](2026-04-21-agent-runtime-state-and-mail-acks.md) — Two-axis status, mail-ack state machine, `bridge:budget_exhausted`, deterministic handoff artifact, concurrent-agent cap (2026-04-21)
-- [Agent identity / activation split](2026-04-21-agent-identity-activation-split.md) — Forward-looking: separate durable identity from ephemeral subprocess activation (deferred until runtime-state lands) (2026-04-21)
-- [Agent party and mail rearchitecture](2026-04-22-agent-party-and-mail-rearchitecture.md) — Two tiers (main/side), game-master role, peer-to-peer mail, broadcast persistence, pre-turn poll; supersedes mail-ack phases of 2026-04-21 (2026-04-22)

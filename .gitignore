@@ -60,3 +60,7 @@ docs/superpowers/
 channel/
 artifacts/
 !docs/exec-plans/active/artifacts/
+
+# belayer — per-run state (.belayer/ contains runs/ and worktrees/; hermes_bridge is in runtime dir)
+/.belayer/runs/
+/.belayer/worktrees/

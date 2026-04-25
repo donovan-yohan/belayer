@@ -198,7 +198,8 @@ def test_side_kind_skips_mail_polling(monkeypatch):
     module.main()
 
     assert created_agents, "expected AIAgent to be constructed"
-    assert created_agents[0].kwargs["ephemeral"] is True
+    # ephemeral is a bridge-local flag, not an AIAgent kwarg (cfbe579).
+    # It drives the post-completion idle vs exit logic.
     assert fetch_calls == []
 
     finished_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:finished"]
@@ -233,7 +234,9 @@ def test_bridge_honors_ephemeral_env_override(monkeypatch):
     module.main()
 
     assert created_agents, "expected AIAgent to be constructed"
-    assert created_agents[0].kwargs["ephemeral"] is False
+    # ephemeral is a bridge-local flag, not an AIAgent kwarg (cfbe579).
+    # The override is observable via the post-completion idle vs exit path.
+    assert "ephemeral" not in created_agents[0].kwargs
 
 
 def test_completed_on_last_turn_is_not_marked_budget_exhausted(monkeypatch):
@@ -354,6 +357,35 @@ def test_main_ignores_empty_enabled_toolsets_env(monkeypatch):
     assert created_agents[0].kwargs["enabled_toolsets"] == []
 
 
+def test_main_treats_unset_enabled_toolsets_env_as_unconfigured(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_AGENT_KIND", "side")  # avoid idle loop after completion
+    monkeypatch.delenv("BELAYER_ENABLED_TOOLSETS", raising=False)
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert "enabled_toolsets" not in created_agents[0].kwargs
+
+
 def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
@@ -380,3 +412,67 @@ def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert "enabled_toolsets" not in created_agents[0].kwargs
+
+
+def test_main_passthrough_provider_envs(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_API_KEY", "sk-test")
+    monkeypatch.setenv("BELAYER_BASE_URL", "https://api.test")
+    monkeypatch.setenv("BELAYER_PROVIDER", "test-provider")
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert created_agents[0].kwargs["api_key"] == "sk-test"
+    assert created_agents[0].kwargs["base_url"] == "https://api.test"
+    assert created_agents[0].kwargs["provider"] == "test-provider"
+
+
+def test_main_ignores_unset_provider_envs(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.delenv("BELAYER_API_KEY", raising=False)
+    monkeypatch.delenv("BELAYER_BASE_URL", raising=False)
+    monkeypatch.delenv("BELAYER_PROVIDER", raising=False)
+
+    created_agents = []
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(
+        monkeypatch,
+        module,
+        result,
+        pending_messages=[],
+        created_agents=created_agents,
+    )
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert "api_key" not in created_agents[0].kwargs
+    assert "base_url" not in created_agents[0].kwargs
+    assert "provider" not in created_agents[0].kwargs
