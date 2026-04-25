@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "769665d97635685a08490f4a42f418f59cf41d89",
+  "prompts": {
+    "bf43704c6c4a91a6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6e1f8d7d-2e50-4fc2-8d9f-d46b515bde57",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 38,
+      "total_deletions": 23,
+      "accepted_lines": 38,
+      "overriden_lines": 0
+    }
+  }
+}
