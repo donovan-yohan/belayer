@@ -322,38 +322,26 @@ def main() -> None:
         else:
             log.warning("Profile dir %s not found, using default", profile_home)
 
-    # --- Resolve model, passthroughs, and construct AIAgent ------------------
+    # --- Resolve passthroughs and construct AIAgent --------------------------
     # Hermes 0.11+ loads credentials, base_url, provider, and api_mode from
     # the active profile (HERMES_HOME) via the transport layer. Auth refresh
     # (OAuth, token rotation) is handled by the transport, not the bridge.
     # We only override via BELAYER_* env vars when the daemon explicitly
     # injects them for sandboxed/container deployments that lack a profile.
-    model = os.environ.get("BELAYER_MODEL", "")
-    max_turns_env = os.environ.get("BELAYER_MAX_TURNS", "")
-    max_turns = None
-    if max_turns_env:
-        try:
-            parsed = int(max_turns_env)
-            if parsed > 0:
-                max_turns = parsed
-            else:
-                log.warning("Ignoring non-positive BELAYER_MAX_TURNS=%r", max_turns_env)
-        except ValueError:
-            log.warning("Ignoring invalid BELAYER_MAX_TURNS=%r", max_turns_env)
 
     # Parse enabled_toolsets from env (comma-separated list of toolset names).
-    # __all__ sentinel means "not configured" → no restriction.
+    # Missing env var or __all__ sentinel means "not configured" → no restriction.
     # Empty string means explicitly empty list → zero toolsets.
     # Non-empty list restricts to those toolsets.
-    enabled_toolsets_env = os.environ.get("BELAYER_ENABLED_TOOLSETS", "")
+    enabled_toolsets_env = os.environ.get("BELAYER_ENABLED_TOOLSETS")
     enabled_toolsets = None
-    if enabled_toolsets_env == "__all__":
-        pass  # field not configured; no restriction
-    elif enabled_toolsets_env != "":
-        enabled_toolsets = [t.strip() for t in enabled_toolsets_env.split(",") if t.strip()]
-    else:
+    if enabled_toolsets_env is None or enabled_toolsets_env == "__all__":
+        pass  # not configured; no restriction
+    elif enabled_toolsets_env == "":
         # explicit empty list (e.g. enabled_toolsets: [])
         enabled_toolsets = []
+    else:
+        enabled_toolsets = [t.strip() for t in enabled_toolsets_env.split(",") if t.strip()]
 
     # --- Shared SessionDB for persistence and resume -----------------------
     from pathlib import Path

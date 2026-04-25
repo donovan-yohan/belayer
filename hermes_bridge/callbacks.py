@@ -438,8 +438,8 @@ def wire_callbacks(agent, callbacks: dict) -> dict:
     """Wire callbacks onto an AIAgent instance with validation.
 
     Returns a dict of {attr: status} where status is 'wired' or 'missing'.
-    Logs a warning for missing attributes so we notice if Hermes renames
-    a callback in a future release.
+    The caller is responsible for surfacing missing attributes (a single
+    summary log line is quieter than per-attr warnings here).
     """
     results: dict = {}
     for attr, fn in callbacks.items():
@@ -447,7 +447,6 @@ def wire_callbacks(agent, callbacks: dict) -> dict:
             setattr(agent, attr, fn)
             results[attr] = "wired"
         else:
-            log.warning("Callback %s not found on AIAgent; skipping", attr)
             results[attr] = "missing"
     return results
 
