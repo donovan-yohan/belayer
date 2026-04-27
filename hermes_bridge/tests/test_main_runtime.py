@@ -308,6 +308,7 @@ def test_non_positive_max_turns_is_ignored(monkeypatch):
 def test_main_honors_enabled_toolsets_env(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "file, code_execution")
 
     created_agents = []
@@ -336,6 +337,7 @@ def test_main_honors_enabled_toolsets_env(monkeypatch):
 def test_main_ignores_empty_enabled_toolsets_env(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "")
 
     created_agents = []
@@ -393,6 +395,7 @@ def test_main_treats_unset_enabled_toolsets_env_as_unconfigured(monkeypatch):
 def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "__all__")
 
     created_agents = []
@@ -421,6 +424,7 @@ def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
 def test_main_passthrough_provider_envs(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.setenv("BELAYER_API_KEY", "sk-test")
     monkeypatch.setenv("BELAYER_BASE_URL", "https://api.test")
     monkeypatch.setenv("BELAYER_PROVIDER", "test-provider")
@@ -453,6 +457,7 @@ def test_main_passthrough_provider_envs(monkeypatch):
 def test_main_ignores_unset_provider_envs(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.delenv("BELAYER_API_KEY", raising=False)
     monkeypatch.delenv("BELAYER_BASE_URL", raising=False)
     monkeypatch.delenv("BELAYER_PROVIDER", raising=False)
