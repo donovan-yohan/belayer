@@ -1,0 +1,23 @@
+hermes_bridge/tests/test_main_runtime.py
+  940ac30711acaa86 311,340,398,427,460
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "b218ead0445becc582807455a83e31f724d34248",
+  "prompts": {
+    "940ac30711acaa86": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "02f49236-ff05-4aed-898d-67ba6c42a15d",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
