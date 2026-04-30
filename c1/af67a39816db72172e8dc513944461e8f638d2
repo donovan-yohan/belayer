@@ -1,0 +1,31 @@
+README.md
+  eba65da2a046cd1c 285
+docs/ORG_MODE.md
+  eba65da2a046cd1c 72-74
+docs/README.md
+  eba65da2a046cd1c 12
+internal/agentlint/docs_test.go
+  eba65da2a046cd1c 110-122,125-139
+docs/ORG_FILESYSTEM.md
+  eba65da2a046cd1c 2,6-8,10-12,14-17,20-22,24-33,35-37,39-41,43-46,48-50,52-54,56,58-59,62,64-83,86-87,89,91-92,95-102,104-105,107-109,111,113-114,116-117,119-127,130,132,134-219,221-230,232-261,263-265,267-280,282-283,285-295,297-300,302-306,308-309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c1af67a39816db72172e8dc513944461e8f638d2",
+  "prompts": {
+    "eba65da2a046cd1c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddbc7-cc5c-7990-98c0-bc190d3f7c96",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 345,
+      "total_deletions": 0,
+      "accepted_lines": 298,
+      "overriden_lines": 0
+    }
+  }
+}
