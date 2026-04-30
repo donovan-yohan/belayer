@@ -1,6 +1,6 @@
 # Relay IDE Software-Company Proof
 
-Test bed: `/Users/donovanyohan/Documents/Programs/personal/relay-ide`
+Test bed: `relay-ide`
 
 Selected PRD: https://github.com/donovan-yohan/relay-ide/issues/320
 

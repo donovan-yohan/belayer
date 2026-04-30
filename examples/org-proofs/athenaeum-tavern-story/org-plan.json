@@ -3,9 +3,9 @@
   "objective": "Write a short three-act tavern celebration scene after the Athenaeum party's successful adventure, using existing party characters and generated NPC team metadata.",
   "lead": "storyteller",
   "context_artifacts": [
-    "/Users/donovanyohan/Documents/Programs/personal/belayer-athenaeum/README.md",
-    "/Users/donovanyohan/Documents/Programs/personal/belayer-athenaeum/.design/characters.md",
-    "/Users/donovanyohan/Documents/Programs/personal/belayer-athenaeum/examples/quest-tale.md"
+    "belayer-athenaeum/README.md",
+    "belayer-athenaeum/.design/characters.md",
+    "belayer-athenaeum/examples/quest-tale.md"
   ],
   "tasks": [
     {

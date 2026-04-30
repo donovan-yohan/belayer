@@ -57,6 +57,31 @@ func TestOrgProofExamplesAreValidArtifacts(t *testing.T) {
 	}
 }
 
+func TestOrgProofExamplesDoNotUseLocalAbsolutePaths(t *testing.T) {
+	root := repoRoot(t)
+	proofRoot := filepath.Join(root, "examples", "org-proofs")
+
+	err := filepath.WalkDir(proofRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(raw), "/Users/") {
+			t.Errorf("%s contains local absolute path", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk proof examples: %v", err)
+	}
+}
+
 func TestOrgProofExamplesKeepStoryAndSoftwareContractsSeparate(t *testing.T) {
 	root := repoRoot(t)
 	proofRoot := filepath.Join(root, "examples", "org-proofs")

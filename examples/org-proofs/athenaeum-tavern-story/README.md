@@ -1,6 +1,6 @@
 # Athenaeum Tavern Story Proof
 
-Test bed: `/Users/donovanyohan/Documents/Programs/personal/belayer-athenaeum`
+Test bed: `belayer-athenaeum`
 
 Scene: a tavern celebration after the party's successful adventure.
 

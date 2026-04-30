@@ -10,7 +10,7 @@
       "status": "pass",
       "summary": "The story follows a successful Codex restoration without contradicting the belayer-athenaeum premise.",
       "evidence": [
-        "/Users/donovanyohan/Documents/Programs/personal/belayer-athenaeum/README.md"
+        "belayer-athenaeum/README.md"
       ]
     },
     {
@@ -18,7 +18,7 @@
       "status": "pass",
       "summary": "Lyra, Kael, Mira, Thorne, and Zara retain distinct voices from the source character briefs.",
       "evidence": [
-        "/Users/donovanyohan/Documents/Programs/personal/belayer-athenaeum/.design/characters.md",
+        "belayer-athenaeum/.design/characters.md",
         "examples/org-proofs/athenaeum-tavern-story/three-act-story.md"
       ]
     },
