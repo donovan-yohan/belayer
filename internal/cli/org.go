@@ -66,6 +66,9 @@ func newCragInitCmd() *cobra.Command {
 			if kind == "" {
 				kind = "custom"
 			}
+			if err := validateCragKind(kind); err != nil {
+				return err
+			}
 			root, err := cragRoot()
 			if err != nil {
 				return err
@@ -81,7 +84,7 @@ func newCragInitCmd() *cobra.Command {
 					return fmt.Errorf("mkdir world-state: %w", err)
 				}
 			}
-			cragYAML := fmt.Sprintf("schema_version: \"belayer-crag/v1\"\nname: %s\nkind: %s\n", name, kind)
+			cragYAML := fmt.Sprintf("schema_version: \"belayer-crag/v1\"\nname: %q\nkind: %q\n", name, kind)
 			if description != "" {
 				cragYAML += fmt.Sprintf("description: %q\n", description)
 			}
@@ -178,10 +181,19 @@ func cragDir(name string) (string, error) {
 	return filepath.Join(root, name), nil
 }
 
+func validateCragKind(kind string) error {
+	switch kind {
+	case "development", "story", "research", "custom":
+		return nil
+	default:
+		return fmt.Errorf("invalid crag kind %q: must be development, story, research, or custom", kind)
+	}
+}
+
 func setCragLinkBlock(raw []byte, name, explicitPath string) []byte {
-	block := "crag:\n  name: " + name + "\n"
+	block := fmt.Sprintf("crag:\n  name: %q\n", name)
 	if explicitPath != "" {
-		block += "  path: " + explicitPath + "\n"
+		block += fmt.Sprintf("  path: %q\n", explicitPath)
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return []byte(block)
@@ -209,7 +221,7 @@ func setCragLinkBlock(raw []byte, name, explicitPath string) []byte {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		if len(line) == len(strings.TrimLeft(line, " \t")) && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+		if len(line) == len(strings.TrimLeft(line, " \t")) {
 			end = i
 			break
 		}

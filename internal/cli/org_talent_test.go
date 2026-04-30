@@ -160,7 +160,7 @@ func TestCragInitListAndLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read crag.yaml: %v", err)
 	}
-	if !strings.Contains(string(raw), `schema_version: "belayer-crag/v1"`) || !strings.Contains(string(raw), "kind: development") {
+	if !strings.Contains(string(raw), `schema_version: "belayer-crag/v1"`) || !strings.Contains(string(raw), `kind: "development"`) {
 		t.Fatalf("unexpected crag.yaml:\n%s", string(raw))
 	}
 
@@ -196,8 +196,21 @@ func TestCragInitListAndLink(t *testing.T) {
 		t.Fatalf("read linked config: %v", err)
 	}
 	got := string(linked)
-	if !strings.Contains(got, "log_level: standard") || !strings.Contains(got, "crag:\n  name: software-company\n") {
+	if !strings.Contains(got, "log_level: standard") || !strings.Contains(got, "crag:\n  name: \"software-company\"\n") {
 		t.Fatalf("unexpected linked config:\n%s", got)
+	}
+}
+
+func TestCragInitRejectsInvalidKind(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("BELAYER_HOME", home)
+
+	cmd := newCragCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"init", "software-company", "--kind", "invalid"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected invalid crag kind to fail")
 	}
 }
 
@@ -207,7 +220,21 @@ func TestSetCragLinkBlockReplacesExistingBlocks(t *testing.T) {
 	if strings.Contains(got, "old") {
 		t.Fatalf("old org remained:\n%s", got)
 	}
-	for _, want := range []string{"log_level: standard", "crag:\n  name: new-crag\n", "runtime:\n  max_concurrent_mains: 8"} {
+	for _, want := range []string{"log_level: standard", "crag:\n  name: \"new-crag\"\n", "runtime:\n  max_concurrent_mains: 8"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestSetCragLinkBlockPreservesFollowingTopLevelComment(t *testing.T) {
+	raw := []byte("log_level: standard\ncrag:\n  name: old\n# runtime settings\nruntime:\n  max_concurrent_mains: 8\n")
+	got := string(setCragLinkBlock(raw, "new-crag", "local/crag"))
+	for _, want := range []string{
+		"crag:\n  name: \"new-crag\"\n  path: \"local/crag\"\n",
+		"# runtime settings",
+		"runtime:\n  max_concurrent_mains: 8",
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in:\n%s", want, got)
 		}
