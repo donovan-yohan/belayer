@@ -485,8 +485,16 @@ def main() -> None:
     try:
         from hermes_plugins import belayer as belayer_plugin  # type: ignore[import]
         pop_plugin_mail_ids = belayer_plugin.pop_turn_mail_ids
-    except Exception as exc:
+    except (ImportError, AttributeError) as exc:
         log.warning("Belayer plugin not loaded (continuing without its tool surface): %s", exc)
+
+        def pop_plugin_mail_ids() -> list[str]:
+            return []
+
+    except Exception as exc:
+        if parse_optional_env_bool("BELAYER_REQUIRE_HERMES_PLUGIN"):
+            raise
+        log.exception("Belayer plugin failed to load unexpectedly; continuing without its tool surface")
 
         def pop_plugin_mail_ids() -> list[str]:
             return []

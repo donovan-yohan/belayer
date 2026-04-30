@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -236,6 +237,36 @@ func TestInjectEnabledPlugin_InlineList_AlreadyEnabled(t *testing.T) {
 	_, changed := injectEnabledPlugin(in, "belayer")
 	if changed {
 		t.Error("expected no change when inline list already includes plugin")
+	}
+}
+
+func TestInjectEnabledPlugin_ScalarEnabledNoOp(t *testing.T) {
+	in := []string{
+		"plugins:",
+		"  enabled: true",
+	}
+
+	out, changed := injectEnabledPlugin(in, "belayer")
+	if changed {
+		t.Errorf("expected no change for unsupported scalar enabled value; got:\n%s", strings.Join(out, "\n"))
+	}
+	if !reflect.DeepEqual(out, in) {
+		t.Errorf("expected scalar config to be preserved unchanged; got:\n%s", strings.Join(out, "\n"))
+	}
+}
+
+func TestInjectEnabledPlugin_MalformedInlineListNoOp(t *testing.T) {
+	in := []string{
+		"plugins:",
+		"  enabled: [foo, bar",
+	}
+
+	out, changed := injectEnabledPlugin(in, "belayer")
+	if changed {
+		t.Errorf("expected no change for malformed inline enabled list; got:\n%s", strings.Join(out, "\n"))
+	}
+	if !reflect.DeepEqual(out, in) {
+		t.Errorf("expected malformed inline config to be preserved unchanged; got:\n%s", strings.Join(out, "\n"))
 	}
 }
 

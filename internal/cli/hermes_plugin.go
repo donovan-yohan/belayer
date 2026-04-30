@@ -298,6 +298,11 @@ func injectEnabledPlugin(lines []string, pluginName string) ([]string, bool) {
 	}
 
 	// Inline list ("enabled: [a, b]") — bail on the safe side.
+	enabledRaw := strings.TrimSpace(lines[enabledIdx])
+	enabledRHS := strings.TrimSpace(strings.TrimPrefix(enabledRaw, "enabled:"))
+	if enabledRHS != "" && !strings.HasPrefix(enabledRHS, "[") {
+		return lines, false
+	}
 	if strings.Contains(lines[enabledIdx], "[") {
 		// Punt: keep the inline form, but append a block-style entry after.
 		// A YAML parser would reject mixed syntax, so instead we transform
@@ -317,6 +322,9 @@ func injectEnabledPlugin(lines []string, pluginName string) ([]string, bool) {
 					items = append(items, it)
 				}
 			}
+		}
+		if len(items) == 0 && rb <= lb {
+			return lines, false
 		}
 		for _, it := range items {
 			if it == pluginName {

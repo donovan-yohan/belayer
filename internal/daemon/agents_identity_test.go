@@ -134,6 +134,21 @@ func TestLoadAgentIdentity_EmptyExplicitListMeansZero(t *testing.T) {
 	}
 }
 
+func TestLoadAgentIdentity_MalformedInlineListsDoNotBecomeEmptyAllowlists(t *testing.T) {
+	root := t.TempDir()
+	belayerRoot := filepath.Join(root, "shipped")
+	mustWrite(t, filepath.Join(belayerRoot, "agents", "reviewer", "agent.yaml"),
+		"belayer_tools: not-a-list\nenabled_toolsets: [unterminated\n")
+
+	got := loadAgentIdentity("", belayerRoot, "reviewer", "")
+	if got.BelayerTools != nil {
+		t.Errorf("BelayerTools = %v, want nil for malformed inline list", got.BelayerTools)
+	}
+	if got.EnabledToolsets != nil {
+		t.Errorf("EnabledToolsets = %v, want nil for malformed inline list", got.EnabledToolsets)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

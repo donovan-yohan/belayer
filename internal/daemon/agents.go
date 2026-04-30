@@ -1386,16 +1386,16 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 			if strings.HasPrefix(trimmed, "belayer_tools:") {
 				inTools = false
 				inToolsets = false
-				out.BelayerTools = []string{} // mark explicitly configured
 				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "belayer_tools:"))
 				switch raw {
 				case "":
+					out.BelayerTools = []string{} // mark explicitly configured
 					inTools = true
 				case "[]":
-					// explicit empty list
+					out.BelayerTools = []string{} // explicit empty list
 				default:
 					if items := parseInlineYAMLList(raw); items != nil {
-						out.BelayerTools = append(out.BelayerTools, items...)
+						out.BelayerTools = items
 					}
 				}
 				continue
@@ -1403,16 +1403,16 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 			if strings.HasPrefix(trimmed, "enabled_toolsets:") {
 				inToolsets = false
 				inTools = false
-				out.EnabledToolsets = []string{} // mark explicitly configured
 				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "enabled_toolsets:"))
 				switch raw {
 				case "":
+					out.EnabledToolsets = []string{} // mark explicitly configured
 					inToolsets = true
 				case "[]":
-					// explicit empty list
+					out.EnabledToolsets = []string{} // explicit empty list
 				default:
 					if items := parseInlineYAMLList(raw); items != nil {
-						out.EnabledToolsets = append(out.EnabledToolsets, items...)
+						out.EnabledToolsets = items
 					}
 				}
 				continue
