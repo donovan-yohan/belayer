@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/donovan-yohan/belayer/internal/climbpath"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -25,7 +26,7 @@ func (d *Daemon) WriteHandoffArtifact(sessionID string) (string, error) {
 		return "", fmt.Errorf("session %s has no workspace_dir", sessionID)
 	}
 
-	runDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", sessionID)
+	runDir := climbpath.SessionDir(sess.WorkspaceDir, sessionID)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		return "", fmt.Errorf("mkdir handoff dir: %w", err)
 	}

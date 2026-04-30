@@ -56,7 +56,7 @@ func TestWriteHandoffArtifactIncludesInventorySections(t *testing.T) {
 		t.Fatalf("create artifact: %v", err)
 	}
 	for _, evt := range []store.SessionEvent{
-		{SessionID: sessionID, Type: "run_initiated", Data: `{"task":"ship handoff"}`},
+		{SessionID: sessionID, Type: "climb_initiated", Data: `{"task":"ship handoff"}`},
 		{SessionID: sessionID, Type: "bridge:finished", Data: `{"agent":"worker-1","final_response":"done"}`},
 	} {
 		if err := d.store.LogEvent(evt); err != nil {
@@ -68,7 +68,7 @@ func TestWriteHandoffArtifactIncludesInventorySections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteHandoffArtifact: %v", err)
 	}
-	if want := filepath.Join(workspace, ".belayer", "runs", sessionID, "handoff.md"); path != want {
+	if want := filepath.Join(workspace, ".belayer", "climbs", sessionID, "handoff.md"); path != want {
 		t.Fatalf("handoff path = %s, want %s", path, want)
 	}
 

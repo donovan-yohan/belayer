@@ -31,7 +31,7 @@ Repo-local `.belayer/` remains the runtime override layer.
 repo/.belayer/
 ├── config.yaml
 ├── agents/
-├── runs/        # current runtime climb state
+├── climbs/
 └── worktrees/
 ```
 
@@ -217,7 +217,7 @@ are records, not automatic prompt mutations.
 
 ### `promotions/`
 
-Promotion records preserve explicit changes made from run evidence into crag
+Promotion records preserve explicit changes made from climb evidence into crag
 knowledge.
 
 ```text
@@ -233,7 +233,7 @@ proposals stay auditable but do not alter crag state.
 ### `generated-talents/`
 
 Generated talents are short-lived workers or NPCs that were created during a
-run and then selected for possible reuse.
+climb and then selected for possible reuse.
 
 ```text
 generated-talents/
@@ -290,14 +290,14 @@ defaults.
 
 ## Privacy And Safety
 
-Cross-project knowledge is opt-in per repo. A normal run must not silently
+Cross-project knowledge is opt-in per repo. A normal climb must not silently
 mutate:
 
 - `~/.belayer/crags/<crag-name>/`
 - `~/.belayer/talent-catalog/<category>/`
 - another repo's `.belayer/`
 
-Runs produce artifacts and promotion proposals. Explicit CLI commands or human
+Climbs produce artifacts and promotion proposals. Explicit CLI commands or human
 review apply those proposals to global crag knowledge.
 
 ## Out Of Scope

@@ -7,13 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/donovan-yohan/belayer/internal/climbpath"
 	"github.com/spf13/cobra"
 )
 
 func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "run",
-		Aliases: []string{"climb"},
+		Use:     "climb",
+		Aliases: []string{"run"},
 		Short:   "Nightshift climb lifecycle commands",
 	}
 	cmd.AddCommand(newRunStartCmd())
@@ -27,7 +28,7 @@ func newRunStartCmd() *cobra.Command {
 	var logLevel string
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Create a run, spawn supervisor, and deliver the initial task",
+		Short: "Create a climb, spawn supervisor, and deliver the initial task",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(task) == "" {
 				return fmt.Errorf("--task is required")
@@ -36,7 +37,7 @@ func newRunStartCmd() *cobra.Command {
 			// If --exit-condition was passed, render an override block that
 			// the supervisor (and later the PM) will see at the top of the
 			// initial task. This replaces config.yaml's exit_conditions for
-			// this run only; the file on disk is untouched. Normalize first so
+			// this climb only; the file on disk is untouched. Normalize first so
 			// blank values (e.g. `--exit-condition ""`) fall through to the
 			// project config instead of injecting an authoritative empty list.
 			normalizedExitConditions := make([]string, 0, len(exitConditions))
@@ -48,7 +49,7 @@ func newRunStartCmd() *cobra.Command {
 			if len(normalizedExitConditions) > 0 {
 				var b strings.Builder
 				b.WriteString("<exit_conditions_override>\n")
-				b.WriteString("These exit conditions replace .belayer/config.yaml#exit_conditions for this run. The PM must validate each one before marking the run complete.\n")
+				b.WriteString("These exit conditions replace .belayer/config.yaml#exit_conditions for this climb. The PM must validate each one before marking the climb complete.\n")
 				for _, c := range normalizedExitConditions {
 					b.WriteString("- ")
 					b.WriteString(c)
@@ -61,7 +62,7 @@ func newRunStartCmd() *cobra.Command {
 
 			// Same shape as --exit-condition above: --persistence-strategy lets
 			// the operator override .belayer/config.yaml#persistence_strategy
-			// for this run only. These are the literal steps the supervisor
+			// for this climb only. These are the literal steps the supervisor
 			// must execute before reporting status=incomplete. Empty values are
 			// dropped so `--persistence-strategy ""` falls through to the
 			// project config instead of injecting an authoritative empty list.
@@ -74,7 +75,7 @@ func newRunStartCmd() *cobra.Command {
 			if len(normalizedPersistenceStrategy) > 0 {
 				var b strings.Builder
 				b.WriteString("<persistence_strategy_override>\n")
-				b.WriteString("These persistence steps replace .belayer/config.yaml#persistence_strategy for this run. Execute every step BEFORE reporting status=incomplete — the daemon will intercept and reprompt if no persistence-notes artifact is registered.\n")
+				b.WriteString("These persistence steps replace .belayer/config.yaml#persistence_strategy for this climb. Execute every step BEFORE reporting status=incomplete — the daemon will intercept and reprompt if no persistence-notes artifact is registered.\n")
 				for _, p := range normalizedPersistenceStrategy {
 					b.WriteString("- ")
 					b.WriteString(p)
@@ -98,7 +99,7 @@ func newRunStartCmd() *cobra.Command {
 			c := NewClient(resolveSocket(socket))
 			sessionName := name
 			if sessionName == "" {
-				sessionName = "nightshift-run"
+				sessionName = "nightshift-climb"
 			}
 
 			// Determine base directory for workspace.
@@ -144,16 +145,16 @@ func newRunStartCmd() *cobra.Command {
 			if _, err := c.SendMessage(sess.ID, "supervisor", task, "instruction", true); err != nil {
 				return fmt.Errorf("deliver initial task: %w", err)
 			}
-			// Log the initial prompt as telemetry so post-mortems can see what started the run.
+			// Log the initial prompt as telemetry so post-mortems can see what started the climb.
 			initData, _ := json.Marshal(map[string]any{
 				"task":                 task,
 				"supervisor_profile":   supervisorProfile,
 				"exit_conditions":      normalizedExitConditions,
 				"persistence_strategy": normalizedPersistenceStrategy,
 			})
-			_ = c.LogEvent(sess.ID, "run_initiated", string(initData))
+			_ = c.LogEvent(sess.ID, "climb_initiated", string(initData))
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Run started: %s (%s)\n", sess.ID, sess.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Climb started: %s (%s)\n", sess.ID, sess.Name)
 			fmt.Fprintln(cmd.OutOrStdout(), "Supervisor: supervisor")
 			if len(repos) > 0 {
 				fmt.Fprintln(cmd.OutOrStdout(), "Repos:")
@@ -170,18 +171,18 @@ func newRunStartCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
-	cmd.Flags().StringVar(&name, "name", "", "Run/session name")
+	cmd.Flags().StringVar(&name, "name", "", "Climb/session name")
 	cmd.Flags().StringVar(&task, "task", "", "Initial task text for the supervisor")
 	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", "default", "Hermes profile for the supervisor")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
-	cmd.Flags().StringArrayVar(&exitConditions, "exit-condition", nil, "Override .belayer/config.yaml#exit_conditions for this run. Repeatable. When present, these replace the file's list entirely.")
-	cmd.Flags().StringArrayVar(&persistenceStrategy, "persistence-strategy", nil, "Override .belayer/config.yaml#persistence_strategy for this run. Repeatable. Literal steps the supervisor must execute before reporting status=incomplete.")
-	cmd.Flags().StringVar(&logLevel, "log-level", "", "Log tier for this run: standard|verbose|trace. Falls back to BELAYER_LOG_LEVEL, then daemon default.")
+	cmd.Flags().StringArrayVar(&exitConditions, "exit-condition", nil, "Override .belayer/config.yaml#exit_conditions for this climb. Repeatable. When present, these replace the file's list entirely.")
+	cmd.Flags().StringArrayVar(&persistenceStrategy, "persistence-strategy", nil, "Override .belayer/config.yaml#persistence_strategy for this climb. Repeatable. Literal steps the supervisor must execute before reporting status=incomplete.")
+	cmd.Flags().StringVar(&logLevel, "log-level", "", "Log tier for this climb: standard|verbose|trace. Falls back to BELAYER_LOG_LEVEL, then daemon default.")
 	return cmd
 }
 
-// resolveRunLogLevel returns the log level for a run: the --log-level flag
+// resolveRunLogLevel returns the log level for a climb: the --log-level flag
 // value if non-empty, otherwise BELAYER_LOG_LEVEL, otherwise empty (daemon
 // applies its own default). Validation of the final string happens server-side
 // in ValidateLogLevel.
@@ -234,7 +235,7 @@ func parseRepos(raw string) (map[string]string, error) {
 // "Open Questions #6" for the design conversation, including the related
 // question of per-agent starting cwd in agent.yaml.
 func provisionWorkspace(baseDir, sessionID string, repos map[string]string) (string, error) {
-	workspaceDir := filepath.Join(baseDir, ".belayer", "runs", sessionID, "workspace")
+	workspaceDir := climbpath.WorkspaceDir(baseDir, sessionID)
 	if err := os.MkdirAll(workspaceDir, 0o700); err != nil {
 		return "", fmt.Errorf("create workspace dir: %w", err)
 	}

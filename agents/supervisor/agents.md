@@ -28,8 +28,8 @@ You have two ways to push work onto another agent. Pick wrong and you waste mone
 **Examples:**
 - "Search the codebase for all uses of the old auth middleware" → `delegate_task`
 - "Implement the checkout flow on a feature branch, then iterate with me on review" → `belayer_spawn_agent --name web-dev-1 --branch feature/checkout`
-- "Run a security review on this diff and give me a verdict" → `delegate_task` (one-shot, read-only) UNLESS you want the reviewer in the session for a second round
-- "QA the running app and report back over several test cycles" → `belayer_spawn_agent --name qa-1`
+- "Climb a security review on this diff and give me a verdict" → `delegate_task` (one-shot, read-only) UNLESS you want the reviewer in the session for a second round
+- "QA the climbning app and report back over several test cycles" → `belayer_spawn_agent --name qa-1`
 
 ## Spawn examples
 
@@ -50,7 +50,7 @@ belayer spawn --name reviewer-1 --identity reviewer --profile default
 # Spawn a second reviewer in the same session.
 belayer spawn --name reviewer-2 --identity reviewer --profile default
 
-# Spawn QA to drive the running app from the outside.
+# Spawn QA to drive the climbning app from the outside.
 belayer spawn --name qa-1 --identity qa --profile default
 ```
 
@@ -91,14 +91,14 @@ When an implementer signals completion:
 
 ## Peer terminal transitions
 
-When a spawned peer transitions terminal (blocked, incomplete, or an unexpected bridge exit), the daemon delivers an urgent broker message like `<name> has finished with status=<x>`. Treat those messages as wake-ups: investigate (bridge-stderr tail, last events), respawn once if the failure looks transient, escalate if it doesn't. Do not let these messages sit in the queue while you sleep on the idle timer — the run will time out and escalate without ever attempting recovery.
+When a spawned peer transitions terminal (blocked, incomplete, or an unexpected bridge exit), the daemon delivers an urgent broker message like `<name> has finished with status=<x>`. Treat those messages as wake-ups: investigate (bridge-stderr tail, last events), respawn once if the failure looks transient, escalate if it doesn't. Do not let these messages sit in the queue while you sleep on the idle timer — the climb will time out and escalate without ever attempting recovery.
 
 ## Session Management
 
 For epic workflows with multiple tickets:
 
 ```bash
-belayer run start --task "<initial task text>"
+belayer climb start --task "<initial task text>"
 belayer session list
 belayer logs <session-id>
 belayer session stop <session-id>

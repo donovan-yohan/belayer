@@ -8,7 +8,7 @@ import (
 )
 
 func TestAgentIdentityPathsWalksUpToProjectRoot(t *testing.T) {
-	// Simulate the common case: workdir is nested under .belayer/runs/<id>/workspace
+	// Simulate the common case: workdir is nested under .belayer/climbs/<id>/workspace
 	// (multi-repo provisioning) but the project-local agents/ override sits at the
 	// project root, several levels up.
 	projectRoot := t.TempDir()
@@ -21,7 +21,7 @@ func TestAgentIdentityPathsWalksUpToProjectRoot(t *testing.T) {
 		t.Fatalf("write override: %v", err)
 	}
 
-	nestedWorkdir := filepath.Join(projectRoot, ".belayer", "runs", "sess-1", "workspace")
+	nestedWorkdir := filepath.Join(projectRoot, ".belayer", "climbs", "sess-1", "workspace")
 	if err := os.MkdirAll(nestedWorkdir, 0o755); err != nil {
 		t.Fatalf("mkdir nested workdir: %v", err)
 	}

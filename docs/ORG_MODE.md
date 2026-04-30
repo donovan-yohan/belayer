@@ -228,7 +228,7 @@ terms:
    and artifacts.
 3. Review: gate talents register `gate-result` artifacts and emit
    `org:task_reviewed`.
-4. Retro: the lead registers `org-retro` to capture what to improve next run.
+4. Retro: the lead registers `org-retro` to capture what to improve next climb.
 
 ## Talent Growth Loop
 
@@ -244,9 +244,9 @@ session evidence
   -> ~/.belayer/crags/<crag-name>/ knowledge
 ```
 
-The `talent-evaluation` artifact captures per-run performance for one talent:
+The `talent-evaluation` artifact captures per-climb performance for one talent:
 assigned tasks, produced artifacts, gate outcomes, common findings, cost, and
-recommended changes. The `org-retro` artifact captures run-level lessons and
+recommended changes. The `org-retro` artifact captures climb-level lessons and
 promotion proposals.
 
 Promotion is a later explicit operation. A reviewed promotion may update:
@@ -257,7 +257,7 @@ Promotion is a later explicit operation. A reviewed promotion may update:
 - `~/.belayer/talent-catalog/<category>/<talent>/talent.yaml` with maturity or
   capability changes
 
-Talent maturity should be recorded as metadata, not inferred from a single run:
+Talent maturity should be recorded as metadata, not inferred from a single climb:
 
 ```yaml
 maturity: experimental | active | trusted | deprecated
@@ -309,7 +309,7 @@ The development catalog models a small software organization:
 - implementers: backend-dev, web-dev
 - gates: reviewer, qa, pm
 
-Success means a run produces an `org-plan`, implementation artifacts, gate
+Success means a climb produces an `org-plan`, implementation artifacts, gate
 results for review/QA/final acceptance, and an `org-retro` without requiring new
 database tables.
 
@@ -321,7 +321,7 @@ The story catalog models an interactive world:
 - talents: characters, factions, narrators, lorekeeper
 - gates: continuity-editor, tone/editorial check, world-state updater
 
-Success means a run produces durable `world-state` and `continuity-report`
+Success means a climb produces durable `world-state` and `continuity-report`
 artifacts while using the same E2R loop and gate contract as the software case.
 No software-specific gate name should be required.
 

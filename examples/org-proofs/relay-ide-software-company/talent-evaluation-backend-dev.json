@@ -15,7 +15,7 @@
     },
     {
       "id": "task-2",
-      "summary": "Implementation reserved for a real relay-ide run.",
+      "summary": "Implementation reserved for a real relay-ide climb.",
       "outcome": "blocked"
     }
   ],
@@ -43,7 +43,7 @@
   "observations": [
     {
       "type": "coordination",
-      "summary": "The selected task is small enough for a real implementation run, but this proof should not silently mutate relay-ide from the Belayer examples branch.",
+      "summary": "The selected task is small enough for a real implementation climb, but this proof should not silently mutate relay-ide from the Belayer examples branch.",
       "evidence": [
         "https://github.com/donovan-yohan/relay-ide/issues/320"
       ]
@@ -53,7 +53,7 @@
     {
       "target": "sop",
       "action": "update",
-      "summary": "Software-company runs should record whether they are dry-run packets or implementation runs before QA gates evaluate runtime evidence."
+      "summary": "Software-company climbs should record whether they are dry-run packets or implementation climbs before QA gates evaluate runtime evidence."
     }
   ],
   "evaluated_at": "2026-04-30T04:15:00Z"

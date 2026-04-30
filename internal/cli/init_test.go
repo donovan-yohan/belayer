@@ -247,7 +247,7 @@ func TestInitCreatesGitignoreWhenMissing(t *testing.T) {
 		t.Fatalf("read .gitignore: %v", err)
 	}
 	// hermes_bridge/ is no longer in the workspace; it lives in the runtime dir.
-	for _, want := range []string{"/.belayer/runs/", "/.belayer/worktrees/"} {
+	for _, want := range []string{"/.belayer/climbs/", "/.belayer/runs/", "/.belayer/worktrees/"} {
 		if !strings.Contains(string(got), want) {
 			t.Fatalf("expected %q in .gitignore, got: %s", want, string(got))
 		}
@@ -496,8 +496,8 @@ func TestExtractBridgeToRuntimeDirPrunesStaleFiles(t *testing.T) {
 // present.
 func TestInitGitignoreUpgradeIsNoOpWhenAllEntriesPresent(t *testing.T) {
 	dir := t.TempDir()
-	// Seed a .gitignore with the current header and both entries.
-	existing := gitignoreHeader + "\n/.belayer/runs/\n/.belayer/worktrees/\n"
+	// Seed a .gitignore with the current header and all current entries.
+	existing := gitignoreHeader + "\n/.belayer/climbs/\n/.belayer/runs/\n/.belayer/worktrees/\n"
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0o644); err != nil {
 		t.Fatalf("seed gitignore: %v", err)
 	}
@@ -517,8 +517,37 @@ func TestInitGitignoreUpgradeIsNoOpWhenAllEntriesPresent(t *testing.T) {
 	if strings.Contains(string(got), gitignoreUpgradeHeader) {
 		t.Fatalf("upgrade header should not appear when all entries present:\n%s", string(got))
 	}
+	if strings.Count(string(got), "/.belayer/climbs/") != 1 {
+		t.Fatalf("existing /.belayer/climbs/ entry should not be duplicated:\n%s", string(got))
+	}
 	if strings.Count(string(got), "/.belayer/runs/") != 1 {
 		t.Fatalf("existing /.belayer/runs/ entry should not be duplicated:\n%s", string(got))
+	}
+}
+
+func TestInitGitignoreUpgradesLegacyRunMarkerWithClimbs(t *testing.T) {
+	dir := t.TempDir()
+	existing := legacyGitignoreMarker + " (.belayer/ contains runs/ and worktrees/; hermes_bridge is in runtime dir)\n/.belayer/runs/\n/.belayer/worktrees/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(existing), 0o644); err != nil {
+		t.Fatalf("seed gitignore: %v", err)
+	}
+
+	cmd := newInitCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--target", dir})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read gitignore: %v", err)
+	}
+	for _, want := range []string{legacyGitignoreMarker, gitignoreUpgradeHeader, "/.belayer/climbs/", "/.belayer/runs/", "/.belayer/worktrees/"} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("expected %q in upgraded gitignore:\n%s", want, string(got))
+		}
 	}
 }
 

@@ -10,7 +10,7 @@ Read the full document before planning. Skimming a long spec produces incomplete
 
 The default belayer team has six identities. They are spawnable peers in this session — message them, send them work, watch them report back.
 
-- **`pm`** — adversarial spec verifier; the final gate before run completion. You don't spawn the PM directly; the daemon spawns it when you call `belayer_request_completion`.
+- **`pm`** — adversarial spec verifier; the final gate before climb completion. You don't spawn the PM directly; the daemon spawns it when you call `belayer_request_completion`.
 - **`web-dev`** — frontend / web app implementer. Works in a git worktree, isolated from other implementers. Spawn with a `branch` so it gets its own workspace.
 - **`backend-dev`** — backend / API implementer. Same shape as `web-dev` — worktree-isolated, spawn with a `branch`.
 - **`qa`** — runs the application and tests it from the outside (browser, CLI, real APIs). Verifies behaviour, not code shape.
@@ -41,7 +41,7 @@ This is the only judgment call about reviews.
 
 ## Final completion gate
 
-Before calling belayer_request_completion, the run requires:
+Before calling belayer_request_completion, the climb requires:
 - A reviewer agent has returned a PASS verdict (NO_FINDINGS or
   PASS_WITH_NOTES) on the full diff and registered a review-report
   artifact.
@@ -56,13 +56,13 @@ until both exist.
 
 ## Definition of done
 
-Exit conditions are the project-wide definition-of-done: what it takes for this run to be considered finished. Resolve them in this order:
+Exit conditions are the project-wide definition-of-done: what it takes for this climb to be considered finished. Resolve them in this order:
 
-1. **Per-run override.** If the operator's initial task message contains an `<exit_conditions_override>` block (delivered via `belayer run start --exit-condition`), those conditions replace the config file's list for this run. Treat the override as authoritative.
+1. **Per-climb override.** If the operator's initial task message contains an `<exit_conditions_override>` block (delivered via `belayer climb start --exit-condition`), those conditions replace the config file's list for this climb. Treat the override as authoritative.
 2. **Project config.** Otherwise, read `.belayer/config.yaml#exit_conditions:` and use that list.
 3. **Absent or empty.** If neither source produces conditions, the PM validates only the spec.
 
-The conditions describe the *shape* of a finished run (committed? merged? deployed? published?), orthogonal to what the spec says to build. The PM will refuse completion until every item has evidence — plan your run so each is addressed. If a condition says "pull request open against main", someone on your team needs to commit, push, and open the PR before you call `belayer_request_completion`. Treat exit conditions as non-negotiable.
+The conditions describe the *shape* of a finished climb (committed? merged? deployed? published?), orthogonal to what the spec says to build. The PM will refuse completion until every item has evidence — plan your climb so each is addressed. If a condition says "pull request open against main", someone on your team needs to commit, push, and open the PR before you call `belayer_request_completion`. Treat exit conditions as non-negotiable.
 
 When `belayer_request_completion` returns a rejection, read the rejection reason carefully. A rejection on a spec item means an implementer has more work; a rejection on an exit condition means you (or a delegate) need to take the final step the project requires — commit and push, open the PR, publish the artifact, whatever the condition names. Don't re-request completion until you have done it.
 
@@ -78,7 +78,7 @@ Reviewer output is advisory. A VERDICT and a list of findings are inputs to your
 
 **Ship is DAG terminal.** Once the ship gate clears, run `git push` then `gh pr create` (or the equivalent your project config specifies). After that: do not spawn another reviewer, do not re-query QA, do not edit the diff. Call `belayer_request_completion` and wait for the PM.
 
-**The review-round counter resets when a new fix commit lands.** The cap is per-diff, not per-run. But re-reviewing the same diff because it feels imperfect is not allowed.
+**The review-round counter resets when a new fix commit lands.** The cap is per-diff, not per-climb. But re-reviewing the same diff because it feels imperfect is not allowed.
 
 **Ship heuristic — run this checklist before pushing:**
 
@@ -87,13 +87,13 @@ Reviewer output is advisory. A VERDICT and a list of findings are inputs to your
 3. There is something to push: if the current branch has an upstream, it is ahead of that upstream; if no upstream is set, local commits not reachable from `origin/<base-branch>` exist and you have explicitly confirmed/set the remote branch to push to.
 4. Reviewer VERDICT is `NO_FINDINGS` or `PASS_WITH_NOTES` (zero CRITICALs).
 5. QA report artifact registered with verdict `ALL_PASS` or `PARTIAL` (PARTIAL requires a rationale note).
-6. Exit conditions from config (or per-run override) are satisfied.
+6. Exit conditions from config (or per-climb override) are satisfied.
 
 When every box is checked, push and open the PR immediately. No more reviewer spawns.
 
 ## Persistence before escalating incomplete
 
-If you conclude the run is `incomplete`, do NOT emit that status until you
+If you conclude the climb is `incomplete`, do NOT emit that status until you
 have executed every item in the project's `persistence_strategy`. Resolve
 the list in the same order as exit conditions: a
 `<persistence_strategy_override>` block in your initial task message wins,
@@ -103,7 +103,7 @@ minimum.
 
 Those steps are literal — `git push`, open a draft PR with diagnostics,
 register a persistence-notes artifact. The point is that even a blocked
-run should leave the next operator and retry with a committed branch, an
+climb should leave the next operator and retry with a committed branch, an
 open draft PR, and a summary of what actually happened. A 6000-line
 implementation sitting uncommitted in a local workspace helps no one.
 

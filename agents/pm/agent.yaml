@@ -1,5 +1,5 @@
 schema_version: "1"
-description: "PM — side verifier for adversarial spec-vs-reality checks before run completion"
+description: "PM — side verifier for adversarial spec-vs-reality checks before climb completion"
 kind: side
 vendor: codex
 model: gpt-5.4

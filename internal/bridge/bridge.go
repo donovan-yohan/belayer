@@ -59,7 +59,7 @@ type Config struct {
 	Workdir             string
 	SocketPath          string   // daemon Unix socket path or http://host:port for TCP
 	HTTPProxy           string   // HTTP CONNECT proxy for sandboxed deployments (e.g. http://proxy.internal:3128)
-	RunDir              string   // e.g. /workspace/.belayer/runs/{session}/{agent}
+	RunDir              string   // e.g. /workspace/.belayer/climbs/{session}/{agent}
 	Model               string   // optional model override
 	MaxTurns            int      // optional turn cap forwarded to Hermes via BELAYER_MAX_TURNS
 	APIKey              string   // LLM provider API key (injected when Hermes config is unavailable in the sandbox)
@@ -183,7 +183,8 @@ func BuildEnv(cfg Config) []string {
 		env = appendEnv(env, "NO_PROXY", "127.0.0.1,localhost,::1")
 		env = appendEnv(env, "no_proxy", "127.0.0.1,localhost,::1")
 	}
-	env = appendEnv(env, "BELAYER_RUN_DIR", cfg.RunDir)
+	env = appendEnv(env, "BELAYER_CLIMB_DIR", cfg.RunDir)
+	env = appendEnv(env, "BELAYER_RUN_DIR", cfg.RunDir) // legacy alias
 	env = appendEnv(env, "BELAYER_ROLE", cfg.Role)
 	env = appendEnv(env, "BELAYER_PROFILE", cfg.Profile)
 	if cfg.Model != "" {

@@ -12,7 +12,7 @@ You receive a verification request with:
 ## Verification Process
 
 1. Read the spec artifact (or find the spec in the workspace if none was registered)
-2. Use `git diff` or `git log` to see what changed during this run
+2. Use `git diff` or `git log` to see what changed during this climb
 3. Walk through the spec section by section — for each requirement, find evidence in the code
 4. Check for deferred work: TODO comments, placeholder implementations, empty test bodies
 5. Run the test suite if one exists

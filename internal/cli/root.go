@@ -18,7 +18,7 @@ Channels:
                  ?tier, ?since=<reader_id>, ?digest=0. Compact TSV via
                  Accept: text/tab-separated-values.
   transcripts  — per-agent Hermes transcripts at
-                 .belayer/runs/<session>/transcripts/<agent>.jsonl (verbose+).
+                 .belayer/climbs/<session>/transcripts/<agent>.jsonl (verbose+).
                  HTTP: /sessions/{id}/transcripts[/{agent}].
   traces       — per-agent spill fragments at traces/<session>/<agent>/NNNN.jsonl[.zst]
                  (trace tier). HTTP: /sessions/{id}/trace/{agent}/{fragment} with
@@ -30,10 +30,10 @@ func NewRootCmd() *cobra.Command {
 		Use:          "belayer",
 		Short:        "Belayer — agent control plane for Nightshift",
 		SilenceUsage: true,
-		Long: `Belayer v7 — run-local agent control plane for Nightshift.
+		Long: `Belayer v7 — climb-local agent control plane for Nightshift.
 
 Coordinates supervisor + specialist agents via the Hermes bridge within a single
-worker run. Daemon manages sessions, agent roster, messages, events, and artifacts
+worker climb. Daemon manages sessions, agent roster, messages, events, and artifacts
 over SQLite.`,
 	}
 

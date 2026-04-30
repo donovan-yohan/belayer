@@ -1,9 +1,9 @@
 # belayer
 
-Run-local agent control plane for Nightshift.
+Climb-local agent control plane for Nightshift.
 
-Belayer coordinates a supervisor + specialist agents inside a single worker run.
-One session, one daemon, one request at a time. Agents communicate through a
+Belayer coordinates a supervisor + specialist agents inside a single worker
+climb. One session, one daemon, one request at a time. Agents communicate through a
 message broker, register artifacts, and fire events. The Hermes bridge spawns
 and manages each agent as a subprocess.
 
@@ -74,8 +74,8 @@ go build ./cmd/belayer
 belayer init                     # scaffold .belayer/ (config, agents)
 belayer daemon                   # start the daemon (also installs the Hermes plugin)
 
-# Launch a run (creates session, spawns supervisor via Hermes bridge)
-belayer run start --task "Add rate limiting to /api/v1/cards" --workdir /path/to/repo
+# Launch a climb (creates session, spawns supervisor via Hermes bridge)
+belayer climb start --task "Add rate limiting to /api/v1/cards" --workdir /path/to/repo
 
 # Monitor
 belayer status
@@ -90,7 +90,35 @@ belayer artifact create --kind spec --path docs/spec.md
 belayer finish "All spec items implemented"
 ```
 
-## How a run flows
+## Climbs And Crags
+
+Use **climbs** when you want agent-powered workflows inside one repo:
+
+```bash
+belayer init
+belayer daemon
+belayer climb start --task "Implement the issue and open a PR"
+```
+
+That path only needs repo-local `.belayer/` state. It is the smallest useful
+Belayer setup: a supervisor, optional specialist agents, artifacts, gates, and
+mail inside one project.
+
+Use **crags** when you want a durable operating context that can learn across
+projects or modes:
+
+```bash
+belayer crag init software-company --kind development
+belayer crag link software-company
+belayer team add development
+belayer climb start --task "Pick up this backlog item end to end"
+```
+
+A crag stores reusable teams, playbooks, gates, evaluations, promotions, and
+generated team metadata under `~/.belayer/crags/<name>/`. Story worlds use the
+same shape with `--kind story`, story teams, continuity gates, and world state.
+
+## How a climb flows
 
 ```mermaid
 sequenceDiagram
@@ -100,7 +128,7 @@ sequenceDiagram
     participant Dev as backend-dev / web-dev (main)
     participant PM as pm (side)
 
-    Op->>D: belayer run start --task "..."
+    Op->>D: belayer climb start --task "..."
     D->>Sup: spawn (reads .belayer/agents/supervisor/)
     Sup->>D: belayer_spawn_agent(web-dev, backend-dev, ...)
     D->>Dev: spawn as peer mains (worktree isolated)
@@ -223,13 +251,13 @@ Three layers:
 ```bash
 belayer init                Scaffold .belayer/ in the current project
 belayer daemon              Start the daemon
-belayer run start           Create a climb + spawn supervisor (`climb` is an alias)
+belayer climb start         Create a climb + spawn supervisor (`run` is an alias)
 belayer spawn               Spawn an agent mid-session
 belayer finish              Signal work complete (triggers PM gate)
 belayer roster              List active agents
 belayer message             Send/broadcast/list messages
 belayer request-completion  Explicit PM gate trigger
-belayer artifact            Create/list run artifacts
+belayer artifact            Create/list climb artifacts
 belayer team                List/add/remove local team identities
 belayer crag                Manage local Belayer crags (`space` and `org` aliases)
 belayer session list|stop   Session lifecycle
@@ -283,9 +311,9 @@ The dashboard is a thin reverse-proxy + static-file server. It holds no state �
 
 - `docs/README.md` — current docs map and historical-design warning
 - `docs/AGENT_ARCHITECTURE.md` — agent toolbox, main/side model, mail, PM gate
-- `docs/ORG_MODE.md` — team catalogs, gate contracts, crag events, proof runs
+- `docs/ORG_MODE.md` — team catalogs, gate contracts, crag events, proof climbs
 - `docs/ORG_FILESYSTEM.md` — repo, user catalog, and user crag directory contracts
-- `docs/ARTIFACT_SCHEMAS.md` — artifact content schemas for org-mode proofs
+- `docs/ARTIFACT_SCHEMAS.md` — artifact content schemas for crag-mode proofs
 - `docs/DEPLOYMENT.md` — topologies, trust model, credentials, sockets
 - `docs/PHILOSOPHY.md` — the six runtime interfaces
 - `docs/LOG_FORMAT.md` — event schema, SSE, archive format

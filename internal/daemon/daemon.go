@@ -111,15 +111,15 @@ type Config struct {
 
 	// ConfineAgentWrites, when true, wraps each spawned bridge subprocess in
 	// belayer-landlock-exec to apply a Landlock v2 write-confinement ruleset.
-	// Specialists are confined to their worktree + run dir; the supervisor gets
-	// workspace access excluding .belayer/ runtime dirs; PM gets run dir only.
+	// Specialists are confined to their worktree + climb dir; the supervisor gets
+	// workspace access excluding .belayer/ runtime dirs; PM gets climb dir only.
 	// Requires Linux 5.19+ kernel; degrades to passthrough on older kernels.
 	// Default: false (opt-in).
 	ConfineAgentWrites bool
 
 	// AgentSharedWritePaths is an optional list of absolute paths that
 	// specialist agents are allowed to write to in addition to their worktree
-	// and run dir. Useful for shared caches (e.g. /workspace/.cache, a pnpm
+	// and climb dir. Useful for shared caches (e.g. /workspace/.cache, a pnpm
 	// store) that span worktrees.
 	AgentSharedWritePaths []string
 
@@ -472,7 +472,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		// macOS-shared bind mounts (Colima VirtIO-FS, Docker Desktop) reject
 		// chmod on Unix sockets with EINVAL (and ENOTSUP on some filesystems),
 		// but the socket itself still works for same-UID callers. Under a
-		// one-container-per-run topology the bridge subprocess runs as the
+		// one-container-per-climb topology the bridge subprocess runs as the
 		// same sandbox UID as the daemon, so 0o666 isn't required.
 		// Any other failure (EPERM/EACCES/ENOENT/...) signals a real problem
 		// — fail fast so connection errors surface now, not at first use.

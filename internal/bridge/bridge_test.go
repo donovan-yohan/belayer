@@ -547,6 +547,7 @@ func TestBuildEnvContainsBelayerVars(t *testing.T) {
 		"BELAYER_ROLE":              "supervisor",
 		"BELAYER_PROFILE":           "nightshift-supervisor",
 		"BELAYER_SOCKET":            "/tmp/build.sock",
+		"BELAYER_CLIMB_DIR":         cfg.RunDir,
 		"BELAYER_RUN_DIR":           cfg.RunDir,
 		"BELAYER_MODEL":             "claude-opus-4",
 		"BELAYER_MAX_TURNS":         "42",

@@ -4,6 +4,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/donovan-yohan/belayer/internal/climbpath"
 )
 
 // computeWriteRoots returns the Landlock write-root allow-list for a spawned
@@ -14,9 +16,9 @@ import (
 //
 //   - supervisor: workspace top-level children (excluding .belayer/) PLUS the
 //     three .belayer/ runtime sub-dirs it legitimately writes to:
-//     runs/, artifacts/, worktrees/.
+//     climbs/, artifacts/, worktrees/.
 //
-//   - pm: run dir only (needs to write its verification report artifact).
+//   - pm: climb dir only (needs to write its verification report artifact).
 //
 //   - branched specialist: worktree + run dir + git common dir (for git
 //     metadata) + shared cache paths + /tmp.
@@ -56,7 +58,7 @@ func computeWriteRoots(
 		}
 		// Re-add the three .belayer subdirs the supervisor must write to.
 		roots = append(roots,
-			filepath.Join(workspace, ".belayer", "runs"),
+			climbpath.Root(workspace),
 			filepath.Join(workspace, ".belayer", "artifacts"),
 			filepath.Join(workspace, ".belayer", "worktrees"),
 		)

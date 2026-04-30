@@ -56,10 +56,10 @@ flowchart TB
 
 A multi-agent coding system needs **two control planes** at different scopes:
 
-1. **Outer daemon** — always-on, manages a pool of workers, queues requests, persists long-lived data (logs, memory, artifacts) that outlive any individual run.
-2. **Inner daemon** — ephemeral, lives inside one worker for one run, coordinates agent-to-agent communication, records telemetry and artifacts to a run-local database.
+1. **Outer daemon** — always-on, manages a pool of workers, queues requests, persists long-lived data (logs, memory, artifacts) that outlive any individual climb.
+2. **Inner daemon** — ephemeral, lives inside one worker for one climb, coordinates agent-to-agent communication, records telemetry and artifacts to a climb-local database.
 
-The inner daemon and everything it manages are **ephemeral** — when the worker dies, the run-local state dies with it. Anything that matters beyond the run (logs, learned knowledge, output artifacts) must be exported to the outer daemon before the worker is reclaimed.
+The inner daemon and everything it manages are **ephemeral** — when the worker dies, the climb-local state dies with it. Anything that matters beyond the climb (logs, learned knowledge, output artifacts) must be exported to the outer daemon before the worker is reclaimed.
 
 ```mermaid
 flowchart LR
@@ -69,9 +69,9 @@ flowchart LR
     OD --> W2["Worker 2"]
     OD --> W3["Worker 3"]
 
-    subgraph WorkerRun["Session: one run on one worker (ephemeral)"]
+    subgraph WorkerRun["Session: one climb on one worker (ephemeral)"]
         ID["Inner daemon\n(agent control plane)"]:::comm
-        DB[("Run-local DB\nevents, telemetry, artifacts")]
+        DB[("Climb-local DB\nevents, telemetry, artifacts")]
 
         subgraph Sandbox["Sandbox: agents + tool execution"]
             SUP["Supervisor"]:::orch
@@ -100,7 +100,7 @@ flowchart LR
     classDef sandboxContainer fill:#4A1E1E,stroke:#E05555,stroke-width:3px,color:#fff
 ```
 
-> Colors map to the six interfaces: blue = Session, amber = Orchestration, green = Communication, red = Sandbox, purple = Memory, teal = Tools. The sandbox wraps the agents and their tool-execution surface — everything the agents actively drive. Communication (inner daemon) and the run-local DB sit inside the session but outside the sandbox: they're trusted infrastructure the agents talk through, not run inside.
+> Colors map to the six interfaces: blue = Session, amber = Orchestration, green = Communication, red = Sandbox, purple = Memory, teal = Tools. The sandbox wraps the agents and their tool-execution surface — everything the agents actively drive. Communication (inner daemon) and the climb-local DB sit inside the session but outside the sandbox: they're trusted infrastructure the agents talk through, not run inside.
 
 ---
 
@@ -113,7 +113,7 @@ The session is the central primitive. It is the unit of work, the scope for stat
 - Append-only event log that survives agent crashes
 - Lifecycle management (create, run, stop, resume)
 - Queryable state (events, status, agent health)
-- Session-scoped identity for all agents in the run
+- Session-scoped identity for all agents in the climb
 - Artifact registration for durable outputs
 
 What is outside this interface: what events mean (agent judgment), when a session is "done" (orchestration judgment), where events are stored (implementation choice).
@@ -134,7 +134,7 @@ What is outside this interface: the coordination logic itself (that's the planne
 The sandbox is the boundary around the agents and their tool-execution surface. It's where they execute — build the app, run tests, read logs — and it's what keeps their execution bounded. Agents are untrusted; the daemon and DB are trusted infrastructure the agents talk *through*, not run *inside*.
 
 - Agent execution surface (build, test, observe)
-- Workspace filesystem (source, outputs, artifacts for this run)
+- Workspace filesystem (source, outputs, artifacts for this climb)
 - Trust boundary (agents cannot self-impose it — the runtime imposes it)
 - Pluggable backend (host process, container, VM — implementation choice)
 

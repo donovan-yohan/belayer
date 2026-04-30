@@ -45,10 +45,10 @@ func TestParseWriteRoots(t *testing.T) {
 		},
 		{
 			name: "multiple paths with run dir",
-			env:  "/workspace/.belayer/worktrees/sess/agent:/workspace/.belayer/runs/sess/agent:/tmp",
+			env:  "/workspace/.belayer/worktrees/sess/agent:/workspace/.belayer/climbs/sess/agent:/tmp",
 			want: []string{
 				"/workspace/.belayer/worktrees/sess/agent",
-				"/workspace/.belayer/runs/sess/agent",
+				"/workspace/.belayer/climbs/sess/agent",
 				"/tmp",
 			},
 		},

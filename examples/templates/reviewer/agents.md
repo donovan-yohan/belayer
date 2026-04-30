@@ -8,8 +8,8 @@ belayer message send --to pilot "FAIL — blocking: missing null check on line 4
 ```
 
 Write durable review reports under `$BELAYER_AGENT_ARTIFACT_DIR`
-(for example `.belayer/runs/<session-id>/<agent-name>/artifacts/review-report.md`)
-so they stay inside the run directory instead of polluting the tracked repo tree.
+(for example `.belayer/climbs/<session-id>/<agent-name>/artifacts/review-report.md`)
+so they stay inside the climb directory instead of polluting the tracked repo tree.
 
 ## What You Receive
 
