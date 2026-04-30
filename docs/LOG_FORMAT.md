@@ -115,7 +115,9 @@ Fragment files are newline-terminated JSONL records. When a fragment is sealed (
 |------------------------|----------|
 | `kind` (string), `path` (string) | `producer` (string) |
 
-`kind` values in v1: `"spec"`, `"design-doc"`, `"verification-report"`. The canonical spelling uses hyphens. Historical data may contain `"design_doc"` (underscore); consumers SHOULD normalize by replacing `_` with `-` in `kind` before comparison. Extension values are permitted; consumers MUST tolerate unknown kinds.
+Common `kind` values in v1: `"spec"`, `"design-doc"`, `"qa-report"`, `"review-report"`, `"verification-report"`, `"org-plan"`, `"gate-result"`, `"org-retro"`, `"talent-evaluation"`, `"world-state"`, and `"continuity-report"`. The canonical spelling uses hyphens. Historical data may contain `"design_doc"` (underscore); consumers SHOULD normalize by replacing `_` with `-` in `kind` before comparison. Extension values are permitted; consumers MUST tolerate unknown kinds.
+
+Organization-mode artifact content schemas live in `docs/ARTIFACT_SCHEMAS.md`.
 
 ### 3.6 `tool_*` — Tool registration and execution
 
@@ -138,7 +140,24 @@ Fragment files are newline-terminated JSONL records. When a fragment is sealed (
 |------|------------------------|
 | `pm_spawn_failed` | `error` (string) |
 
-### 3.9 `warning:*` — Advisory conditions
+### 3.9 `org:*` — Organization-mode extension events
+
+Organization-mode events are extension events emitted through the same
+`POST /sessions/{id}/events` path as bridge and daemon events. They are direct
+event types, not `custom_event` payload subtypes. Consumers SHOULD filter them
+with `type_prefix=org:`.
+
+| Type | Key `data` fields | Notes |
+|------|-------------------|-------|
+| `org:task_planned` | `agent`, `org_plan_artifact` | Lead talent registered or updated an `org-plan` |
+| `org:task_started` | `agent`, `task_id`, `owner` | A planned task moved into execution |
+| `org:task_reviewed` | `agent`, `task_id`, `gate_result_artifact`, `verdict` | A gate produced a durable result |
+| `org:talent_evaluated` | `agent`, `talent`, `talent_evaluation_artifact`, `summary` | Optional post-task assessment for catalog learning |
+| `org:retro_recorded` | `agent`, `org_retro_artifact` | Lead talent registered an `org-retro` |
+
+Unknown `org:*` events are allowed. Consumers MUST tolerate new suffixes.
+
+### 3.10 `warning:*` — Advisory conditions
 
 | Type | Required `data` fields |
 |------|------------------------|
@@ -146,7 +165,7 @@ Fragment files are newline-terminated JSONL records. When a fragment is sealed (
 
 At most one `warning:supervisor_exited_early` event is emitted per session, for the first active specialist found.
 
-### 3.10 `node_*` — Agent-run internal lifecycle
+### 3.11 `node_*` — Agent-run internal lifecycle
 
 | Type | Typical `data` fields | Notes |
 |------|----------------------|-------|
@@ -155,19 +174,19 @@ At most one `warning:supervisor_exited_early` event is emitted per session, for 
 
 Exact payload shape is agent-defined. Consumers SHOULD treat `data` as opaque beyond `node`.
 
-### 3.11 `gate_scored`
+### 3.12 `gate_scored`
 
 Emitted by agents via `POST /sessions/{id}/events`. Payload is agent-defined. Consumers SHOULD treat `data` as opaque.
 
-### 3.12 `agent_status:*`
+### 3.13 `agent_status:*`
 
 Agent-posted events. `agent_status:incomplete` is the only type with daemon-side effects (see Section 3.2). Other subtypes are logged verbatim with no side effects.
 
-### 3.13 `custom_event`
+### 3.14 `custom_event`
 
 Extension point. Agents may post arbitrary events via `POST /sessions/{id}/events` with `type: "custom_event"`. No daemon-side effects. `data` is agent-defined.
 
-### 3.14 `trace:*` — Trace-tier filesystem and subprocess events
+### 3.15 `trace:*` — Trace-tier filesystem and subprocess events
 
 **Trace tier only.** These events are emitted at `log_level: "trace"` and are always absent at standard and verbose tiers. Consumers MUST NOT expect them unless `manifest.session.log_level == "trace"` or the `tier` capability is `"trace"`.
 
@@ -197,7 +216,7 @@ Emitted when a tool spawns a subprocess. Captures command, environment (redacted
 | `stdout_head` | string | First ≤4 KB of stdout |
 | `stderr_head` | string | First ≤4 KB of stderr |
 
-### 3.15 Type prefix recipes
+### 3.16 Type prefix recipes
 
 Common `type_prefix=` filter values for the SSE subscribe and `/search` endpoints:
 

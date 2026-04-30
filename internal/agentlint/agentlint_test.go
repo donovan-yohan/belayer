@@ -283,6 +283,7 @@ func TestAgentPromptsOnlyReferenceRealCommands(t *testing.T) {
 	scanDirs := []string{
 		"agents",
 		"examples/templates",
+		"examples/talent-catalog",
 		"skills",
 		"docs",
 	}

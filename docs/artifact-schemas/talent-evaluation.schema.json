@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/donovan-yohan/belayer/docs/artifact-schemas/talent-evaluation.schema.json",
+  "title": "Belayer Talent Evaluation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "talent", "org", "session", "tasks", "gate_outcomes", "recommendations"],
+  "properties": {
+    "schema_version": {
+      "const": "belayer-talent-evaluation/v1"
+    },
+    "talent": {
+      "type": "string",
+      "minLength": 1
+    },
+    "org": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repo": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": ["software-company", "story-world", "custom"]
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/task_summary"
+      }
+    },
+    "produced_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "gate_outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/gate_outcome"
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "turns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated_cost_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "duration_seconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observation"
+      },
+      "default": []
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/recommendation"
+      }
+    },
+    "evaluated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "task_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "summary", "outcome"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "enum": ["completed", "blocked", "reassigned", "failed"]
+        }
+      }
+    },
+    "gate_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate_id", "verdict"],
+      "properties": {
+        "gate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verdict": {
+          "enum": ["pass", "pass-with-notes", "fail", "blocked"]
+        },
+        "artifact": {
+          "type": "string"
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "summary"],
+      "properties": {
+        "type": {
+          "enum": ["strength", "failure", "risk", "cost", "coordination"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "action", "summary"],
+      "properties": {
+        "target": {
+          "enum": ["prompt", "talent-metadata", "sop", "gate", "offboard", "promote", "no-change"]
+        },
+        "action": {
+          "enum": ["review", "update", "deprecate", "promote", "split", "keep"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

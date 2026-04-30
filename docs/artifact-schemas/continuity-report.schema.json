@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/donovan-yohan/belayer/docs/artifact-schemas/continuity-report.schema.json",
+  "title": "Belayer Story Continuity Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "gate_id", "producer", "world_state_artifact", "verdict", "checks", "required_fixes"],
+  "properties": {
+    "schema_version": {
+      "const": "belayer-continuity-report/v1"
+    },
+    "gate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "world_state_artifact": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verdict": {
+      "enum": ["pass", "pass-with-notes", "fail", "blocked"]
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/check"
+      }
+    },
+    "required_fixes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "checked_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["area", "status", "summary"],
+      "properties": {
+        "area": {
+          "enum": ["canon", "timeline", "character", "location", "tone", "open-threads"]
+        },
+        "status": {
+          "enum": ["pass", "warn", "fail", "blocked"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}
