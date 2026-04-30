@@ -49,7 +49,7 @@ summarized by `gate-result` when a run needs a uniform gate contract.
 - Preserve role neutrality: do not require `qa`, `reviewer`, or `pm` fields in
   generic schemas.
 - Treat growth fields as recommendations unless a reviewed promotion applies
-  them to `~/.belayer/orgs/` or `~/.belayer/talent-catalog/`.
+  them to `~/.belayer/crags/` or `~/.belayer/talent-catalog/`.
 
 ## Gate Result Example
 
@@ -83,7 +83,7 @@ Do not add database tables for these artifacts until proof runs show a repeated
 query the file registry cannot answer well. Promote fields only when operators
 or dashboards need indexed access across sessions.
 
-Do not let normal runs silently mutate global org knowledge. Runs produce
+Do not let normal runs silently mutate global crag knowledge. Runs produce
 `talent-evaluation` and `org-retro` artifacts. A later reviewed promotion step
-may apply selected lessons to `~/.belayer/orgs/<org-name>/` or
+may apply selected lessons to `~/.belayer/crags/<crag-name>/` or
 `~/.belayer/talent-catalog/<category>/`.

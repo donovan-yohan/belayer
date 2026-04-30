@@ -11,21 +11,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newOrgCmd() *cobra.Command {
+func newCragCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "org",
-		Short: "Manage local Belayer organizations",
+		Use:     "crag",
+		Aliases: []string{"space", "org"},
+		Short:   "Manage local Belayer crags",
 	}
-	cmd.AddCommand(newOrgListCmd(), newOrgInitCmd(), newOrgLinkCmd())
+	cmd.AddCommand(newCragListCmd(), newCragInitCmd(), newCragLinkCmd())
 	return cmd
 }
 
-func newOrgListCmd() *cobra.Command {
+func newCragListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List local Belayer organizations",
+		Short: "List local Belayer crags",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := orgRoot()
+			root, err := cragRoot()
 			if err != nil {
 				return err
 			}
@@ -34,7 +35,7 @@ func newOrgListCmd() *cobra.Command {
 				if os.IsNotExist(err) {
 					return nil
 				}
-				return fmt.Errorf("read org root: %w", err)
+				return fmt.Errorf("read crag root: %w", err)
 			}
 			var names []string
 			for _, entry := range entries {
@@ -51,28 +52,28 @@ func newOrgListCmd() *cobra.Command {
 	}
 }
 
-func newOrgInitCmd() *cobra.Command {
+func newCragInitCmd() *cobra.Command {
 	var kind, description string
 	cmd := &cobra.Command{
 		Use:   "init <name>",
-		Short: "Create a local Belayer organization skeleton",
+		Short: "Create a local Belayer crag skeleton",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			if err := validateName(name, "org"); err != nil {
+			if err := validateName(name, "crag"); err != nil {
 				return err
 			}
 			if kind == "" {
 				kind = "custom"
 			}
-			root, err := orgRoot()
+			root, err := cragRoot()
 			if err != nil {
 				return err
 			}
 			dir := filepath.Join(root, name)
 			for _, sub := range []string{"", "teams", "sops", "gates", "evaluations", "promotions", "generated-talents"} {
 				if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
-					return fmt.Errorf("mkdir org skeleton: %w", err)
+					return fmt.Errorf("mkdir crag skeleton: %w", err)
 				}
 			}
 			if kind == "story" {
@@ -80,49 +81,49 @@ func newOrgInitCmd() *cobra.Command {
 					return fmt.Errorf("mkdir world-state: %w", err)
 				}
 			}
-			orgYAML := fmt.Sprintf("schema_version: \"belayer-org/v1\"\nname: %s\nkind: %s\n", name, kind)
+			cragYAML := fmt.Sprintf("schema_version: \"belayer-crag/v1\"\nname: %s\nkind: %s\n", name, kind)
 			if description != "" {
-				orgYAML += fmt.Sprintf("description: %q\n", description)
+				cragYAML += fmt.Sprintf("description: %q\n", description)
 			}
-			orgYAML += "catalog_categories: []\n"
-			orgPath := filepath.Join(dir, "org.yaml")
-			created, err := writeIfMissing(orgPath, []byte(orgYAML))
+			cragYAML += "catalog_categories: []\n"
+			cragPath := filepath.Join(dir, "crag.yaml")
+			created, err := writeIfMissing(cragPath, []byte(cragYAML))
 			if err != nil {
 				return err
 			}
 			if created {
-				fmt.Fprintf(cmd.OutOrStdout(), "Created org %s at %s\n", name, dir)
+				fmt.Fprintf(cmd.OutOrStdout(), "Created crag %s at %s\n", name, dir)
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Org %s already exists at %s\n", name, dir)
+				fmt.Fprintf(cmd.OutOrStdout(), "Crag %s already exists at %s\n", name, dir)
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&kind, "kind", "custom", "Org kind: development, story, research, or custom")
-	cmd.Flags().StringVar(&description, "description", "", "Human-readable org summary")
+	cmd.Flags().StringVar(&kind, "kind", "custom", "Crag kind: development, story, research, or custom")
+	cmd.Flags().StringVar(&description, "description", "", "Human-readable crag summary")
 	return cmd
 }
 
-func newOrgLinkCmd() *cobra.Command {
+func newCragLinkCmd() *cobra.Command {
 	var target string
 	cmd := &cobra.Command{
 		Use:   "link <name>",
-		Short: "Link the current project to a local Belayer organization",
+		Short: "Link the current project to a local Belayer crag",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			if err := validateName(name, "org"); err != nil {
+			if err := validateName(name, "crag"); err != nil {
 				return err
 			}
-			orgDir, err := orgDir(name)
+			cragDir, err := cragDir(name)
 			if err != nil {
 				return err
 			}
-			if _, err := os.Stat(filepath.Join(orgDir, "org.yaml")); err != nil {
+			if _, err := os.Stat(filepath.Join(cragDir, "crag.yaml")); err != nil {
 				if os.IsNotExist(err) {
-					return fmt.Errorf("org %q does not exist at %s", name, orgDir)
+					return fmt.Errorf("crag %q does not exist at %s", name, cragDir)
 				}
-				return fmt.Errorf("stat org.yaml: %w", err)
+				return fmt.Errorf("stat crag.yaml: %w", err)
 			}
 			if target == "" {
 				target, err = os.Getwd()
@@ -138,11 +139,11 @@ func newOrgLinkCmd() *cobra.Command {
 			if err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("read config: %w", err)
 			}
-			updated := setOrgLinkBlock(raw, name, "")
+			updated := setCragLinkBlock(raw, name, "")
 			if err := os.WriteFile(configPath, updated, 0o644); err != nil {
 				return fmt.Errorf("write config: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Linked project to org %s\n", name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Linked project to crag %s\n", name)
 			return nil
 		},
 	}
@@ -161,24 +162,24 @@ func belayerHome() (string, error) {
 	return filepath.Join(userHome, ".belayer"), nil
 }
 
-func orgRoot() (string, error) {
+func cragRoot() (string, error) {
 	home, err := belayerHome()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, "orgs"), nil
+	return filepath.Join(home, "crags"), nil
 }
 
-func orgDir(name string) (string, error) {
-	root, err := orgRoot()
+func cragDir(name string) (string, error) {
+	root, err := cragRoot()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(root, name), nil
 }
 
-func setOrgLinkBlock(raw []byte, name, explicitPath string) []byte {
-	block := "org:\n  name: " + name + "\n"
+func setCragLinkBlock(raw []byte, name, explicitPath string) []byte {
+	block := "crag:\n  name: " + name + "\n"
 	if explicitPath != "" {
 		block += "  path: " + explicitPath + "\n"
 	}
@@ -188,7 +189,7 @@ func setOrgLinkBlock(raw []byte, name, explicitPath string) []byte {
 	lines := strings.Split(string(raw), "\n")
 	start := -1
 	for i, line := range lines {
-		if strings.TrimSpace(line) == "org:" && len(line) == len(strings.TrimLeft(line, " \t")) {
+		if isTopLevelCragOrOrgKey(line) {
 			start = i
 			break
 		}
@@ -222,4 +223,12 @@ func setOrgLinkBlock(raw []byte, name, explicitPath string) []byte {
 		out += "\n"
 	}
 	return []byte(out)
+}
+
+func isTopLevelCragOrOrgKey(line string) bool {
+	if len(line) != len(strings.TrimLeft(line, " \t")) {
+		return false
+	}
+	trimmed := strings.TrimSpace(line)
+	return trimmed == "crag:" || trimmed == "org:"
 }

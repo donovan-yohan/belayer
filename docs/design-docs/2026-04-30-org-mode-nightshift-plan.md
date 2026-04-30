@@ -24,11 +24,11 @@ Goal: lock the local filesystem shape before CLI behavior exists.
 
 Deliverables:
 
-- Document `~/.belayer/orgs/<org>/`.
+- Document `~/.belayer/crags/<crag>/`.
 - Document `~/.belayer/talent-catalog/<category>/`.
-- Document repo-local `.belayer/config.yaml` org linking.
-- Define `org.yaml` minimal fields.
-- Define precedence: repo-local override, linked org default, shipped fallback.
+- Document repo-local `.belayer/config.yaml` crag linking.
+- Define `crag.yaml` minimal fields.
+- Define precedence: repo-local override, linked crag default, shipped fallback.
 - Include generated NPC/talent storage at contract level.
 
 Review focus:
@@ -39,25 +39,27 @@ Review focus:
 
 ## Stack B: #114 CLI Implementation
 
-Goal: implement local-only org and talent commands against the contract from
+Goal: implement local-only crag and team commands against the contract from
 stack A.
 
 Deliverables:
 
-- `belayer talent list`
-- `belayer talent install <category>`
-- `belayer talent install <category>/<talent>`
-- `belayer org list`
-- `belayer org init <name>`
-- `belayer org link <name>`
+- `belayer team list`
+- `belayer team add <category>`
+- `belayer team add <category>/<team>`
+- `belayer team remove <category>`
+- `belayer team remove <category>/<team>`
+- `belayer crag list`
+- `belayer crag init <name>`
+- `belayer crag link <name>`
 
 Implementation constraints:
 
-- Installs copy selected talents into `.belayer/agents/`.
+- Adds copy selected team identities into `.belayer/agents/`.
 - Existing files are skipped by default.
 - `--force` overwrites installed files.
 - Path traversal and unknown category/talent inputs are rejected.
-- `org link` writes only a repo-local config pointer; it does not import global
+- `crag link` writes only a repo-local config pointer; it does not import global
   learnings into the repo.
 
 Review focus:

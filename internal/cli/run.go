@@ -12,8 +12,9 @@ import (
 
 func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "run",
-		Short: "Nightshift run lifecycle commands",
+		Use:     "run",
+		Aliases: []string{"climb"},
+		Short:   "Nightshift climb lifecycle commands",
 	}
 	cmd.AddCommand(newRunStartCmd())
 	return cmd

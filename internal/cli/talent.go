@@ -17,19 +17,20 @@ type copySummary struct {
 	skipped int
 }
 
-func newTalentCmd() *cobra.Command {
+func newTeamCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "talent",
-		Short: "List and install local talent catalog identities",
+		Use:     "team",
+		Aliases: []string{"teams", "talent"},
+		Short:   "List, add, and remove local team identities",
 	}
-	cmd.AddCommand(newTalentListCmd(), newTalentInstallCmd())
+	cmd.AddCommand(newTeamListCmd(), newTeamAddCmd(), newTeamRemoveCmd())
 	return cmd
 }
 
-func newTalentListCmd() *cobra.Command {
+func newTeamListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List local talent catalog categories and talents",
+		Short: "List local team catalog categories and identities",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cats, err := talentCategories()
 			if err != nil {
@@ -50,13 +51,14 @@ func newTalentListCmd() *cobra.Command {
 	}
 }
 
-func newTalentInstallCmd() *cobra.Command {
+func newTeamAddCmd() *cobra.Command {
 	var target string
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "install <category|category/talent>",
-		Short: "Install local talent catalog identities into .belayer/agents",
-		Args:  cobra.ExactArgs(1),
+		Use:     "add <category|category/team>",
+		Aliases: []string{"install"},
+		Short:   "Add local team catalog identities into .belayer/agents",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			category, talent, err := parseTalentRef(args[0])
 			if err != nil {
@@ -85,12 +87,51 @@ func newTalentInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Installed %s: written=%d skipped=%d\n", args[0], summary.written, summary.skipped)
+			fmt.Fprintf(cmd.OutOrStdout(), "Added %s: written=%d skipped=%d\n", args[0], summary.written, summary.skipped)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", "", "Project directory (default cwd)")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite existing installed files")
+	return cmd
+}
+
+func newTeamRemoveCmd() *cobra.Command {
+	var target string
+	cmd := &cobra.Command{
+		Use:   "remove <category|category/team>",
+		Short: "Remove local team identities from .belayer/agents",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			category, talent, err := parseTalentRef(args[0])
+			if err != nil {
+				return err
+			}
+			if _, err := talentNames(category); err != nil {
+				return err
+			}
+			if target == "" {
+				target, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			dst := filepath.Join(target, ".belayer", "agents")
+
+			var summary removeSummary
+			if talent != "" {
+				summary, err = removeOneTeam(category, talent, dst)
+			} else {
+				summary, err = removeTeamCategory(category, dst)
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Removed %s: removed=%d skipped=%d\n", args[0], summary.removed, summary.skipped)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", "", "Project directory (default cwd)")
 	return cmd
 }
 
@@ -106,12 +147,12 @@ func parseTalentRef(ref string) (string, string, error) {
 		if err := validateName(parts[0], "category"); err != nil {
 			return "", "", err
 		}
-		if err := validateName(parts[1], "talent"); err != nil {
+		if err := validateName(parts[1], "team"); err != nil {
 			return "", "", err
 		}
 		return parts[0], parts[1], nil
 	}
-	return "", "", fmt.Errorf("invalid talent reference %q (use category or category/talent)", ref)
+	return "", "", fmt.Errorf("invalid team reference %q (use category or category/team)", ref)
 }
 
 func validateName(name, label string) error {
@@ -133,7 +174,7 @@ func validateName(name, label string) error {
 func talentCategories() ([]string, error) {
 	entries, err := belayer.TalentCatalog.ReadDir("examples/talent-catalog")
 	if err != nil {
-		return nil, fmt.Errorf("read talent catalog: %w", err)
+		return nil, fmt.Errorf("read team catalog: %w", err)
 	}
 	var cats []string
 	for _, entry := range entries {
@@ -159,9 +200,9 @@ func talentNames(category string) ([]string, error) {
 	root := "examples/talent-catalog/" + category
 	if _, err := fs.Stat(belayer.TalentCatalog, root); err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("unknown talent category %q", category)
+			return nil, fmt.Errorf("unknown team category %q", category)
 		}
-		return nil, fmt.Errorf("stat talent category %q: %w", category, err)
+		return nil, fmt.Errorf("stat team category %q: %w", category, err)
 	}
 	names, err := identityDirs(belayer.TalentCatalog, root)
 	if err != nil {
@@ -221,12 +262,63 @@ func installOneTalent(category, name, dst string, force bool) (copySummary, erro
 		}
 	}
 	if !found {
-		return copySummary{}, fmt.Errorf("unknown talent %q in category %q", name, category)
+		return copySummary{}, fmt.Errorf("unknown team %q in category %q", name, category)
 	}
 	if category == "development" {
 		return copyFSTree(belayer.DefaultAgents, "agents/"+name, filepath.Join(dst, name), force)
 	}
 	return copyFSTree(belayer.TalentCatalog, "examples/talent-catalog/"+category+"/"+name, filepath.Join(dst, name), force)
+}
+
+type removeSummary struct {
+	removed int
+	skipped int
+}
+
+func removeTeamCategory(category, dst string) (removeSummary, error) {
+	names, err := talentNames(category)
+	if err != nil {
+		return removeSummary{}, err
+	}
+	var total removeSummary
+	for _, name := range names {
+		summary, err := removeOneTeam(category, name, dst)
+		if err != nil {
+			return removeSummary{}, err
+		}
+		total.removed += summary.removed
+		total.skipped += summary.skipped
+	}
+	return total, nil
+}
+
+func removeOneTeam(category, name, dst string) (removeSummary, error) {
+	names, err := talentNames(category)
+	if err != nil {
+		return removeSummary{}, err
+	}
+	found := false
+	for _, n := range names {
+		if n == name {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return removeSummary{}, fmt.Errorf("unknown team %q in category %q", name, category)
+	}
+
+	path := filepath.Join(dst, name)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return removeSummary{skipped: 1}, nil
+		}
+		return removeSummary{}, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return removeSummary{}, fmt.Errorf("remove %s: %w", path, err)
+	}
+	return removeSummary{removed: 1}, nil
 }
 
 func copyFSTree(source fs.FS, root, dst string, force bool) (copySummary, error) {
