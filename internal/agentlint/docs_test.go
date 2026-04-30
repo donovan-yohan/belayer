@@ -120,8 +120,8 @@ func TestOrgFilesystemContractCoversRequiredScopes(t *testing.T) {
 	required := []string{
 		"repo/.belayer/",
 		"~/.belayer/talent-catalog/<category>/",
-		"~/.belayer/orgs/<org-name>/",
-		"schema_version: \"belayer-org/v1\"",
+		"~/.belayer/crags/<crag-name>/",
+		"schema_version: \"belayer-crag/v1\"",
 		"teams/",
 		"sops/",
 		"gates/",
