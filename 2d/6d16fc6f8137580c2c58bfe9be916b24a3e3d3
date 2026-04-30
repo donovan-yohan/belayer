@@ -1,0 +1,31 @@
+examples/org-proofs/athenaeum-tavern-story/README.md
+  eba65da2a046cd1c 3
+examples/org-proofs/athenaeum-tavern-story/continuity-report.json
+  eba65da2a046cd1c 13,21
+internal/agentlint/proof_examples_test.go
+  eba65da2a046cd1c 60-84
+examples/org-proofs/athenaeum-tavern-story/org-plan.json
+  eba65da2a046cd1c 6-8
+examples/org-proofs/relay-ide-software-company/README.md
+  eba65da2a046cd1c 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "2d6d16fc6f8137580c2c58bfe9be916b24a3e3d3",
+  "prompts": {
+    "eba65da2a046cd1c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddbc7-cc5c-7990-98c0-bc190d3f7c96",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 735,
+      "total_deletions": 9,
+      "accepted_lines": 1149,
+      "overriden_lines": 0
+    }
+  }
+}
