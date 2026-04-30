@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -66,7 +67,7 @@ func extractPluginsToHermesHome(hermesHome string) error {
 // $HERMES_HOME/plugins/<name>/, idempotently, and removes stale files
 // within that plugin's directory only. Leaves other plugins alone.
 func syncEmbeddedPlugin(pluginsRoot, pluginName string) error {
-	embeddedRoot := filepath.Join("plugins", pluginName)
+	embeddedRoot := path.Join("plugins", pluginName)
 	dstRoot := filepath.Join(pluginsRoot, pluginName)
 	if err := os.MkdirAll(dstRoot, 0o755); err != nil {
 		return fmt.Errorf("extract plugin %s: mkdir: %w", pluginName, err)

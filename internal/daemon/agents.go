@@ -1388,10 +1388,10 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 				inToolsets = false
 				out.BelayerTools = []string{} // mark explicitly configured
 				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "belayer_tools:"))
-				switch {
-				case raw == "":
+				switch raw {
+				case "":
 					inTools = true
-				case raw == "[]":
+				case "[]":
 					// explicit empty list
 				default:
 					if items := parseInlineYAMLList(raw); items != nil {
@@ -1405,10 +1405,10 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 				inTools = false
 				out.EnabledToolsets = []string{} // mark explicitly configured
 				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "enabled_toolsets:"))
-				switch {
-				case raw == "":
+				switch raw {
+				case "":
 					inToolsets = true
-				case raw == "[]":
+				case "[]":
 					// explicit empty list
 				default:
 					if items := parseInlineYAMLList(raw); items != nil {
@@ -1481,7 +1481,6 @@ func agentIdentityPaths(workdir, belayerRoot, identity, file string) []string {
 	}
 	return paths
 }
-
 
 func splitLines(s string) []string {
 	var lines []string

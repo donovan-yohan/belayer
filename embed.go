@@ -34,5 +34,5 @@ var WebUI embed.FS
 // The extractor filters __pycache__/ and *.pyc to avoid leaking host
 // bytecode into the user's plugin directory.
 //
-//go:embed all:plugins
+//go:embed plugins/belayer/*.py plugins/belayer/plugin.yaml
 var DefaultPlugins embed.FS

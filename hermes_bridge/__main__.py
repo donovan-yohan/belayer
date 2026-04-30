@@ -707,6 +707,8 @@ def main() -> None:
             waited = 0
             absolute_waited = 0
             was_waiting_on_peers = False
+            previous_active_peer_count = 0
+            active_peer_rows = None
             while waited < idle_timeout and absolute_waited < absolute_timeout:
                 time.sleep(idle_poll_interval)
                 absolute_waited += idle_poll_interval
@@ -777,13 +779,14 @@ def main() -> None:
                     # ceiling continue to tick so we don't wait forever on
                     # a truly dead daemon.
                     log.debug("Roster fetch failed; holding idle counter steady")
-                    active_peer_rows = []  # unknown, treated as none-known for logging
+                    active_peer_rows = None
                     waited = 0
                 else:
                     active_peer_rows = active_peers(roster, agent_id)
                     peers_still_active = len(active_peer_rows) > 0
 
                     if peers_still_active:
+                        previous_active_peer_count = len(active_peer_rows)
                         if not was_waiting_on_peers:
                             was_waiting_on_peers = True
                         waited = 0  # reset; don't count time while specialists are running
@@ -791,7 +794,7 @@ def main() -> None:
                         if was_waiting_on_peers:
                             log.info(
                                 "All %d peer agent(s) now terminal; idle countdown started",
-                                len(peers),
+                                previous_active_peer_count,
                             )
                             was_waiting_on_peers = False
                         waited += idle_poll_interval
@@ -808,13 +811,20 @@ def main() -> None:
                     )
                     reason = "idle_timeout"
                 else:
-                    active_count = len(active_peer_rows)
-                    detail = (
-                        f"Absolute idle ceiling ({absolute_timeout}s) reached with "
-                        f"{active_count} peer(s) still marked running. Suspected "
-                        "hang or deadlock — no messages received despite peers "
-                        "reporting active."
-                    )
+                    if active_peer_rows is None:
+                        detail = (
+                            f"Absolute idle ceiling ({absolute_timeout}s) reached "
+                            "while peer state was unknown because roster fetches "
+                            "were failing. Suspected daemon hang or deadlock."
+                        )
+                    else:
+                        active_count = len(active_peer_rows)
+                        detail = (
+                            f"Absolute idle ceiling ({absolute_timeout}s) reached with "
+                            f"{active_count} peer(s) still marked running. Suspected "
+                            "hang or deadlock — no messages received despite peers "
+                            "reporting active."
+                        )
                     reason = "absolute_idle_ceiling"
                 log.info("Idle loop exiting: %s", detail)
                 post_event(

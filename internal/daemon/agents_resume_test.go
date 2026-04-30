@@ -14,7 +14,8 @@ import (
 // subsequent spawnBridgeAgent call. This is the resume path: an agent exits,
 // the supervisor re-spawns it, and Hermes picks up the same conversation.
 //
-// Reference: internal/daemon/agents.go:1061 (spawnAgentInternal resume branch).
+// Reference: internal/daemon/agents.go spawnAgentInternal resume branch
+// (the prior Hermes session ID copy into an empty resume request).
 // A silent regression here would create a fresh Hermes session on every
 // re-spawn, duplicating sessions and losing conversation history.
 func TestSpawnAgent_ResumesExistingHermesSessionID(t *testing.T) {
