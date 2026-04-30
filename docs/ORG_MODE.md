@@ -69,6 +69,9 @@ Organization mode has three filesystem scopes. Keeping them separate prevents
 repo-specific context from leaking into global org knowledge and prevents global
 lessons from silently changing a project run.
 
+`docs/ORG_FILESYSTEM.md` is the normative filesystem contract. This section
+summarizes the model.
+
 ```text
 repo/.belayer/
   Project-local team, config, overrides, run artifacts, and explicit org link.
@@ -182,7 +185,7 @@ gate: a scoped authority that inspects artifacts and produces a durable verdict.
 ```yaml
 schema_version: "belayer-gate/v1"
 gate:
-  id: runtime-qa
+  name: runtime-qa
   stage: task
   authority: blocking
   input_artifacts:

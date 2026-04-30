@@ -107,3 +107,33 @@ func TestDesignDocsIndexMarksHistoricalMaterial(t *testing.T) {
 		}
 	}
 }
+
+func TestOrgFilesystemContractCoversRequiredScopes(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "docs", "ORG_FILESYSTEM.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	text := string(raw)
+
+	required := []string{
+		"repo/.belayer/",
+		"~/.belayer/talent-catalog/<category>/",
+		"~/.belayer/crags/<crag-name>/",
+		"schema_version: \"belayer-crag/v1\"",
+		"teams/",
+		"sops/",
+		"gates/",
+		"evaluations/",
+		"generated-talents/",
+		"world-state/",
+		"Repo-local override",
+		"Cross-project knowledge is opt-in per repo",
+	}
+	for _, needle := range required {
+		if !strings.Contains(text, needle) {
+			t.Errorf("%s missing filesystem contract marker %q", path, needle)
+		}
+	}
+}
