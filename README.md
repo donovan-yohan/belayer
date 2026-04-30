@@ -230,6 +230,8 @@ belayer roster              List active agents
 belayer message             Send/broadcast/list messages
 belayer request-completion  Explicit PM gate trigger
 belayer artifact            Create/list run artifacts
+belayer talent              List/install local talent catalog identities
+belayer org                 Manage local Belayer organizations
 belayer session list|stop   Session lifecycle
 belayer logs                Event stream
 belayer status              Running sessions overview

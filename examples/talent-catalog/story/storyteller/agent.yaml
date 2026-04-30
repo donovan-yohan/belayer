@@ -1,0 +1,13 @@
+schema_version: "1"
+description: "Storyteller - main narrator and scene coordinator"
+kind: main
+vendor: codex
+model: gpt-5.4
+max_turns: 80
+max_duration: "2h"
+ephemeral: false
+workspace: inherit
+belayer_tools:
+  - belayer_spawn_agent
+  - belayer_request_completion
+  - belayer_escalate_to_human

@@ -1,0 +1,13 @@
+schema_version: "belayer-talent/v1"
+name: continuity-editor
+category: story
+kind: side
+summary: "Gate talent for story continuity and tone"
+capabilities:
+  - continuity-check
+  - tone-check
+  - canon-review
+compatible_adapters:
+  - hermes-plugin
+default_gates:
+  - continuity
