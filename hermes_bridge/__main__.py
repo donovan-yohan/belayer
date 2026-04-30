@@ -14,6 +14,7 @@ import os
 import sys
 import json
 import logging
+import inspect
 import queue
 import time
 
@@ -284,6 +285,18 @@ def extract_session_usage(agent: object) -> dict:
     return usage
 
 
+def aia_agent_accepts_kwarg(name: str) -> bool:
+    """Return whether the active Hermes AIAgent constructor accepts name."""
+    try:
+        sig = inspect.signature(AIAgent.__init__)
+    except (TypeError, ValueError):
+        return True
+    for param in sig.parameters.values():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+    return name in sig.parameters
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -373,9 +386,10 @@ def main() -> None:
 
     agent_kwargs: dict = {
         "quiet_mode": True,
-        "persist_session": True,
         "session_db": session_db,
     }
+    if aia_agent_accepts_kwarg("persist_session"):
+        agent_kwargs["persist_session"] = True
     if system_prompt:
         agent_kwargs["ephemeral_system_prompt"] = system_prompt
     if model:

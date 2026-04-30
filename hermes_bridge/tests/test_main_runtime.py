@@ -131,6 +131,55 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
     assert len(finished_calls) == 1
 
 
+def test_main_does_not_pass_removed_persist_session_kwarg(monkeypatch):
+    module = _load_main_module(monkeypatch)
+    _set_required_env(monkeypatch, max_turns="7")
+
+    created_agents = []
+
+    class FakeAIAgent:
+        def __init__(self, quiet_mode=False, session_db=None, max_iterations=90):
+            self.kwargs = {
+                "quiet_mode": quiet_mode,
+                "session_db": session_db,
+                "max_iterations": max_iterations,
+            }
+            self.session_id = "hermes-session-123"
+            created_agents.append(self)
+
+        def run_conversation(self, **kwargs):
+            return {
+                "budget_exhausted": True,
+                "turns_used": 1,
+                "final_response": "done",
+                "last_message": "done",
+                "messages": [],
+            }
+
+    monkeypatch.setattr(module, "AIAgent", FakeAIAgent)
+    monkeypatch.setattr(module, "fetch_pending_messages", lambda *args, **kwargs: [])
+    monkeypatch.setattr(module, "make_callbacks", lambda *args, **kwargs: {})
+    monkeypatch.setattr(module, "start_heartbeat_thread", lambda *args, **kwargs: types.SimpleNamespace(set=lambda: None))
+
+    class DummyReader:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr(module, "StdinReader", DummyReader)
+    monkeypatch.setattr(module, "post_event", MagicMock())
+
+    module.main()
+
+    assert created_agents, "expected AIAgent to be constructed"
+    assert created_agents[0].kwargs["max_iterations"] == 7
+
+
 def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="9")
