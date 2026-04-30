@@ -108,9 +108,9 @@ func TestDesignDocsIndexMarksHistoricalMaterial(t *testing.T) {
 	}
 }
 
-func TestOrgFilesystemContractCoversRequiredScopes(t *testing.T) {
+func TestCragFilesystemContractCoversRequiredScopes(t *testing.T) {
 	root := repoRoot(t)
-	path := filepath.Join(root, "docs", "ORG_FILESYSTEM.md")
+	path := filepath.Join(root, "docs", "CRAG_FILESYSTEM.md")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

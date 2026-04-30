@@ -311,8 +311,8 @@ The dashboard is a thin reverse-proxy + static-file server. It holds no state �
 
 - `docs/README.md` — current docs map and historical-design warning
 - `docs/AGENT_ARCHITECTURE.md` — agent toolbox, main/side model, mail, PM gate
-- `docs/ORG_MODE.md` — team catalogs, gate contracts, crag events, proof climbs
-- `docs/ORG_FILESYSTEM.md` — repo, user catalog, and user crag directory contracts
+- `docs/CRAG_MODE.md` — team catalogs, gate contracts, crag events, proof climbs
+- `docs/CRAG_FILESYSTEM.md` — repo, user catalog, and user crag directory contracts
 - `docs/ARTIFACT_SCHEMAS.md` — artifact content schemas for crag-mode proofs
 - `docs/DEPLOYMENT.md` — topologies, trust model, credentials, sockets
 - `docs/PHILOSOPHY.md` — the six runtime interfaces
