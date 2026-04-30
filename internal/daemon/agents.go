@@ -734,7 +734,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	argv := bridge.BuildCmd(cfg)
 	env := bridge.BuildEnv(cfg)
 	env = append(env, "BELAYER_AGENT_KIND="+req.Kind)
-	env = append(env, "BELAYER_AGENT_ARTIFACT_DIR="+climbpath.AgentArtifactsRel(req.SessionID, req.Name))
+	env = append(env, "BELAYER_AGENT_ARTIFACT_DIR="+climbpath.AgentArtifactsRel(workdir, req.SessionID, req.Name))
 
 	// Use an io.Pipe for stdout so the scanner pump can tee bytes to the log
 	// writer while concurrently scanning for error markers. If we assigned
@@ -864,7 +864,7 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 
 		// Notify supervisor.
 		if run.Name != "supervisor" {
-			// Reconstruct the run directory for this agent. If the agent was
+			// Reconstruct the climb directory for this agent. If the agent was
 			// spawned on a branch it has a worktree; otherwise it uses Workdir.
 			runBase := run.Workdir
 			if run.WorktreePath != "" {

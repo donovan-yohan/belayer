@@ -29,7 +29,7 @@ func setupWorkspace(t *testing.T) string {
 		}
 	}
 	// Create .belayer/ runtime structure.
-	for _, sub := range []string{".belayer/climbs", ".belayer/artifacts", ".belayer/worktrees"} {
+	for _, sub := range []string{".belayer/climbs", ".belayer/runs", ".belayer/artifacts", ".belayer/worktrees"} {
 		if err := os.MkdirAll(filepath.Join(ws, sub), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", sub, err)
 		}
@@ -57,8 +57,9 @@ func TestComputeWriteRoots_Supervisor(t *testing.T) {
 		t.Error("supervisor roots must not include .belayer/ root")
 	}
 
-	// The three allowed .belayer subdirs must appear.
-	for _, sub := range []string{"climbs", "artifacts", "worktrees"} {
+	// The allowed .belayer subdirs must appear, including legacy runs/ for
+	// resuming older sessions under write confinement.
+	for _, sub := range []string{"climbs", "runs", "artifacts", "worktrees"} {
 		want := filepath.Join(ws, ".belayer", sub)
 		if !envContains(roots, want) {
 			t.Errorf("supervisor roots must include .belayer/%s; got %v", sub, roots)

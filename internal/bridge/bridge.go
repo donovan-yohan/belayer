@@ -270,7 +270,7 @@ func NewProcess(handle ProcessHandle, stdin io.WriteCloser) *Process {
 // Returns a Process handle for monitoring and communication.
 func Spawn(cfg Config) (*Process, error) {
 	if err := os.MkdirAll(cfg.RunDir, 0o700); err != nil {
-		return nil, fmt.Errorf("bridge: create run dir: %w", err)
+		return nil, fmt.Errorf("bridge: create climb dir: %w", err)
 	}
 
 	argv := BuildCmd(cfg)

@@ -20,10 +20,10 @@ import (
 //
 //   - pm: climb dir only (needs to write its verification report artifact).
 //
-//   - branched specialist: worktree + run dir + git common dir (for git
+//   - branched specialist: worktree + climb dir + git common dir (for git
 //     metadata) + shared cache paths + /tmp.
 //
-//   - unbranched specialist (rare): run dir + /tmp.
+//   - unbranched specialist (rare): climb dir + /tmp.
 //
 // /tmp is always appended so compilers, package managers, and OS scratch usage
 // work correctly. This is a known limitation: agents can exfiltrate data via
@@ -59,12 +59,13 @@ func computeWriteRoots(
 		// Re-add the three .belayer subdirs the supervisor must write to.
 		roots = append(roots,
 			climbpath.Root(workspace),
+			climbpath.LegacyRoot(workspace),
 			filepath.Join(workspace, ".belayer", "artifacts"),
 			filepath.Join(workspace, ".belayer", "worktrees"),
 		)
 
 	case identity == "pm":
-		// PM writes only its own run dir (verification report artifact).
+		// PM writes only its own climb dir (verification report artifact).
 		roots = []string{runDir}
 
 	case worktreePath != "":
@@ -80,7 +81,7 @@ func computeWriteRoots(
 		roots = append(roots, sharedPaths...)
 
 	default:
-		// Unbranched specialist (rare): run dir only.
+		// Unbranched specialist (rare): climb dir only.
 		roots = []string{runDir}
 	}
 

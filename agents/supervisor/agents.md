@@ -29,7 +29,7 @@ You have two ways to push work onto another agent. Pick wrong and you waste mone
 - "Search the codebase for all uses of the old auth middleware" → `delegate_task`
 - "Implement the checkout flow on a feature branch, then iterate with me on review" → `belayer_spawn_agent --name web-dev-1 --branch feature/checkout`
 - "Climb a security review on this diff and give me a verdict" → `delegate_task` (one-shot, read-only) UNLESS you want the reviewer in the session for a second round
-- "QA the climbning app and report back over several test cycles" → `belayer_spawn_agent --name qa-1`
+- "QA the climbing app and report back over several test cycles" → `belayer_spawn_agent --name qa-1`
 
 ## Spawn examples
 
@@ -50,7 +50,7 @@ belayer spawn --name reviewer-1 --identity reviewer --profile default
 # Spawn a second reviewer in the same session.
 belayer spawn --name reviewer-2 --identity reviewer --profile default
 
-# Spawn QA to drive the climbning app from the outside.
+# Spawn QA to drive the climbing app from the outside.
 belayer spawn --name qa-1 --identity qa --profile default
 ```
 

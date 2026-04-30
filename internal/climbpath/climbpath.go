@@ -3,6 +3,7 @@ package climbpath
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -19,15 +20,7 @@ func LegacyRoot(workspace string) string {
 }
 
 func SessionDir(workspace, sessionID string) string {
-	return filepath.Join(Root(workspace), sessionID)
-}
-
-func LegacySessionDir(workspace, sessionID string) string {
-	return filepath.Join(LegacyRoot(workspace), sessionID)
-}
-
-func ExistingSessionDir(workspace, sessionID string) string {
-	current := SessionDir(workspace, sessionID)
+	current := filepath.Join(Root(workspace), sessionID)
 	if _, err := os.Stat(current); err == nil {
 		return current
 	}
@@ -36,6 +29,14 @@ func ExistingSessionDir(workspace, sessionID string) string {
 		return legacy
 	}
 	return current
+}
+
+func LegacySessionDir(workspace, sessionID string) string {
+	return filepath.Join(LegacyRoot(workspace), sessionID)
+}
+
+func ExistingSessionDir(workspace, sessionID string) string {
+	return SessionDir(workspace, sessionID)
 }
 
 func AgentDir(workspace, sessionID, agentName string) string {
@@ -74,10 +75,18 @@ func ExistingTranscriptsDir(workspace, sessionID string) string {
 	return current
 }
 
-func AgentArtifactsRel(sessionID, agentName string) string {
+func AgentArtifactsRel(workspace, sessionID, agentName string) string {
+	artifactsDir := filepath.Join(AgentDir(workspace, sessionID, agentName), "artifacts")
+	if rel, err := filepath.Rel(workspace, artifactsDir); err == nil && isLocalRel(rel) {
+		return filepath.ToSlash(rel)
+	}
 	return filepath.ToSlash(filepath.Join(".belayer", DirName, sessionID, agentName, "artifacts"))
 }
 
 func HandoffRel(sessionID string) string {
 	return filepath.ToSlash(filepath.Join(".belayer", DirName, sessionID, "handoff.md"))
+}
+
+func isLocalRel(path string) bool {
+	return path != "." && path != ".." && !strings.HasPrefix(path, ".."+string(filepath.Separator))
 }
