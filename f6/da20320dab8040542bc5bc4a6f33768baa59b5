@@ -1,0 +1,13 @@
+docs/ORG_FILESYSTEM.md
+  eba65da2a046cd1c 2,6-8,10-12,14-17,20-22,24-33,35-37,39-41,43-46,48-50,52-54,56,58-62,64-83,87-92,94-127,129-309
+docs/ORG_MODE.md
+  eba65da2a046cd1c 72-74,190
+docs/design-docs/2026-04-30-org-mode-nightshift-plan.md
+  eba65da2a046cd1c 1-26,28,32-41,43-46,55-57,59-61,63-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "f6da20320dab8040542bc5bc4a6f33768baa59b5",
+  "prompts": {}
+}
