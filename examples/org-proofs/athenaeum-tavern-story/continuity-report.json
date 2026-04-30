@@ -1,0 +1,36 @@
+{
+  "schema_version": "belayer-continuity-report/v1",
+  "gate_id": "continuity",
+  "producer": "continuity-editor",
+  "world_state_artifact": "examples/org-proofs/athenaeum-tavern-story/world-state.json",
+  "verdict": "pass-with-notes",
+  "checks": [
+    {
+      "area": "canon",
+      "status": "pass",
+      "summary": "The story follows a successful Codex restoration without contradicting the belayer-athenaeum premise.",
+      "evidence": [
+        "/Users/donovanyohan/Documents/Programs/personal/belayer-athenaeum/README.md"
+      ]
+    },
+    {
+      "area": "character",
+      "status": "pass",
+      "summary": "Lyra, Kael, Mira, Thorne, and Zara retain distinct voices from the source character briefs.",
+      "evidence": [
+        "/Users/donovanyohan/Documents/Programs/personal/belayer-athenaeum/.design/characters.md",
+        "examples/org-proofs/athenaeum-tavern-story/three-act-story.md"
+      ]
+    },
+    {
+      "area": "open-threads",
+      "status": "warn",
+      "summary": "The silver chimney presence is intentionally unresolved and should be tracked if this location recurs.",
+      "evidence": [
+        "examples/org-proofs/athenaeum-tavern-story/world-state.json"
+      ]
+    }
+  ],
+  "required_fixes": [],
+  "checked_at": "2026-04-30T04:40:00Z"
+}

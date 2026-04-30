@@ -1,0 +1,27 @@
+{
+  "schema_version": "belayer-gate-result/v1",
+  "gate_id": "runtime-qa",
+  "stage": "task",
+  "authority": "blocking",
+  "producer": "qa",
+  "subject": {
+    "task_id": "task-3",
+    "artifact_paths": [
+      "artifacts/relay-ide/runtime-qa.md"
+    ]
+  },
+  "verdict": "blocked",
+  "findings": [
+    {
+      "severity": "high",
+      "summary": "This proof packet did not execute relay-ide tests because it is a Belayer examples PR, not the relay-ide implementation run.",
+      "evidence": [
+        "examples/org-proofs/relay-ide-software-company/README.md"
+      ]
+    }
+  ],
+  "required_fixes": [
+    "When #320 is implemented for real, run relay-ide port allocator tests and attach command output or PR checks."
+  ],
+  "checked_at": "2026-04-30T04:10:00Z"
+}

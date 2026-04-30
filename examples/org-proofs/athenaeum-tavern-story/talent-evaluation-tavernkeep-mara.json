@@ -1,0 +1,50 @@
+{
+  "schema_version": "belayer-talent-evaluation/v1",
+  "talent": "mara-underbough",
+  "org": "story-world",
+  "session": {
+    "id": "example-athenaeum-tavern",
+    "repo": "donovan-yohan/belayer-athenaeum",
+    "mode": "story-world"
+  },
+  "tasks": [
+    {
+      "id": "npc-generation",
+      "summary": "Serve as tavernkeep NPC, reveal house rules, and anchor the Last Lantern location.",
+      "outcome": "completed"
+    }
+  ],
+  "produced_artifacts": [
+    "examples/org-proofs/athenaeum-tavern-story/generated-talents/tavernkeep-mara/talent.yaml"
+  ],
+  "gate_outcomes": [
+    {
+      "gate_id": "continuity",
+      "verdict": "pass-with-notes",
+      "artifact": "examples/org-proofs/athenaeum-tavern-story/continuity-report.json"
+    }
+  ],
+  "metrics": {
+    "turns": 0,
+    "total_tokens": 0,
+    "estimated_cost_usd": 0,
+    "duration_seconds": 0
+  },
+  "observations": [
+    {
+      "type": "strength",
+      "summary": "Mara creates a reusable location anchor with clear voice and continuity constraints.",
+      "evidence": [
+        "examples/org-proofs/athenaeum-tavern-story/three-act-story.md"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "target": "promote",
+      "action": "review",
+      "summary": "Keep Mara as recurring generated team metadata for future Last Lantern scenes."
+    }
+  ],
+  "evaluated_at": "2026-04-30T04:50:00Z"
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": "belayer-world-state/v1",
+  "world": {
+    "name": "Relics of the Athenaeum",
+    "premise": "The party restored the Codex Machina and now discovers that fragments of the Athenaeum's memory persist in ordinary places.",
+    "tone": "warm adventure with mystery, banter, and latent consequence"
+  },
+  "timeline": [
+    {
+      "id": "after-codex-restoration",
+      "summary": "The party celebrates at the Last Lantern after restoring the Codex Machina.",
+      "participants": [
+        "lyra",
+        "kael",
+        "mira",
+        "thorne",
+        "zara",
+        "mara-underbough"
+      ]
+    },
+    {
+      "id": "last-lantern-awakens",
+      "summary": "The tavern reveals that it was built from archive stone and keeps one of the Athenaeum's outer doors.",
+      "participants": [
+        "mara-underbough",
+        "party"
+      ]
+    }
+  ],
+  "characters": [
+    {
+      "id": "mara-underbough",
+      "name": "Mara Underbough",
+      "state": "Tavernkeep of the Last Lantern; knows the house rules and now understands her tavern keeps an Athenaeum door.",
+      "relationships": [
+        "Respects Zara's diplomacy",
+        "Treats the party as debt-bearing regulars"
+      ]
+    },
+    {
+      "id": "thorne",
+      "name": "Thorne the Sentinel",
+      "state": "Still protective of the Codex and skeptical of celebratory magic.",
+      "relationships": [
+        "Distrusts any demand to return the Codex"
+      ]
+    },
+    {
+      "id": "kael",
+      "name": "Kael the Chronicler",
+      "state": "Interested in the Last Lantern as a primary source and architectural memory site.",
+      "relationships": [
+        "Likely to revisit Mara's ledger"
+      ]
+    }
+  ],
+  "locations": [
+    {
+      "id": "last-lantern",
+      "name": "The Last Lantern",
+      "state": "A tavern built from archive stone; contains or guards an outer Athenaeum door.",
+      "relationships": [
+        "Mara Underbough is its keeper",
+        "The chimney may hold a small silver presence"
+      ]
+    }
+  ],
+  "open_threads": [
+    {
+      "id": "silver-chimney-laughter",
+      "summary": "Something small and silver laughed in the chimney after the wall accepted the returned page.",
+      "status": "open"
+    },
+    {
+      "id": "last-lantern-door",
+      "summary": "The tavern keeps an Athenaeum door, but the destination and rules are unknown.",
+      "status": "open"
+    }
+  ],
+  "updated_at": "2026-04-30T04:35:00Z"
+}
