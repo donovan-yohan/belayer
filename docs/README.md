@@ -9,6 +9,7 @@ current.
 
 - [Agent Architecture](AGENT_ARCHITECTURE.md) - agent kinds, tools, mail, spawn, and PM completion gate
 - [Organization Mode](ORG_MODE.md) - talent catalogs, gate contracts, org events, and proof-run framing
+- [Organization Filesystem](ORG_FILESYSTEM.md) - repo, user catalog, and user org directory contracts
 - [Artifact Schemas](ARTIFACT_SCHEMAS.md) - content contracts for durable artifacts
 - [Log Format](LOG_FORMAT.md) - external event, archive, search, and SSE contract
 - [Observability](OBSERVABILITY.md) - operator recipes for logs, events, traces, and archives

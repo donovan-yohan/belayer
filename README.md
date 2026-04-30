@@ -282,6 +282,7 @@ The dashboard is a thin reverse-proxy + static-file server. It holds no state �
 - `docs/README.md` — current docs map and historical-design warning
 - `docs/AGENT_ARCHITECTURE.md` — agent toolbox, main/side model, mail, PM gate
 - `docs/ORG_MODE.md` — talent catalogs, gate contracts, org events, proof runs
+- `docs/ORG_FILESYSTEM.md` — repo, user catalog, and user org directory contracts
 - `docs/ARTIFACT_SCHEMAS.md` — artifact content schemas for org-mode proofs
 - `docs/DEPLOYMENT.md` — topologies, trust model, credentials, sockets
 - `docs/PHILOSOPHY.md` — the six runtime interfaces
