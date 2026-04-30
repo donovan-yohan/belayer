@@ -34,11 +34,11 @@ func TestArtifactSchemasAreValidJSON(t *testing.T) {
 			t.Errorf("%s: invalid JSON schema: %v", path, err)
 			continue
 		}
-		if schema["$schema"] == "" {
-			t.Errorf("%s: missing $schema", path)
+		if s, _ := schema["$schema"].(string); s == "" {
+			t.Errorf("%s: missing or empty $schema", path)
 		}
-		if schema["title"] == "" {
-			t.Errorf("%s: missing title", path)
+		if s, _ := schema["title"].(string); s == "" {
+			t.Errorf("%s: missing or empty title", path)
 		}
 		if schema["type"] != "object" {
 			t.Errorf("%s: root type = %v, want object", path, schema["type"])
