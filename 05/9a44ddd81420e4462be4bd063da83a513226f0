@@ -1,0 +1,53 @@
+examples/talent-catalog/story/lorekeeper/system-prompt.md
+  eba65da2a046cd1c 1-4
+examples/talent-catalog/story/storyteller/agents.md
+  eba65da2a046cd1c 1-9
+examples/talent-catalog/story/lorekeeper/agent.yaml
+  eba65da2a046cd1c 1-10
+embed.go
+  eba65da2a046cd1c 15-21
+examples/talent-catalog/story/continuity-editor/agents.md
+  eba65da2a046cd1c 1-8
+examples/talent-catalog/story/continuity-editor/talent.yaml
+  eba65da2a046cd1c 1-13
+internal/cli/org.go
+  eba65da2a046cd1c 1-13,15,18,20-22,24-25,27,29-36,38-53,55-57,59-61,63-67,69-74,76-82,84,90-93,95,97-100,103-105,107-109,111-113,115-116,118-120,122,124,126-140,142-144,146-163,165-168,170-171,174-179,182-190,192-224
+internal/cli/talent.go
+  eba65da2a046cd1c 1-19,21,26-28,30-31,33-52,54-56,60-87,89-108,110-113,115-135,137-161,163,165-223,225-229,232-277
+examples/talent-catalog/story/storyteller/talent.yaml
+  eba65da2a046cd1c 1-13
+internal/cli/org_talent_test.go
+  eba65da2a046cd1c 1-10,13-18,20-24,26-29,31-32,34-36,38,40-52,54-56,58,60-68,70-71,73-74,76,78-83,85-87,89,91-92,94-95,97-102,104-106,109-110,112-117,119-122,124-128,130,133,135,138-139,141-145,147-148,150-159,161-164,166-171,173-176,178,180-182,184-185
+examples/talent-catalog/story/continuity-editor/agent.yaml
+  eba65da2a046cd1c 1-10
+examples/talent-catalog/story/lorekeeper/talent.yaml
+  eba65da2a046cd1c 1-11
+examples/talent-catalog/story/storyteller/agent.yaml
+  eba65da2a046cd1c 1-13
+examples/talent-catalog/story/storyteller/system-prompt.md
+  eba65da2a046cd1c 1-6
+examples/talent-catalog/story/continuity-editor/system-prompt.md
+  eba65da2a046cd1c 1-4
+examples/talent-catalog/story/lorekeeper/agents.md
+  eba65da2a046cd1c 1-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "059a44ddd81420e4462be4bd063da83a513226f0",
+  "prompts": {
+    "eba65da2a046cd1c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddbc7-cc5c-7990-98c0-bc190d3f7c96",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 812,
+      "total_deletions": 0,
+      "accepted_lines": 702,
+      "overriden_lines": 0
+    }
+  }
+}
