@@ -81,10 +81,9 @@ project state.
         └── talent.yaml
 ```
 
-Category add commands should copy team identity directories into
-`repo/.belayer/agents/`. Category remove commands should remove copied
-identities from that project. Copying is deliberate: the repo gets a reviewable
-snapshot of the identities it will run.
+`belayer team add` copies team identity directories into `repo/.belayer/agents/`.
+`belayer team remove` removes copied identities from that project. Copying is
+deliberate: the repo gets a reviewable snapshot of the identities it will run.
 
 ## User Crag Directory
 

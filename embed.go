@@ -12,6 +12,13 @@ import "embed"
 //go:embed all:agents
 var DefaultAgents embed.FS
 
+// TalentCatalog is the local-first example catalog used by `belayer talent`
+// commands. Development currently aliases the shipped default agents; story
+// identities live under examples/talent-catalog/story/.
+//
+//go:embed all:examples/talent-catalog
+var TalentCatalog embed.FS
+
 // DefaultBridge is the hermes_bridge Python package copied into a project's
 // .belayer/hermes_bridge/ directory by `belayer init`. Unlike DefaultAgents,
 // this copy is machine-generated and gitignored — it is always overwritten

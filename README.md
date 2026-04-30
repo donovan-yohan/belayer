@@ -223,13 +223,15 @@ Three layers:
 ```bash
 belayer init                Scaffold .belayer/ in the current project
 belayer daemon              Start the daemon
-belayer run start           Create session + spawn supervisor
+belayer run start           Create a climb + spawn supervisor (`climb` is an alias)
 belayer spawn               Spawn an agent mid-session
 belayer finish              Signal work complete (triggers PM gate)
 belayer roster              List active agents
 belayer message             Send/broadcast/list messages
 belayer request-completion  Explicit PM gate trigger
 belayer artifact            Create/list run artifacts
+belayer team                List/add/remove local team identities
+belayer crag                Manage local Belayer crags (`space` and `org` aliases)
 belayer session list|stop   Session lifecycle
 belayer logs                Event stream
 belayer status              Running sessions overview
@@ -281,8 +283,8 @@ The dashboard is a thin reverse-proxy + static-file server. It holds no state �
 
 - `docs/README.md` — current docs map and historical-design warning
 - `docs/AGENT_ARCHITECTURE.md` — agent toolbox, main/side model, mail, PM gate
-- `docs/ORG_MODE.md` — talent catalogs, gate contracts, org events, proof runs
-- `docs/ORG_FILESYSTEM.md` — repo, user catalog, and user org directory contracts
+- `docs/ORG_MODE.md` — team catalogs, gate contracts, crag events, proof runs
+- `docs/ORG_FILESYSTEM.md` — repo, user catalog, and user crag directory contracts
 - `docs/ARTIFACT_SCHEMAS.md` — artifact content schemas for org-mode proofs
 - `docs/DEPLOYMENT.md` — topologies, trust model, credentials, sockets
 - `docs/PHILOSOPHY.md` — the six runtime interfaces

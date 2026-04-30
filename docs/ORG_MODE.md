@@ -1,14 +1,14 @@
 # Organization Mode
 
-Organization mode is a thin layer over Belayer's existing run-local control
-plane. It makes team composition, task decomposition, gates, and retrospectives
-explicit without changing the core agent runtime.
+Organization mode is a thin layer over Belayer's existing climb-local control
+plane. Its Belayer-native nouns are crags and climbs: a crag is the durable
+operating context, and a climb is one execution run against that context.
 
 The current implementation target is a walking skeleton:
 
-- local talent catalogs, grouped by category
+- local team catalogs, grouped by category
 - durable artifact content schemas
-- cross-project org knowledge under `~/.belayer/orgs/<org-name>/`
+- cross-project crag knowledge under `~/.belayer/crags/<crag-name>/`
 - direct `org:*` event types in the existing event log
 - prompt guidance that works for both software delivery and story worlds
 
@@ -28,11 +28,11 @@ Belayer already has the substrate an organization layer needs:
 Organization mode names the higher-level contracts that currently live mostly
 in prompts.
 
-## Talent
+## Team Identities
 
-A talent is an installable agent identity plus optional metadata describing when
-and how to use it. In v1, the portable identity contract remains the existing
-directory shape:
+A team identity is an addable agent identity plus optional metadata describing
+when and how to use it. In v1, the portable identity contract remains the
+existing directory shape:
 
 ```text
 .belayer/agents/<name>/
@@ -41,9 +41,9 @@ directory shape:
 └── agents.md
 ```
 
-Talent metadata should live beside the identity as `talent.yaml` rather than as
-nested fields in `agent.yaml`. The current daemon only needs the existing
-identity fields at spawn time; `talent.yaml` is for catalog browsing,
+Team metadata currently lives beside the identity as `talent.yaml` to preserve
+the existing artifact/schema vocabulary. The current daemon only needs the
+existing identity fields at spawn time; metadata is for catalog browsing,
 documentation, and future selection logic.
 
 ```yaml
@@ -66,39 +66,40 @@ default_gates:
 ## Persistence Scopes
 
 Organization mode has three filesystem scopes. Keeping them separate prevents
-repo-specific context from leaking into global org knowledge and prevents global
-lessons from silently changing a project run.
+repo-specific context from leaking into global crag knowledge and prevents
+global lessons from silently changing a project climb.
 
 `docs/ORG_FILESYSTEM.md` is the normative filesystem contract. This section
 summarizes the model.
 
 ```text
 repo/.belayer/
-  Project-local team, config, overrides, run artifacts, and explicit org link.
+  Project-local team, config, overrides, climb artifacts, and explicit crag link.
 
 ~/.belayer/talent-catalog/<category>/
   Reusable local talent supply, grouped by category.
 
-~/.belayer/orgs/<org-name>/
-  Cross-project org knowledge: teams, SOPs, gates, evaluations, and reviewed
+~/.belayer/crags/<crag-name>/
+  Cross-project crag knowledge: teams, SOPs, gates, evaluations, and reviewed
   promotion history.
 ```
 
 `repo/.belayer/` answers "what does this repo need?" It is the override layer
-for a specific project. A project may link to one global org, but it should not
+for a specific project. A project may link to one global crag, but it should not
 receive global changes unless that link is explicit in `.belayer/config.yaml`.
 
-`~/.belayer/talent-catalog/` answers "what talents are available to install?"
-It is local-first supply, not a hosted marketplace. Repo installs copy selected
-talents into `.belayer/agents/` so each project has an auditable runtime team.
+`~/.belayer/talent-catalog/` answers "what teams are available to add?" It is
+local-first supply, not a hosted marketplace. `belayer team add` copies selected
+identities into `.belayer/agents/` so each project has an auditable runtime
+team.
 
-`~/.belayer/orgs/<org-name>/` answers "how does this organization operate
+`~/.belayer/crags/<crag-name>/` answers "how does this operating context work
 across projects?" It may hold reusable teams, SOPs, gate presets, and talent
 performance history:
 
 ```text
-~/.belayer/orgs/software-company/
-├── org.yaml
+~/.belayer/crags/software-company/
+├── crag.yaml
 ├── teams/
 ├── sops/
 ├── gates/
@@ -106,12 +107,12 @@ performance history:
 └── promotions/
 ```
 
-Story-world orgs can use the same structure with domain-specific directories
+Story-world crags can use the same structure with domain-specific directories
 for campaign state:
 
 ```text
-~/.belayer/orgs/story-world/
-├── org.yaml
+~/.belayer/crags/story-world/
+├── crag.yaml
 ├── teams/
 ├── sops/
 ├── gates/
@@ -152,9 +153,10 @@ examples/talent-catalog/
 └── story/
 ```
 
-The planned installer should copy one category, or one talent within a category,
-into `.belayer/agents/`. It should skip existing identities by default, support
-`--force`, and print written/skipped counts. Remote catalogs and cross-project
+The `team add` command copies one category, or one identity within a category,
+into `.belayer/agents/`. It skips existing identities by default, supports
+`--force`, and prints written/skipped counts. The `team remove` command removes
+copied identities from the current project. Remote catalogs and cross-project
 markets are intentionally out of scope until local catalogs prove useful.
 
 ## Execution Adapter Boundary
@@ -230,16 +232,16 @@ terms:
 
 ## Talent Growth Loop
 
-Talent growth is evidence-driven, not prompt self-editing. A run can evaluate a
+Talent growth is evidence-driven, not prompt self-editing. A climb can evaluate a
 talent, propose a better SOP, or recommend a catalog update, but it must not
-silently mutate global org state.
+silently mutate global crag state.
 
 ```text
 session evidence
   -> repo-local artifacts
   -> org-retro and talent-evaluation
   -> reviewed promotion proposal
-  -> ~/.belayer/orgs/<org-name>/ knowledge
+  -> ~/.belayer/crags/<crag-name>/ knowledge
 ```
 
 The `talent-evaluation` artifact captures per-run performance for one talent:
@@ -249,9 +251,9 @@ promotion proposals.
 
 Promotion is a later explicit operation. A reviewed promotion may update:
 
-- `~/.belayer/orgs/<org>/sops/` with reusable operating procedures
-- `~/.belayer/orgs/<org>/gates/` with reviewed gate presets
-- `~/.belayer/orgs/<org>/evaluations/` with summarized performance history
+- `~/.belayer/crags/<crag>/sops/` with reusable operating procedures
+- `~/.belayer/crags/<crag>/gates/` with reviewed gate presets
+- `~/.belayer/crags/<crag>/evaluations/` with summarized performance history
 - `~/.belayer/talent-catalog/<category>/<talent>/talent.yaml` with maturity or
   capability changes
 

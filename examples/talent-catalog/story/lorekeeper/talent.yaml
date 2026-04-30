@@ -1,0 +1,11 @@
+schema_version: "belayer-talent/v1"
+name: lorekeeper
+category: story
+kind: side
+summary: "Maintains durable world state and open story threads"
+capabilities:
+  - world-state
+  - continuity-memory
+compatible_adapters:
+  - hermes-plugin
+default_gates: []
