@@ -781,7 +781,7 @@ flowchart LR
 - **The PM controls run completion, not the supervisor.** The supervisor calls `belayer finish`, but the daemon intercepts it and spawns the PM for verification. The PM calls `belayer_approve_completion` to actually close the session. There is no way for the supervisor to directly complete the run.
 - **The daemon enforces the gate.** The PM is auto-spawned by the daemon when the supervisor finishes. The supervisor can't skip or forget the gate.
 - **The spec is the source of truth, not the supervisor's summary.** The PM reads the original spec artifact directly. It receives the supervisor's summary for context but verifies against the spec.
-- **Tool access is declared in agent templates.** Each template's `agent.yaml` declares which belayer tools that role receives. The supervisor gets spawn and request_completion. The PM gets approve and reject. Specialists get baseline only. This is enforced at bridge registration time.
+- **Tool access is declared in agent templates.** Each template's `agent.yaml` declares which belayer tools that role receives. The supervisor gets spawn and request_completion. The PM gets approve and reject. Specialists get baseline only. The Belayer Hermes plugin enforces this at plugin-discovery time: it reads the per-agent `BELAYER_TOOLS` allowlist (set by the daemon from `agent.yaml`) and only registers tools the agent is permitted to call.
 - **PM is ephemeral.** It spawns, verifies, decides, and exits. If rejected, a new PM process spawns on the next `belayer finish` call.
 - **PM identity lives in `agents/pm/` (shipped) and `.belayer/agents/pm/` (project-local override).** The system prompt is injected via Hermes's `ephemeral_system_prompt` at spawn time. The Hermes profile stays `default` for now.
 
@@ -792,7 +792,9 @@ flowchart LR
 | File | What it does |
 |------|--------------|
 | `agents/pm/` (shipped) and `.belayer/agents/pm/` (project-local) | PM identity: `agent.yaml`, `system-prompt.md`, `agents.md` |
-| `hermes_bridge/tools.py` | Tool schemas and handlers for `request_completion`, `approve_completion`, `reject_completion` |
+| `plugins/belayer/tools.py` | Tool schemas and handlers for every `belayer_*` tool (`request_completion`, `approve_completion`, `reject_completion`, plus `send_message` / `broadcast` / `check_mail` / `report_status` / `create_artifact` / `spawn_agent` / `escalate_to_human`) — owned by the Hermes 0.11 plugin, registered at plugin discovery time |
+| `plugins/belayer/__init__.py` | Plugin `register(ctx)` entry point. Applies kind gate (main/side) and BELAYER_TOOLS allowlist to pick which tools to register per bridge subprocess. Exposes `pop_turn_mail_ids()` for the bridge's end-of-turn ack drain. |
+| `internal/cli/hermes_plugin.go` | Extracts `plugins/` from the binary into `$HERMES_HOME/plugins/` on daemon startup; idempotently enables `belayer` in `$HERMES_HOME/config.yaml` `plugins.enabled` |
 | `hermes_bridge/__main__.py` | Reads `BELAYER_SYSTEM_PROMPT` and injects as `ephemeral_system_prompt` |
 | `internal/daemon/bridge_events.go` | Event handlers: `handleBridgeCompletionRequested`, `handleBridgeCompletionApproved`, `handleBridgeCompletionRejected` |
 | `internal/daemon/agents.go` | `spawnAgentInternal` for auto-spawning PM; `handleFinishAgent` intercepts supervisor finish to trigger PM gate; agent system-prompt resolution from `.belayer/agents/<name>/system-prompt.md` then `<BelayerRoot>/agents/<name>/system-prompt.md` |
@@ -848,11 +850,15 @@ Side agents (`kind: side`) do not receive mail tools. They receive their task in
 
 The daemon reads `belayer_tools` from the spawning agent's
 `agent.yaml`, passes the allowlist to the bridge subprocess via
-`BELAYER_TOOLS`, and the bridge's `register_belayer_tools(...,
-allowed_tools=...)` adds only baseline + allowed entries to the agent's
-tool inventory. An identity that forgets to declare a needed role-specific
-tool in `belayer_tools` will spawn without it — the failure mode is
-"tool missing from inventory," caught at the first attempted call.
+`BELAYER_TOOLS`, and the Hermes plugin's `register(ctx)` (at
+`plugins/belayer/__init__.py`) registers only the baseline + permitted
+tools during plugin discovery — which fires when the bridge's `from
+run_agent import AIAgent` triggers `discover_plugins()`. By the time
+`AIAgent.__init__` reads the tool registry via `get_tool_definitions`,
+only the allowed tools are visible. An identity that forgets to declare
+a needed role-specific tool in `belayer_tools` will spawn without it —
+the failure mode is "tool missing from inventory," caught at the first
+attempted call.
 
 ---
 

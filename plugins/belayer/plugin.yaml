@@ -1,0 +1,16 @@
+name: belayer
+version: 0.2.0
+description: Belayer session-bus tools (broadcast, messaging, spawn, artifacts, completion gate, escalation) that let agents coordinate through the Belayer daemon. The plugin reads BELAYER_* env vars set by the Go daemon at bridge spawn time and registers only the tools allowed for that agent's kind and role.
+author: Belayer
+kind: standalone
+provides_tools:
+  - belayer_send_message
+  - belayer_broadcast
+  - belayer_check_mail
+  - belayer_report_status
+  - belayer_create_artifact
+  - belayer_spawn_agent
+  - belayer_request_completion
+  - belayer_approve_completion
+  - belayer_reject_completion
+  - belayer_escalate_to_human

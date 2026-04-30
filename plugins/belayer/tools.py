@@ -1,27 +1,101 @@
-"""Belayer coordination tools for Hermes agents.
+"""Belayer coordination tool schemas and handlers.
 
-Registered tools are kind-aware, but the names are belayer-native:
-  - mains: belayer_send_message, belayer_broadcast, belayer_check_mail
-  - all agents: belayer_report_status, belayer_create_artifact
-  - role-specific tools come from the daemon-provided BELAYER_TOOLS allowlist
+Defines the full set of belayer_* tools that ship with the Belayer plugin.
+Registered by plugins/belayer/__init__.py via ctx.register_tool() at Hermes
+plugin discovery time, so they land in AIAgent.tools through the registry
+path rather than being appended manually after construction.
 
-Tool schemas follow the OpenAI function-calling format used by Hermes.
-Handlers receive kwargs matching schema property names (Hermes calling convention).
+Per-agent gating (main vs side kind, explicit allowlist from agent.yaml)
+lives in register() and determines which of the tools below get registered
+for a given bridge subprocess.
+
+Handlers close over agent_id / session_id / socket_path, all of which come
+from environment variables set by the Go daemon at spawn time. Each bridge
+subprocess is a fresh Python process, so closures are naturally scoped to
+the right session.
 """
 
+from __future__ import annotations
+
+import http.client
 import json
 import logging
+import os
+import socket
+from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlparse
 
-from hermes_bridge.http_client import unix_get, unix_post
-
-log = logging.getLogger("tools")
+logger = logging.getLogger(__name__)
 
 KIND_MAIN = "main"
 KIND_SIDE = "side"
 
 
-def _body_preview(body: str, limit: int = 200) -> str:
-    return body[:limit]
+# ---------------------------------------------------------------------------
+# HTTP helpers (Belayer daemon: unix socket, direct HTTP, or HTTP-CONNECT proxy)
+# ---------------------------------------------------------------------------
+#
+# Mirrors hermes_bridge.http_client so plugin works in clamshell/sandboxed
+# deployments where BELAYER_SOCKET is an http:// URL (optionally tunneled via
+# BELAYER_HTTP_PROXY). Kept inline (not imported from hermes_bridge) because
+# the bridge package lives in a separate runtime dir and is not guaranteed to
+# be importable when the plugin loads inside the Hermes process.
+
+
+def _is_http_url(socket_path: str) -> bool:
+    return socket_path.startswith("http://")
+
+
+def _make_conn(socket_path: str) -> http.client.HTTPConnection:
+    if _is_http_url(socket_path):
+        parsed = urlparse(socket_path)
+        proxy_url = os.environ.get("BELAYER_HTTP_PROXY", "")
+        if proxy_url:
+            proxy = urlparse(proxy_url)
+            conn = http.client.HTTPConnection(proxy.hostname, proxy.port or 3128, timeout=5.0)
+            conn.set_tunnel(parsed.hostname, parsed.port or 80)
+            return conn
+        return http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=5.0)
+    conn = http.client.HTTPConnection("localhost", timeout=5.0)
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(5.0)
+    s.connect(socket_path)
+    conn.sock = s
+    return conn
+
+
+def unix_post(socket_path: str, path: str, payload: Dict[str, Any]) -> tuple[int, str]:
+    """POST JSON to the Belayer daemon over unix socket, HTTP, or proxied HTTP."""
+    try:
+        conn = _make_conn(socket_path)
+        body = json.dumps(payload).encode("utf-8")
+        conn.request("POST", path, body=body, headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        resp_body = resp.read().decode("utf-8", errors="replace")
+        conn.close()
+        return resp.status, resp_body
+    except Exception as exc:
+        logger.debug("unix_post %s failed: %s", path, exc)
+        return 0, str(exc)
+
+
+def unix_get(socket_path: str, path: str) -> tuple[int, str]:
+    """GET from the Belayer daemon over unix socket, HTTP, or proxied HTTP."""
+    try:
+        conn = _make_conn(socket_path)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        resp_body = resp.read().decode("utf-8", errors="replace")
+        conn.close()
+        return resp.status, resp_body
+    except Exception as exc:
+        logger.debug("unix_get %s failed: %s", path, exc)
+        return 0, str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Message-parsing helpers (shared between check_mail and related paths)
+# ---------------------------------------------------------------------------
 
 
 def _json_messages(body: str) -> list[dict]:
@@ -53,16 +127,11 @@ def _format_messages(messages: list[dict]) -> str:
 
 def _filter_messages(messages: list[dict]) -> tuple[str, list[str]]:
     valid = []
-    dropped = []
     ack_ids: list[str] = []
     for msg in messages:
         msg_id = _message_field(msg, "ID", "id")
         content = _message_field(msg, "Content", "content")
         if not content.strip():
-            dropped.append({
-                "sender": _message_field(msg, "SenderID", "sender_id") or "unknown",
-                "message_id": msg_id,
-            })
             if msg_id:
                 ack_ids.append(msg_id)
             continue
@@ -73,7 +142,7 @@ def _filter_messages(messages: list[dict]) -> tuple[str, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Tool schemas
+# Tool schemas — keep in sync with docs/AGENT_ARCHITECTURE.md
 # ---------------------------------------------------------------------------
 
 SEND_MESSAGE_SCHEMA = {
@@ -131,6 +200,96 @@ SEND_MESSAGE_SCHEMA = {
             },
         },
         "required": ["to", "content"],
+    },
+}
+
+BROADCAST_SCHEMA = {
+    "name": "belayer_broadcast",
+    "description": (
+        "Broadcast a message to every main agent in the session except the sender. "
+        "Broadcasts are for party-wide announcements, not private follow-up."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "Message body to broadcast to the party.",
+            },
+        },
+        "required": ["content"],
+    },
+}
+
+CHECK_MAIL_SCHEMA = {
+    "name": "belayer_check_mail",
+    "description": (
+        "Explicitly poll your mailbox now. This is optional because the bridge "
+        "already polls pending mail before every turn, but it is available for "
+        "mid-narrative checks between tool calls."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
+REPORT_STATUS_SCHEMA = {
+    "name": "belayer_report_status",
+    "description": (
+        "Publish a status event to the session bus. Most statuses are observability-only — they "
+        "go in the event log so the operator and reflection can see what you're up to, but they "
+        "do not change daemon state. The exception is 'incomplete', which is the canonical "
+        "escalation signal: when you report 'incomplete' the daemon treats the run as needing "
+        "human review and wakes the operator.\n\n"
+        "WHEN TO USE belayer_report_status:\n"
+        "- A real state transition the operator should see in the timeline (started, hit a "
+        "wall, finished a phase)\n"
+        "- Escalating to a human after you've made progress but cannot finish — use 'incomplete' "
+        "and explain why in 'detail'\n"
+        "- Marking your own work 'done' so the supervisor and event stream reflect that you've "
+        "wrapped your assigned task\n\n"
+        "WHEN NOT TO USE (use these instead):\n"
+        "- Asking a peer for help or sending coordination instructions -> use "
+        "belayer_send_message\n"
+        "- Logging every micro-step (\"reading file\", \"thinking\") -> don't; status events "
+        "are for transitions, not narration\n"
+        "- Signalling the whole run is complete and the spec is satisfied -> that's "
+        "belayer_request_completion (supervisor only), not 'done'\n\n"
+        "IMPORTANT:\n"
+        "- 'incomplete' is the only status that triggers daemon-side action (operator "
+        "escalation). Use it when truly stuck — looping, unable to make progress, missing "
+        "credentials or context you can't recover.\n"
+        "- 'working', 'blocked', 'done', and 'needs-review' are log-only. They give telemetry "
+        "but do not move the session forward on their own.\n"
+        "- Don't spam status events; the event log is shared and noisy events drown out real "
+        "transitions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": ["working", "blocked", "done", "needs-review", "incomplete"],
+                "description": (
+                    "Your current status. 'incomplete' is the only value that triggers "
+                    "daemon-side action (it escalates to a human) — use it when you have made "
+                    "progress but cannot finish. The others ('working', 'blocked', 'done', "
+                    "'needs-review') are recorded in the event log for observability but do not "
+                    "change session state."
+                ),
+            },
+            "detail": {
+                "type": "string",
+                "description": (
+                    "What this status means right now. For 'blocked' or 'incomplete', explain "
+                    "the cause concretely (file you can't read, credential missing, conflicting "
+                    "instructions). For 'done', say what you finished. The operator reads this "
+                    "to decide whether to intervene."
+                ),
+            },
+        },
+        "required": ["status"],
     },
 }
 
@@ -192,65 +351,6 @@ CREATE_ARTIFACT_SCHEMA = {
             },
         },
         "required": ["kind", "path"],
-    },
-}
-
-REPORT_STATUS_SCHEMA = {
-    "name": "belayer_report_status",
-    "description": (
-        "Publish a status event to the session bus. Most statuses are observability-only — they "
-        "go in the event log so the operator and reflection can see what you're up to, but they "
-        "do not change daemon state. The exception is 'incomplete', which is the canonical "
-        "escalation signal: when you report 'incomplete' the daemon treats the run as needing "
-        "human review and wakes the operator.\n\n"
-        "WHEN TO USE belayer_report_status:\n"
-        "- A real state transition the operator should see in the timeline (started, hit a "
-        "wall, finished a phase)\n"
-        "- Escalating to a human after you've made progress but cannot finish — use 'incomplete' "
-        "and explain why in 'detail'\n"
-        "- Marking your own work 'done' so the supervisor and event stream reflect that you've "
-        "wrapped your assigned task\n\n"
-        "WHEN NOT TO USE (use these instead):\n"
-        "- Asking a peer for help or sending coordination instructions -> use "
-        "belayer_send_message\n"
-        "- Logging every micro-step (\"reading file\", \"thinking\") -> don't; status events "
-        "are for transitions, not narration\n"
-        "- Signalling the whole run is complete and the spec is satisfied -> that's "
-        "belayer_request_completion (supervisor only), not 'done'\n\n"
-        "IMPORTANT:\n"
-        "- 'incomplete' is the only status that triggers daemon-side action (operator "
-        "escalation). Use it when truly stuck — looping, unable to make progress, missing "
-        "credentials or context you can't recover.\n"
-        "- 'working', 'blocked', 'done', and 'needs-review' are log-only. They give telemetry "
-        "but do not move the session forward on their own.\n"
-        "- Don't spam status events; the event log is shared and noisy events drown out real "
-        "transitions."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "status": {
-                "type": "string",
-                "enum": ["working", "blocked", "done", "needs-review", "incomplete"],
-                "description": (
-                    "Your current status. 'incomplete' is the only value that triggers "
-                    "daemon-side action (it escalates to a human) — use it when you have made "
-                    "progress but cannot finish. The others ('working', 'blocked', 'done', "
-                    "'needs-review') are recorded in the event log for observability but do not "
-                    "change session state."
-                ),
-            },
-            "detail": {
-                "type": "string",
-                "description": (
-                    "What this status means right now. For 'blocked' or 'incomplete', explain "
-                    "the cause concretely (file you can't read, credential missing, conflicting "
-                    "instructions). For 'done', say what you finished. The operator reads this "
-                    "to decide whether to intervene."
-                ),
-            },
-        },
-        "required": ["status"],
     },
 }
 
@@ -424,104 +524,6 @@ REQUEST_COMPLETION_SCHEMA = {
     },
 }
 
-ESCALATE_TO_HUMAN_SCHEMA = {
-    "name": "belayer_escalate_to_human",
-    "description": (
-        "Permanently stop the run and hand it to a human operator because a blocker exists that "
-        "is outside your agency and cannot be resolved by further effort. This is a stop button, "
-        "not a communication channel. Calling this tool immediately triggers session teardown: "
-        "the session transitions to `needs_human_review`, the sandbox is torn down, all "
-        "in-flight specialist work is abandoned, and a human operator must intervene before "
-        "anything further happens. There is no resume, no follow-up turn, no way to undo.\n\n"
-        "WHEN TO USE belayer_escalate_to_human (ALL of the following must be true):\n"
-        "- You have made at least 3 attempts at the same approach and each has failed with the "
-        "same or a materially similar error — not a different error, not a different symptom, "
-        "the same root cause repeating despite your changes\n"
-        "- You have exhausted alternative strategies: different libraries, different "
-        "architectures, different tool orderings, different implementations of the same goal. "
-        "'I tried twice with the same approach' does not qualify\n"
-        "- The blocker is genuinely outside your agency: an infrastructure egress-policy denial "
-        "that blocks every install path for a required package, a spec ambiguity that requires "
-        "a human business decision to resolve, an external credential problem you cannot work "
-        "around. If more effort, a different approach, or a different specialist could plausibly "
-        "fix it, that condition is NOT met\n\n"
-        "Example scenarios where using this tool IS appropriate:\n"
-        "- After 5 attempts to install dependency X (pip install, conda, from source, vendored "
-        "wheel, alternative package), each failing with the same egress-policy denial, and no "
-        "alternative package provides the capability X offers\n"
-        "- After 4 attempts with two different specialists to implement a spec section that "
-        "contains a genuine contradiction (e.g. 'must be stateless' and 'must persist across "
-        "sessions' with no guidance on which takes priority), where any implementation choice "
-        "violates one of the constraints\n\n"
-        "WHEN NOT TO USE (these are not grounds for escalation):\n"
-        "- You are unsure how to proceed: think harder, re-read the spec, try a different "
-        "approach. Uncertainty is not a blocker. This tool is not a way to ask for guidance\n"
-        "- A specialist returned unsatisfactory work: use belayer_spawn_agent to retry with "
-        "better, more specific instructions. Poor output quality from a specialist is a "
-        "supervision problem, not an escalation trigger\n"
-        "- You hit a dependency install error on your first attempt: try an alternative install "
-        "path, read the docs, try a different library, consult the error message. One failure "
-        "is not exhaustion\n"
-        "- There are spec sections you haven't implemented yet: implement them. Incomplete work "
-        "is not a blocker; it is the work\n"
-        "- You want to ask for clarification on something ambiguous: there is no clarification "
-        "mechanism — this tool terminates the run permanently. If the ambiguity has a reasonable "
-        "default interpretation, take it and proceed; only escalate if every interpretation "
-        "violates a hard constraint\n"
-        "- You're stuck and frustrated: that is not a system blocker. Step back, retry with a "
-        "fresh approach, spawn a specialist with different instructions\n"
-        "- A single specialist failed: that is one data point. Try again with different "
-        "instructions, or try a different specialist identity\n\n"
-        "COST / CONSEQUENCES:\n"
-        "Calling this tool permanently terminates the run. The session transitions to "
-        "`needs_human_review`, the sandbox is torn down, all in-flight specialist work is "
-        "abandoned, and a human operator must intervene before anything further happens. Do not "
-        "call this tool as a way to 'check in' or ask for help — it is a stop button, not a "
-        "communication channel. The operator will see your reason, your blocker, and the "
-        "approaches you tried; they will use that context to decide whether to retry with a "
-        "different strategy, adjust the spec, or abandon the run entirely."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "reason": {
-                "type": "string",
-                "description": (
-                    "One-sentence description of why the run cannot proceed. Be direct and "
-                    "specific: name the capability or outcome that is blocked, not just the "
-                    "symptom. The operator reads this first to triage."
-                ),
-            },
-            "blocker": {
-                "type": "string",
-                "description": (
-                    "The specific obstacle that makes forward progress impossible. Describe "
-                    "the concrete constraint: the infrastructure policy that blocks every "
-                    "install path, the spec contradiction that makes any implementation "
-                    "invalid, the external credential that is absent and cannot be substituted. "
-                    "Be precise enough that the operator can act without asking follow-up "
-                    "questions."
-                ),
-            },
-            "what_tried": {
-                "type": "array",
-                "items": {"type": "string"},
-                "minItems": 3,
-                "description": (
-                    "The approaches already attempted, in order. Each entry should name the "
-                    "approach and its outcome (e.g. 'pip install cryptography — egress denied "
-                    "by policy on all mirrors', 'vendored wheel from workspace — import failed, "
-                    "wrong platform ABI'). Minimum 3 entries required — this matches the "
-                    "\"at least 3 materially similar failed attempts\" guardrail in the tool's "
-                    "WHEN TO USE block. The operator uses this list to understand what has "
-                    "already been ruled out before deciding next steps."
-                ),
-            },
-        },
-        "required": ["reason", "blocker", "what_tried"],
-    },
-}
-
 APPROVE_COMPLETION_SCHEMA = {
     "name": "belayer_approve_completion",
     "description": (
@@ -620,46 +622,113 @@ REJECT_COMPLETION_SCHEMA = {
     },
 }
 
-BROADCAST_SCHEMA = {
-    "name": "belayer_broadcast",
+ESCALATE_TO_HUMAN_SCHEMA = {
+    "name": "belayer_escalate_to_human",
     "description": (
-        "Broadcast a message to every main agent in the session except the sender. "
-        "Broadcasts are for party-wide announcements, not private follow-up."
+        "Permanently stop the run and hand it to a human operator because a blocker exists that "
+        "is outside your agency and cannot be resolved by further effort. This is a stop button, "
+        "not a communication channel. Calling this tool immediately triggers session teardown: "
+        "the session transitions to `needs_human_review`, the sandbox is torn down, all "
+        "in-flight specialist work is abandoned, and a human operator must intervene before "
+        "anything further happens. There is no resume, no follow-up turn, no way to undo.\n\n"
+        "WHEN TO USE belayer_escalate_to_human (ALL of the following must be true):\n"
+        "- You have made at least 3 attempts at the same approach and each has failed with the "
+        "same or a materially similar error — not a different error, not a different symptom, "
+        "the same root cause repeating despite your changes\n"
+        "- You have exhausted alternative strategies: different libraries, different "
+        "architectures, different tool orderings, different implementations of the same goal. "
+        "'I tried twice with the same approach' does not qualify\n"
+        "- The blocker is genuinely outside your agency: an infrastructure egress-policy denial "
+        "that blocks every install path for a required package, a spec ambiguity that requires "
+        "a human business decision to resolve, an external credential problem you cannot work "
+        "around. If more effort, a different approach, or a different specialist could plausibly "
+        "fix it, that condition is NOT met\n\n"
+        "Example scenarios where using this tool IS appropriate:\n"
+        "- After 5 attempts to install dependency X (pip install, conda, from source, vendored "
+        "wheel, alternative package), each failing with the same egress-policy denial, and no "
+        "alternative package provides the capability X offers\n"
+        "- After 4 attempts with two different specialists to implement a spec section that "
+        "contains a genuine contradiction (e.g. 'must be stateless' and 'must persist across "
+        "sessions' with no guidance on which takes priority), where any implementation choice "
+        "violates one of the constraints\n\n"
+        "WHEN NOT TO USE (these are not grounds for escalation):\n"
+        "- You are unsure how to proceed: think harder, re-read the spec, try a different "
+        "approach. Uncertainty is not a blocker. This tool is not a way to ask for guidance\n"
+        "- A specialist returned unsatisfactory work: use belayer_spawn_agent to retry with "
+        "better, more specific instructions. Poor output quality from a specialist is a "
+        "supervision problem, not an escalation trigger\n"
+        "- You hit a dependency install error on your first attempt: try an alternative install "
+        "path, read the docs, try a different library, consult the error message. One failure "
+        "is not exhaustion\n"
+        "- There are spec sections you haven't implemented yet: implement them. Incomplete work "
+        "is not a blocker; it is the work\n"
+        "- You want to ask for clarification on something ambiguous: there is no clarification "
+        "mechanism — this tool terminates the run permanently. If the ambiguity has a reasonable "
+        "default interpretation, take it and proceed; only escalate if every interpretation "
+        "violates a hard constraint\n"
+        "- You're stuck and frustrated: that is not a system blocker. Step back, retry with a "
+        "fresh approach, spawn a specialist with different instructions\n"
+        "- A single specialist failed: that is one data point. Try again with different "
+        "instructions, or try a different specialist identity\n\n"
+        "COST / CONSEQUENCES:\n"
+        "Calling this tool permanently terminates the run. The session transitions to "
+        "`needs_human_review`, the sandbox is torn down, all in-flight specialist work is "
+        "abandoned, and a human operator must intervene before anything further happens. Do not "
+        "call this tool as a way to 'check in' or ask for help — it is a stop button, not a "
+        "communication channel. The operator will see your reason, your blocker, and the "
+        "approaches you tried; they will use that context to decide whether to retry with a "
+        "different strategy, adjust the spec, or abandon the run entirely."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "content": {
+            "reason": {
                 "type": "string",
-                "description": "Message body to broadcast to the party.",
+                "description": (
+                    "One-sentence description of why the run cannot proceed. Be direct and "
+                    "specific: name the capability or outcome that is blocked, not just the "
+                    "symptom. The operator reads this first to triage."
+                ),
+            },
+            "blocker": {
+                "type": "string",
+                "description": (
+                    "The specific obstacle that makes forward progress impossible. Describe "
+                    "the concrete constraint: the infrastructure policy that blocks every "
+                    "install path, the spec contradiction that makes any implementation "
+                    "invalid, the external credential that is absent and cannot be substituted. "
+                    "Be precise enough that the operator can act without asking follow-up "
+                    "questions."
+                ),
+            },
+            "what_tried": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 3,
+                "description": (
+                    "The approaches already attempted, in order. Each entry should name the "
+                    "approach and its outcome (e.g. 'pip install cryptography — egress denied "
+                    "by policy on all mirrors', 'vendored wheel from workspace — import failed, "
+                    "wrong platform ABI'). Minimum 3 entries required — this matches the "
+                    "\"at least 3 materially similar failed attempts\" guardrail in the tool's "
+                    "WHEN TO USE block. The operator uses this list to understand what has "
+                    "already been ruled out before deciding next steps."
+                ),
             },
         },
-        "required": ["content"],
+        "required": ["reason", "blocker", "what_tried"],
     },
 }
 
-CHECK_MAIL_SCHEMA = {
-    "name": "belayer_check_mail",
-    "description": (
-        "Explicitly poll your mailbox now. This is optional because the bridge "
-        "already polls pending mail before every turn, but it is available for "
-        "mid-narrative checks between tool calls."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {},
-    },
-}
 
 # ---------------------------------------------------------------------------
-# Handler factories
+# Handler factories — each returns a closure over session context
 # ---------------------------------------------------------------------------
 
 
-def make_send_message_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_send_message."""
-
-    def handler(args: dict, **kwargs) -> str:
+def make_send_message_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         to = args.get("to", "")
         content = args.get("content", "")
         interrupt = bool(args.get("interrupt", False))
@@ -671,7 +740,7 @@ def make_send_message_handler(agent_id: str, session_id: str, socket_path: str):
         if status == 201:
             prefix = "Interrupt sent" if interrupt else "Message sent"
             return f"{prefix} to {to}."
-        log.warning("send %s to %s failed (%d): %s", "interrupt" if interrupt else "message", to, status, body[:200])
+        logger.warning("send %s to %s failed (%d): %s", "interrupt" if interrupt else "message", to, status, body[:200])
         if status in (410, 404):
             return f"[System] Agent '{to}' is not available. Choose another target or respawn it."
         return f"[System] Daemon unavailable — message to {to} not delivered. Continue local work. Error: {body[:200]}"
@@ -679,10 +748,9 @@ def make_send_message_handler(agent_id: str, session_id: str, socket_path: str):
     return handler
 
 
-def make_broadcast_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_broadcast."""
-
-    def handler(args: dict, **kwargs) -> str:
+def make_broadcast_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         content = args.get("content", "")
         status, body = unix_post(
             socket_path,
@@ -691,16 +759,48 @@ def make_broadcast_handler(agent_id: str, session_id: str, socket_path: str):
         )
         if status == 201:
             return "Broadcast sent."
-        log.warning("broadcast failed (%d): %s", status, body[:200])
+        logger.warning("belayer_broadcast failed (%d): %s", status, body[:200])
         return f"[System] Failed to broadcast message. Error: {body[:200]}"
 
     return handler
 
 
-def make_report_status_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_report_status."""
+def make_check_mail_handler(
+    agent_id: str,
+    session_id: str,
+    socket_path: str,
+    turn_mail_ids: list[str],
+) -> Callable:
+    """Return a check_mail handler that appends consumed message IDs to
+    turn_mail_ids for the bridge to ack at end-of-turn.
 
-    def handler(args: dict, **kwargs) -> str:
+    The caller is expected to pass a module-level list (see
+    plugins.belayer._TURN_MAIL_IDS) and drain it via pop_turn_mail_ids()
+    between turns. This indirection lets the plugin handler mutate state
+    that the bridge subprocess can observe after it imports the plugin
+    module by name.
+    """
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        status, body = unix_get(
+            socket_path,
+            f"/sessions/{session_id}/messages?for={agent_id}&pending=true",
+        )
+        if status != 200:
+            logger.warning("check_mail failed (%d): %s", status, body[:200])
+            return f"[System] Failed to poll mail. Error: {body[:200]}"
+        messages = _json_messages(body)
+        if not messages:
+            return "[System] No pending mail."
+        formatted, ack_ids = _filter_messages(messages)
+        turn_mail_ids.extend(ack_ids)
+        return formatted or "[System] No pending mail."
+
+    return handler
+
+
+def make_report_status_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         status = args.get("status", "")
         detail = args.get("detail", "")
         event_data = json.dumps({"agent": agent_id, "status": status, "detail": detail})
@@ -711,43 +811,15 @@ def make_report_status_handler(agent_id: str, session_id: str, socket_path: str)
         )
         if status_code in (200, 201):
             return f"Status reported: {status}."
-        log.warning("report_status %s failed (%d): %s", status, status_code, body[:200])
+        logger.warning("report_status %s failed (%d): %s", status, status_code, body[:200])
         return f"[System] Daemon unavailable — status not broadcast. Continue local work. Error: {body[:200]}"
 
     return handler
 
 
-def make_check_mail_handler(
-    agent_id: str,
-    session_id: str,
-    socket_path: str,
-    turn_mail_ids: list[str] | None = None,
-):
-    """Return a handler for belayer_check_mail."""
-
-    def handler(args: dict, **kwargs) -> str:
-        status, body = unix_get(
-            socket_path,
-            f"/sessions/{session_id}/messages?for={agent_id}&pending=true",
-        )
-        if status != 200:
-            log.warning("check_mail failed (%d): %s", status, body[:200])
-            return f"[System] Failed to poll mail. Error: {body[:200]}"
-        messages = _json_messages(body)
-        if not messages:
-            return "[System] No pending mail."
-        formatted, ack_ids = _filter_messages(messages)
-        if turn_mail_ids is not None:
-            turn_mail_ids.extend(ack_ids)
-        return formatted or "[System] No pending mail."
-
-    return handler
-
-
-def make_create_artifact_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_create_artifact."""
-
-    def handler(args: dict, **kwargs) -> str:
+def make_create_artifact_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         kind = args.get("kind", "")
         path = args.get("path", "")
         summary = args.get("summary", "")
@@ -758,7 +830,7 @@ def make_create_artifact_handler(agent_id: str, session_id: str, socket_path: st
         )
         if status == 201:
             return f"Artifact registered: {kind} at {path}."
-        log.warning("create_artifact %s@%s failed (%d): %s", kind, path, status, body[:200])
+        logger.warning("create_artifact %s@%s failed (%d): %s", kind, path, status, body[:200])
         return (
             f"[System] Daemon unavailable — artifact not registered centrally. "
             f"Artifact saved locally at {path}. Error: {body[:200]}"
@@ -767,12 +839,11 @@ def make_create_artifact_handler(agent_id: str, session_id: str, socket_path: st
     return handler
 
 
-def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_spawn_agent."""
-
-    def handler(args: dict, **kwargs) -> str:
+def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         name = args.get("name", "")
-        identity = args.get("identity", "") or name  # default to name for single-instance roles
+        identity = args.get("identity", "") or name
         profile = args.get("profile", "")
         message = args.get("message", "")
         branch = args.get("branch", "")
@@ -780,7 +851,7 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
         payload: dict = {
             "name": name,
             "identity": identity,
-            "role": identity,  # role tracks the identity template by default
+            "role": identity,
             "profile": profile,
             "message": message,
         }
@@ -798,16 +869,15 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str):
             branch_extra = f" on branch '{branch}'" if branch else ""
             id_suffix = f" (identity '{identity}')" if identity != name else ""
             return f"Agent '{name}'{id_suffix} spawned with profile '{profile}'{repo_extra}{branch_extra}."
-        log.warning("spawn_agent %s failed (%d): %s", name, status, body[:200])
+        logger.warning("spawn_agent %s failed (%d): %s", name, status, body[:200])
         return f"[System] Failed to spawn agent '{name}'. Error: {body[:200]}"
 
     return handler
 
 
-def make_request_completion_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_request_completion."""
-
-    def handler(args: dict, **kwargs) -> str:
+def make_request_completion_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         summary = args.get("summary", "")
         spec_artifact = args.get("spec_artifact", "")
         event_data = json.dumps({
@@ -826,21 +896,17 @@ def make_request_completion_handler(agent_id: str, session_id: str, socket_path:
                 "spawned to verify the spec against the implementation. "
                 "Wait for the PM's verdict before taking further action."
             )
-        log.warning("request_completion failed (%d): %s", status, body[:200])
+        logger.warning("request_completion failed (%d): %s", status, body[:200])
         return f"[System] Failed to request completion review. Error: {body[:200]}"
 
     return handler
 
 
-def make_approve_completion_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_approve_completion."""
-
-    def handler(args: dict, **kwargs) -> str:
+def make_approve_completion_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         report = args.get("verification_report", "")
-        event_data = json.dumps({
-            "agent": agent_id,
-            "verification_report": report,
-        })
+        event_data = json.dumps({"agent": agent_id, "verification_report": report})
         status, body = unix_post(
             socket_path,
             f"/sessions/{session_id}/events",
@@ -848,16 +914,15 @@ def make_approve_completion_handler(agent_id: str, session_id: str, socket_path:
         )
         if status in (200, 201):
             return "Run approved. Session marked as complete."
-        log.warning("approve_completion failed (%d): %s", status, body[:200])
+        logger.warning("approve_completion failed (%d): %s", status, body[:200])
         return f"[System] Failed to approve completion. Error: {body[:200]}"
 
     return handler
 
 
-def make_reject_completion_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_reject_completion."""
-
-    def handler(args: dict, **kwargs) -> str:
+def make_reject_completion_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         report = args.get("verification_report", "")
         gap_list = args.get("gap_list", "")
         event_data = json.dumps({
@@ -872,16 +937,15 @@ def make_reject_completion_handler(agent_id: str, session_id: str, socket_path: 
         )
         if status in (200, 201):
             return "Completion rejected. Gap list sent to supervisor for remediation."
-        log.warning("reject_completion failed (%d): %s", status, body[:200])
+        logger.warning("reject_completion failed (%d): %s", status, body[:200])
         return f"[System] Failed to reject completion. Error: {body[:200]}"
 
     return handler
 
 
-def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: str):
-    """Return a handler for belayer_escalate_to_human."""
-
-    def handler(args: dict, **kwargs) -> str:
+def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
         reason = args.get("reason", "")
         blocker = args.get("blocker", "")
         what_tried = args.get("what_tried", [])
@@ -895,10 +959,6 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
         if not all(isinstance(item, str) and item.strip() for item in what_tried):
             return "[System] Each entry in 'what_tried' must be a non-empty string."
 
-        # Keep the single-line detail short but informative — the daemon
-        # surfaces it verbatim in the agent_escalated log entry, which is
-        # what an on-call operator sees first. Full `blocker` and the
-        # `what_tried` list are preserved as structured fields alongside.
         first_tried = what_tried[0].strip()
         last_tried = what_tried[-1].strip()
         detail = (
@@ -908,8 +968,6 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
         )
         event_data = json.dumps({
             "agent": agent_id,
-            # Mirror belayer_report_status' shape so both escalation paths
-            # look identical to the daemon's processAgentStatusEvent handler.
             "status": "incomplete",
             "detail": detail,
             "escalated_by_tool": True,
@@ -923,42 +981,32 @@ def make_escalate_to_human_handler(agent_id: str, session_id: str, socket_path: 
             {"type": "agent_status:incomplete", "data": event_data},
         )
         if status_code not in (200, 201):
-            log.warning("escalate_to_human failed (%d): %s", status_code, body[:200])
+            logger.warning("escalate_to_human failed (%d): %s", status_code, body[:200])
             return f"[System] Failed to post escalation event. Error: {body[:200]}"
 
-        # The tool is documented as a "stop button" — don't rely on the
-        # model to stop generating or on the daemon to race a sandbox
-        # teardown against the next tool call. Post bridge:finished for
-        # observability and raise SystemExit so the bridge process exits
-        # cleanly on this tool call. Best-effort on bridge:finished: if
-        # the daemon is unreachable we still want to exit, so we log and
-        # proceed rather than bail back to the agent.
-        finished_data = json.dumps({
-            "agent": agent_id,
-            "reason": "escalate_to_human",
-        })
+        finished_data = json.dumps({"agent": agent_id, "reason": "escalate_to_human"})
         finished_status, finished_body = unix_post(
             socket_path,
             f"/sessions/{session_id}/events",
             {"type": "bridge:finished", "data": finished_data},
         )
         if finished_status not in (200, 201):
-            log.warning(
+            logger.warning(
                 "escalate_to_human posted, but bridge:finished failed (%d): %s",
                 finished_status,
                 finished_body[:200],
             )
-        log.info("escalate_to_human: exiting bridge cleanly after event post")
+        logger.info("escalate_to_human: exiting bridge cleanly after event post")
         raise SystemExit(0)
 
     return handler
 
 
 # ---------------------------------------------------------------------------
-# Registration
+# Registry — tool name → (schema, handler factory)
 # ---------------------------------------------------------------------------
 
-_TOOL_SPECS = {
+TOOL_SPECS: Dict[str, tuple] = {
     "belayer_send_message": (SEND_MESSAGE_SCHEMA, make_send_message_handler),
     "belayer_broadcast": (BROADCAST_SCHEMA, make_broadcast_handler),
     "belayer_check_mail": (CHECK_MAIL_SCHEMA, make_check_mail_handler),
@@ -971,87 +1019,8 @@ _TOOL_SPECS = {
     "belayer_escalate_to_human": (ESCALATE_TO_HUMAN_SCHEMA, make_escalate_to_human_handler),
 }
 
+# Tools available to every agent regardless of kind or allowlist.
+BASELINE_TOOLS = ("belayer_report_status", "belayer_create_artifact")
 
-def _register(agent, tool_name: str, agent_id: str, session_id: str, socket_path: str, turn_mail_ids: list[str] | None = None) -> None:
-    try:
-        from tools.registry import registry  # type: ignore[import]
-    except ImportError as exc:
-        raise RuntimeError(
-            "Hermes 'tools' package not found. Ensure hermes-agent is installed."
-        ) from exc
-
-    schema, factory = _TOOL_SPECS[tool_name]
-    if tool_name == "belayer_check_mail":
-        handler = factory(agent_id, session_id, socket_path, turn_mail_ids=turn_mail_ids)
-    else:
-        handler = factory(agent_id, session_id, socket_path)
-    registry.register(
-        name=schema["name"],
-        toolset="belayer",
-        schema=schema,
-        handler=handler,
-    )
-    agent.tools.append(
-        {
-            "type": "function",
-            "function": {
-                "name": schema["name"],
-                "description": schema["description"],
-                "parameters": schema["parameters"],
-            },
-        }
-    )
-    agent.valid_tool_names.add(schema["name"])
-
-
-def register_belayer_tools(
-    agent,
-    agent_id: str,
-    session_id: str,
-    socket_path: str,
-    allowed_tools: list[str] | None = None,
-    *,
-    agent_kind: str = KIND_MAIN,
-    turn_mail_ids: list[str] | None = None,
-) -> None:
-    """Register Belayer coordination tools on an AIAgent instance.
-
-    Kind determines the baseline mail surface; allowed_tools grants
-    role-specific capabilities like spawn_agent or PM approval tools.
-    """
-    try:
-        allowed_set = {str(tool) for tool in (allowed_tools or [])}
-        allowed_preview = sorted(allowed_set)
-    except TypeError:
-        allowed_set = set()
-        allowed_preview = []
-
-    kind = (agent_kind or KIND_MAIN).strip().lower() or KIND_MAIN
-    if kind not in (KIND_MAIN, KIND_SIDE):
-        kind = KIND_MAIN
-
-    baseline_tools = ["belayer_report_status", "belayer_create_artifact"]
-    if kind == KIND_MAIN:
-        baseline_tools.extend(["belayer_send_message", "belayer_broadcast", "belayer_check_mail"])
-
-    registered = []
-    seen = set()
-    for tool_name in baseline_tools + allowed_preview:
-        if tool_name in seen:
-            continue
-        seen.add(tool_name)
-        if tool_name not in _TOOL_SPECS:
-            continue
-        if tool_name in {"belayer_check_mail", "belayer_broadcast", "belayer_send_message"} and kind != KIND_MAIN:
-            continue
-        _register(agent, tool_name, agent_id, session_id, socket_path, turn_mail_ids=turn_mail_ids)
-        registered.append(tool_name)
-
-    log.info(
-        "Registered Belayer tools for agent=%s session=%s kind=%s tools=%s allowed=%s",
-        agent_id,
-        session_id,
-        kind,
-        registered,
-        allowed_preview,
-    )
+# Mailbox-surface tools — main agents only (side agents have no mailbox).
+MAIL_TOOLS = ("belayer_send_message", "belayer_broadcast", "belayer_check_mail")

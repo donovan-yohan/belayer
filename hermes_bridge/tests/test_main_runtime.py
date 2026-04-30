@@ -65,7 +65,11 @@ def _patch_bridge_runtime(monkeypatch, module, result, pending_messages=None, cr
 
     monkeypatch.setattr(module, "fetch_pending_messages", _fetch_pending_messages)
     monkeypatch.setattr(module, "make_callbacks", lambda *args, **kwargs: {})
-    monkeypatch.setattr(module, "register_belayer_tools", lambda *args, **kwargs: None)
+    # register_belayer_tools was removed in phase 2 — tools are now owned
+    # by the plugins.belayer package which hermes discovers at AIAgent
+    # import time. The bridge's fallback `from hermes_plugins import
+    # belayer as belayer_plugin` is tolerated to fail in tests (bridge
+    # logs a warning and falls back to an empty turn_mail_ids list).
     monkeypatch.setattr(module, "start_heartbeat_thread", lambda *args, **kwargs: types.SimpleNamespace(set=lambda: None))
     monkeypatch.setattr(module, "StdinReader", DummyReader)
 
@@ -304,6 +308,7 @@ def test_non_positive_max_turns_is_ignored(monkeypatch):
 def test_main_honors_enabled_toolsets_env(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "file, code_execution")
 
     created_agents = []
@@ -332,6 +337,7 @@ def test_main_honors_enabled_toolsets_env(monkeypatch):
 def test_main_ignores_empty_enabled_toolsets_env(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "")
 
     created_agents = []
@@ -389,6 +395,7 @@ def test_main_treats_unset_enabled_toolsets_env_as_unconfigured(monkeypatch):
 def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.setenv("BELAYER_ENABLED_TOOLSETS", "__all__")
 
     created_agents = []
@@ -417,6 +424,7 @@ def test_main_ignores_all_sentinel_enabled_toolsets_env(monkeypatch):
 def test_main_passthrough_provider_envs(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.setenv("BELAYER_API_KEY", "sk-test")
     monkeypatch.setenv("BELAYER_BASE_URL", "https://api.test")
     monkeypatch.setenv("BELAYER_PROVIDER", "test-provider")
@@ -449,6 +457,7 @@ def test_main_passthrough_provider_envs(monkeypatch):
 def test_main_ignores_unset_provider_envs(monkeypatch):
     module = _load_main_module(monkeypatch)
     _set_required_env(monkeypatch, max_turns="5")
+    monkeypatch.setenv("BELAYER_EPHEMERAL", "true")
     monkeypatch.delenv("BELAYER_API_KEY", raising=False)
     monkeypatch.delenv("BELAYER_BASE_URL", raising=False)
     monkeypatch.delenv("BELAYER_PROVIDER", raising=False)
@@ -476,3 +485,40 @@ def test_main_ignores_unset_provider_envs(monkeypatch):
     assert "api_key" not in created_agents[0].kwargs
     assert "base_url" not in created_agents[0].kwargs
     assert "provider" not in created_agents[0].kwargs
+
+
+def test_active_peers_uses_lowercase_json_keys(monkeypatch):
+    """Regression: roster JSON keys are lowercase (`name`, `status`).
+
+    Reading them as `Name`/`Status` silently classifies every peer as
+    terminal, which made the supervisor's idle countdown tick forward
+    even while specialists were actively running tools — producing a
+    false `agent_status:incomplete` after idle_timeout despite live
+    work.
+    """
+    module = _load_main_module(monkeypatch)
+    roster = [
+        {"name": "supervisor", "status": "running"},
+        {"name": "extend-api-dev", "status": "running"},
+        {"name": "research", "status": "starting"},
+        {"name": "qa", "status": "exited"},
+        {"name": "old-pm", "status": "idle"},
+    ]
+
+    rows = module.active_peers(roster, "supervisor")
+    names = sorted(r["name"] for r in rows)
+
+    assert names == ["extend-api-dev", "research"], (
+        "supervisor should be excluded; only starting/running peers count "
+        f"as active, got {names}"
+    )
+
+
+def test_active_peers_ignores_capitalised_keys(monkeypatch):
+    """If something feeds capitalised keys, treat them as unknown (not active)."""
+    module = _load_main_module(monkeypatch)
+    roster = [
+        {"Name": "extend-api-dev", "Status": "running"},
+    ]
+
+    assert module.active_peers(roster, "supervisor") == []

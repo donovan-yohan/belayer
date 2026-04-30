@@ -578,107 +578,21 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		ephemeral = false
 	}
 
-	// Load system prompt from agent identity dir if it exists. Project-local
-	// overrides under <workdir>/.belayer/agents/<identity>/ win over the shipped
-	// defaults at <BelayerRoot>/agents/<identity>/. Identity defaults to Name
-	// when not explicitly set — see agentSpawnRequest.identityKey for details.
+	// Load system prompt + agent.yaml settings from the agent's identity dir.
+	// Project-local <workdir>/.belayer/agents/<identity>/ overrides shipped
+	// <BelayerRoot>/agents/<identity>/. Identity defaults to Name when unset.
 	identity := req.identityKey()
-	var systemPrompt string
-	for _, candidate := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "system-prompt.md") {
-		if data, err := os.ReadFile(candidate); err == nil {
-			systemPrompt = string(data)
-			log.Printf("Loaded system prompt from %s for agent %s (identity=%s)", candidate, req.Name, identity)
-			break
-		}
+	loaded := loadAgentIdentity(workdir, d.config.BelayerRoot, identity, req.Model)
+	systemPrompt := loaded.SystemPrompt
+	belayerTools := loaded.BelayerTools
+	enabledToolsets := loaded.EnabledToolsets
+	agentModel := loaded.Model
+	agentMaxTurns := loaded.MaxTurns
+	if loaded.SystemPromptPath != "" {
+		log.Printf("Loaded system prompt from %s for agent %s (identity=%s)", loaded.SystemPromptPath, req.Name, identity)
 	}
-
-	// Load belayer_tools, enabled_toolsets, and model from <agent-dir>/agent.yaml
-	// if it exists. Same project-local-over-shipped resolution as the system prompt.
-	var belayerTools []string
-	var enabledToolsets []string
-	agentModel := req.Model // explicit spawn request takes precedence
-	agentMaxTurns := 0
-	for _, yamlPath := range agentIdentityPaths(workdir, d.config.BelayerRoot, identity, "agent.yaml") {
-		data, err := os.ReadFile(yamlPath)
-		if err != nil {
-			continue
-		}
-		// Simple line-based parse — avoid YAML library dependency.
-		// Looks for "belayer_tools:" then collects "  - tool_name" lines.
-		// Also reads "enabled_toolsets:" with the same list syntax.
-		// Also reads "model: <value>" for the default model.
-		inTools := false
-		inToolsets := false
-		for _, line := range splitLines(string(data)) {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "model:") && agentModel == "" {
-				agentModel = strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
-				inTools = false
-				inToolsets = false
-				continue
-			}
-			if strings.HasPrefix(trimmed, "max_turns:") && agentMaxTurns == 0 {
-				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "max_turns:"))
-				if n, convErr := strconv.Atoi(raw); convErr == nil && n > 0 {
-					agentMaxTurns = n
-				}
-				inTools = false
-				inToolsets = false
-				continue
-			}
-			if strings.HasPrefix(trimmed, "belayer_tools:") {
-				inTools = false
-				inToolsets = false
-				belayerTools = []string{} // mark as explicitly configured
-				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "belayer_tools:"))
-				switch {
-				case raw == "":
-					inTools = true
-				case raw == "[]":
-					// explicit empty list
-				default:
-					if items := parseInlineYAMLList(raw); items != nil {
-						belayerTools = append(belayerTools, items...)
-					}
-				}
-				continue
-			}
-			if strings.HasPrefix(trimmed, "enabled_toolsets:") {
-				inToolsets = false
-				inTools = false
-				enabledToolsets = []string{} // mark as explicitly configured
-				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "enabled_toolsets:"))
-				switch {
-				case raw == "":
-					inToolsets = true
-				case raw == "[]":
-					// explicit empty list
-				default:
-					if items := parseInlineYAMLList(raw); items != nil {
-						enabledToolsets = append(enabledToolsets, items...)
-					}
-				}
-				continue
-			}
-			if inTools {
-				if strings.HasPrefix(trimmed, "- ") {
-					tool := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
-					belayerTools = append(belayerTools, tool)
-				} else {
-					inTools = false
-				}
-			}
-			if inToolsets {
-				if strings.HasPrefix(trimmed, "- ") {
-					ts := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
-					enabledToolsets = append(enabledToolsets, ts)
-				} else {
-					inToolsets = false
-				}
-			}
-		}
-		log.Printf("Loaded agent.yaml from %s for agent %s (identity=%s): model=%q tools=%v toolsets=%v", yamlPath, req.Name, identity, agentModel, belayerTools, enabledToolsets)
-		break
+	if loaded.YAMLPath != "" {
+		log.Printf("Loaded agent.yaml from %s for agent %s (identity=%s): model=%q tools=%v toolsets=%v", loaded.YAMLPath, req.Name, identity, agentModel, belayerTools, enabledToolsets)
 	}
 
 	// Set up stdin pipe for daemon→agent communication.
@@ -1406,6 +1320,124 @@ func worktreesDisabled(workdir string) bool {
 	return false
 }
 
+// agentIdentity captures everything the daemon reads from an agent's
+// identity directory (.belayer/agents/<identity>/). Populated by
+// loadAgentIdentity and consumed when building bridge.Config.
+//
+// An empty SystemPromptPath / YAMLPath means the respective file was not
+// found — useful for tests and for deciding whether to log the "loaded X"
+// breadcrumbs.
+type agentIdentity struct {
+	SystemPrompt     string
+	SystemPromptPath string
+	BelayerTools     []string
+	EnabledToolsets  []string
+	Model            string
+	MaxTurns         int
+	YAMLPath         string
+}
+
+// loadAgentIdentity resolves an agent's identity files (system-prompt.md and
+// agent.yaml) under workdir (project-local override) first and then
+// belayerRoot (shipped default), and returns the merged settings.
+//
+// modelOverride, when non-empty, takes precedence over any model: line in
+// agent.yaml (an explicit spawn request always wins).
+//
+// This function is the single source of truth for "how the daemon reads an
+// agent identity" — used both by bridgeLaunchAgent for real spawns and by
+// tests that want to assert what reaches the bridge subprocess.
+func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) agentIdentity {
+	out := agentIdentity{Model: modelOverride}
+
+	for _, candidate := range agentIdentityPaths(workdir, belayerRoot, identity, "system-prompt.md") {
+		if data, err := os.ReadFile(candidate); err == nil {
+			out.SystemPrompt = string(data)
+			out.SystemPromptPath = candidate
+			break
+		}
+	}
+
+	for _, yamlPath := range agentIdentityPaths(workdir, belayerRoot, identity, "agent.yaml") {
+		data, err := os.ReadFile(yamlPath)
+		if err != nil {
+			continue
+		}
+		out.YAMLPath = yamlPath
+		inTools := false
+		inToolsets := false
+		for _, line := range splitLines(string(data)) {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "model:") && out.Model == "" {
+				out.Model = strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
+				inTools = false
+				inToolsets = false
+				continue
+			}
+			if strings.HasPrefix(trimmed, "max_turns:") && out.MaxTurns == 0 {
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "max_turns:"))
+				if n, convErr := strconv.Atoi(raw); convErr == nil && n > 0 {
+					out.MaxTurns = n
+				}
+				inTools = false
+				inToolsets = false
+				continue
+			}
+			if strings.HasPrefix(trimmed, "belayer_tools:") {
+				inTools = false
+				inToolsets = false
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "belayer_tools:"))
+				switch raw {
+				case "":
+					out.BelayerTools = []string{} // mark explicitly configured
+					inTools = true
+				case "[]":
+					out.BelayerTools = []string{} // explicit empty list
+				default:
+					if items := parseInlineYAMLList(raw); items != nil {
+						out.BelayerTools = items
+					}
+				}
+				continue
+			}
+			if strings.HasPrefix(trimmed, "enabled_toolsets:") {
+				inToolsets = false
+				inTools = false
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "enabled_toolsets:"))
+				switch raw {
+				case "":
+					out.EnabledToolsets = []string{} // mark explicitly configured
+					inToolsets = true
+				case "[]":
+					out.EnabledToolsets = []string{} // explicit empty list
+				default:
+					if items := parseInlineYAMLList(raw); items != nil {
+						out.EnabledToolsets = items
+					}
+				}
+				continue
+			}
+			if inTools {
+				if strings.HasPrefix(trimmed, "- ") {
+					out.BelayerTools = append(out.BelayerTools, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+				} else {
+					inTools = false
+				}
+			}
+			if inToolsets {
+				if strings.HasPrefix(trimmed, "- ") {
+					out.EnabledToolsets = append(out.EnabledToolsets, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
+				} else {
+					inToolsets = false
+				}
+			}
+		}
+		break
+	}
+
+	return out
+}
+
 // agentIdentityPaths returns the ordered list of candidate paths to look up
 // for an agent identity file, in priority order:
 //
@@ -1449,7 +1481,6 @@ func agentIdentityPaths(workdir, belayerRoot, identity, file string) []string {
 	}
 	return paths
 }
-
 
 func splitLines(s string) []string {
 	var lines []string

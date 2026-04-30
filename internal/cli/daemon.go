@@ -83,6 +83,39 @@ func newDaemonCmd() *cobra.Command {
 			cfg.RuntimeDir = runtimeDir
 			fmt.Fprintf(cmd.OutOrStdout(), "belayer runtime dir: %s\n", runtimeDir)
 
+			// Install the Belayer Hermes plugin into $HERMES_HOME/plugins/
+			// and ensure it is enabled in config.yaml. Idempotent; edits
+			// config only when the plugin is missing from the list.
+			//
+			// Failures here degrade to a warning rather than aborting startup:
+			// only `belayer_*` tools (which agents need to coordinate) depend
+			// on the plugin being present in $HERMES_HOME, and a read-only or
+			// otherwise unwritable HERMES_HOME would otherwise wedge the
+			// entire daemon. The agents party will fail loudly on their own
+			// if the plugin truly isn't loadable. Set BELAYER_REQUIRE_HERMES_PLUGIN=1
+			// to opt back into hard-fail behaviour (e.g. for CI sanity checks).
+			requirePlugin := os.Getenv("BELAYER_REQUIRE_HERMES_PLUGIN") == "1"
+			if hermesHome, hhErr := resolveHermesHome(); hhErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warn: could not resolve HERMES_HOME for plugin install: %v\n", hhErr)
+				if requirePlugin {
+					return fmt.Errorf("resolve hermes home: %w", hhErr)
+				}
+			} else {
+				if err := extractPluginsToHermesHome(hermesHome); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warn: extract belayer hermes plugin into %s failed: %v\n", hermesHome, err)
+					if requirePlugin {
+						return fmt.Errorf("extract belayer hermes plugin: %w", err)
+					}
+				} else if changed, err := ensureHermesPluginEnabled(hermesHome, "belayer"); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warn: enable belayer hermes plugin in %s/config.yaml failed: %v\n", hermesHome, err)
+					if requirePlugin {
+						return fmt.Errorf("enable belayer hermes plugin: %w", err)
+					}
+				} else if changed {
+					fmt.Fprintf(cmd.OutOrStdout(), "enabled 'belayer' plugin in %s/config.yaml\n", hermesHome)
+				}
+			}
+
 			if tcpAddr != "" {
 				cfg.TCPAddr = tcpAddr
 			}

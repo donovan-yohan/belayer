@@ -35,7 +35,7 @@ Every `agents.md` follows:
 # <Agent Name> Operating Instructions
 
 ## Tools
-<real, never fictional — must match agent.yaml + hermes_bridge/tools.py>
+<real, never fictional — must match agent.yaml + plugins/belayer/tools.py>
 
 ## Workflow
 <numbered concrete steps using actual CLI commands>
@@ -68,7 +68,7 @@ When applying the skill to an existing or new agent:
 
 - [ ] system-prompt.md has all five skeleton sections in order
 - [ ] agents.md has all three skeleton sections in order
-- [ ] Tools listed in agents.md match `agent.yaml#belayer_tools` plus baseline tools from `hermes_bridge/tools.py`
+- [ ] Tools listed in agents.md match `agent.yaml#belayer_tools` plus baseline tools from `plugins/belayer/tools.py`
 - [ ] Every CLI command in either file exists in `belayer --help`
 - [ ] No CAPS intensifiers ("MUST", "CRITICAL", "NEVER" in caps)
 - [ ] No pleasantries / preamble

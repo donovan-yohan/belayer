@@ -38,7 +38,6 @@ except ImportError:
     )
     sys.exit(1)
 
-from hermes_bridge.tools import register_belayer_tools
 from hermes_bridge.callbacks import make_callbacks, make_transcript_writer, post_event, start_heartbeat_thread, wire_callbacks
 from hermes_bridge.stdin_reader import StdinReader
 from hermes_bridge.http_client import unix_get
@@ -100,6 +99,31 @@ def fetch_roster(socket_path: str, session_id: str) -> list[dict] | None:
     if not isinstance(data, list):
         return None
     return data
+
+
+# Lifecycle values the daemon's roster JSON emits while a peer is not yet
+# terminal. See lifecycleFromRunStatus in internal/daemon/daemon.go: it folds
+# run.Status="pending_verification" down to "running", so the wire-level set
+# is just {starting, running}. Other lifecycle values (stopping, idle,
+# exited) mean the peer is winding down or done — supervisor should let the
+# idle countdown advance.
+_ACTIVE_PEER_LIFECYCLES = ("starting", "running")
+
+
+def active_peers(roster: list[dict], self_id: str) -> list[dict]:
+    """Return roster rows for peers (not self) still in a non-terminal lifecycle.
+
+    The daemon serialises agentRunResponse with lowercase JSON keys
+    (`name`, `status`) — see internal/daemon/agents.go. Reading
+    `r.get("Status")` would always be None and silently mark every peer
+    as terminal, which is exactly the false idle-timeout bug this
+    helper guards against.
+    """
+    return [
+        r for r in roster
+        if r.get("name") != self_id
+        and r.get("status") in _ACTIVE_PEER_LIFECYCLES
+    ]
 
 
 def _msg_field(msg: dict, *keys: str) -> str:
@@ -440,24 +464,40 @@ def main() -> None:
     # short-circuit this loop on the daemon side (see belayer status output
     # after bridge exits without completion).
 
-    # --- Register Belayer tools --------------------------------------------
-    allowed_tools_env = os.environ.get("BELAYER_TOOLS", "")
-    allowed_tools = [t.strip() for t in allowed_tools_env.split(",") if t.strip()] if allowed_tools_env else None
+    # --- Belayer tools: owned by the Hermes plugin -----------------------
+    # Tools are registered into the global tool registry by the belayer
+    # plugin's register(ctx), which Hermes fires during discover_plugins()
+    # — triggered as a side effect of `from run_agent import AIAgent`
+    # earlier in this file. By the time AIAgent.__init__ ran above, the
+    # registry was populated and the tools are already in agent.tools via
+    # get_tool_definitions(). See plugins/belayer/__init__.py.
+    #
+    # We still need access to the plugin's per-turn mail-id buffer because
+    # the check_mail handler appends to it and the end-of-turn cleanup
+    # below acks those ids back to the daemon. The plugin namespace
+    # (hermes_plugins.belayer) is populated in sys.modules by the loader.
+    #
+    # Use the plugin's public pop_turn_mail_ids() drain helper rather than
+    # touching its private buffer, so the bridge↔plugin contract stays at the
+    # documented surface and the plugin is free to change its internal
+    # buffering without breaking the bridge.
     turn_mail_ids: list[str] = []
     try:
-        register_belayer_tools(
-            agent,
-            agent_id,
-            session_id,
-            socket_path,
-            allowed_tools=allowed_tools,
-            agent_kind=agent_kind,
-            turn_mail_ids=turn_mail_ids,
-        )
+        from hermes_plugins import belayer as belayer_plugin  # type: ignore[import]
+        pop_plugin_mail_ids = belayer_plugin.pop_turn_mail_ids
+    except (ImportError, AttributeError) as exc:
+        log.warning("Belayer plugin not loaded (continuing without its tool surface): %s", exc)
+
+        def pop_plugin_mail_ids() -> list[str]:
+            return []
+
     except Exception as exc:
-        log.error("Failed to register Belayer tools: %s", exc)
-        post_event(socket_path, session_id, agent_id, "bridge:failed", {"error": str(exc)})
-        sys.exit(1)
+        if parse_optional_env_bool("BELAYER_REQUIRE_HERMES_PLUGIN"):
+            raise
+        log.exception("Belayer plugin failed to load unexpectedly; continuing without its tool surface")
+
+        def pop_plugin_mail_ids() -> list[str]:
+            return []
 
     # --- Open transcript writer (verbose sessions only) --------------------
     # Must be created before make_callbacks so the writer can be passed into
@@ -578,6 +618,9 @@ def main() -> None:
         if turn_usage:
             post_event(socket_path, session_id, agent_id, "bridge:turn_usage", turn_usage)
 
+        # Drain anything check_mail consumed during the just-finished turn,
+        # then ack everything (preface-poll ids extended above + plugin drain).
+        turn_mail_ids.extend(pop_plugin_mail_ids())
         if turn_mail_ids:
             post_message_ack(socket_path, session_id, agent_id, turn_mail_ids)
             turn_mail_ids.clear()
@@ -672,6 +715,8 @@ def main() -> None:
             waited = 0
             absolute_waited = 0
             was_waiting_on_peers = False
+            previous_active_peer_count = 0
+            active_peer_rows = None
             while waited < idle_timeout and absolute_waited < absolute_timeout:
                 time.sleep(idle_poll_interval)
                 absolute_waited += idle_poll_interval
@@ -732,8 +777,8 @@ def main() -> None:
                 # Identity note: BELAYER_AGENT_ID is the agent *name*
                 # (e.g. "supervisor"), not a UUID — the daemon sets
                 # AgentID = req.Name when spawning the bridge (see
-                # internal/daemon/agents.go). The roster JSON exposes both
-                # `ID` (UUID) and `Name`; compare against Name.
+                # internal/daemon/agents.go). Roster JSON keys are
+                # lowercase (`name`, `status`); see active_peers() above.
                 roster = fetch_roster(socket_path, session_id)
                 if roster is None:
                     # Daemon unreachable or malformed response. We can't
@@ -742,24 +787,14 @@ def main() -> None:
                     # ceiling continue to tick so we don't wait forever on
                     # a truly dead daemon.
                     log.debug("Roster fetch failed; holding idle counter steady")
-                    active_peers = []  # unknown, treated as none-known for logging
+                    active_peer_rows = None
                     waited = 0
                 else:
-                    peers = [r for r in roster if r.get("Name") != agent_id]
-                    # Active = anything the daemon considers not-yet-terminal.
-                    # The daemon emits "starting" during sandbox boot / hermes
-                    # warm-up, then flips to "running" once the bridge reports
-                    # in, and "pending_verification" while the PM adjudicates;
-                    # all three count as active so we don't idle-timeout a
-                    # supervisor while a peer is booting, executing, or awaiting
-                    # verification.
-                    active_peers = [
-                        r for r in peers
-                        if r.get("Status") in ("starting", "running", "pending_verification")
-                    ]
-                    peers_still_active = len(active_peers) > 0
+                    active_peer_rows = active_peers(roster, agent_id)
+                    peers_still_active = len(active_peer_rows) > 0
 
                     if peers_still_active:
+                        previous_active_peer_count = len(active_peer_rows)
                         if not was_waiting_on_peers:
                             was_waiting_on_peers = True
                         waited = 0  # reset; don't count time while specialists are running
@@ -767,7 +802,7 @@ def main() -> None:
                         if was_waiting_on_peers:
                             log.info(
                                 "All %d peer agent(s) now terminal; idle countdown started",
-                                len(peers),
+                                previous_active_peer_count,
                             )
                             was_waiting_on_peers = False
                         waited += idle_poll_interval
@@ -784,13 +819,20 @@ def main() -> None:
                     )
                     reason = "idle_timeout"
                 else:
-                    active_count = len(active_peers)
-                    detail = (
-                        f"Absolute idle ceiling ({absolute_timeout}s) reached with "
-                        f"{active_count} peer(s) still marked running. Suspected "
-                        "hang or deadlock — no messages received despite peers "
-                        "reporting active."
-                    )
+                    if active_peer_rows is None:
+                        detail = (
+                            f"Absolute idle ceiling ({absolute_timeout}s) reached "
+                            "while peer state was unknown because roster fetches "
+                            "were failing. Suspected daemon hang or deadlock."
+                        )
+                    else:
+                        active_count = len(active_peer_rows)
+                        detail = (
+                            f"Absolute idle ceiling ({absolute_timeout}s) reached with "
+                            f"{active_count} peer(s) still marked running. Suspected "
+                            "hang or deadlock — no messages received despite peers "
+                            "reporting active."
+                        )
                     reason = "absolute_idle_ceiling"
                 log.info("Idle loop exiting: %s", detail)
                 post_event(
