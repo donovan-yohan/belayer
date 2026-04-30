@@ -1,0 +1,40 @@
+{
+  "schema_version": "belayer-org-retro/v1",
+  "session_summary": "Relay-ide issue #320 is a good software-company proof target, but this examples PR intentionally stopped before changing relay-ide.",
+  "what_worked": [
+    "A real GitHub issue maps cleanly into org-plan tasks and gate contracts.",
+    "The existing PM concept maps naturally to a session-level acceptance gate."
+  ],
+  "bottlenecks": [
+    {
+      "summary": "Runtime QA is blocked until a real relay-ide implementation run exists.",
+      "impact": "medium",
+      "evidence": [
+        "examples/org-proofs/relay-ide-software-company/gate-result-runtime-qa.json"
+      ]
+    },
+    {
+      "summary": "Related active work on issue #200 must be checked before implementation.",
+      "impact": "medium",
+      "evidence": [
+        "https://github.com/donovan-yohan/relay-ide/issues/200"
+      ]
+    }
+  ],
+  "followups": [
+    {
+      "owner": "software-company",
+      "action": "Run a real relay-ide implementation pass for issue #320 and attach PR/test evidence.",
+      "category": "runtime"
+    },
+    {
+      "owner": "belayer",
+      "action": "Represent PM as the default acceptance gate preset in the configurable gate framework.",
+      "category": "gate"
+    }
+  ],
+  "measured_cost": {
+    "total_tokens": 0,
+    "estimated_cost_usd": 0
+  }
+}

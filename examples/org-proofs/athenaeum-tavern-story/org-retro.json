@@ -1,0 +1,41 @@
+{
+  "schema_version": "belayer-org-retro/v1",
+  "session_summary": "The tavern celebration proof showed that a story-world crag can use the same E2R loop while generating short-lived NPC team metadata.",
+  "what_worked": [
+    "The tavern scene gave existing party characters a natural place to speak without a puzzle-solving task.",
+    "Generated NPC team metadata worked best as compact metadata rather than a full agent identity.",
+    "Continuity and world-state gates fit the story domain without QA/PM naming."
+  ],
+  "bottlenecks": [
+    {
+      "summary": "The example packet does not prove live mail choreography between character agents.",
+      "impact": "medium",
+      "evidence": [
+        "examples/org-proofs/athenaeum-tavern-story/three-act-story.md"
+      ]
+    },
+    {
+      "summary": "Generated NPC promotion needs a clear reviewed persistence command before real runs mutate a hiring pool.",
+      "impact": "high",
+      "evidence": [
+        "examples/org-proofs/athenaeum-tavern-story/generated-talents/tavernkeep-mara/talent.yaml"
+      ]
+    }
+  ],
+  "followups": [
+    {
+      "owner": "belayer",
+      "action": "Define generated talent persistence and reviewed promotion in #120/#116.",
+      "category": "catalog"
+    },
+    {
+      "owner": "belayer",
+      "action": "Use lazy lifecycle so NPCs and townsfolk are not idle running agents.",
+      "category": "runtime"
+    }
+  ],
+  "measured_cost": {
+    "total_tokens": 0,
+    "estimated_cost_usd": 0
+  }
+}

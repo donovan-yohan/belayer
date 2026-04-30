@@ -1,0 +1,25 @@
+schema_version: "belayer-generated-talent/v1"
+name: mara-underbough
+category: story
+status: candidate
+origin:
+  session_id: "example-athenaeum-tavern"
+  first_artifact: "examples/org-proofs/athenaeum-tavern-story/three-act-story.md"
+role: "tavernkeep"
+summary: "Warm, watchful keeper of the Last Lantern who remembers debts, house rules, and rumors."
+personality_hooks:
+  - "Practical hospitality with a steel edge"
+  - "Treats magical danger as a customer-service problem until it breaks house rules"
+  - "Knows more family history than she admits at first"
+voice_notes:
+  - "Plainspoken"
+  - "Dry humor"
+  - "Uses house rules as moral philosophy"
+relationships:
+  - "Respects Zara's diplomacy"
+  - "Wary of Thorne's instinct to solve mysteries with refusal"
+continuity_constraints:
+  - "Owns or manages the Last Lantern"
+  - "The tavern is built from archive stone"
+  - "The Last Lantern keeps an Athenaeum door"
+reuse_policy: "recurring"

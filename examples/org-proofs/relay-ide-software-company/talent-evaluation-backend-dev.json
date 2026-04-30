@@ -1,0 +1,60 @@
+{
+  "schema_version": "belayer-talent-evaluation/v1",
+  "talent": "backend-dev",
+  "org": "software-company",
+  "session": {
+    "id": "example-relay-ide-issue-320",
+    "repo": "donovan-yohan/relay-ide",
+    "mode": "software-company"
+  },
+  "tasks": [
+    {
+      "id": "task-1",
+      "summary": "Analyze PortAllocator path leak and propose user-config path resolution.",
+      "outcome": "completed"
+    },
+    {
+      "id": "task-2",
+      "summary": "Implementation reserved for a real relay-ide run.",
+      "outcome": "blocked"
+    }
+  ],
+  "produced_artifacts": [
+    "examples/org-proofs/relay-ide-software-company/org-plan.json"
+  ],
+  "gate_outcomes": [
+    {
+      "gate_id": "code-review",
+      "verdict": "pass-with-notes",
+      "artifact": "examples/org-proofs/relay-ide-software-company/gate-result-code-review.json"
+    },
+    {
+      "gate_id": "runtime-qa",
+      "verdict": "blocked",
+      "artifact": "examples/org-proofs/relay-ide-software-company/gate-result-runtime-qa.json"
+    }
+  ],
+  "metrics": {
+    "turns": 0,
+    "total_tokens": 0,
+    "estimated_cost_usd": 0,
+    "duration_seconds": 0
+  },
+  "observations": [
+    {
+      "type": "coordination",
+      "summary": "The selected task is small enough for a real implementation run, but this proof should not silently mutate relay-ide from the Belayer examples branch.",
+      "evidence": [
+        "https://github.com/donovan-yohan/relay-ide/issues/320"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "target": "sop",
+      "action": "update",
+      "summary": "Software-company runs should record whether they are dry-run packets or implementation runs before QA gates evaluate runtime evidence."
+    }
+  ],
+  "evaluated_at": "2026-04-30T04:15:00Z"
+}

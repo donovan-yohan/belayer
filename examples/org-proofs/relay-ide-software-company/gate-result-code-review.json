@@ -1,0 +1,26 @@
+{
+  "schema_version": "belayer-gate-result/v1",
+  "gate_id": "code-review",
+  "stage": "task",
+  "authority": "blocking",
+  "producer": "reviewer",
+  "subject": {
+    "task_id": "task-2",
+    "artifact_paths": [
+      "artifacts/relay-ide/implementation-notes.md"
+    ]
+  },
+  "verdict": "pass-with-notes",
+  "findings": [
+    {
+      "severity": "medium",
+      "summary": "The implementation must check active #200 work before changing PortAllocator semantics.",
+      "evidence": [
+        "https://github.com/donovan-yohan/relay-ide/issues/320",
+        "https://github.com/donovan-yohan/relay-ide/issues/200"
+      ]
+    }
+  ],
+  "required_fixes": [],
+  "checked_at": "2026-04-30T04:05:00Z"
+}

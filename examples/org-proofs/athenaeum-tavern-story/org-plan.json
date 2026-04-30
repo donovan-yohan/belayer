@@ -1,0 +1,86 @@
+{
+  "schema_version": "belayer-org-plan/v1",
+  "objective": "Write a short three-act tavern celebration scene after the Athenaeum party's successful adventure, using existing party characters and generated NPC team metadata.",
+  "lead": "storyteller",
+  "context_artifacts": [
+    "belayer-athenaeum/README.md",
+    "belayer-athenaeum/.design/characters.md",
+    "belayer-athenaeum/examples/quest-tale.md"
+  ],
+  "tasks": [
+    {
+      "id": "scene-setup",
+      "title": "Frame the tavern celebration and introduce returning party members",
+      "owner": "storyteller",
+      "status": "planned",
+      "dependencies": [],
+      "acceptance": [
+        "Scene starts after a successful Athenaeum adventure",
+        "At least three existing party characters appear with distinct voices"
+      ],
+      "output_artifacts": [
+        "examples/org-proofs/athenaeum-tavern-story/three-act-story.md"
+      ]
+    },
+    {
+      "id": "npc-generation",
+      "title": "Generate scene-local NPCs and persist one for rediscovery",
+      "owner": "storyteller",
+      "status": "planned",
+      "dependencies": [
+        "scene-setup"
+      ],
+      "acceptance": [
+        "At least one tavern NPC affects the scene",
+        "At least one NPC is persisted as compact generated team metadata"
+      ],
+      "output_artifacts": [
+        "examples/org-proofs/athenaeum-tavern-story/generated-talents/tavernkeep-mara/talent.yaml"
+      ]
+    },
+    {
+      "id": "continuity",
+      "title": "Check story continuity and record durable state",
+      "owner": "continuity-editor",
+      "status": "planned",
+      "dependencies": [
+        "scene-setup",
+        "npc-generation"
+      ],
+      "acceptance": [
+        "Continuity report has a clear verdict",
+        "World state records consequences, open hooks, and NPC persistence"
+      ],
+      "output_artifacts": [
+        "examples/org-proofs/athenaeum-tavern-story/continuity-report.json",
+        "examples/org-proofs/athenaeum-tavern-story/world-state.json"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "id": "continuity",
+      "stage": "session",
+      "authority": "blocking",
+      "input_artifacts": [
+        "world-state",
+        "three-act-story"
+      ],
+      "output_artifact": "continuity-report",
+      "assigned_talent": [
+        "continuity-editor"
+      ],
+      "verdicts": [
+        "pass",
+        "pass-with-notes",
+        "fail",
+        "blocked"
+      ]
+    }
+  ],
+  "risks": [
+    "NPCs can become noisy if promoted with full transcript context",
+    "Narrator may speak for characters instead of letting character team identities act"
+  ],
+  "created_at": "2026-04-30T04:20:00Z"
+}

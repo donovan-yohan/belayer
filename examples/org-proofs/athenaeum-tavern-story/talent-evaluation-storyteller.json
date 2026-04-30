@@ -1,0 +1,68 @@
+{
+  "schema_version": "belayer-talent-evaluation/v1",
+  "talent": "storyteller",
+  "org": "story-world",
+  "session": {
+    "id": "example-athenaeum-tavern",
+    "repo": "donovan-yohan/belayer-athenaeum",
+    "mode": "story-world"
+  },
+  "tasks": [
+    {
+      "id": "scene-setup",
+      "summary": "Frame a tavern celebration after the Athenaeum adventure.",
+      "outcome": "completed"
+    },
+    {
+      "id": "npc-generation",
+      "summary": "Generate and persist Mara Underbough as reusable NPC talent.",
+      "outcome": "completed"
+    }
+  ],
+  "produced_artifacts": [
+    "examples/org-proofs/athenaeum-tavern-story/three-act-story.md",
+    "examples/org-proofs/athenaeum-tavern-story/world-state.json"
+  ],
+  "gate_outcomes": [
+    {
+      "gate_id": "continuity",
+      "verdict": "pass-with-notes",
+      "artifact": "examples/org-proofs/athenaeum-tavern-story/continuity-report.json"
+    }
+  ],
+  "metrics": {
+    "turns": 0,
+    "total_tokens": 0,
+    "estimated_cost_usd": 0,
+    "duration_seconds": 0
+  },
+  "observations": [
+    {
+      "type": "strength",
+      "summary": "The storyteller model can coordinate persistent characters and generated NPCs without software-role language.",
+      "evidence": [
+        "examples/org-proofs/athenaeum-tavern-story/three-act-story.md"
+      ]
+    },
+    {
+      "type": "coordination",
+      "summary": "NPCs should start as compact generated team metadata and only become full agents if reused.",
+      "evidence": [
+        "examples/org-proofs/athenaeum-tavern-story/generated-talents/tavernkeep-mara/talent.yaml"
+      ]
+    }
+  ],
+  "recommendations": [
+    {
+      "target": "sop",
+      "action": "update",
+      "summary": "Story-world runs should include an explicit entrance/exit plan for characters and NPCs."
+    },
+    {
+      "target": "talent-metadata",
+      "action": "review",
+      "summary": "Generated NPC metadata should be reviewed before promotion to recurring team identity."
+    }
+  ],
+  "evaluated_at": "2026-04-30T04:45:00Z"
+}

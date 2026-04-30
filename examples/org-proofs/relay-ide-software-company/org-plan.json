@@ -1,0 +1,119 @@
+{
+  "schema_version": "belayer-org-plan/v1",
+  "objective": "Fix relay-ide issue #320 so port-assignments.json no longer leaks into the repo root during local development.",
+  "lead": "supervisor",
+  "context_artifacts": [
+    "https://github.com/donovan-yohan/relay-ide/issues/320"
+  ],
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Inspect PortAllocator path resolution",
+      "owner": "backend-dev",
+      "status": "planned",
+      "dependencies": [],
+      "acceptance": [
+        "Identify where configPath resolves to ./config.json in local dev",
+        "Find tests covering port allocator path behavior"
+      ],
+      "output_artifacts": [
+        "artifacts/relay-ide/port-allocator-analysis.md"
+      ]
+    },
+    {
+      "id": "task-2",
+      "title": "Move assignments path to user config workspace scope",
+      "owner": "backend-dev",
+      "status": "planned",
+      "dependencies": [
+        "task-1"
+      ],
+      "acceptance": [
+        "Assignments path is under user config, not repo root",
+        "Path is keyed by repo or workspace identity",
+        "Existing root file is migrated or safely ignored"
+      ],
+      "output_artifacts": [
+        "artifacts/relay-ide/implementation-notes.md"
+      ]
+    },
+    {
+      "id": "task-3",
+      "title": "Verify path isolation and no #200 regression",
+      "owner": "qa",
+      "status": "planned",
+      "dependencies": [
+        "task-2"
+      ],
+      "acceptance": [
+        "test/port-allocator.test.ts covers new path resolution",
+        "Multiple worktrees do not collide",
+        "Repo root does not receive port-assignments.json"
+      ],
+      "output_artifacts": [
+        "artifacts/relay-ide/runtime-qa.md"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "id": "code-review",
+      "stage": "task",
+      "authority": "blocking",
+      "input_artifacts": [
+        "artifacts/relay-ide/implementation-notes.md"
+      ],
+      "output_artifact": "gate-result",
+      "assigned_talent": [
+        "reviewer"
+      ],
+      "verdicts": [
+        "pass",
+        "pass-with-notes",
+        "fail",
+        "blocked"
+      ]
+    },
+    {
+      "id": "runtime-qa",
+      "stage": "task",
+      "authority": "blocking",
+      "input_artifacts": [
+        "artifacts/relay-ide/runtime-qa.md"
+      ],
+      "output_artifact": "gate-result",
+      "assigned_talent": [
+        "qa"
+      ],
+      "verdicts": [
+        "pass",
+        "pass-with-notes",
+        "fail",
+        "blocked"
+      ]
+    },
+    {
+      "id": "acceptance",
+      "stage": "session",
+      "authority": "blocking",
+      "input_artifacts": [
+        "org-plan",
+        "gate-result"
+      ],
+      "output_artifact": "gate-result",
+      "assigned_talent": [
+        "pm"
+      ],
+      "verdicts": [
+        "pass",
+        "fail",
+        "blocked"
+      ]
+    }
+  ],
+  "risks": [
+    "Issue #200 is related and may have an in-progress branch touching the same module",
+    "Workspace identity must avoid leaking absolute paths into portable config"
+  ],
+  "created_at": "2026-04-30T04:00:00Z"
+}
