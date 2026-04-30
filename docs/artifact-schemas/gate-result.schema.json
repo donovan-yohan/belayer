@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/donovan-yohan/belayer/docs/artifact-schemas/gate-result.schema.json",
+  "title": "Belayer Gate Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "gate_id", "stage", "authority", "producer", "subject", "verdict", "findings", "required_fixes"],
+  "properties": {
+    "schema_version": {
+      "const": "belayer-gate-result/v1"
+    },
+    "gate_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stage": {
+      "enum": ["task", "phase", "session"]
+    },
+    "authority": {
+      "enum": ["advisory", "blocking", "human-escalation"]
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_paths"],
+      "properties": {
+        "task_id": {
+          "type": "string"
+        },
+        "artifact_paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    },
+    "verdict": {
+      "enum": ["pass", "pass-with-notes", "fail", "blocked"]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    },
+    "required_fixes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "checked_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "summary", "evidence"],
+      "properties": {
+        "severity": {
+          "enum": ["info", "low", "medium", "high", "critical"]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}

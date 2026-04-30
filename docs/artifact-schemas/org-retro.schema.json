@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/donovan-yohan/belayer/docs/artifact-schemas/org-retro.schema.json",
+  "title": "Belayer Organization Retrospective",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "session_summary", "what_worked", "bottlenecks", "followups"],
+  "properties": {
+    "schema_version": {
+      "const": "belayer-org-retro/v1"
+    },
+    "session_summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "what_worked": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "bottlenecks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/bottleneck"
+      }
+    },
+    "followups": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/followup"
+      }
+    },
+    "measured_cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated_cost_usd": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "bottleneck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "impact"],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "impact": {
+          "enum": ["low", "medium", "high"]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    },
+    "followup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "action"],
+      "properties": {
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "enum": ["prompt", "catalog", "gate", "tooling", "runtime", "docs"]
+        }
+      }
+    }
+  }
+}

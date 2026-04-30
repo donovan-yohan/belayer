@@ -15,6 +15,11 @@ them into the consuming repo at `.belayer/agents/`. That project-local tree is
 owned by the consuming project. Edit it there instead of changing belayer
 source just to customize your team's roles, prompts, or tool access.
 
+For the emerging organization-mode layer, see `docs/ORG_MODE.md`. Organization
+mode builds on the same daemon, mail, events, artifacts, and Hermes plugin tool
+surface described here; it does not introduce a third agent kind or a separate
+communication path.
+
 ---
 
 ## Two kinds of agent: main and side
