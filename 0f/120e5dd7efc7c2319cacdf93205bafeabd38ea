@@ -1,0 +1,87 @@
+internal/daemon/bridge_failure_propagation_test.go
+  eba65da2a046cd1c 49-54,56,404,406-407,409
+internal/daemon/transcripts_http_test.go
+  eba65da2a046cd1c 49,52
+internal/daemon/agents_spawn_test.go
+  eba65da2a046cd1c 86
+docs/README.md
+  eba65da2a046cd1c 12
+internal/daemon/agents_paths_test.go
+  eba65da2a046cd1c 11,24
+agents/supervisor/agents.md
+  eba65da2a046cd1c 31-32,53,94,101
+docs/design-docs/2026-04-16-sandbox-runtime-and-crag-proof.md
+  eba65da2a046cd1c 112,652
+agents/reviewer/system-prompt.md
+  eba65da2a046cd1c 70,72
+examples/templates/reviewer/agents.md
+  eba65da2a046cd1c 11-12
+docs/design-docs/2026-04-17-embed-hermes-bridge-design.md
+  eba65da2a046cd1c 68
+examples/org-proofs/relay-ide-software-company/talent-evaluation-backend-dev.json
+  eba65da2a046cd1c 1-17,19-45,47-55,57-60
+internal/daemon/bridges_http_test.go
+  eba65da2a046cd1c 22
+internal/daemon/archive_manager_test.go
+  eba65da2a046cd1c 326,345
+docs/ORG_MODE.md
+  eba65da2a046cd1c 3-5,9,11,31,33-35,44-46,69-70,72-74,77,82-83,88,91-94,96,101-102,110,114-115,156-159,235,237,244,254-256
+internal/daemon/agents_confine_test.go
+  eba65da2a046cd1c 32,42,61,84,120,145,182
+internal/daemon/handoff_test.go
+  eba65da2a046cd1c 59,71
+agents/reviewer/agents.md
+  eba65da2a046cd1c 9
+docs/ARTIFACT_SCHEMAS.md
+  eba65da2a046cd1c 52,88
+docs/ORG_FILESYSTEM.md
+  eba65da2a046cd1c 1-33,35-59,62-128,130-189,191-219,221-235,237-256,258-292,294-299,301-309
+internal/daemon/bridge_events_test.go
+  eba65da2a046cd1c 839,851,854,867,911,924-947,1027,1037
+internal/climbpath/climbpath_test.go
+  eba65da2a046cd1c 1-52
+internal/cli/init_test.go
+  eba65da2a046cd1c 250,499-500,520-522,528-550
+README.md
+  eba65da2a046cd1c 261-262,313,315
+examples/org-proofs/relay-ide-software-company/org-retro.json
+  eba65da2a046cd1c 1-9,11-40
+internal/cli/init.go
+  eba65da2a046cd1c 20,37,56,64,68,97,174,181,254,260,262-263,267,302,414,427
+examples/templates/pilot/agents.md
+  eba65da2a046cd1c 61
+internal/cli/run.go
+  eba65da2a046cd1c 18
+agents/pm/system-prompt.md
+  eba65da2a046cd1c 3,11-12
+internal/cli/root_test.go
+  eba65da2a046cd1c 13
+cmd/belayer-landlock-exec/main_test.go
+  eba65da2a046cd1c 48,51
+internal/cli/root.go
+  eba65da2a046cd1c 56-57
+examples/org-proofs/relay-ide-software-company/README.md
+  eba65da2a046cd1c 1-2,4-9,11-21,24-25
+agents/supervisor/system-prompt.md
+  eba65da2a046cd1c 13,44,59,61,65,81,90,96,106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "0f120e5dd7efc7c2319cacdf93205bafeabd38ea",
+  "prompts": {
+    "eba65da2a046cd1c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddbc7-cc5c-7990-98c0-bc190d3f7c96",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1684,
+      "total_deletions": 93,
+      "accepted_lines": 185,
+      "overriden_lines": 0
+    }
+  }
+}
