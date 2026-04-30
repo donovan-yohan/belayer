@@ -459,7 +459,7 @@ Daemon-internal events (not from bridge):
 | `warning:supervisor_exited_early` | Bridge finished handler | Supervisor exited while specialists still running |
 | `completion_rejected` | Completion rejected handler | Tracks cycle count |
 | `completion_escalated` | Rejection limit handler | Session status → needs_human_review |
-| `pm_spawn_failed` | PM spawn error | Notifies supervisor to retry |
+| `pm_spawn_failed` | Acceptance gate spawn error; historical event name retained for compatibility | Notifies supervisor to retry |
 
 ### How telemetry enables resume
 

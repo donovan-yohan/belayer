@@ -180,14 +180,14 @@ func newFinishCmd() *cobra.Command {
 }
 
 type spawnAgentRequest struct {
-	Name       string `json:"name"`
-	Identity   string `json:"identity,omitempty"` // identity template under .belayer/agents/<identity>/; defaults to Name
-	Role       string `json:"role"`
-	Kind       string `json:"kind,omitempty"`
-	Profile    string `json:"profile"`
-	Repo       string `json:"repo,omitempty"`
-	Workdir    string `json:"workdir,omitempty"`
-	Branch     string `json:"branch,omitempty"` // git branch for worktree-isolated spawns
+	Name     string `json:"name"`
+	Identity string `json:"identity,omitempty"` // identity template under .belayer/agents/<identity>/; defaults to Name
+	Role     string `json:"role"`
+	Kind     string `json:"kind,omitempty"`
+	Profile  string `json:"profile"`
+	Repo     string `json:"repo,omitempty"`
+	Workdir  string `json:"workdir,omitempty"`
+	Branch   string `json:"branch,omitempty"` // git branch for worktree-isolated spawns
 }
 
 type AgentRunView struct {
@@ -283,7 +283,7 @@ func newRequestCompletionCmd() *cobra.Command {
 			if err := c.LogEvent(sessID, "bridge:completion_requested", eventData); err != nil {
 				return fmt.Errorf("request completion: %w", err)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Completion review requested. PM agent will be spawned to verify.")
+			fmt.Fprintln(cmd.OutOrStdout(), "Completion review requested. Acceptance gate agent will be spawned to verify.")
 			return nil
 		},
 	}

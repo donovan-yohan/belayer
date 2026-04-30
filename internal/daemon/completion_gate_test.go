@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -102,5 +104,93 @@ func TestCompletionRequested_AutoSpawnsPM(t *testing.T) {
 	}
 	if !sawPM {
 		t.Fatalf("spawnBridgeAgent never called with name=pm; saw: %v", spawnedNames)
+	}
+}
+
+func TestCompletionRequested_UsesConfiguredAcceptanceGateTalent(t *testing.T) {
+	d := testDaemon(t)
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".belayer"), 0o755); err != nil {
+		t.Fatalf("mkdir .belayer: %v", err)
+	}
+	config := `gates:
+  - name: acceptance
+    stage: session
+    authority: blocking
+    trigger: completion_requested
+    assigned_talent:
+      - acceptance-editor
+    requires:
+      - spec-or-task
+    conditions:
+      - "The delivered work satisfies the task"
+    verdicts:
+      - pass
+      - fail
+      - blocked
+`
+	if err := os.WriteFile(filepath.Join(workspace, ".belayer", "config.yaml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	sessionID, err := d.store.CreateSession(store.Session{Name: "configured-gate", WorkspaceDir: workspace, Status: "running"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	if _, err := d.store.CreateAgentRun(store.AgentRun{
+		SessionID: sessionID,
+		Name:      "supervisor",
+		Role:      "supervisor",
+		Profile:   "default",
+		Status:    "running",
+		Transport: "tmux",
+	}); err != nil {
+		t.Fatalf("create supervisor run: %v", err)
+	}
+
+	var mu sync.Mutex
+	var spawnedNames []string
+	var spawnedMessages []string
+	spawned := make(chan struct{}, 4)
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
+		mu.Lock()
+		spawnedNames = append(spawnedNames, req.Name)
+		spawnedMessages = append(spawnedMessages, req.Message)
+		mu.Unlock()
+		proc, _ := newLiveProc()
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			proc.MarkLive()
+		}()
+		select {
+		case spawned <- struct{}{}:
+		default:
+		}
+		return proc, nil
+	}
+
+	rr := postBridgeEvent(t, d, sessionID, "bridge:completion_requested", map[string]any{
+		"agent":   "supervisor",
+		"summary": "implemented the configured gate flow",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	select {
+	case <-spawned:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for acceptance gate spawn after completion_requested")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(spawnedNames) != 1 {
+		t.Fatalf("expected one spawned acceptance gate talent, got %v", spawnedNames)
+	}
+	if spawnedNames[0] != "acceptance-editor" {
+		t.Fatalf("spawned %q, want configured acceptance talent %q", spawnedNames[0], "acceptance-editor")
+	}
+	if !strings.Contains(spawnedMessages[0], "The delivered work satisfies the task") {
+		t.Fatalf("spawn message did not include configured gate condition: %q", spawnedMessages[0])
 	}
 }

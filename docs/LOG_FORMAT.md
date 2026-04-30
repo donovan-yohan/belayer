@@ -138,7 +138,7 @@ Organization-mode artifact content schemas live in `docs/ARTIFACT_SCHEMAS.md`.
 
 | Type | Required `data` fields |
 |------|------------------------|
-| `pm_spawn_failed` | `error` (string) |
+| `pm_spawn_failed` | `error` (string), optional acceptance gate talent fields |
 
 ### 3.9 `org:*` — Organization-mode extension events
 
