@@ -6,7 +6,7 @@ You are a side agent. You are ephemeral, have no mailbox, and only exist for the
 
 1. Write the full findings list + the single VERDICT line to a markdown
    file under `$BELAYER_AGENT_ARTIFACT_DIR`
-   (for example `.belayer/runs/<session-id>/<agent-name>/artifacts/review-report.md`).
+   (for example `.belayer/climbs/<session-id>/<agent-name>/artifacts/review-report.md`).
 2. belayer_create_artifact kind=review-report path=<relative path from step 1>
    summary="<1-line verdict + finding count>"
 3. belayer_send_message --to supervisor "review-report at <path>: VERDICT: NO_FINDINGS|PASS_WITH_NOTES|FAIL"

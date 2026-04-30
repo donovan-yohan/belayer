@@ -46,10 +46,10 @@ func makeTranscriptSession(t *testing.T, d *Daemon, logLevel string) (sessID, wo
 	return sessID, workspace
 }
 
-// writeTranscript writes content to <workspace>/.belayer/runs/<sess>/transcripts/<agent>.jsonl.
+// writeTranscript writes content to <workspace>/.belayer/climbs/<sess>/transcripts/<agent>.jsonl.
 func writeTranscript(t *testing.T, workspace, sessID, agent, content string) string {
 	t.Helper()
-	dir := filepath.Join(workspace, ".belayer", "runs", sessID, "transcripts")
+	dir := filepath.Join(workspace, ".belayer", "climbs", sessID, "transcripts")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("MkdirAll transcripts dir: %v", err)
 	}

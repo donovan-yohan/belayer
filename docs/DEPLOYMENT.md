@@ -1,6 +1,6 @@
 # Deployment
 
-Belayer is the control plane for ONE run. It does not impose an isolation boundary. Isolation is the responsibility of the outer deployment topology.
+Belayer is the control plane for ONE climb. It does not impose an isolation boundary. Isolation is the responsibility of the outer deployment topology.
 
 ---
 
@@ -9,7 +9,7 @@ Belayer is the control plane for ONE run. It does not impose an isolation bounda
 | Topology | Sandbox provider | Trust model | Network exposure |
 |----------|-----------------|-------------|-----------------|
 | **Host-native** (dev laptop) | None — agents run as the current OS user | Working directory is the only boundary; full filesystem access | Unix socket only (`~/.belayer/daemon.sock`); no network by default |
-| **Nightshift worker** (production) | Outer container (provided by Nightshift); one container per run | Container boundary enforced by Nightshift; Belayer trusts everything inside | Unix socket inside container + optional TCP (`--bind`) for external observability |
+| **Nightshift worker** (production) | Outer container (provided by Nightshift); one container per climb | Container boundary enforced by Nightshift; Belayer trusts everything inside | Unix socket inside container + optional TCP (`--bind`) for external observability |
 
 The outer topology — not Belayer — is responsible for isolating agent processes from each other and from the host. Belayer reads and writes the working directory freely; it has no concept of "this directory is off-limits."
 
@@ -41,12 +41,12 @@ Both files are loaded via `godotenv.Load()` at daemon startup into the daemon's 
 | Surface | Default | Purpose |
 |---------|---------|---------|
 | `~/.belayer/daemon.sock` | Always present | Local Unix socket; no authentication required; trusted local access only |
-| `.belayer/runs/<session>/daemon.sock` | When `WorkspaceSockPath` is set | Workspace-relative socket for in-container bridge access via bind-mount |
+| `.belayer/climbs/<session>/daemon.sock` | When `WorkspaceSockPath` is set | Workspace-relative socket for in-container bridge access via bind-mount |
 | TCP `--bind <addr>` | Opt-in | Remote observability and dashboard access; requires `--auth-token` |
 
 **TCP opt-in:** pass `--bind 127.0.0.1:<port>` (or `--tcp-addr`) to enable a TCP listener. When `--bind` is set without `--auth-token`, the daemon auto-generates a 32-byte random token and logs it to stderr. Pass `--cors-origin <url>` to allow browser-based dashboards from a specific origin.
 
-**Bridge stdout logs:** raw bridge subprocess stdout/stderr is captured per-agent at `.belayer/runs/<session>/bridge.<agent>.log`. These files rotate (3 generations) and are not automatically deleted. At verbose+ tier, they are included in the session archive under `bridges/<agent>.stdout.log`.
+**Bridge stdout logs:** raw bridge subprocess stdout/stderr is captured per-agent at `.belayer/climbs/<session>/bridge.<agent>.log`. These files rotate (3 generations) and are not automatically deleted. At verbose+ tier, they are included in the session archive under `bridges/<agent>.stdout.log`.
 
 ---
 
@@ -88,7 +88,7 @@ that applies the Landlock ruleset and then `exec`-replaces itself with the
 actual bridge command. It must be on `PATH` when `confine_agent_writes: true` is
 active.
 
-**For sandboxed deployment images (Nightshift worker, container-per-run
+**For sandboxed deployment images (Nightshift worker, container-per-climb
 drivers, etc.):** bake `belayer-landlock-exec` into the image alongside
 `belayer`. The binary is built from `cmd/belayer-landlock-exec/` and
 cross-compiles cleanly with:
@@ -97,9 +97,9 @@ cross-compiles cleanly with:
 GOOS=linux GOARCH=arm64 go build -o belayer-landlock-exec ./cmd/belayer-landlock-exec
 ```
 
-**TODO (container-per-run images):** Any container-per-run sandbox driver
+**TODO (container-per-climb images):** Any container-per-climb sandbox driver
 added in the future needs `belayer-landlock-exec` baked into `/usr/local/bin`
-of its image. Landlock confinement is ineffective in container-per-run
+of its image. Landlock confinement is ineffective in container-per-climb
 topologies until the binary is present in the image.
 
 ### What is and is not protected

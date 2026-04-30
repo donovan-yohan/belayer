@@ -19,7 +19,7 @@ import (
 // handlers can serve it.
 func writeBridgeLog(t *testing.T, workdir, sessionID, agentName, content string) string {
 	t.Helper()
-	dir := filepath.Join(workdir, ".belayer", "runs", sessionID, agentName)
+	dir := filepath.Join(workdir, ".belayer", "climbs", sessionID, agentName)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

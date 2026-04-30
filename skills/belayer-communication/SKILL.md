@@ -1,6 +1,6 @@
 ---
 name: belayer-communication
-description: How to communicate with other agents and the Belayer control plane during a Nightshift run. Load this skill in every Nightshift specialist profile.
+description: How to communicate with other agents and the Belayer control plane during a Nightshift climb. Load this skill in every Nightshift specialist profile.
 version: 1.0.0
 author: Nightshift
 license: MIT
@@ -11,7 +11,7 @@ metadata:
 
 # Belayer Communication
 
-You are operating inside a **Belayer-managed Nightshift run**.
+You are operating inside a **Belayer-managed Nightshift climb**.
 
 Multiple specialist agents are working on the same ticket. You are one of them. A supervisor coordinates the work. Belayer is the session bus that connects everyone.
 
@@ -19,7 +19,7 @@ Multiple specialist agents are working on the same ticket. You are one of them. 
 
 1. **Never communicate with other agents directly.** No raw tmux. No writing to shared files as a messaging hack. No printing text hoping someone reads your terminal.
 2. **Always use `belayer` commands** to send messages, log observations, publish artifacts, and mark work complete.
-3. **Belayer is your only coordination interface.** If you need something from another agent, go through Belayer. If you learn something the run should know, tell Belayer.
+3. **Belayer is your only coordination interface.** If you need something from another agent, go through Belayer. If you learn something the climb should know, tell Belayer.
 
 ---
 
@@ -27,10 +27,11 @@ Multiple specialist agents are working on the same ticket. You are one of them. 
 
 Every Nightshift agent receives these environment variables:
 
-- `BELAYER_SESSION_ID` — the current run session
+- `BELAYER_SESSION_ID` — the current climb session
 - `BELAYER_AGENT_ID` — your role identity (e.g. `supervisor`, `api`, `app`, `reviewer`, `qa`)
 - `BELAYER_SOCKET` — daemon socket (usually auto-resolved)
-- `BELAYER_RUN_DIR` — root directory for this run's artifacts and state
+- `BELAYER_CLIMB_DIR` — root directory for this climb's artifacts and state
+- `BELAYER_RUN_DIR` — legacy alias for `BELAYER_CLIMB_DIR`
 
 You do not need to pass `--session` or `--agent` to most commands — they are inferred from the environment.
 
@@ -76,7 +77,7 @@ belayer finish "Summary of what I did and what the supervisor should know"
 ```
 
 This:
-- marks your agent run as complete in the session
+- marks your agent climb as complete in the session
 - logs your summary to the event stream
 - notifies the supervisor that you are done
 

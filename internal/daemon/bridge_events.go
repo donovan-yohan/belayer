@@ -566,14 +566,14 @@ func (d *Daemon) handleBridgeClarification(sessionID, agentName string, data map
 
 // resolveExitConditions returns the authoritative exit-condition list for the
 // session plus the source it came from ("override" for a --exit-condition flag
-// at run start, "config" for .belayer/config.yaml, or "none"). The PM gate
-// validates these before marking the run complete; making them explicit in the
+// at climb start, "config" for .belayer/config.yaml, or "none"). The PM gate
+// validates these before marking the climb complete; making them explicit in the
 // spawn message keeps the PM from having to scan session history to find them.
 func (d *Daemon) resolveExitConditions(sessionID string) ([]string, string) {
-	// First: check run_initiated event for a per-run override.
+	// First: check climb initiation event for a per-climb override.
 	events, _ := d.store.QueryEvents(sessionID)
 	for _, ev := range events {
-		if ev.Type != "run_initiated" || ev.Data == "" {
+		if !isClimbInitiatedEvent(ev.Type) || ev.Data == "" {
 			continue
 		}
 		var payload struct {
@@ -582,7 +582,7 @@ func (d *Daemon) resolveExitConditions(sessionID string) ([]string, string) {
 		if err := json.Unmarshal([]byte(ev.Data), &payload); err == nil && len(payload.ExitConditions) > 0 {
 			return payload.ExitConditions, "override"
 		}
-		break // only the first run_initiated event is authoritative
+		break // only the first climb initiation event is authoritative
 	}
 
 	// Fallback: read .belayer/config.yaml from the session's workspace.
@@ -606,20 +606,20 @@ func (d *Daemon) resolveExitConditions(sessionID string) ([]string, string) {
 
 // resolvePersistenceStrategy returns the authoritative persistence-strategy
 // list for the session plus the source it came from ("override" for a
-// --persistence-strategy flag at run start, "config" for .belayer/config.yaml,
+// --persistence-strategy flag at climb start, "config" for .belayer/config.yaml,
 // or "none"). These are the literal steps the supervisor must execute before
 // reporting status=incomplete — committing, pushing, opening a draft PR,
 // registering a persistence-notes artifact — so a blocked run still leaves
 // the next operator with something to pick up.
 //
-// Shape mirrors resolveExitConditions: run-initiated override wins, then the
+// Shape mirrors resolveExitConditions: climb-initiated override wins, then the
 // config file, then empty. See docs/AGENT_ARCHITECTURE.md for the resolution
 // order discussion; this sibling keeps the two gates symmetric.
 func (d *Daemon) resolvePersistenceStrategy(sessionID string) ([]string, string) {
-	// First: check run_initiated event for a per-run override.
+	// First: check climb initiation event for a per-climb override.
 	events, _ := d.store.QueryEvents(sessionID)
 	for _, ev := range events {
-		if ev.Type != "run_initiated" || ev.Data == "" {
+		if !isClimbInitiatedEvent(ev.Type) || ev.Data == "" {
 			continue
 		}
 		var payload struct {
@@ -628,7 +628,7 @@ func (d *Daemon) resolvePersistenceStrategy(sessionID string) ([]string, string)
 		if err := json.Unmarshal([]byte(ev.Data), &payload); err == nil && len(payload.PersistenceStrategy) > 0 {
 			return payload.PersistenceStrategy, "override"
 		}
-		break // only the first run_initiated event is authoritative
+		break // only the first climb initiation event is authoritative
 	}
 
 	// Fallback: read .belayer/config.yaml from the session's workspace.
@@ -648,6 +648,10 @@ func (d *Daemon) resolvePersistenceStrategy(sessionID string) ([]string, string)
 		return nil, "none"
 	}
 	return file.PersistenceStrategy, "config"
+}
+
+func isClimbInitiatedEvent(eventType string) bool {
+	return eventType == "climb_initiated" || eventType == "run_initiated"
 }
 
 // hasPersistenceNotesArtifact returns true when at least one artifact in the
@@ -869,11 +873,11 @@ func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, da
 	var exitBlock string
 	switch exitSource {
 	case "override":
-		exitBlock = "Exit conditions for this run (per-run override, authoritative):\n"
+		exitBlock = "Exit conditions for this climb (per-climb override, authoritative):\n"
 	case "config":
-		exitBlock = "Exit conditions for this run (from .belayer/config.yaml):\n"
+		exitBlock = "Exit conditions for this climb (from .belayer/config.yaml):\n"
 	default:
-		exitBlock = "Exit conditions for this run: none declared. Validate the spec only.\n"
+		exitBlock = "Exit conditions for this climb: none declared. Validate the spec only.\n"
 	}
 	if len(exitConditions) > 0 {
 		for _, c := range exitConditions {
@@ -896,7 +900,7 @@ Registered artifacts:
 %s
 Instructions:
 1. Read the spec artifact (or find the spec in the workspace if none was registered).
-2. Use git diff to see what changed during this run.
+2. Use git diff to see what changed during this climb.
 3. Walk through the spec section by section. For each requirement, find evidence in the code.
 4. For each exit condition listed above, demand concrete evidence it holds.
 5. Check for deferred work: TODO comments, placeholder implementations, empty test bodies.

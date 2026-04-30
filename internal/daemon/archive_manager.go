@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/archive"
+	"github.com/donovan-yohan/belayer/internal/climbpath"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -173,7 +174,7 @@ func (m *archiveManager) doArchive(sessionID string, partial bool) error {
 	}
 
 	destDir := filepath.Join(sess.WorkspaceDir, ".belayer", "archive", sessionID)
-	transcriptsDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", sessionID, "transcripts")
+	transcriptsDir := climbpath.ExistingTranscriptsDir(sess.WorkspaceDir, sessionID)
 	meta := archive.Meta{
 		SchemaVersion:    "belayer-log/v1",
 		DaemonInstanceID: m.daemonInstanceID,

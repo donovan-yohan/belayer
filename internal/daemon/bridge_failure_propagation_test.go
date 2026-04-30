@@ -46,14 +46,14 @@ func TestStdoutScannerMarkerBlocksAgent(t *testing.T) {
 	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
 		runDir := t.TempDir()
 		cfg := bridge.Config{
-			Cmd:       []string{"/bin/sh", "-c", "echo 'API failed after 3 retries — Connection error'; sleep 0"},
-			SessionID: req.SessionID,
-			AgentID:   req.Name,
-			Role:      req.Role,
-			Profile:   req.Profile,
-			Workdir:   req.Workdir,
+			Cmd:        []string{"/bin/sh", "-c", "echo 'API failed after 3 retries — Connection error'; sleep 0"},
+			SessionID:  req.SessionID,
+			AgentID:    req.Name,
+			Role:       req.Role,
+			Profile:    req.Profile,
+			Workdir:    req.Workdir,
 			SocketPath: "",
-			RunDir:    runDir,
+			RunDir:     runDir,
 		}
 		proc, err := bridge.Spawn(cfg)
 		if err != nil {
@@ -401,12 +401,12 @@ func TestWatchBridgeExitIncludesStdoutTail(t *testing.T) {
 		t.Fatalf("write stderr log: %v", err)
 	}
 
-	// Create the agent run with Workdir pointing to a directory whose .belayer/runs/<sess>/<name>
+	// Create the agent run with Workdir pointing to a directory whose .belayer/climbs/<sess>/<name>
 	// path resolves to our runDir. We set Workdir so the path reconstruction works.
-	// watchBridgeExit reconstructs: filepath.Join(runBase, ".belayer", "runs", sessionID, run.Name)
-	// So we need: runBase + "/.belayer/runs/" + sessionID + "/api" == runDir
+	// watchBridgeExit reconstructs: filepath.Join(runBase, ".belayer", "climbs", sessionID, run.Name)
+	// So we need: runBase + "/.belayer/climbs/" + sessionID + "/api" == runDir
 	runBase := t.TempDir()
-	targetDir := filepath.Join(runBase, ".belayer", "runs", sessionID, "api")
+	targetDir := filepath.Join(runBase, ".belayer", "climbs", sessionID, "api")
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		t.Fatalf("mkdir target: %v", err)
 	}

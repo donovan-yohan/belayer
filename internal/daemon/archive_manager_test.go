@@ -323,7 +323,7 @@ func TestArchiveTerminal_WorksAfterDedupeEviction(t *testing.T) {
 
 // TestArchiveManager_VerboseIncludesTranscripts verifies the end-to-end
 // capture-at-level contract: a session created with LogLevel="verbose"
-// whose transcript files live under <workspace>/.belayer/runs/<id>/transcripts/
+// whose transcript files live under <workspace>/.belayer/climbs/<id>/transcripts/
 // gets both manifest.session.log_level=="verbose" AND the transcript files
 // copied into <archive>/transcripts/ with verbatim content.
 func TestArchiveManager_VerboseIncludesTranscripts(t *testing.T) {
@@ -342,7 +342,7 @@ func TestArchiveManager_VerboseIncludesTranscripts(t *testing.T) {
 	logTestEvent(t, st, id, "session_created")
 
 	// Stage a transcript file at the daemon-anchored path.
-	transcriptsDir := filepath.Join(ws, ".belayer", "runs", id, "transcripts")
+	transcriptsDir := filepath.Join(ws, ".belayer", "climbs", id, "transcripts")
 	if err := os.MkdirAll(transcriptsDir, 0o700); err != nil {
 		t.Fatalf("mkdir transcripts: %v", err)
 	}

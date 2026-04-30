@@ -58,7 +58,7 @@ When an implementer signals completion:
 For epic workflows with multiple tickets:
 
 ```bash
-belayer run start --task "<initial task text>"
+belayer climb start --task "<initial task text>"
 belayer session list
 belayer logs <session-id>
 belayer session stop <session-id>

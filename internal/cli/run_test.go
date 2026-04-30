@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// resolveLogLevelForRun replicates the precedence logic used by run start:
+// resolveLogLevelForRun replicates the precedence logic used by climb start:
 // flag wins, then BELAYER_LOG_LEVEL, then empty (let daemon pick).
 func TestResolveRunLogLevel_Precedence(t *testing.T) {
 	cases := []struct {

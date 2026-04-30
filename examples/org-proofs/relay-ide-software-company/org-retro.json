@@ -7,7 +7,7 @@
   ],
   "bottlenecks": [
     {
-      "summary": "Runtime QA is blocked until a real relay-ide implementation run exists.",
+      "summary": "Runtime QA is blocked until a real relay-ide implementation climb exists.",
       "impact": "medium",
       "evidence": [
         "examples/org-proofs/relay-ide-software-company/gate-result-runtime-qa.json"

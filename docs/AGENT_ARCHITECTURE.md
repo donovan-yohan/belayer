@@ -1,6 +1,6 @@
 # Agent Architecture
 
-How agents communicate, coordinate, and stay alive inside a Belayer run.
+How agents communicate, coordinate, and stay alive inside a Belayer climb.
 
 ---
 
@@ -172,13 +172,13 @@ flowchart TB
 | `belayer_report_status` | `status` (working/blocked/done/needs-review), `detail?` | Publish lifecycle state to the session bus |
 | `belayer_spawn_agent` | `name`, `profile`, `message`, `branch?` | Dynamically spawn a specialist agent (supervisor only) |
 | `belayer_request_completion` | `summary`, `spec_artifact?` | Signal work is done, trigger PM verification (supervisor only) |
-| `belayer_approve_completion` | `verification_report` | Approve the run after spec verification (PM only) |
-| `belayer_reject_completion` | `verification_report`, `gap_list` | Reject the run with gaps for supervisor to fix (PM only) |
-| `belayer_escalate_to_human` | `reason` (string) | Halt the run and flag for human review (supervisor only) |
+| `belayer_approve_completion` | `verification_report` | Approve the climb after spec verification (PM only) |
+| `belayer_reject_completion` | `verification_report`, `gap_list` | Reject the climb with gaps for supervisor to fix (PM only) |
+| `belayer_escalate_to_human` | `reason` (string) | Halt the climb and flag for human review (supervisor only) |
 
-The base Hermes tools let an agent do work (read files, write code, run commands). The Belayer coordination tools let an agent coordinate (send messages, register outputs, report status, spawn teammates). The completion gate tools enforce spec verification before a run can close.
+The base Hermes tools let an agent do work (read files, write code, run commands). The Belayer coordination tools let an agent coordinate (send messages, register outputs, report status, spawn teammates). The completion gate tools enforce spec verification before a climb can close.
 
-Each agent template declares role-specific tools via the `belayer_tools` field in `agent.yaml`. `report_status` and `create_artifact` are universal baseline tools registered on every agent. Mail tools (`send_message`, `broadcast`, `check_mail`) are registered only for `kind: main`. Role-specific tools are only available to identities that declare them. The supervisor can spawn agents, request completion, and escalate to human. Only the PM can approve or reject a run. This is enforced at registration time — agents never see tools they aren't authorized to use.
+Each agent template declares role-specific tools via the `belayer_tools` field in `agent.yaml`. `report_status` and `create_artifact` are universal baseline tools registered on every agent. Mail tools (`send_message`, `broadcast`, `check_mail`) are registered only for `kind: main`. Role-specific tools are only available to identities that declare them. The supervisor can spawn agents, request completion, and escalate to human. Only the PM can approve or reject a climb. This is enforced at registration time — agents never see tools they aren't authorized to use.
 
 Side agents do not receive mail tools; they receive their task in the spawn message and return via `final_response` plus artifacts.
 
@@ -190,7 +190,7 @@ Agents never communicate by writing to shared files or reading each other's term
 
 The daemon is a Go process running on a Unix socket. It owns the session state and routes all inter-agent communication.
 
-Every run has one **party lead** (a `kind: main` agent with `belayer_spawn_agent`
+Every climb has one **party lead** (a `kind: main` agent with `belayer_spawn_agent`
 + `belayer_request_completion`, conventionally `supervisor`) plus zero or more
 specialist agents (mains or sides) spawned by the party lead at runtime. A
 **PM** side is auto-spawned by the daemon when the party lead calls
@@ -321,13 +321,13 @@ Sides are excluded from broadcast fan-out by construction.
 
 ## Agent lifecycle: party mains vs. summoned sides
 
-Two distinct lifecycle models exist inside a single run. The shape maps
-onto `kind`: mains live through the run as peer party members; sides are
+Two distinct lifecycle models exist inside a single climb. The shape maps
+onto `kind`: mains live through the climb as peer party members; sides are
 spawn-and-complete.
 
 ### Party mains (non-ephemeral, always-on)
 
-The party lead (and any peer main) stays alive for the entire run. The party lead is the only agent that can spawn other agents — the `belayer_spawn_agent` tool is opt-in via `agent.yaml#belayer_tools:` and by convention declared only on the lead. When a specialist finishes and reports back, the party lead is already there, waiting.
+The party lead (and any peer main) stays alive for the entire climb. The party lead is the only agent that can spawn other agents — the `belayer_spawn_agent` tool is opt-in via `agent.yaml#belayer_tools:` and by convention declared only on the lead. When a specialist finishes and reports back, the party lead is already there, waiting.
 
 ```mermaid
 stateDiagram-v2
@@ -350,7 +350,7 @@ The supervisor doesn't burn tokens while idling. It's not running inference. It'
 
 Any peer main (`backend-dev`, `web-dev`, a custom main) follows the same
 lifecycle. They idle between turns when their task is done, wake on mail or
-interrupt, and stay available for the rest of the run.
+interrupt, and stay available for the rest of the climb.
 
 ### Sides (ephemeral, spawn-and-complete)
 
@@ -367,7 +367,7 @@ stateDiagram-v2
 
 Sides are ephemeral by default (`ephemeral: true`). When their task is done, the bridge posts `bridge:finished` and the process exits. If a side gets stuck, it can report `incomplete` to escalate — the daemon logs an `agent_escalated` event and the party lead is notified.
 
-But their **names persist**. The `agent_runs` table keeps the row. If the supervisor needs to assign more work to the same role, it spawns with the same name. The daemon detects the prior run, carries over the `HermesSessionID`, and the specialist resumes with its full conversation history.
+But their **names persist**. The `agent_runs` table keeps the row. If the supervisor needs to assign more work to the same role, it spawns with the same name. The daemon detects the prior climb assignment, carries over the `HermesSessionID`, and the specialist resumes with its full conversation history.
 
 ```
 First spawn:   supervisor → belayer_spawn_agent(name="api", message="implement POST /items")
@@ -385,7 +385,7 @@ This gives you persistent identity without persistent processes. The specialist 
 
 ## Telemetry: the event stream
 
-Every significant thing that happens inside a run posts an event to the daemon's event log. This is the primary observability surface and the mechanism that enables session resume.
+Every significant thing that happens inside a climb posts an event to the daemon's event log. This is the primary observability surface and the mechanism that enables session resume.
 
 ### Event flow
 
@@ -404,7 +404,7 @@ flowchart LR
     end
 
     subgraph consumers["Consumers"]
-        crag["Crag Web UI\n(dashboard, run detail)"]
+        crag["Crag Web UI\n(dashboard, climb detail)"]
         cli["belayer events\n(CLI tail)"]
         supervisor_obs["Supervisor\n(reads via messages)"]
     end
@@ -452,7 +452,7 @@ Daemon-internal events (not from bridge):
 | `agent_exited_without_finish` | Exit watcher | Marks agent `blocked` |
 | `agent_escalated` | Status event handler | Agent reported `incomplete`, logged for monitoring |
 | `artifact_created` | Artifact handler | Registry update |
-| `run_initiated` | CLI `run start` | Records initial task prompt and supervisor profile |
+| `climb_initiated` | CLI `climb start` | Records initial task prompt and supervisor profile. Legacy `run_initiated` events are still read for compatibility. |
 | `session_created` | Session handler | — |
 | `session_completed` | Completion approved handler | Session status → complete |
 | `session_stalled` | Bridge finished/failed handler | All agents exited without completion → session status → stalled |
@@ -497,7 +497,7 @@ sequenceDiagram
     participant S as Specialist (Hermes)
 
     P->>D: belayer_spawn_agent(name="api", profile="...", message="...", branch="feat/x")
-    Note over D: 1. Check for prior AgentRun "api"<br/>2. Carry over HermesSessionID if exists<br/>3. Create git worktree if branch specified<br/>4. Create run directory<br/>5. Insert/update agent_runs row (status: starting)
+    Note over D: 1. Check for prior AgentRun "api"<br/>2. Carry over HermesSessionID if exists<br/>3. Create git worktree if branch specified<br/>4. Create climb directory<br/>5. Insert/update agent_runs row (status: starting)
 
     D->>B: Start Python subprocess<br/>(env: BELAYER_*, HERMES_*)
     Note over D: Update status → running<br/>Log agent_spawned event<br/>Start exit watcher
@@ -583,7 +583,7 @@ The daemon injects environment variables into every bridge subprocess at spawn t
 
 #### `HERMES_SKIP_OPENROUTER_PROBE`
 
-Set to `1` by default. Suppresses the `openrouter.ai/api/v1/models` metadata fetch that hermes-agent performs at startup, which causes 20+ proxy-denied `CONNECT` requests per run on sandboxed deployments whose egress policy does not whitelist `openrouter.ai`.
+Set to `1` by default. Suppresses the `openrouter.ai/api/v1/models` metadata fetch that hermes-agent performs at startup, which causes 20+ proxy-denied `CONNECT` requests per climb on sandboxed deployments whose egress policy does not whitelist `openrouter.ai`.
 
 **When to disable:** Only if your LLM vendor requires OpenRouter metadata at startup (e.g. a routing layer that resolves model IDs via the OpenRouter catalog). To opt out, add the following to `.belayer/config.yaml`:
 
@@ -628,7 +628,7 @@ If no branch is specified, the specialist works in the same directory as the sup
 
 ## Putting it together
 
-The full picture of a Nightshift run:
+The full picture of a Nightshift climb:
 
 ```
 Crag (always-on daemon, owns queue + targets + web UI)
@@ -637,7 +637,7 @@ Crag (always-on daemon, owns queue + targets + web UI)
 │
 └── Target directory: ~/Projects/my-app
     │
-    ├── Belayer daemon (Go, Unix socket, one per run)
+    ├── Belayer daemon (Go, Unix socket, one per climb)
     │   ├── SQLite store (sessions, agents, messages, events, artifacts)
     │   ├── Message broker (debounce, fan-out, urgent interrupt)
     │   └── Bridge process manager (spawn, monitor, stdin pipes)
@@ -679,7 +679,7 @@ The supervisor orchestrates. Specialists execute. The PM verifies. The daemon ro
 
 ## Cost observability
 
-Hermes exposes per-turn token usage and cost estimates from `run_conversation()`. The bridge posts these as events so the daemon can aggregate per-agent costs and Crag can display per-run cost breakdowns.
+Hermes exposes per-turn token usage and cost estimates from `run_conversation()`. The bridge posts these as events so the daemon can aggregate per-agent costs and Crag can display per-climb cost breakdowns.
 
 ### Data available from Hermes
 
@@ -721,7 +721,7 @@ flowchart LR
     end
 
     subgraph crag["Crag Web UI"]
-        breakdown["Cost breakdown\nby agent, by run"]
+        breakdown["Cost breakdown\nby agent, by climb"]
     end
 
     turn --> turn_event --> store
@@ -732,9 +732,9 @@ flowchart LR
 ### What this enables
 
 - **Per-agent cost breakdown**: see that the supervisor used $0.80 (Opus, orchestration overhead) while the implementer used $2.10 (Sonnet, heavy code generation)
-- **Per-run total cost**: sum across all agents for one Nightshift run
-- **Cost trending**: Crag can show cost-per-run over time, catch cost regressions
-- **Budget enforcement**: future feature, Crag could set cost limits per run and pause/escalate when approaching them
+- **Per-climb total cost**: sum across all agents for one Nightshift climb
+- **Cost trending**: Crag can show cost-per-climb over time, catch cost regressions
+- **Budget enforcement**: future feature, Crag could set cost limits per climb and pause/escalate when approaching them
 
 ### Implementation status
 
@@ -783,7 +783,7 @@ flowchart LR
 
 ### Key design decisions
 
-- **The PM controls run completion, not the supervisor.** The supervisor calls `belayer finish`, but the daemon intercepts it and spawns the PM for verification. The PM calls `belayer_approve_completion` to actually close the session. There is no way for the supervisor to directly complete the run.
+- **The PM controls climb completion, not the supervisor.** The supervisor calls `belayer finish`, but the daemon intercepts it and spawns the PM for verification. The PM calls `belayer_approve_completion` to actually close the session. There is no way for the supervisor to directly complete the climb.
 - **The daemon enforces the gate.** The PM is auto-spawned by the daemon when the supervisor finishes. The supervisor can't skip or forget the gate.
 - **The spec is the source of truth, not the supervisor's summary.** The PM reads the original spec artifact directly. It receives the supervisor's summary for context but verifies against the spec.
 - **Tool access is declared in agent templates.** Each template's `agent.yaml` declares which belayer tools that role receives. The supervisor gets spawn and request_completion. The PM gets approve and reject. Specialists get baseline only. The Belayer Hermes plugin enforces this at plugin-discovery time: it reads the per-agent `BELAYER_TOOLS` allowlist (set by the daemon from `agent.yaml`) and only registers tools the agent is permitted to call.
@@ -811,10 +811,10 @@ flowchart LR
 
 ## Exit-condition resolution
 
-Exit conditions describe the shape of a finished run, orthogonal to the
+Exit conditions describe the shape of a finished climb, orthogonal to the
 spec. Resolution precedence at PM spawn time:
 
-1. **Per-run override** — `belayer run start --exit-condition "<text>"`
+1. **Per-climb override** — `belayer climb start --exit-condition "<text>"`
    delivered to the supervisor in an `<exit_conditions_override>` block
    inside the initial task message. The override replaces the config list
    entirely.
@@ -826,7 +826,7 @@ spec. Resolution precedence at PM spawn time:
 
 The daemon resolves the final list via `resolveExitConditions` (see
 `internal/daemon/bridge_events.go`) and injects an explicit
-"Exit conditions for this run" block into the PM's task prompt. The PM
+"Exit conditions for this climb" block into the PM's task prompt. The PM
 rejects completion per-condition: any condition lacking observable
 evidence produces a specific gap in the rejection report, and the
 supervisor must close that gap before re-requesting completion.
@@ -896,10 +896,10 @@ control) is available. If the file does not exist, Landlock is absent.
 
 | Role | Writable paths |
 |------|---------------|
-| **supervisor** | All top-level workspace children except `.belayer/` root, plus `.belayer/runs/`, `.belayer/artifacts/`, `.belayer/worktrees/`, and `/tmp` |
-| **pm** | Agent run dir (`<workspace>/.belayer/runs/<session>/pm`) + `/tmp` |
-| **branched specialist** | Worktree dir + agent run dir + git common dir (`<parent>.git/worktrees/<name>`) + `AgentSharedWritePaths` + `/tmp` |
-| **unbranched specialist** | Agent run dir + `/tmp` |
+| **supervisor** | All top-level workspace children except `.belayer/` root, plus `.belayer/climbs/`, `.belayer/artifacts/`, `.belayer/worktrees/`, and `/tmp` |
+| **pm** | Agent climb dir (`<workspace>/.belayer/climbs/<session>/pm`) + `/tmp` |
+| **branched specialist** | Worktree dir + agent climb dir + git common dir (`<parent>.git/worktrees/<name>`) + `AgentSharedWritePaths` + `/tmp` |
+| **unbranched specialist** | Agent climb dir + `/tmp` |
 
 The supervisor carve-out enumerates workspace top-level children at spawn
 time (not dynamically). Directories created after spawn are not

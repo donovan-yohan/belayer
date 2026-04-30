@@ -203,7 +203,7 @@ func newDaemonCmd() *cobra.Command {
 	cmd.Flags().StringVar(&bridgeAPIKey, "bridge-api-key", "", "LLM provider API key injected into bridge subprocesses (for sandboxes with no Hermes config on the container user)")
 	cmd.Flags().StringVar(&bridgeBaseURL, "bridge-base-url", "", "LLM provider base URL injected into bridge subprocesses (e.g. https://opencode.ai/zen/go/v1)")
 	cmd.Flags().StringVar(&bridgeProvider, "bridge-provider", "", "LLM provider name injected into bridge subprocesses (e.g. openai)")
-	cmd.Flags().StringVar(&logLevel, "log-level", "", "Default log level for new sessions (standard|verbose|trace). Overridable per-run via `belayer run start --log-level` or BELAYER_LOG_LEVEL.")
+	cmd.Flags().StringVar(&logLevel, "log-level", "", "Default log level for new sessions (standard|verbose|trace). Overridable per-climb via `belayer climb start --log-level` or BELAYER_LOG_LEVEL.")
 	cmd.Flags().StringVar(&authToken, "auth-token", "", "Bearer token required for TCP listener requests (auto-generated if --tcp-addr/--bind is set and this flag is not)")
 	cmd.Flags().StringSliceVar(&corsOrigins, "cors-origin", nil, "Allowed CORS origin (repeatable, e.g. --cors-origin https://app.example)")
 	cmd.Flags().BoolVar(&confineAgentWrites, "confine-agent-writes", false, "Enable kernel-enforced write confinement via Landlock v2 for agent bridge subprocesses (Linux 5.19+ only; degrades gracefully on older kernels)")

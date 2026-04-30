@@ -79,11 +79,11 @@ summarized by `gate-result` when a run needs a uniform gate contract.
 
 ## Promotion Rule
 
-Do not add database tables for these artifacts until proof runs show a repeated
+Do not add database tables for these artifacts until proof climbs show a repeated
 query the file registry cannot answer well. Promote fields only when operators
 or dashboards need indexed access across sessions.
 
-Do not let normal runs silently mutate global crag knowledge. Runs produce
+Do not let normal climbs silently mutate global crag knowledge. Climbs produce
 `talent-evaluation` and `org-retro` artifacts. A later reviewed promotion step
 may apply selected lessons to `~/.belayer/crags/<crag-name>/` or
 `~/.belayer/talent-catalog/<category>/`.

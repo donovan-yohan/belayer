@@ -143,7 +143,7 @@ artifacts. A side that needs mid-flight redirection only accepts
 Nothing in the framework source requires `supervisor`/`pm`/`qa`/`reviewer`. If your
 project wants `pilot` + `sprites`, start from `examples/templates/pilot/` and
 `examples/templates/sprite/`, drop them under `.belayer/agents/`, and point
-`belayer run start` at your new party lead.
+`belayer climb start` at your new party lead.
 
 ```bash
 rm -r .belayer/agents/*                        # clear the starter team

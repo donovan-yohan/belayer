@@ -836,7 +836,7 @@ func setupSessionWithWorkspace(t *testing.T, d *Daemon, configYAML string) strin
 	return sessID
 }
 
-// TestResolvePersistenceStrategy_Override verifies that a run_initiated event
+// TestResolvePersistenceStrategy_Override verifies that a climb_initiated event
 // carrying persistence_strategy wins over any config file on disk.
 func TestResolvePersistenceStrategy_Override(t *testing.T) {
 	d := testDaemon(t)
@@ -848,10 +848,10 @@ func TestResolvePersistenceStrategy_Override(t *testing.T) {
 	})
 	if err := d.store.LogEvent(store.SessionEvent{
 		SessionID: sessID,
-		Type:      "run_initiated",
+		Type:      "climb_initiated",
 		Data:      string(overrideData),
 	}); err != nil {
-		t.Fatalf("log run_initiated: %v", err)
+		t.Fatalf("log climb_initiated: %v", err)
 	}
 
 	got, source := d.resolvePersistenceStrategy(sessID)
@@ -864,7 +864,7 @@ func TestResolvePersistenceStrategy_Override(t *testing.T) {
 }
 
 // TestResolvePersistenceStrategy_Config verifies that the config file is used
-// when no run_initiated override is present.
+// when no climb_initiated override is present.
 func TestResolvePersistenceStrategy_Config(t *testing.T) {
 	d := testDaemon(t)
 	sessID := setupSessionWithWorkspace(t, d,
@@ -908,7 +908,7 @@ func TestResolvePersistenceStrategy_EmptyOverrideFallsThroughToConfig(t *testing
 	})
 	_ = d.store.LogEvent(store.SessionEvent{
 		SessionID: sessID,
-		Type:      "run_initiated",
+		Type:      "climb_initiated",
 		Data:      string(overrideData),
 	})
 
@@ -918,6 +918,30 @@ func TestResolvePersistenceStrategy_EmptyOverrideFallsThroughToConfig(t *testing
 	}
 	if len(got) != 1 || got[0] != "config-step" {
 		t.Fatalf("expected config step, got %v", got)
+	}
+}
+
+func TestResolvePersistenceStrategy_LegacyRunInitiatedOverride(t *testing.T) {
+	d := testDaemon(t)
+	sessID := setupSessionWithWorkspace(t, d, "persistence_strategy:\n  - from-config\n")
+
+	overrideData, _ := json.Marshal(map[string]any{
+		"persistence_strategy": []string{"legacy-override"},
+	})
+	if err := d.store.LogEvent(store.SessionEvent{
+		SessionID: sessID,
+		Type:      "run_initiated",
+		Data:      string(overrideData),
+	}); err != nil {
+		t.Fatalf("log legacy run_initiated: %v", err)
+	}
+
+	got, source := d.resolvePersistenceStrategy(sessID)
+	if source != "override" {
+		t.Fatalf("expected source=override, got %q", source)
+	}
+	if len(got) != 1 || got[0] != "legacy-override" {
+		t.Fatalf("expected legacy override, got %v", got)
 	}
 }
 
@@ -1000,7 +1024,7 @@ func TestSupervisorIncompleteRepromptedWhenNoPersistenceArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	handoffPath := filepath.Join(sessMeta.WorkspaceDir, ".belayer", "runs", sessID, "handoff.md")
+	handoffPath := filepath.Join(sessMeta.WorkspaceDir, ".belayer", "climbs", sessID, "handoff.md")
 	if _, err := os.Stat(handoffPath); err != nil {
 		t.Fatalf("expected handoff artifact at %s: %v", handoffPath, err)
 	}
@@ -1010,7 +1034,7 @@ func TestSupervisorIncompleteRepromptedWhenNoPersistenceArtifact(t *testing.T) {
 	}
 	var foundHandoff bool
 	for _, artifact := range artifacts {
-		if artifact.Kind == "handoff" && artifact.Path == ".belayer/runs/"+sessID+"/handoff.md" {
+		if artifact.Kind == "handoff" && artifact.Path == ".belayer/climbs/"+sessID+"/handoff.md" {
 			foundHandoff = true
 			break
 		}

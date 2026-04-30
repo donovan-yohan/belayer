@@ -109,7 +109,7 @@ belayer init --force          # refresh shipped agents from defaults; never touc
 Behavior:
 1. If `.belayer/` exists and `--force` is not set: print "belayer already initialized at <path>" and exit 0.
 2. Otherwise: create `.belayer/{config.yaml,policies/standard.yaml,agents/<six defaults>}`.
-3. Append a managed block to `<project>/.gitignore` (creating it if absent) so per-run scratch directories don't get committed: `/.belayer/runs/` and `/.belayer/worktrees/`. The committed surface — `agents/`, `config.yaml`, `policies/` — stays tracked. The block is fenced by a `# belayer — per-run state` marker so re-runs are a no-op and user-added rules above it are preserved verbatim.
+3. Append a managed block to `<project>/.gitignore` (creating it if absent) so per-climb scratch directories don't get committed: `/.belayer/climbs/` and `/.belayer/worktrees/`. The committed surface — `agents/`, `config.yaml`, `policies/` — stays tracked. The block is fenced by a `# belayer — per-climb state` marker so re-runs are a no-op and user-added rules above it are preserved verbatim.
 4. Print one line per file created so the user knows what landed in their repo.
 5. `--force` overwrites only `.belayer/agents/`. The user's `config.yaml`, `policies/standard.yaml`, and `.gitignore` are never overwritten — re-running with `--force` is the supported path for upgrading shipped agents after a `belayer` upgrade.
 
@@ -649,7 +649,7 @@ SQLite for the PoC. Workspace definitions as YAML files in `~/.crag/workspaces/`
 
 ### 6. Multi-repo: revisit `--repos` and per-agent starting cwd
 
-Today `belayer run start --repos name=path,...` synthesizes a workspace at `.belayer/runs/<sessionID>/workspace/` by symlinking each repo into it. The agent's `workdir` is that synthetic dir, and individual implementers see all repos as siblings. The cleaner pattern in practice is a meta-directory with sibling repos (`~/projects/extend-fullstack/{extend-app,extend-api,.belayer}`) — no `--repos` flag needed, the meta-dir IS the workspace.
+Today `belayer climb start --repos name=path,...` synthesizes a workspace at `.belayer/climbs/<sessionID>/workspace/` by symlinking each repo into it. The agent's `workdir` is that synthetic dir, and individual implementers see all repos as siblings. The cleaner pattern in practice is a meta-directory with sibling repos (`~/projects/extend-fullstack/{extend-app,extend-api,.belayer}`) — no `--repos` flag needed, the meta-dir IS the workspace.
 
 Two concrete things to revisit before multi-repo gets serious use:
 

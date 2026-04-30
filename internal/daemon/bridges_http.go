@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/donovan-yohan/belayer/internal/climbpath"
 )
 
 type bridgeLogDescriptor struct {
@@ -22,7 +24,7 @@ type bridgeLogDescriptor struct {
 }
 
 func bridgeLogPathFor(workdir, sessionID, agentName string) string {
-	return filepath.Join(workdir, ".belayer", "runs", sessionID, agentName, "bridge-stdout.log")
+	return filepath.Join(climbpath.ExistingAgentDir(workdir, sessionID, agentName), "bridge-stdout.log")
 }
 
 func (d *Daemon) handleListBridges(w http.ResponseWriter, r *http.Request) {

@@ -67,9 +67,9 @@ End every review with a single-line verdict on its own:
 
 ## Artifact registration
 
-Write your full findings list under the per-run artifact directory from
+Write your full findings list under the per-climb artifact directory from
 `$BELAYER_AGENT_ARTIFACT_DIR` (default:
-`.belayer/runs/<session-id>/<agent-name>/artifacts/`). A canonical choice is
+`.belayer/climbs/<session-id>/<agent-name>/artifacts/`). A canonical choice is
 `$BELAYER_AGENT_ARTIFACT_DIR/review-report.md`. Register that file with
 belayer_create_artifact using `kind=review-report`, the relative
 `path` you just wrote, and a one-line `summary`. Message the

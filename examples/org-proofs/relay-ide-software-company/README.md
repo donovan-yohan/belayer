@@ -7,7 +7,7 @@ Selected PRD: https://github.com/donovan-yohan/relay-ide/issues/320
 This packet models a software-company crag climb for issue #320. It does not alter
 relay-ide directly in this Belayer PR. That was deliberate: the goal for #115 is
 to verify the crag-mode artifact shape and review criteria before handing the
-task to a real implementation run.
+task to a real implementation climb.
 
 ## Files
 
@@ -19,7 +19,7 @@ task to a real implementation run.
 
 ## Handoff Decision
 
-Issue #320 is a good first real software-company run because it is small, has
-clear acceptance criteria, and touches a bounded module. A future Belayer run
+Issue #320 is a good first real software-company climb because it is small, has
+clear acceptance criteria, and touches a bounded module. A future Belayer climb
 should implement it in relay-ide and attach the real PR/check URLs to these
 same artifact kinds.

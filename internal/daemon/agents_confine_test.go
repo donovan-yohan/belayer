@@ -29,7 +29,7 @@ func setupWorkspace(t *testing.T) string {
 		}
 	}
 	// Create .belayer/ runtime structure.
-	for _, sub := range []string{".belayer/runs", ".belayer/artifacts", ".belayer/worktrees"} {
+	for _, sub := range []string{".belayer/climbs", ".belayer/runs", ".belayer/artifacts", ".belayer/worktrees"} {
 		if err := os.MkdirAll(filepath.Join(ws, sub), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", sub, err)
 		}
@@ -39,7 +39,7 @@ func setupWorkspace(t *testing.T) string {
 
 func TestComputeWriteRoots_Supervisor(t *testing.T) {
 	ws := setupWorkspace(t)
-	runDir := filepath.Join(ws, ".belayer", "runs", "sess1", "supervisor")
+	runDir := filepath.Join(ws, ".belayer", "climbs", "sess1", "supervisor")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatalf("mkdir runDir: %v", err)
 	}
@@ -57,8 +57,9 @@ func TestComputeWriteRoots_Supervisor(t *testing.T) {
 		t.Error("supervisor roots must not include .belayer/ root")
 	}
 
-	// The three allowed .belayer subdirs must appear.
-	for _, sub := range []string{"runs", "artifacts", "worktrees"} {
+	// The allowed .belayer subdirs must appear, including legacy runs/ for
+	// resuming older sessions under write confinement.
+	for _, sub := range []string{"climbs", "runs", "artifacts", "worktrees"} {
 		want := filepath.Join(ws, ".belayer", sub)
 		if !envContains(roots, want) {
 			t.Errorf("supervisor roots must include .belayer/%s; got %v", sub, roots)
@@ -81,7 +82,7 @@ func TestComputeWriteRoots_Supervisor(t *testing.T) {
 
 func TestComputeWriteRoots_PM(t *testing.T) {
 	ws := setupWorkspace(t)
-	runDir := filepath.Join(ws, ".belayer", "runs", "sess1", "pm")
+	runDir := filepath.Join(ws, ".belayer", "climbs", "sess1", "pm")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatalf("mkdir runDir: %v", err)
 	}
@@ -117,7 +118,7 @@ func TestComputeWriteRoots_BranchedSpecialist(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+gitdir+"\n"), 0o644); err != nil {
 		t.Fatalf("write .git: %v", err)
 	}
-	runDir := filepath.Join(ws, ".belayer", "runs", "sess1", "implementer-1")
+	runDir := filepath.Join(ws, ".belayer", "climbs", "sess1", "implementer-1")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatalf("mkdir runDir: %v", err)
 	}
@@ -142,7 +143,7 @@ func TestComputeWriteRoots_BranchedSpecialist(t *testing.T) {
 
 func TestComputeWriteRoots_UnbranchedSpecialist(t *testing.T) {
 	ws := setupWorkspace(t)
-	runDir := filepath.Join(ws, ".belayer", "runs", "sess1", "implementer")
+	runDir := filepath.Join(ws, ".belayer", "climbs", "sess1", "implementer")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatalf("mkdir runDir: %v", err)
 	}
@@ -179,7 +180,7 @@ func TestComputeWriteRoots_SharedPathsSlice(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: /repo/.git/worktrees/a\n"), 0o644); err != nil {
 		t.Fatalf("write .git: %v", err)
 	}
-	runDir := filepath.Join(ws, ".belayer", "runs", "s", "a")
+	runDir := filepath.Join(ws, ".belayer", "climbs", "s", "a")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatalf("mkdir runDir: %v", err)
 	}

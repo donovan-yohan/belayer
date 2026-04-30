@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/donovan-yohan/belayer/internal/climbpath"
 )
 
 // transcriptEntry is the JSON shape returned by handleListTranscripts.
@@ -21,9 +23,9 @@ type transcriptEntry struct {
 // transcriptDir returns the directory under workspace that holds transcript
 // files for a given session.
 //
-//	<workspace>/.belayer/runs/<session>/transcripts/
+//	<workspace>/.belayer/climbs/<session>/transcripts/
 func transcriptDir(workspaceDir, sessionID string) string {
-	return filepath.Join(workspaceDir, ".belayer", "runs", sessionID, "transcripts")
+	return climbpath.ExistingTranscriptsDir(workspaceDir, sessionID)
 }
 
 // handleListTranscripts lists transcript files for a session.

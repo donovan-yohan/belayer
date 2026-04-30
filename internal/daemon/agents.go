@@ -17,6 +17,7 @@ import (
 
 	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/broker"
+	"github.com/donovan-yohan/belayer/internal/climbpath"
 	"github.com/donovan-yohan/belayer/internal/daemon/bridgelog"
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
@@ -337,7 +338,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 				workdirForRunDir = cwd
 			}
 		}
-		runDir := filepath.Join(workdirForRunDir, ".belayer", "runs", sessionID, req.Name)
+		runDir := climbpath.AgentDir(workdirForRunDir, sessionID, req.Name)
 		select {
 		case <-proc.FirstEvent():
 			// healthy startup — proceed
@@ -561,9 +562,9 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 		initialMessage = buildAgentInitialMessage(req.Branch, wtPath, req.Message)
 	}
 
-	runDir := filepath.Join(workdir, ".belayer", "runs", req.SessionID, req.Name)
+	runDir := climbpath.AgentDir(workdir, req.SessionID, req.Name)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create run dir: %w", err)
+		return nil, fmt.Errorf("create climb dir: %w", err)
 	}
 
 	// Compute Landlock write roots for this agent (used when ConfineAgentWrites is true).
@@ -657,7 +658,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// Allocate per-agent transcript path for verbose sessions. Anchored to
 	// sess.WorkspaceDir (not the agent's workdir, which may be a per-branch
 	// worktree) so the archive manager's single read path under
-	// sess.WorkspaceDir/.belayer/runs/<session>/transcripts/ finds every
+	// sess.WorkspaceDir/.belayer/climbs/<session>/transcripts/ finds every
 	// agent's file, including branch-based specialists. If sess.WorkspaceDir
 	// is empty, the session is never archived anyway (archive_manager.doArchive
 	// skips), so there's no point writing transcripts.
@@ -665,7 +666,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// Tier model is monotonic (standard ⊂ verbose ⊂ trace): trace sessions
 	// still want the verbose transcript channel in addition to trace fragments.
 	if (sess.LogLevel == LogLevelVerbose || sess.LogLevel == LogLevelTrace) && sess.WorkspaceDir != "" {
-		transcriptsDir := filepath.Join(sess.WorkspaceDir, ".belayer", "runs", req.SessionID, "transcripts")
+		transcriptsDir := climbpath.TranscriptsDir(sess.WorkspaceDir, req.SessionID)
 		if mkErr := os.MkdirAll(transcriptsDir, 0o700); mkErr != nil {
 			log.Printf("spawn %s: create transcripts dir failed (continuing without transcript): %v", req.Name, mkErr)
 		} else {
@@ -733,7 +734,7 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	argv := bridge.BuildCmd(cfg)
 	env := bridge.BuildEnv(cfg)
 	env = append(env, "BELAYER_AGENT_KIND="+req.Kind)
-	env = append(env, "BELAYER_AGENT_ARTIFACT_DIR="+filepath.ToSlash(filepath.Join(".belayer", "runs", req.SessionID, req.Name, "artifacts")))
+	env = append(env, "BELAYER_AGENT_ARTIFACT_DIR="+climbpath.AgentArtifactsRel(workdir, req.SessionID, req.Name))
 
 	// Use an io.Pipe for stdout so the scanner pump can tee bytes to the log
 	// writer while concurrently scanning for error markers. If we assigned
@@ -863,13 +864,13 @@ func (d *Daemon) watchBridgeExit(run store.AgentRun, proc *bridge.Process) {
 
 		// Notify supervisor.
 		if run.Name != "supervisor" {
-			// Reconstruct the run directory for this agent. If the agent was
+			// Reconstruct the climb directory for this agent. If the agent was
 			// spawned on a branch it has a worktree; otherwise it uses Workdir.
 			runBase := run.Workdir
 			if run.WorktreePath != "" {
 				runBase = run.WorktreePath
 			}
-			runDir := filepath.Join(runBase, ".belayer", "runs", run.SessionID, run.Name)
+			runDir := climbpath.ExistingAgentDir(runBase, run.SessionID, run.Name)
 			stderrPath := filepath.Join(runDir, "bridge-stderr.log")
 			stderrTail := bridgelog.TailLines(stderrPath, 50)
 			stdoutPath := filepath.Join(runDir, "bridge-stdout.log")
@@ -1055,7 +1056,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		// or process exit (crash during startup). This converts a silent race
 		// where the bridge exits in <500ms into an immediate error returned to
 		// the supervisor tool call (Gap 14).
-		runDir := filepath.Join(req.Workdir, ".belayer", "runs", req.SessionID, req.Name)
+		runDir := climbpath.AgentDir(req.Workdir, req.SessionID, req.Name)
 		select {
 		case <-proc.FirstEvent():
 			// healthy startup — proceed
@@ -1447,7 +1448,7 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 //  2. <belayerRoot>/agents/<identity>/<file>                  — shipped default
 //
 // The walk-up handles the common case where workdir points at a nested location
-// (a session workspace under .belayer/runs/<id>/workspace/, or a worktree under
+// (a session workspace under .belayer/climbs/<id>/workspace/, or a worktree under
 // .belayer/worktrees/<id>/<name>/) rather than the project root itself —
 // without it, the project-local override would be silently invisible.
 //
@@ -1535,7 +1536,7 @@ func buildAgentInitialMessage(branch, worktreePath, message string) string {
 }
 
 // validateAgentName rejects names that could escape a filesystem path.
-// Agent names are used as directory segments under .belayer/runs/<session>/
+// Agent names are used as directory segments under .belayer/climbs/<session>/
 // and as filenames for per-agent transcripts, so they must not contain path
 // separators, "..", NUL bytes, or leading dots.
 func validateAgentName(name string) error {

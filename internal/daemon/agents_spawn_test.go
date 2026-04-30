@@ -83,7 +83,7 @@ func TestSpawnAgent_BridgeCrashDuringStartup(t *testing.T) {
 
 	// Build a runDir in a temp dir so TailLines can find the fake stderr.
 	tempBase := t.TempDir()
-	runDir := filepath.Join(tempBase, ".belayer", "runs", sess.ID, "worker")
+	runDir := filepath.Join(tempBase, ".belayer", "climbs", sess.ID, "worker")
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}

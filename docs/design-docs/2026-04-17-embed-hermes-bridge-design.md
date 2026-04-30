@@ -65,7 +65,7 @@ The gitignore list gets one new entry:
 /.belayer/hermes_bridge/
 ```
 
-Added alongside the existing `/.belayer/runs/` and `/.belayer/worktrees/` entries. `ensureGitignoreEntries()` is upgraded from a marker-gated "write block once" check to a per-entry check that diffs the expected entries against the file contents and appends any missing ones — so projects initialized under an older binary pick up new entries on the next `belayer init` or auto-init run. Fresh projects still get a single labelled block; upgrades get the missing entries appended under a compact `# belayer — added on upgrade` header so their provenance is visible.
+Added alongside the existing `/.belayer/climbs/` and `/.belayer/worktrees/` entries. `ensureGitignoreEntries()` is upgraded from a marker-gated "write block once" check to a per-entry check that diffs the expected entries against the file contents and appends any missing ones — so projects initialized under an older binary pick up new entries on the next `belayer init` or auto-init climb. Fresh projects still get a single labelled block; upgrades get the missing entries appended under a compact `# belayer — added on upgrade` header so their provenance is visible.
 
 ### PYTHONPATH routing in clamshell mode
 

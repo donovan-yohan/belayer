@@ -6,7 +6,7 @@ Schema tag: **`belayer-log/v1`**. This document is the sole authoritative refere
 
 ## 1. Overview
 
-Belayer is the agent control plane for a single Nightshift worker run — one daemon per workspace, ephemeral per run. It coordinates supervisor and specialist agents via the Hermes bridge subprocess.
+Belayer is the agent control plane for a single Nightshift worker climb — one daemon per workspace, ephemeral per climb. It coordinates supervisor and specialist agents via the Hermes bridge subprocess.
 
 A **SessionEvent** is an immutable, monotonically-ordered row inserted into SQLite when something significant happens during a session. Events are the primary observability primitive: streamed live via SSE, queryable via HTTP, and dumped to NDJSON at terminal transition.
 
@@ -99,7 +99,7 @@ Fragment files are newline-terminated JSONL records. When a fragment is sealed (
 
 `bridge:*` events are forwarded verbatim from the Python hermes_bridge subprocess. Additional fields may appear in `data`; consumers MUST ignore unknown fields.
 
-**Verbose-only events.** `bridge:agent_reasoning` and `bridge:agent_narration` are gated at the bridge on the session's `log_level`. Standard runs emit no such events — consumers that rely on reasoning capture MUST verify the session was created with `log_level: "verbose"` (see Section 6.5).
+**Verbose-only events.** `bridge:agent_reasoning` and `bridge:agent_narration` are gated at the bridge on the session's `log_level`. Standard climbs emit no such events — consumers that rely on reasoning capture MUST verify the session was created with `log_level: "verbose"` (see Section 6.5).
 
 ### 3.4 `message_*` — Inter-agent messaging
 
@@ -165,7 +165,7 @@ Unknown `org:*` events are allowed. Consumers MUST tolerate new suffixes.
 
 At most one `warning:supervisor_exited_early` event is emitted per session, for the first active specialist found.
 
-### 3.11 `node_*` — Agent-run internal lifecycle
+### 3.11 `node_*` — Agent-climb internal lifecycle
 
 | Type | Typical `data` fields | Notes |
 |------|----------------------|-------|
