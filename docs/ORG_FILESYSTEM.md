@@ -57,8 +57,8 @@ crag:
   path: /absolute/path/to/crag
 ```
 
-If `crag.path` is present, it must be absolute and must point at a crag
-directory with a valid `crag.yaml`.
+If `crag.path` is present, it must be absolute or relative to the repository
+root, and must point at a crag directory with a valid `crag.yaml`.
 
 ## User Team Catalog
 
@@ -127,7 +127,7 @@ Fields:
 | Field | Required | Meaning |
 |-------|----------|---------|
 | `schema_version` | yes | Must be `belayer-crag/v1` for this contract. |
-| `name` | yes | Directory-safe crag identifier. Should match `<crag-name>`. |
+| `name` | yes | Directory-safe crag identifier. Must match `<crag-name>`. |
 | `kind` | yes | `development`, `story`, `research`, or `custom`. |
 | `description` | no | Human summary for future crag-listing surfaces. |
 | `default_team` | no | Team file under `teams/` to use by default. |
@@ -188,7 +188,7 @@ Example:
 
 ```yaml
 schema_version: "belayer-gate/v1"
-id: acceptance
+name: acceptance
 stage: session
 authority: blocking
 trigger: completion_requested
@@ -255,7 +255,7 @@ origin:
   first_artifact: "artifacts/stories/tavern-celebration.md"
 role: "tavernkeep"
 summary: "Warm, watchful innkeeper who remembers debts and rumors"
-reuse_policy: scene-local | recurring | promoted
+reuse_policy: scene-local # options: scene-local | recurring | promoted
 ```
 
 Generated talents do not become full `.belayer/agents/` identities by default.

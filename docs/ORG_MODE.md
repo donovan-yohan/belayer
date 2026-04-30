@@ -185,7 +185,7 @@ gate: a scoped authority that inspects artifacts and produces a durable verdict.
 ```yaml
 schema_version: "belayer-gate/v1"
 gate:
-  id: runtime-qa
+  name: runtime-qa
   stage: task
   authority: blocking
   input_artifacts:
