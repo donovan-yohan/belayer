@@ -1,0 +1,27 @@
+embed.go
+  cea6ddc0add32c83 38
+internal/cli/hermes_plugin.go
+  cea6ddc0add32c83 33
+plugins/belayer/tests/test_plugin_register.py
+  cea6ddc0add32c83 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7bea95cefd1b6bbe201dccd542f21dd0b3ac490d",
+  "prompts": {
+    "cea6ddc0add32c83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddeb8-5202-7ee3-952f-bf72f3a760bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 93,
+      "total_deletions": 4,
+      "accepted_lines": 1547,
+      "overriden_lines": 0
+    }
+  }
+}
