@@ -1,0 +1,35 @@
+agents/supervisor/agents.md
+  eba65da2a046cd1c 31,94,101
+internal/bridge/bridge.go
+  eba65da2a046cd1c 273
+internal/daemon/agents_confine.go
+  eba65da2a046cd1c 23,26,62,68,84
+internal/daemon/agents.go
+  eba65da2a046cd1c 737,867
+internal/climbpath/climbpath_test.go
+  eba65da2a046cd1c 1-26,28-34,36-50,53-76
+internal/climbpath/climbpath.go
+  eba65da2a046cd1c 32-41,78-82,89-92
+internal/daemon/agents_confine_test.go
+  eba65da2a046cd1c 42,85,121,146,183
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "80bc2dee8bb7dfc425c05796913d30f4d82c3435",
+  "prompts": {
+    "eba65da2a046cd1c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddbc7-cc5c-7990-98c0-bc190d3f7c96",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 3622,
+      "total_deletions": 24,
+      "accepted_lines": 59,
+      "overriden_lines": 0
+    }
+  }
+}
