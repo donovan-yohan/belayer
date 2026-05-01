@@ -38,6 +38,15 @@ except ImportError:
     )
     sys.exit(1)
 
+try:
+    from hermes_cli import __version__ as HERMES_VERSION  # type: ignore[import]
+except ImportError:
+    print(
+        "ERROR: Hermes 0.12.0 or newer is required; hermes_cli module not found.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 from hermes_bridge.callbacks import make_callbacks, make_transcript_writer, post_event, start_heartbeat_thread, wire_callbacks
 from hermes_bridge.stdin_reader import StdinReader
 from hermes_bridge.http_client import unix_get
@@ -47,6 +56,9 @@ logging.basicConfig(
     format="%(asctime)s [bridge:%(name)s] %(message)s",
 )
 log = logging.getLogger("main")
+
+MIN_HERMES_VERSION = (0, 12, 0)
+MIN_HERMES_VERSION_TEXT = "0.12.0"
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +72,30 @@ def _require_env(name: str) -> str:
         log.error("Required env var %s is not set", name)
         sys.exit(1)
     return val
+
+
+def parse_semver(version: str) -> tuple[int, int, int] | None:
+    """Parse the numeric major.minor.patch prefix from a semver-ish string."""
+    parts = version.split("-", 1)[0].split("+", 1)[0].split(".")
+    if len(parts) < 3:
+        return None
+    try:
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except ValueError:
+        return None
+
+
+def require_supported_hermes_version() -> None:
+    """Abort early when the bridge is running against an unsupported Hermes."""
+    parsed = parse_semver(str(HERMES_VERSION))
+    if parsed is not None and parsed >= MIN_HERMES_VERSION:
+        return
+    log.error(
+        "Hermes %s or newer is required; found %s. Upgrade Hermes before running Belayer.",
+        MIN_HERMES_VERSION_TEXT,
+        HERMES_VERSION,
+    )
+    sys.exit(1)
 
 
 def fetch_pending_messages(socket_path: str, session_id: str, agent_id: str) -> list[dict]:
@@ -290,6 +326,8 @@ def extract_session_usage(agent: object) -> dict:
 
 
 def main() -> None:
+    require_supported_hermes_version()
+
     # --- Config from environment -------------------------------------------
     session_id = _require_env("BELAYER_SESSION_ID")
     agent_id = _require_env("BELAYER_AGENT_ID")
@@ -347,7 +385,7 @@ def main() -> None:
             log.warning("Profile dir %s not found, using default", profile_home)
 
     # --- Resolve passthroughs and construct AIAgent --------------------------
-    # Hermes 0.11+ loads credentials, base_url, provider, and api_mode from
+    # Hermes 0.12+ loads credentials, base_url, provider, and api_mode from
     # the active profile (HERMES_HOME) via the transport layer. Auth refresh
     # (OAuth, token rotation) is handled by the transport, not the bridge.
     # We only override via BELAYER_* env vars when the daemon explicitly
@@ -373,7 +411,6 @@ def main() -> None:
 
     agent_kwargs: dict = {
         "quiet_mode": True,
-        "persist_session": True,
         "session_db": session_db,
     }
     if system_prompt:
@@ -410,7 +447,7 @@ def main() -> None:
         sys.exit(1)
 
     # TODO(upstream-hermes): Remove once transports handle HTTPS_PROXY.
-    # Hermes 0.11's transport ABC should eventually handle proxy config per-
+    # Hermes' transport ABC should eventually handle proxy config per-
     # transport. Until then, monkey-patch _create_openai_client to inject a
     # proxy-aware httpx.Client for OpenAI-format transports.
     _proxy_url = os.environ.get("HTTPS_PROXY", "") or os.environ.get("https_proxy", "")

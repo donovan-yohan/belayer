@@ -7,10 +7,13 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+import pytest
+
 
 def _load_main_module(monkeypatch):
     fake_run_agent = types.ModuleType("run_agent")
     fake_state = types.ModuleType("hermes_state")
+    fake_hermes_cli = types.ModuleType("hermes_cli")
 
     class _PlaceholderAIAgent:
         def __init__(self, **kwargs):
@@ -26,8 +29,10 @@ def _load_main_module(monkeypatch):
 
     fake_run_agent.AIAgent = _PlaceholderAIAgent
     fake_state.SessionDB = _PlaceholderSessionDB
+    fake_hermes_cli.__version__ = "0.12.0"
     monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
     monkeypatch.setitem(sys.modules, "hermes_state", fake_state)
+    monkeypatch.setitem(sys.modules, "hermes_cli", fake_hermes_cli)
     monkeypatch.delitem(sys.modules, "hermes_bridge.__main__", raising=False)
     return importlib.import_module("hermes_bridge.__main__")
 
@@ -118,6 +123,7 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert created_agents[0].kwargs["max_iterations"] == 7
+    assert "persist_session" not in created_agents[0].kwargs
     assert "[Message from peer]: hello" in created_agents[0].last_run["user_message"]
 
     ack_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:message_ack"]
@@ -129,6 +135,17 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
 
     finished_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:finished"]
     assert len(finished_calls) == 1
+
+
+def test_main_requires_hermes_0_12_or_newer(monkeypatch, caplog):
+    module = _load_main_module(monkeypatch)
+    monkeypatch.setattr(module, "HERMES_VERSION", "0.11.0")
+
+    with pytest.raises(SystemExit) as exc:
+        module.require_supported_hermes_version()
+
+    assert exc.value.code == 1
+    assert "Hermes 0.12.0 or newer is required" in caplog.text
 
 
 def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
@@ -158,6 +175,7 @@ def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert created_agents[0].kwargs["max_iterations"] == 9
+    assert "persist_session" not in created_agents[0].kwargs
 
     budget_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:budget_exhausted"]
     assert len(budget_calls) == 1

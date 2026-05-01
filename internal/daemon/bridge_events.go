@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/donovan-yohan/belayer/internal/broker"
+	"github.com/donovan-yohan/belayer/internal/gates"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/google/uuid"
 	"go.yaml.in/yaml/v3"
@@ -604,6 +605,27 @@ func (d *Daemon) resolveExitConditions(sessionID string) ([]string, string) {
 	return file.ExitConditions, "config"
 }
 
+func (d *Daemon) resolveAcceptanceGate(sessionID string) (gates.Gate, string) {
+	sess, err := d.store.GetSession(sessionID)
+	if err != nil || sess.WorkspaceDir == "" {
+		return gates.BuiltInAcceptance(), "builtin"
+	}
+	cfgPath := filepath.Join(sess.WorkspaceDir, ".belayer", "config.yaml")
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return gates.BuiltInAcceptance(), "builtin"
+	}
+	gate, ok, err := gates.AcceptanceFromConfig(raw)
+	if err != nil {
+		log.Printf("resolveAcceptanceGate: failed to parse gates for session %s: %v (using built-in acceptance)", sessionID, err)
+		return gates.BuiltInAcceptance(), "builtin"
+	}
+	if !ok {
+		return gates.BuiltInAcceptance(), "builtin"
+	}
+	return gate, "config"
+}
+
 // resolvePersistenceStrategy returns the authoritative persistence-strategy
 // list for the session plus the source it came from ("override" for a
 // --persistence-strategy flag at climb start, "config" for .belayer/config.yaml,
@@ -831,9 +853,41 @@ func (d *Daemon) maybeRepromptForPersistence(sessionID, supervisorDetail string)
 	return true
 }
 
+func renderAcceptanceGateBlock(gate gates.Gate, source string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Acceptance gate for this climb (source: %s):\n", source)
+	fmt.Fprintf(&b, "- name: %s\n", gate.Name)
+	fmt.Fprintf(&b, "- stage: %s\n", gate.Stage)
+	fmt.Fprintf(&b, "- authority: %s\n", gate.Authority)
+	if gate.Trigger != "" {
+		fmt.Fprintf(&b, "- trigger: %s\n", gate.Trigger)
+	}
+	if len(gate.AssignedTalent) > 0 {
+		fmt.Fprintf(&b, "- assigned_talent: %s\n", strings.Join(gate.AssignedTalent, ", "))
+	}
+	if len(gate.Requires) > 0 {
+		b.WriteString("- requires:\n")
+		for _, req := range gate.Requires {
+			fmt.Fprintf(&b, "  - %s\n", req)
+		}
+	}
+	if len(gate.Conditions) > 0 {
+		b.WriteString("- conditions:\n")
+		for _, condition := range gate.Conditions {
+			fmt.Fprintf(&b, "  - %s\n", condition)
+		}
+	}
+	if len(gate.Verdicts) > 0 {
+		fmt.Fprintf(&b, "- verdicts: %s\n", strings.Join(gate.Verdicts, ", "))
+	}
+	return b.String()
+}
+
 func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, data map[string]any) {
 	summary, _ := data["summary"].(string)
 	specArtifact, _ := data["spec_artifact"].(string)
+	acceptanceGate, gateSource := d.resolveAcceptanceGate(sessionID)
+	acceptanceTalent := acceptanceGate.PrimaryTalent()
 
 	// Build context for the PM: spec location, artifact list, supervisor summary.
 	artifacts, _ := d.store.ListArtifacts(sessionID)
@@ -885,8 +939,10 @@ func (d *Daemon) handleBridgeCompletionRequested(sessionID, agentName string, da
 		}
 	}
 
+	gateBlock := renderAcceptanceGateBlock(acceptanceGate, gateSource)
+
 	// Build PM initial message with full context.
-	pmMessage := fmt.Sprintf(
+	gateMessage := fmt.Sprintf(
 		`[System] The supervisor has signaled that all implementation work is complete. Your job is to verify.
 
 Supervisor's summary:
@@ -898,35 +954,42 @@ Registered artifacts:
 %s
 
 %s
+
+%s
 Instructions:
 1. Read the spec artifact (or find the spec in the workspace if none was registered).
 2. Use git diff to see what changed during this climb.
 3. Walk through the spec section by section. For each requirement, find evidence in the code.
-4. For each exit condition listed above, demand concrete evidence it holds.
+4. For each acceptance gate condition and exit condition listed above, demand concrete evidence it holds.
 5. Check for deferred work: TODO comments, placeholder implementations, empty test bodies.
 6. Produce a structured verification report (Passed / Failed / Deferred).
 
-If ALL spec items and exit conditions are satisfied: call belayer_approve_completion with your verification report.
+If ALL acceptance gate conditions, spec items, and exit conditions are satisfied: call belayer_approve_completion with your verification report.
 If gaps exist: call belayer_reject_completion with the specific gaps so the supervisor can fix them.`,
-		summary, specLine, artifactSummary, exitBlock,
+		summary, specLine, artifactSummary, gateBlock, exitBlock,
 	)
 
-	// Auto-spawn the PM agent.
+	// Auto-spawn the acceptance gate talent. The built-in preset keeps the
+	// historical PM path intact unless a project config overrides it.
 	go func() {
 		_, err := d.spawnAgentInternal(agentSpawnRequest{
 			SessionID: sessionID,
-			Name:      "pm",
-			Role:      "pm",
+			Name:      acceptanceTalent,
+			Role:      acceptanceTalent,
 			Kind:      "side",
 			Profile:   "default",
-			Message:   pmMessage,
+			Message:   gateMessage,
 		})
 		if err != nil {
-			log.Printf("Failed to auto-spawn PM for session %s: %v", sessionID, err)
+			log.Printf("Failed to auto-spawn acceptance gate talent %s for session %s: %v", acceptanceTalent, sessionID, err)
 			_ = d.store.LogEvent(store.SessionEvent{
 				SessionID: sessionID,
 				Type:      "pm_spawn_failed",
-				Data:      mustJSON(map[string]string{"error": err.Error()}),
+				Data: mustJSON(map[string]string{
+					"error":  err.Error(),
+					"gate":   acceptanceGate.Name,
+					"talent": acceptanceTalent,
+				}),
 			})
 			// Notify supervisor that PM spawn failed.
 			msg := broker.Message{
@@ -935,7 +998,7 @@ If gaps exist: call belayer_reject_completion with the specific gaps so the supe
 				SenderID:    "system",
 				RecipientID: "supervisor",
 				Type:        broker.MessageStateChange,
-				Content:     "PM agent failed to spawn for completion verification. You may call belayer_request_completion again to retry.",
+				Content:     "Acceptance gate agent failed to spawn for completion verification. You may call belayer_request_completion again to retry.",
 				Urgent:      true,
 				Timestamp:   time.Now().UTC(),
 			}
@@ -950,7 +1013,7 @@ If gaps exist: call belayer_reject_completion with the specific gaps so the supe
 			})
 			_ = d.broker.Interrupt(sessionID, "supervisor", msg)
 		} else {
-			log.Printf("Auto-spawned PM agent for completion review in session %s", sessionID)
+			log.Printf("Auto-spawned acceptance gate talent %s for completion review in session %s", acceptanceTalent, sessionID)
 		}
 	}()
 }

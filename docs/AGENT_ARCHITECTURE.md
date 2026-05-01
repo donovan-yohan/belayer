@@ -459,7 +459,7 @@ Daemon-internal events (not from bridge):
 | `warning:supervisor_exited_early` | Bridge finished handler | Supervisor exited while specialists still running |
 | `completion_rejected` | Completion rejected handler | Tracks cycle count |
 | `completion_escalated` | Rejection limit handler | Session status → needs_human_review |
-| `pm_spawn_failed` | PM spawn error | Notifies supervisor to retry |
+| `pm_spawn_failed` | Acceptance gate spawn error; historical event name retained for compatibility | Notifies supervisor to retry |
 
 ### How telemetry enables resume
 
@@ -797,7 +797,7 @@ flowchart LR
 | File | What it does |
 |------|--------------|
 | `agents/pm/` (shipped) and `.belayer/agents/pm/` (project-local) | PM identity: `agent.yaml`, `system-prompt.md`, `agents.md` |
-| `plugins/belayer/tools.py` | Tool schemas and handlers for every `belayer_*` tool (`request_completion`, `approve_completion`, `reject_completion`, plus `send_message` / `broadcast` / `check_mail` / `report_status` / `create_artifact` / `spawn_agent` / `escalate_to_human`) — owned by the Hermes 0.11 plugin, registered at plugin discovery time |
+| `plugins/belayer/tools.py` | Tool schemas and handlers for every `belayer_*` tool (`request_completion`, `approve_completion`, `reject_completion`, plus `send_message` / `broadcast` / `check_mail` / `report_status` / `create_artifact` / `spawn_agent` / `escalate_to_human`) — owned by the Hermes 0.12 plugin, registered at plugin discovery time |
 | `plugins/belayer/__init__.py` | Plugin `register(ctx)` entry point. Applies kind gate (main/side) and BELAYER_TOOLS allowlist to pick which tools to register per bridge subprocess. Exposes `pop_turn_mail_ids()` for the bridge's end-of-turn ack drain. |
 | `internal/cli/hermes_plugin.go` | Extracts `plugins/` from the binary into `$HERMES_HOME/plugins/` on daemon startup; idempotently enables `belayer` in `$HERMES_HOME/config.yaml` `plugins.enabled` |
 | `hermes_bridge/__main__.py` | Reads `BELAYER_SYSTEM_PROMPT` and injects as `ephemeral_system_prompt` |

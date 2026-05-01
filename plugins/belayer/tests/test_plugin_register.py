@@ -1,4 +1,4 @@
-"""Tests for plugins.belayer — the Hermes 0.11 plugin entry point.
+"""Tests for plugins.belayer — the Hermes 0.12 plugin entry point.
 
 Verifies the plugin's register(ctx) wiring: which tools it registers, how
 env vars drive kind-gating and the BELAYER_TOOLS allowlist, that missing

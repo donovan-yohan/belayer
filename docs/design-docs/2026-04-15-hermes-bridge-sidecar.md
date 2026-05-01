@@ -237,7 +237,9 @@ Option (b) is recommended. The broker's `Subscribe` / `Send` / `Interrupt` model
 - **JSON session log** (`_save_session_log`): Incremental, after each tool iteration (`run_agent.py:10249`). Always current.
 - **SQLite session DB** (`_flush_messages_to_session_db`): Written on exit paths only (completion, errors, interrupts). Lags during normal operation.
 
-The bridge wires `step_callback` to periodically flush SQLite. This calls `agent._persist_session(agent._session_messages, None)` every ~5 iterations. This is a private API dependency (`_persist_session` and `_session_messages` are underscore-prefixed). Acknowledged as fragile. If Hermes changes these internals, the flush breaks silently and we fall back to exit-path-only persistence.
+The bridge passes Hermes a shared `SessionDB` and relies on Hermes' normal
+session creation/flush paths. `step_callback` is used for Belayer events and
+transcript records, not for calling Hermes private persistence methods.
 
 ### Bridge process dies
 
@@ -254,7 +256,7 @@ history = db.get_messages_as_conversation(hermes_session_id)
 history = [m for m in history if m.get("role") != "session_meta"]
 
 agent = AIAgent(model=model, quiet_mode=True, session_id=hermes_session_id,
-                session_db=db, persist_session=True, ...)
+                session_db=db, ...)
 register_belayer_tools(agent, config)
 wire_callbacks(agent, agent_id)
 
@@ -390,7 +392,9 @@ Remove `internal/tmux/`, tmux-specific daemon code, finish markers, capture-pane
 ## Risks
 
 ### Hermes API changes
-Bridge is ~200 lines wrapping Hermes internals. When Hermes changes, we update the wrapper. The `_persist_session` / `_session_messages` dependency for periodic SQLite flush is the most fragile part.
+Bridge is ~200 lines wrapping Hermes internals. When Hermes changes, we update
+the wrapper. Belayer requires Hermes 0.12+ and relies on the public
+`session_db` constructor contract for persistence.
 
 ### Memory overhead
 Each Python process is ~50-100MB. Three agents = 150-300MB. For a Nightshift worker on a dedicated machine, this is negligible. If it becomes a problem, we can share a Python process (the original ThreadPoolExecutor model), but we'd need to solve the registry collision problem.

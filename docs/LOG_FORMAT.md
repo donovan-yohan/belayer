@@ -136,9 +136,9 @@ Organization-mode artifact content schemas live in `docs/ARTIFACT_SCHEMAS.md`.
 
 ### 3.8 `pm_*` — PM agent errors
 
-| Type | Required `data` fields |
-|------|------------------------|
-| `pm_spawn_failed` | `error` (string) |
+| Type | Required `data` fields | Optional `data` fields |
+|------|------------------------|------------------------|
+| `pm_spawn_failed` | `error` (string) | `gate` (string), `talent` (string) |
 
 ### 3.9 `org:*` — Organization-mode extension events
 

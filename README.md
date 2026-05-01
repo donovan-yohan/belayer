@@ -49,7 +49,7 @@ full coordination model.
 |------------|---------|-------|
 | Go         | 1.22+   | Build toolchain for the daemon binary. |
 | Python     | 3.10+   | Runs the per-agent bridge subprocess. |
-| Hermes     | 0.11+   | LLM driver. Belayer ships a Hermes plugin (`plugins/belayer/`) that is auto-installed into `$HERMES_HOME/plugins/belayer/` on first daemon start. Older Hermes versions lacked the plugin surface and are no longer supported. |
+| Hermes     | 0.12+   | LLM driver. Belayer ships a Hermes plugin (`plugins/belayer/`) that is auto-installed into `$HERMES_HOME/plugins/belayer/` on first daemon start. Older Hermes versions lacked the current session persistence and plugin surface and are no longer supported. |
 | Linux kernel | 5.19+ (optional) | Required for Landlock v2 write-confinement (see `docs/DEPLOYMENT.md`). |
 
 The daemon resolves Hermes from `$HERMES_HOME` (or `~/.hermes` by default).

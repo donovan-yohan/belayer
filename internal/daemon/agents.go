@@ -481,7 +481,7 @@ func (d *Daemon) handleFinishAgent(w http.ResponseWriter, r *http.Request) {
 		})
 		writeJSON(w, http.StatusOK, map[string]string{
 			"status":  "pending_verification",
-			"message": "PM agent spawned for spec verification",
+			"message": "Acceptance gate agent spawned for spec verification",
 		})
 		return
 	}
