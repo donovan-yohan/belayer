@@ -1,0 +1,27 @@
+docs/CRAG_MODE.md
+  cea6ddc0add32c83 189-205,252-253,255-256
+internal/agentlint/docs_test.go
+  cea6ddc0add32c83 125-127
+docs/CRAG_FILESYSTEM.md
+  cea6ddc0add32c83 213-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e4432df793669f478ff29d3a34c15f325b1b6f88",
+  "prompts": {
+    "cea6ddc0add32c83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddeb8-5202-7ee3-952f-bf72f3a760bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 90,
+      "total_deletions": 49,
+      "accepted_lines": 1588,
+      "overriden_lines": 0
+    }
+  }
+}
