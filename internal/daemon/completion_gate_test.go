@@ -182,6 +182,23 @@ func TestCompletionRequested_UsesConfiguredAcceptanceGateTalent(t *testing.T) {
 		t.Fatal("timed out waiting for acceptance gate spawn after completion_requested")
 	}
 
+	var acceptanceRun store.AgentRun
+	var acceptanceErr error
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		acceptanceRun, acceptanceErr = d.store.GetAgentRun(sessionID, "acceptance-editor")
+		if acceptanceErr == nil && acceptanceRun.Status == "running" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if acceptanceErr != nil {
+		t.Fatalf("expected acceptance gate agent run to exist after completion_requested: %v", acceptanceErr)
+	}
+	if acceptanceRun.Status != "running" {
+		t.Fatalf("acceptance-editor status = %q, want %q", acceptanceRun.Status, "running")
+	}
+
 	mu.Lock()
 	defer mu.Unlock()
 	if len(spawnedNames) != 1 {

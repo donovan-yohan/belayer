@@ -31,10 +31,18 @@ except AttributeError:
 try:
     from run_agent import AIAgent  # type: ignore[import]
     from hermes_state import SessionDB  # type: ignore[import]
-    from hermes_cli import __version__ as HERMES_VERSION  # type: ignore[import]
 except ImportError:
     print(
         "ERROR: hermes-agent package not found. Install hermes-agent first.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+try:
+    from hermes_cli import __version__ as HERMES_VERSION  # type: ignore[import]
+except ImportError:
+    print(
+        "ERROR: Hermes 0.12.0 or newer is required; hermes_cli module not found.",
         file=sys.stderr,
     )
     sys.exit(1)
