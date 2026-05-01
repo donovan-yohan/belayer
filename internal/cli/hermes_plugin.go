@@ -30,7 +30,7 @@ func resolveHermesHome() (string, error) {
 }
 
 // extractPluginsToHermesHome mirrors extractBridgeToRuntimeDir but for the
-// Hermes 0.11 plugin tree. The Hermes PluginManager discovers plugins at
+// Hermes 0.12 plugin tree. The Hermes PluginManager discovers plugins at
 // $HERMES_HOME/plugins/<name>/, so we extract there.
 //
 // Idempotent (SHA-256 match skips writes), strips __pycache__ / *.pyc /

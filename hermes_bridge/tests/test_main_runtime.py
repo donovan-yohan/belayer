@@ -7,10 +7,13 @@ import sys
 import types
 from unittest.mock import MagicMock
 
+import pytest
+
 
 def _load_main_module(monkeypatch):
     fake_run_agent = types.ModuleType("run_agent")
     fake_state = types.ModuleType("hermes_state")
+    fake_hermes_cli = types.ModuleType("hermes_cli")
 
     class _PlaceholderAIAgent:
         def __init__(self, **kwargs):
@@ -26,8 +29,10 @@ def _load_main_module(monkeypatch):
 
     fake_run_agent.AIAgent = _PlaceholderAIAgent
     fake_state.SessionDB = _PlaceholderSessionDB
+    fake_hermes_cli.__version__ = "0.12.0"
     monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
     monkeypatch.setitem(sys.modules, "hermes_state", fake_state)
+    monkeypatch.setitem(sys.modules, "hermes_cli", fake_hermes_cli)
     monkeypatch.delitem(sys.modules, "hermes_bridge.__main__", raising=False)
     return importlib.import_module("hermes_bridge.__main__")
 
@@ -118,6 +123,7 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert created_agents[0].kwargs["max_iterations"] == 7
+    assert "persist_session" not in created_agents[0].kwargs
     assert "[Message from peer]: hello" in created_agents[0].last_run["user_message"]
 
     ack_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:message_ack"]
@@ -131,53 +137,15 @@ def test_main_emits_message_ack_for_consumed_pending_messages(monkeypatch):
     assert len(finished_calls) == 1
 
 
-def test_main_does_not_pass_removed_persist_session_kwarg(monkeypatch):
+def test_main_requires_hermes_0_12_or_newer(monkeypatch, caplog):
     module = _load_main_module(monkeypatch)
-    _set_required_env(monkeypatch, max_turns="7")
+    monkeypatch.setattr(module, "HERMES_VERSION", "0.11.0")
 
-    created_agents = []
+    with pytest.raises(SystemExit) as exc:
+        module.require_supported_hermes_version()
 
-    class FakeAIAgent:
-        def __init__(self, quiet_mode=False, session_db=None, max_iterations=90):
-            self.kwargs = {
-                "quiet_mode": quiet_mode,
-                "session_db": session_db,
-                "max_iterations": max_iterations,
-            }
-            self.session_id = "hermes-session-123"
-            created_agents.append(self)
-
-        def run_conversation(self, **kwargs):
-            return {
-                "budget_exhausted": True,
-                "turns_used": 1,
-                "final_response": "done",
-                "last_message": "done",
-                "messages": [],
-            }
-
-    monkeypatch.setattr(module, "AIAgent", FakeAIAgent)
-    monkeypatch.setattr(module, "fetch_pending_messages", lambda *args, **kwargs: [])
-    monkeypatch.setattr(module, "make_callbacks", lambda *args, **kwargs: {})
-    monkeypatch.setattr(module, "start_heartbeat_thread", lambda *args, **kwargs: types.SimpleNamespace(set=lambda: None))
-
-    class DummyReader:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def start(self):
-            return None
-
-        def stop(self):
-            return None
-
-    monkeypatch.setattr(module, "StdinReader", DummyReader)
-    monkeypatch.setattr(module, "post_event", MagicMock())
-
-    module.main()
-
-    assert created_agents, "expected AIAgent to be constructed"
-    assert created_agents[0].kwargs["max_iterations"] == 7
+    assert exc.value.code == 1
+    assert "Hermes 0.12.0 or newer is required" in caplog.text
 
 
 def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
@@ -207,6 +175,7 @@ def test_main_emits_budget_exhausted_and_passes_max_turns(monkeypatch):
 
     assert created_agents, "expected AIAgent to be constructed"
     assert created_agents[0].kwargs["max_iterations"] == 9
+    assert "persist_session" not in created_agents[0].kwargs
 
     budget_calls = [c for c in post_event.call_args_list if c.args[3] == "bridge:budget_exhausted"]
     assert len(budget_calls) == 1

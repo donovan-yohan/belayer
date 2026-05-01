@@ -17,7 +17,7 @@ Not a cluster scheduler, autoscaler, hypervisor, or hosted identity service. It 
 Three layers:
 
 1. **Session bus** — Go daemon + SQLite. Sessions, agent roster, messages, events, artifacts.
-2. **Hermes driver** — Bridge subprocess (`python -m hermes_bridge`) wraps Hermes AIAgent. Identity injected via `ephemeral_system_prompt`; belayer_* tools registered by the Hermes 0.11 plugin at `plugins/belayer/` (loaded automatically by Hermes during AIAgent import).
+2. **Hermes driver** — Bridge subprocess (`python -m hermes_bridge`) wraps Hermes AIAgent. Identity injected via `ephemeral_system_prompt`; belayer_* tools registered by the Hermes 0.12 plugin at `plugins/belayer/` (loaded automatically by Hermes during AIAgent import).
 3. **Bridge transport** — Python subprocess managed by Go. Heartbeats, exit detection, event streaming over stdout.
 
 ## Agent kinds
