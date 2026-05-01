@@ -5,6 +5,171 @@
   "context_artifacts": [
     "https://github.com/donovan-yohan/relay-ide/issues/320"
   ],
+  "assignments": [
+    {
+      "talent": "supervisor",
+      "source": "project",
+      "reason": "Lead the climb, decompose the operator request, and request acceptance when evidence is ready.",
+      "activation": {
+        "mode": "climb_start"
+      },
+      "runtime": {
+        "lifecycle": "resident",
+        "idle_after": "session_complete",
+        "resume": "hermes_session"
+      },
+      "contract": {
+        "accepts": [
+          "operator-request",
+          "gate-result"
+        ],
+        "produces": [
+          "org-plan",
+          "org-retro"
+        ],
+        "requires": [
+          "repo-workspace"
+        ]
+      },
+      "task_ids": [
+        "task-1",
+        "task-2",
+        "task-3"
+      ]
+    },
+    {
+      "talent": "backend-dev",
+      "source": "catalog",
+      "reason": "PortAllocator path ownership and implementation are backend/runtime work.",
+      "activation": {
+        "mode": "on_demand",
+        "triggers": [
+          "direct_mail",
+          "task-assignment"
+        ]
+      },
+      "runtime": {
+        "lifecycle": "resumable",
+        "idle_after": "task_done",
+        "resume": "hermes_session"
+      },
+      "contract": {
+        "accepts": [
+          "task",
+          "direct-mail"
+        ],
+        "produces": [
+          "implementation-notes",
+          "code-changes"
+        ],
+        "requires": [
+          "repo-workspace"
+        ]
+      },
+      "task_ids": [
+        "task-1",
+        "task-2"
+      ]
+    },
+    {
+      "talent": "qa",
+      "source": "catalog",
+      "reason": "Runtime evidence is required before session acceptance.",
+      "activation": {
+        "mode": "gate_triggered",
+        "triggers": [
+          "gate:runtime-qa"
+        ]
+      },
+      "runtime": {
+        "lifecycle": "resumable",
+        "idle_after": "gate_result_submitted",
+        "resume": "hermes_session"
+      },
+      "contract": {
+        "accepts": [
+          "gate-request",
+          "artifact-review"
+        ],
+        "produces": [
+          "runtime-qa",
+          "gate-result"
+        ],
+        "requires": [
+          "repo-workspace"
+        ]
+      },
+      "task_ids": [
+        "task-3"
+      ]
+    },
+    {
+      "talent": "reviewer",
+      "source": "catalog",
+      "reason": "Code review is a blocking gate before final acceptance.",
+      "activation": {
+        "mode": "gate_triggered",
+        "triggers": [
+          "gate:code-review"
+        ]
+      },
+      "runtime": {
+        "lifecycle": "resumable",
+        "idle_after": "gate_result_submitted",
+        "resume": "hermes_session"
+      },
+      "contract": {
+        "accepts": [
+          "gate-request",
+          "artifact-review"
+        ],
+        "produces": [
+          "review-report",
+          "gate-result"
+        ],
+        "requires": [
+          "repo-workspace"
+        ]
+      },
+      "task_ids": [
+        "task-1",
+        "task-2"
+      ]
+    },
+    {
+      "talent": "pm",
+      "source": "project",
+      "reason": "The built-in acceptance gate remains the final session-level verifier.",
+      "activation": {
+        "mode": "gate_triggered",
+        "triggers": [
+          "completion_requested"
+        ]
+      },
+      "runtime": {
+        "lifecycle": "ephemeral",
+        "idle_after": "gate_result_submitted",
+        "resume": "none"
+      },
+      "contract": {
+        "accepts": [
+          "completion-request",
+          "org-plan",
+          "gate-result"
+        ],
+        "produces": [
+          "verification-report",
+          "gate-result"
+        ],
+        "requires": [
+          "repo-workspace"
+        ]
+      },
+      "task_ids": [
+        "task-3"
+      ]
+    }
+  ],
   "tasks": [
     {
       "id": "task-1",
@@ -16,6 +181,16 @@
         "Identify where configPath resolves to ./config.json in local dev",
         "Find tests covering port allocator path behavior"
       ],
+      "expected_outputs": [
+        "port-allocator-analysis"
+      ],
+      "gates": [
+        "code-review"
+      ],
+      "attempts": {
+        "max": 2,
+        "used": 0
+      },
       "output_artifacts": [
         "artifacts/relay-ide/port-allocator-analysis.md"
       ]
@@ -33,6 +208,18 @@
         "Path is keyed by repo or workspace identity",
         "Existing root file is migrated or safely ignored"
       ],
+      "expected_outputs": [
+        "implementation-notes",
+        "code-changes"
+      ],
+      "gates": [
+        "code-review",
+        "runtime-qa"
+      ],
+      "attempts": {
+        "max": 2,
+        "used": 0
+      },
       "output_artifacts": [
         "artifacts/relay-ide/implementation-notes.md"
       ]
@@ -50,6 +237,18 @@
         "Multiple worktrees do not collide",
         "Repo root does not receive port-assignments.json"
       ],
+      "expected_outputs": [
+        "runtime-qa",
+        "gate-result"
+      ],
+      "gates": [
+        "runtime-qa",
+        "acceptance"
+      ],
+      "attempts": {
+        "max": 2,
+        "used": 0
+      },
       "output_artifacts": [
         "artifacts/relay-ide/runtime-qa.md"
       ]

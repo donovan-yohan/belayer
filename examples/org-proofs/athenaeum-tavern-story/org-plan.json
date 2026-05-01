@@ -7,6 +7,100 @@
     "belayer-athenaeum/.design/characters.md",
     "belayer-athenaeum/examples/quest-tale.md"
   ],
+  "assignments": [
+    {
+      "talent": "storyteller",
+      "source": "catalog",
+      "reason": "Frame the scene, coordinate character pressure, and aggregate the story artifact.",
+      "activation": {
+        "mode": "climb_start"
+      },
+      "runtime": {
+        "lifecycle": "resident",
+        "idle_after": "session_complete",
+        "resume": "hermes_session"
+      },
+      "contract": {
+        "accepts": [
+          "story-premise",
+          "continuity-feedback"
+        ],
+        "produces": [
+          "org-plan",
+          "story-artifact",
+          "org-retro"
+        ],
+        "requires": [
+          "world-context"
+        ]
+      },
+      "task_ids": [
+        "scene-setup",
+        "npc-generation",
+        "continuity"
+      ]
+    },
+    {
+      "talent": "continuity-editor",
+      "source": "catalog",
+      "reason": "Continuity is a blocking session gate for story-world climbs.",
+      "activation": {
+        "mode": "gate_triggered",
+        "triggers": [
+          "gate:continuity"
+        ]
+      },
+      "runtime": {
+        "lifecycle": "resumable",
+        "idle_after": "gate_result_submitted",
+        "resume": "hermes_session"
+      },
+      "contract": {
+        "accepts": [
+          "gate-request",
+          "story-artifact",
+          "world-state"
+        ],
+        "produces": [
+          "continuity-report",
+          "gate-result"
+        ],
+        "requires": [
+          "world-context"
+        ]
+      },
+      "task_ids": [
+        "continuity"
+      ]
+    },
+    {
+      "talent": "mara-underbough",
+      "source": "generated",
+      "reason": "Scene-local tavernkeep created for this climb and proposed for future reuse.",
+      "activation": {
+        "mode": "generated"
+      },
+      "runtime": {
+        "lifecycle": "ephemeral",
+        "idle_after": "task_done",
+        "resume": "none"
+      },
+      "contract": {
+        "accepts": [
+          "scene-role"
+        ],
+        "produces": [
+          "character-beats"
+        ],
+        "requires": [
+          "scene-context"
+        ]
+      },
+      "task_ids": [
+        "npc-generation"
+      ]
+    }
+  ],
   "tasks": [
     {
       "id": "scene-setup",
@@ -18,6 +112,16 @@
         "Scene starts after a successful Athenaeum adventure",
         "At least three existing party characters appear with distinct voices"
       ],
+      "expected_outputs": [
+        "story-artifact"
+      ],
+      "gates": [
+        "continuity"
+      ],
+      "attempts": {
+        "max": 2,
+        "used": 0
+      },
       "output_artifacts": [
         "examples/org-proofs/athenaeum-tavern-story/three-act-story.md"
       ]
@@ -34,6 +138,16 @@
         "At least one tavern NPC affects the scene",
         "At least one NPC is persisted as compact generated team metadata"
       ],
+      "expected_outputs": [
+        "generated-talent"
+      ],
+      "gates": [
+        "continuity"
+      ],
+      "attempts": {
+        "max": 2,
+        "used": 0
+      },
       "output_artifacts": [
         "examples/org-proofs/athenaeum-tavern-story/generated-talents/tavernkeep-mara/talent.yaml"
       ]
@@ -51,6 +165,17 @@
         "Continuity report has a clear verdict",
         "World state records consequences, open hooks, and NPC persistence"
       ],
+      "expected_outputs": [
+        "continuity-report",
+        "world-state"
+      ],
+      "gates": [
+        "continuity"
+      ],
+      "attempts": {
+        "max": 1,
+        "used": 0
+      },
       "output_artifacts": [
         "examples/org-proofs/athenaeum-tavern-story/continuity-report.json",
         "examples/org-proofs/athenaeum-tavern-story/world-state.json"

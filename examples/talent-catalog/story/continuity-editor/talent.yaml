@@ -1,12 +1,40 @@
 schema_version: "belayer-talent/v1"
 name: continuity-editor
 category: story
-kind: side
 summary: "Gate talent for story continuity and tone"
+role: "continuity editor"
+domain: "story"
 capabilities:
   - continuity-check
   - tone-check
   - canon-review
+activation:
+  mode: gate_triggered
+  triggers:
+    - gate:continuity
+runtime:
+  lifecycle: resumable
+  idle_after: gate_result_submitted
+  resume: hermes_session
+contract:
+  accepts:
+    - gate-request
+    - story-artifact
+    - world-state
+  produces:
+    - continuity-report
+    - gate-result
+  requires:
+    - world-context
+authority:
+  tools: []
+  gates:
+    - continuity
+memory:
+  scope: crag
+retention:
+  scope: crag
+  promotion: proposed
 compatible_adapters:
   - hermes-plugin
 default_gates:

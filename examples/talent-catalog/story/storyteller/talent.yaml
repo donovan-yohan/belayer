@@ -1,12 +1,39 @@
 schema_version: "belayer-talent/v1"
 name: storyteller
 category: story
-kind: main
 summary: "Narrator and scene coordinator for story-world runs"
+role: "storyteller"
+domain: "story"
 capabilities:
   - scene-framing
   - character-coordination
   - story-artifacts
+activation:
+  mode: climb_start
+runtime:
+  lifecycle: resident
+  idle_after: session_complete
+  resume: hermes_session
+contract:
+  accepts:
+    - story-premise
+    - continuity-feedback
+  produces:
+    - org-plan
+    - story-artifact
+    - org-retro
+  requires:
+    - world-context
+authority:
+  tools:
+    - belayer_spawn_agent
+    - belayer_request_completion
+  gates: []
+memory:
+  scope: crag
+retention:
+  scope: crag
+  promotion: proposed
 compatible_adapters:
   - hermes-plugin
 default_gates:

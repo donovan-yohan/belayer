@@ -32,6 +32,13 @@
         "$ref": "#/$defs/task"
       }
     },
+    "assignments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/assignment"
+      },
+      "default": []
+    },
     "gates": {
       "type": "array",
       "items": {
@@ -73,7 +80,7 @@
           "minLength": 1
         },
         "status": {
-          "enum": ["planned", "ready", "running", "blocked", "review", "done"]
+          "enum": ["planned", "ready", "running", "active", "blocked", "review", "done", "passed", "failed"]
         },
         "dependencies": {
           "type": "array",
@@ -91,7 +98,137 @@
             "minLength": 1
           }
         },
+        "expected_outputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "gates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "attempts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "used": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
         "output_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["talent", "source", "reason", "activation", "runtime", "contract"],
+      "properties": {
+        "talent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "enum": ["project", "crag", "catalog", "generated"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "activation": {
+          "$ref": "#/$defs/activation"
+        },
+        "runtime": {
+          "$ref": "#/$defs/runtime"
+        },
+        "contract": {
+          "$ref": "#/$defs/talent_contract"
+        },
+        "task_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    },
+    "activation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "enum": ["climb_start", "on_demand", "gate_triggered", "generated"]
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lifecycle"],
+      "properties": {
+        "lifecycle": {
+          "enum": ["resident", "resumable", "ephemeral"]
+        },
+        "idle_after": {
+          "enum": ["task_done", "gate_result_submitted", "session_complete", "manual"]
+        },
+        "resume": {
+          "enum": ["hermes_session", "none"]
+        }
+      }
+    },
+    "talent_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepts", "produces"],
+      "properties": {
+        "accepts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "produces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "requires": {
           "type": "array",
           "items": {
             "type": "string",

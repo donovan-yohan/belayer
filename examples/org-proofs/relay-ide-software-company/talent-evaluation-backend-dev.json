@@ -19,6 +19,16 @@
       "outcome": "blocked"
     }
   ],
+  "assignment": {
+    "source": "catalog",
+    "reason": "Backend/runtime ownership matched the PortAllocator path task.",
+    "lifecycle": "resumable",
+    "state": "assigned",
+    "task_ids": [
+      "task-1",
+      "task-2"
+    ]
+  },
   "produced_artifacts": [
     "examples/org-proofs/relay-ide-software-company/org-plan.json"
   ],

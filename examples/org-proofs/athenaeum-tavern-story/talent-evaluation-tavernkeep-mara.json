@@ -14,6 +14,15 @@
       "outcome": "completed"
     }
   ],
+  "assignment": {
+    "source": "generated",
+    "reason": "Mara was generated for a scene-local tavern role and proposed for recurring reuse.",
+    "lifecycle": "ephemeral",
+    "state": "spawned_new",
+    "task_ids": [
+      "npc-generation"
+    ]
+  },
   "produced_artifacts": [
     "examples/org-proofs/athenaeum-tavern-story/generated-talents/tavernkeep-mara/talent.yaml"
   ],

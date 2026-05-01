@@ -40,6 +40,9 @@
         "$ref": "#/$defs/task_summary"
       }
     },
+    "assignment": {
+      "$ref": "#/$defs/assignment"
+    },
     "produced_artifacts": {
       "type": "array",
       "items": {
@@ -95,6 +98,34 @@
     }
   },
   "$defs": {
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "lifecycle", "state", "task_ids"],
+      "properties": {
+        "source": {
+          "enum": ["project", "crag", "catalog", "generated"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "enum": ["resident", "resumable", "ephemeral"]
+        },
+        "state": {
+          "enum": ["available", "assigned", "running", "dormant", "resumed", "spawned_new", "not_available"]
+        },
+        "task_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "task_summary": {
       "type": "object",
       "additionalProperties": false,

@@ -20,7 +20,7 @@ replacement for the Hermes plugin tool architecture.
 Belayer already has the substrate an organization layer needs:
 
 - agent identity directories under `agents/<name>/` and `.belayer/agents/<name>/`
-- `kind: main | side` for mailbox-bearing peers versus scoped workers
+- bridge-level `kind` and `ephemeral` mechanics for current Hermes spawns
 - a Go daemon that owns roster, mail, events, artifacts, and completion state
 - Hermes plugin tools that expose daemon-backed coordination functions to agents
 - durable artifacts that PM, QA, reviewer, or custom gates can inspect
@@ -28,9 +28,9 @@ Belayer already has the substrate an organization layer needs:
 Crag mode names the higher-level contracts that currently live mostly
 in prompts.
 
-## Team Identities
+## Talent Identities
 
-A team identity is an addable agent identity plus optional metadata describing
+A talent identity is an addable agent identity plus optional metadata describing
 when and how to use it. In v1, the portable identity contract remains the
 existing directory shape:
 
@@ -41,27 +41,99 @@ existing directory shape:
 └── agents.md
 ```
 
-Team metadata currently lives beside the identity as `talent.yaml` to preserve
+Talent metadata currently lives beside the identity as `talent.yaml` to preserve
 the existing artifact/schema vocabulary. The current daemon only needs the
 existing identity fields at spawn time; metadata is for catalog browsing,
 documentation, and future selection logic.
 
 ```yaml
 schema_version: "belayer-talent/v1"
-name: backend-dev
+name: design-engineer
 category: development
-kind: main
-summary: Backend/API implementer
+summary: Product/design talent for UX review and interaction design
+role: "design engineer"
+domain: "product"
 capabilities:
-  - api-design
-  - database-migrations
-  - service-tests
-compatible_adapters:
-  - hermes-plugin
+  - interaction-design
+  - ux-review
+  - accessibility-review
+activation:
+  mode: on_demand
+runtime:
+  lifecycle: resumable
+contract:
+  accepts:
+    - task
+    - gate-request
+  produces:
+    - design-review-notes
+  requires:
+    - repo-workspace
+authority:
+  tools: []
+  gates:
+    - design-review
+memory:
+  scope: crag
+retention:
+  scope: crag
+  promotion: proposed
 default_gates:
-  - code-review
-  - runtime-qa
+  - design-review
 ```
+
+`role` and `domain` are prompt-visible metadata, not framework enums. A
+software crag can use roles like "CEO", "HR", "QA engineer", or "design
+engineer"; a story crag can use "storyteller", "lorekeeper", or "tavernkeep".
+Belayer core should route on the smaller generic contract:
+
+- `activation.mode`: `climb_start`, `on_demand`, `gate_triggered`, or
+  `generated`
+- `runtime.lifecycle`: `resident`, `resumable`, or `ephemeral`
+- `contract.accepts` / `contract.produces` / `contract.requires`
+- `authority.tools` and `authority.gates`
+- `memory.scope` and `retention`
+
+The existing `agent.yaml#kind` and bridge `ephemeral` flag remain compatibility
+mechanics for current Hermes spawns. New crag metadata should describe the
+talent contract above and let the adapter derive bridge settings when possible.
+
+## Talent Lifecycle
+
+Crag mode separates a talent definition from a running process:
+
+```text
+catalog talent
+  -> assigned talent
+  -> active employee
+  -> checkpointed/dormant employee
+  -> resumed or retired
+```
+
+`catalog talent` is metadata, prompt, and tool contract with no process.
+`assigned talent` is selected for a task or gate but may not be spawned yet.
+`active employee` has a running bridge/session. `dormant employee` has no live
+process but remains addressable through its assignment, prior Hermes session ID,
+artifacts, and mailbox cursor. `retired` talent is retained for audit history but
+not selected by default.
+
+Lifecycle names are runtime behavior, not company roles:
+
+```text
+resident
+  Live for the climb. Idles and wakes in-process. Suitable for the lead.
+
+resumable
+  Durable assigned talent. Can shut down after work, then wake later with prior
+  context when directly mailed or explicitly spawned.
+
+ephemeral
+  One-shot worker. No durable mailbox or wake contract after completion.
+```
+
+The framework should not know "CEO", "HR", "QA", or "design engineer" as
+special cases. Those are roles/capabilities in talent metadata. The enforceable
+parts are activation, lifecycle, authority, contract shape, and gate binding.
 
 ## Persistence Scopes
 
@@ -296,6 +368,30 @@ terms:
 3. Review: gate talents register `gate-result` artifacts and emit
    `org:task_reviewed`.
 4. Retro: the lead registers `org-retro` to capture what to improve next climb.
+
+Top-down decomposition and agent-to-agent communication are complementary.
+Decomposition creates task addresses; communication resolves work inside those
+addresses; artifacts and gates aggregate results back up.
+
+```text
+lead decomposes
+  -> task id, owner, acceptance, expected outputs, gates
+talents communicate
+  -> questions, handoffs, blockers, review notes
+talents publish
+  -> artifacts, gate-results, final reports
+lead aggregates
+  -> task state, org-retro, talent-evaluation
+```
+
+Messages, artifacts, gate results, and talent evaluations should carry a
+`task_id` when the interaction is about a planned task. Belayer does not need a
+full workflow engine to enforce this on day one, but task binding keeps direct
+agent communication from becoming invisible coordination fog.
+
+Every meaningful agent conversation should advance a task, create or update an
+artifact, unblock another talent, or trigger a gate. The auditable record is the
+task-linked artifact and event trail, not the raw chat transcript alone.
 
 ## Talent Growth Loop
 
