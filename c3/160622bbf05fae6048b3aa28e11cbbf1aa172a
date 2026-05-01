@@ -1,0 +1,29 @@
+internal/agentlint/proof_examples_test.go
+  cea6ddc0add32c83 166-167,171-172,231-232,235-236
+docs/artifact-schemas/talent-evaluation.schema.json
+  cea6ddc0add32c83 7,117
+docs/artifact-schemas/org-plan.schema.json
+  cea6ddc0add32c83 7,65,83,103,112,122,195-215
+examples/org-proofs/relay-ide-software-company/org-plan.json
+  cea6ddc0add32c83 216,262
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c3160622bbf05fae6048b3aa28e11cbbf1aa172a",
+  "prompts": {
+    "cea6ddc0add32c83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddeb8-5202-7ee3-952f-bf72f3a760bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 39,
+      "total_deletions": 12,
+      "accepted_lines": 2250,
+      "overriden_lines": 0
+    }
+  }
+}
