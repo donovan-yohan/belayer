@@ -1,6 +1,6 @@
-# Organization Mode
+# Crag Mode
 
-Organization mode is a thin layer over Belayer's existing climb-local control
+Crag mode is a thin layer over Belayer's existing climb-local control
 plane. Its Belayer-native nouns are crags and climbs: a crag is the durable
 operating context, and a climb is one execution run against that context.
 
@@ -25,7 +25,7 @@ Belayer already has the substrate an organization layer needs:
 - Hermes plugin tools that expose daemon-backed coordination functions to agents
 - durable artifacts that PM, QA, reviewer, or custom gates can inspect
 
-Organization mode names the higher-level contracts that currently live mostly
+Crag mode names the higher-level contracts that currently live mostly
 in prompts.
 
 ## Team Identities
@@ -65,11 +65,11 @@ default_gates:
 
 ## Persistence Scopes
 
-Organization mode has three filesystem scopes. Keeping them separate prevents
+Crag mode has three filesystem scopes. Keeping them separate prevents
 repo-specific context from leaking into global crag knowledge and prevents
 global lessons from silently changing a project climb.
 
-`docs/ORG_FILESYSTEM.md` is the normative filesystem contract. This section
+`docs/CRAG_FILESYSTEM.md` is the normative filesystem contract. This section
 summarizes the model.
 
 ```text
@@ -186,21 +186,23 @@ gate: a scoped authority that inspects artifacts and produces a durable verdict.
 
 ```yaml
 schema_version: "belayer-gate/v1"
-gate:
-  name: runtime-qa
-  stage: task
-  authority: blocking
-  input_artifacts:
-    - org-plan
-    - implementation-notes
-  output_artifact: gate-result
-  verdicts:
-    - pass
-    - pass-with-notes
-    - fail
-    - blocked
-  assigned_talent:
-    - qa
+name: runtime-qa
+stage: task
+authority: blocking
+requires:
+  - org-plan
+  - implementation-notes
+conditions:
+  - "Implementation matches the task acceptance criteria"
+  - "Runtime evidence proves the changed user path works"
+output_artifact: gate-result
+verdicts:
+  - pass
+  - pass-with-notes
+  - fail
+  - blocked
+assigned_talent:
+  - qa
 ```
 
 Software-company gates can map to familiar artifacts:
@@ -217,9 +219,74 @@ Story-world gates use the same contract with different content:
 Do not hard-code QA/reviewer/PM into the framework. Treat them as default
 talents and default gate presets in the `development` catalog.
 
+Gate conditions should remain natural language. The structured fields answer
+"when does this gate run?", "who has authority?", "which artifacts should be
+available?", and "which verdicts are legal?" They should not become a policy
+engine that tries to understand every repo, story world, or research workflow.
+The gate talent interprets `conditions` against the actual evidence and records
+that judgment in a `gate-result`.
+
+## Minimal Climb Mapping
+
+The pre-organization Belayer workflow is still the smallest valid climb:
+
+```text
+operator task
+  -> supervisor main agent
+  -> supervisor calls belayer_request_completion
+  -> acceptance gate fires
+  -> pm side agent verifies evidence
+  -> pm approves or rejects
+```
+
+Under the gate model, this is not a separate legacy path. It is the built-in
+`acceptance` gate preset:
+
+```yaml
+schema_version: "belayer-gate/v1"
+name: acceptance
+stage: session
+authority: blocking
+trigger: completion_requested
+requires:
+  - org-plan
+  - gate-result
+conditions:
+  - "The org-plan acceptance criteria are satisfied"
+  - "Required gate-result artifacts have passing or accepted verdicts"
+assigned_talent:
+  - pm
+output_artifact: gate-result
+verdicts:
+  - pass
+  - fail
+  - blocked
+```
+
+Every climb must resolve at least one session-level acceptance gate. If a project
+does not define gates, Belayer falls back to the built-in `acceptance` preset so
+existing supervisor + PM climbs continue to work. A project or linked crag can
+replace that preset with a stricter acceptance gate, but it cannot silently remove
+acceptance. Bypassing acceptance should require an explicit operator action, not
+an omitted config file.
+
+Gate resolution should stay boring and inspectable:
+
+1. Per-climb gate declarations in an `org-plan` or climb-start context.
+2. Repo-local `.belayer/config.yaml` gate defaults or overrides.
+3. Linked crag presets under `~/.belayer/crags/<name>/gates/`.
+4. Shipped built-in `acceptance` preset.
+
+This preserves predetermined climbs: an operator or supervisor can start from a
+known gate set and run the climb against that contract. It also lets crags make
+climbs form organically: the crag exposes available teams, SOPs, and gate
+presets, then the supervisor chooses the relevant ones while creating `org-plan`.
+Belayer provides the scaffolding, artifact registry, mail, and gate trigger; it
+does not need to infer the whole workflow from task traits.
+
 ## E2R Loop
 
-Organization mode uses the paper's Explore, Execute, Review loop in Belayer
+Crag mode uses the paper's Explore, Execute, Review loop in Belayer
 terms:
 
 1. Explore: a lead talent emits `org:task_planned` and registers an `org-plan`
@@ -286,7 +353,7 @@ existing event APIs with `type_prefix=org:`.
 
 ## Artifact Kinds
 
-Organization mode defines content schemas for these artifact kinds:
+Crag mode defines content schemas for these artifact kinds:
 
 - `org-plan`
 - `gate-result`

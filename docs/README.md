@@ -8,8 +8,8 @@ current.
 ## Current References
 
 - [Agent Architecture](AGENT_ARCHITECTURE.md) - agent kinds, tools, mail, spawn, and PM completion gate
-- [Organization Mode](ORG_MODE.md) - team catalogs, gate contracts, crag events, and proof-climb framing
-- [Organization Filesystem](ORG_FILESYSTEM.md) - repo, user catalog, and user crag directory contracts
+- [Crag Mode](CRAG_MODE.md) - team catalogs, gate contracts, crag events, and proof-climb framing
+- [Crag Filesystem](CRAG_FILESYSTEM.md) - repo, user catalog, and user crag directory contracts
 - [Artifact Schemas](ARTIFACT_SCHEMAS.md) - content contracts for durable artifacts
 - [Log Format](LOG_FORMAT.md) - external event, archive, search, and SSE contract
 - [Observability](OBSERVABILITY.md) - operator recipes for logs, events, traces, and archives

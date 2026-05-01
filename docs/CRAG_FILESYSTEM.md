@@ -196,11 +196,28 @@ assigned_talent:
 requires:
   - org-plan
   - gate-result
+conditions:
+  - "The org-plan acceptance criteria are satisfied"
+  - "Required gate-result artifacts have passing or accepted verdicts"
 verdicts:
   - pass
   - fail
   - blocked
 ```
+
+Every climb must resolve a session-level acceptance gate. If no repo-local or
+linked-crag gate declares `trigger: completion_requested`, Belayer uses its
+built-in `acceptance` preset with `assigned_talent: [pm]`. Crags may make richer
+gate sets available, but they should not make "no acceptance gate" the implicit
+default.
+This requirement is limited to completion acceptance resolution; generalized
+runtime gate-graph enforcement remains out of scope in this contract.
+
+`conditions` are intentionally natural language. Gate files provide routing,
+authority, required evidence names, and allowed verdicts; the assigned talent
+interprets the conditions against real artifacts and records its judgment in a
+gate result. This keeps crag gates reusable across domains without turning
+Belayer into a workflow engine.
 
 ### `evaluations/`
 
