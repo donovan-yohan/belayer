@@ -1,0 +1,23 @@
+docs/artifact-schemas/org-plan.schema.json
+  cea6ddc0add32c83 107,115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "b3ff829bb36775335af38cf865e59eff0d092688",
+  "prompts": {
+    "cea6ddc0add32c83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddeb8-5202-7ee3-952f-bf72f3a760bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 4,
+      "accepted_lines": 2213,
+      "overriden_lines": 0
+    }
+  }
+}
