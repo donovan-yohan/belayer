@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -110,5 +111,49 @@ func TestSpawnAgent_FreshWhenNoPrior(t *testing.T) {
 	}
 	if seen[0] != "" {
 		t.Errorf("spawnBridgeAgent received HermesSessionID = %q, want empty (no resume)", seen[0])
+	}
+}
+
+func TestSpawnAgent_DoesNotOverwriteBridgeFinishedDuringStartup(t *testing.T) {
+	d := testDaemon(t)
+	rr := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "fast-finish"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create session: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	sess := decodeJSON[sessionAPIResponse](t, rr)
+
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
+		postBridgeEvent(t, d, req.SessionID, "bridge:finished", map[string]any{
+			"agent":          req.Name,
+			"final_response": "finished before spawn bookkeeping caught up",
+		})
+		return nil, nil
+	}
+
+	run, err := d.spawnAgentInternal(agentSpawnRequest{
+		SessionID: sess.ID,
+		Name:      "qa",
+		Role:      "qa",
+		Kind:      "side",
+		Profile:   "default",
+		Workdir:   t.TempDir(),
+		Message:   "quick check",
+	})
+	if err != nil {
+		t.Fatalf("spawnAgentInternal: %v", err)
+	}
+	if run.Status != "complete" {
+		t.Fatalf("spawnAgentInternal returned status %q, want complete", run.Status)
+	}
+
+	stored, err := d.store.GetAgentRun(sess.ID, "qa")
+	if err != nil {
+		t.Fatalf("GetAgentRun: %v", err)
+	}
+	if stored.Status != "complete" {
+		t.Fatalf("stored status = %q, want complete", stored.Status)
+	}
+	if stored.Outcome != "succeeded" {
+		t.Fatalf("stored outcome = %q, want succeeded", stored.Outcome)
 	}
 }

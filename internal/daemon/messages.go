@@ -75,9 +75,34 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject messages to agents that have exited the session.
+	// Reject messages to agents that have exited the session, except completed
+	// side agents with a Hermes session: those are dormant resumable talent and
+	// direct mail is the wake signal.
 	if target, err := d.store.GetAgentRun(id, req.To); err == nil {
-		if target.Status == "complete" || target.Status == "blocked" || target.Status == "incomplete" || target.Status == "exited" {
+		if agentRunStatusIsTerminal(target.Status) {
+			if agentRunIsWakeableDormantSide(target) {
+				msgID, from, wakeErr := d.wakeDormantSideFromMessage(id, target, req)
+				if wakeErr != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": wakeErr.Error()})
+					return
+				}
+				data := mustJSON(map[string]any{
+					"id":        msgID,
+					"to":        req.To,
+					"from":      from,
+					"content":   req.Content,
+					"type":      req.Type,
+					"interrupt": req.Interrupt,
+					"delivery":  "wake_spawn",
+					"sent_at":   time.Now().UTC().Format(time.RFC3339Nano),
+				})
+				if err := d.store.LogEvent(store.SessionEvent{SessionID: id, Type: "message_sent", Data: data}); err != nil {
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+					return
+				}
+				writeJSON(w, http.StatusCreated, map[string]string{"id": msgID})
+				return
+			}
 			writeJSON(w, http.StatusGone, map[string]string{
 				"error": "agent '" + req.To + "' has exited (status: " + target.Status + "). Use belayer_spawn_agent to re-spawn with conversation history.",
 			})
@@ -164,6 +189,36 @@ func (d *Daemon) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": msgID})
+}
+
+func agentRunIsWakeableDormantSide(run store.AgentRun) bool {
+	return agentRunIsSide(run) && run.Status == "complete" && run.HermesSessionID != ""
+}
+
+func (d *Daemon) wakeDormantSideFromMessage(sessionID string, target store.AgentRun, req sendMessageRequest) (string, string, error) {
+	msgID := uuid.New().String()
+	from := req.From
+	if from == "" {
+		from = "operator"
+	}
+
+	wakeMessage := fmt.Sprintf("Resume from your prior Hermes conversation. New message from %s:\n\n%s", from, req.Content)
+	_, err := d.spawnAgentInternal(agentSpawnRequest{
+		SessionID:       sessionID,
+		Name:            target.Name,
+		Role:            target.Role,
+		Kind:            target.Kind,
+		Profile:         target.Profile,
+		Repo:            target.RepoScope,
+		Workdir:         target.Workdir,
+		Branch:          target.Branch,
+		HermesSessionID: target.HermesSessionID,
+		Message:         wakeMessage,
+	})
+	if err != nil {
+		return "", "", fmt.Errorf("wake dormant side %q: %w", target.Name, err)
+	}
+	return msgID, from, nil
 }
 
 func (d *Daemon) handleBroadcastMessage(w http.ResponseWriter, r *http.Request) {
