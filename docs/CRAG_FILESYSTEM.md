@@ -210,6 +210,8 @@ linked-crag gate declares `trigger: completion_requested`, Belayer uses its
 built-in `acceptance` preset with `assigned_talent: [pm]`. Crags may make richer
 gate sets available, but they should not make "no acceptance gate" the implicit
 default.
+This requirement is limited to completion acceptance resolution; generalized
+runtime gate-graph enforcement remains out of scope in this contract.
 
 `conditions` are intentionally natural language. Gate files provide routing,
 authority, required evidence names, and allowed verdicts; the assigned talent

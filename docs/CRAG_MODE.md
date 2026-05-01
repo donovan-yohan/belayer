@@ -186,24 +186,23 @@ gate: a scoped authority that inspects artifacts and produces a durable verdict.
 
 ```yaml
 schema_version: "belayer-gate/v1"
-gate:
-  name: runtime-qa
-  stage: task
-  authority: blocking
-  input_artifacts:
-    - org-plan
-    - implementation-notes
-  conditions:
-    - "Implementation matches the task acceptance criteria"
-    - "Runtime evidence proves the changed user path works"
-  output_artifact: gate-result
-  verdicts:
-    - pass
-    - pass-with-notes
-    - fail
-    - blocked
-  assigned_talent:
-    - qa
+name: runtime-qa
+stage: task
+authority: blocking
+requires:
+  - org-plan
+  - implementation-notes
+conditions:
+  - "Implementation matches the task acceptance criteria"
+  - "Runtime evidence proves the changed user path works"
+output_artifact: gate-result
+verdicts:
+  - pass
+  - pass-with-notes
+  - fail
+  - blocked
+assigned_talent:
+  - qa
 ```
 
 Software-company gates can map to familiar artifacts:
@@ -250,11 +249,11 @@ stage: session
 authority: blocking
 trigger: completion_requested
 requires:
-  - spec-or-task
-  - registered-artifacts
+  - org-plan
+  - gate-result
 conditions:
-  - "The delivered work satisfies the original task or spec"
-  - "All configured exit conditions have observable evidence"
+  - "The org-plan acceptance criteria are satisfied"
+  - "Required gate-result artifacts have passing or accepted verdicts"
 assigned_talent:
   - pm
 output_artifact: gate-result
