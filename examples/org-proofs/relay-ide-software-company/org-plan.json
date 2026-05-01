@@ -213,8 +213,7 @@
         "code-changes"
       ],
       "gates": [
-        "code-review",
-        "runtime-qa"
+        "code-review"
       ],
       "attempts": {
         "max": 2,
@@ -260,6 +259,7 @@
       "stage": "task",
       "authority": "blocking",
       "input_artifacts": [
+        "artifacts/relay-ide/port-allocator-analysis.md",
         "artifacts/relay-ide/implementation-notes.md"
       ],
       "output_artifact": "gate-result",

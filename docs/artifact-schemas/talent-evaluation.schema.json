@@ -4,7 +4,7 @@
   "title": "Belayer Talent Evaluation",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "talent", "org", "session", "tasks", "gate_outcomes", "recommendations"],
+  "required": ["schema_version", "talent", "org", "session", "tasks", "assignment", "gate_outcomes", "recommendations"],
   "properties": {
     "schema_version": {
       "const": "belayer-talent-evaluation/v1"
@@ -114,7 +114,7 @@
           "enum": ["resident", "resumable", "ephemeral"]
         },
         "state": {
-          "enum": ["available", "assigned", "running", "dormant", "resumed", "spawned_new", "not_available"]
+          "enum": ["available", "assigned", "running", "dormant", "resumed", "spawned_new", "not_available", "retired"]
         },
         "task_ids": {
           "type": "array",

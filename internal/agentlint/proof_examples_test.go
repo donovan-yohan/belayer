@@ -163,11 +163,13 @@ func TestOrgProofPlansCarryTalentLifecycleAssignments(t *testing.T) {
 				t.Fatalf("%s: assignment is %T, want object", path, item)
 			}
 			activation, ok := assignment["activation"].(map[string]any)
-			if !ok || activation["mode"] == "" {
+			mode, modeOK := activation["mode"].(string)
+			if !ok || !modeOK || strings.TrimSpace(mode) == "" {
 				t.Errorf("%s: assignment %v missing activation.mode", path, assignment["talent"])
 			}
 			runtime, ok := assignment["runtime"].(map[string]any)
-			if !ok || runtime["lifecycle"] == "" {
+			lifecycle, lifecycleOK := runtime["lifecycle"].(string)
+			if !ok || !lifecycleOK || strings.TrimSpace(lifecycle) == "" {
 				t.Errorf("%s: assignment %v missing runtime.lifecycle", path, assignment["talent"])
 			}
 			contract, ok := assignment["contract"].(map[string]any)
@@ -226,10 +228,12 @@ func TestTalentEvaluationsRecordAssignmentLifecycle(t *testing.T) {
 			t.Errorf("%s: missing assignment", path)
 			return nil
 		}
-		if assignment["lifecycle"] == "" {
+		lifecycle, lifecycleOK := assignment["lifecycle"].(string)
+		if !lifecycleOK || strings.TrimSpace(lifecycle) == "" {
 			t.Errorf("%s: missing assignment.lifecycle", path)
 		}
-		if assignment["state"] == "" {
+		state, stateOK := assignment["state"].(string)
+		if !stateOK || strings.TrimSpace(state) == "" {
 			t.Errorf("%s: missing assignment.state", path)
 		}
 		requireNonEmptyJSONArray(t, path, assignment, "task_ids")
