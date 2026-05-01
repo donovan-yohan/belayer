@@ -105,6 +105,29 @@ func agentRunIsMain(run store.AgentRun) bool {
 	return !agentRunIsSide(run)
 }
 
+func agentRunStatusIsTerminal(status string) bool {
+	switch status {
+	case "complete", "blocked", "incomplete", "exited", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *Daemon) markAgentRunRunningUnlessTerminal(sessionID, name string) (store.AgentRun, error) {
+	current, err := d.store.GetAgentRun(sessionID, name)
+	if err != nil {
+		return store.AgentRun{}, err
+	}
+	if agentRunStatusIsTerminal(current.Status) {
+		return current, nil
+	}
+	if err := d.store.UpdateAgentRunStatus(sessionID, name, "running"); err != nil {
+		return store.AgentRun{}, err
+	}
+	return d.store.GetAgentRun(sessionID, name)
+}
+
 func (d *Daemon) lockSpawnSession(sessionID string) func() {
 	d.spawnSessionMu.Lock()
 	mu := d.spawnSessionLocks[sessionID]
@@ -361,11 +384,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := d.store.UpdateAgentRunStatus(sessionID, req.Name, "running"); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	stored, err := d.store.GetAgentRun(sessionID, req.Name)
+	stored, err := d.markAgentRunRunningUnlessTerminal(sessionID, req.Name)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -1076,13 +1095,9 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		}
 	}
 
-	if err := d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "running"); err != nil {
-		return store.AgentRun{}, fmt.Errorf("update running status: %w", err)
-	}
-
-	stored, err := d.store.GetAgentRun(req.SessionID, req.Name)
+	stored, err := d.markAgentRunRunningUnlessTerminal(req.SessionID, req.Name)
 	if err != nil {
-		return store.AgentRun{}, fmt.Errorf("get agent run: %w", err)
+		return store.AgentRun{}, fmt.Errorf("update running status: %w", err)
 	}
 
 	if proc != nil {

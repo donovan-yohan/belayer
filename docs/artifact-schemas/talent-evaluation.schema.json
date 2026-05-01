@@ -4,7 +4,7 @@
   "title": "Belayer Talent Evaluation",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "talent", "org", "session", "tasks", "gate_outcomes", "recommendations"],
+  "required": ["schema_version", "talent", "org", "session", "tasks", "assignment", "gate_outcomes", "recommendations"],
   "properties": {
     "schema_version": {
       "const": "belayer-talent-evaluation/v1"
@@ -39,6 +39,9 @@
       "items": {
         "$ref": "#/$defs/task_summary"
       }
+    },
+    "assignment": {
+      "$ref": "#/$defs/assignment"
     },
     "produced_artifacts": {
       "type": "array",
@@ -95,6 +98,34 @@
     }
   },
   "$defs": {
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "lifecycle", "state", "task_ids"],
+      "properties": {
+        "source": {
+          "enum": ["project", "crag", "catalog", "generated"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "enum": ["resident", "resumable", "ephemeral"]
+        },
+        "state": {
+          "enum": ["available", "assigned", "running", "dormant", "resumed", "spawned_new", "not_available", "retired"]
+        },
+        "task_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "task_summary": {
       "type": "object",
       "additionalProperties": false,

@@ -19,6 +19,16 @@
       "outcome": "completed"
     }
   ],
+  "assignment": {
+    "source": "catalog",
+    "reason": "Storyteller leads the climb, coordinates scene pressure, and aggregates the story artifact.",
+    "lifecycle": "resident",
+    "state": "running",
+    "task_ids": [
+      "scene-setup",
+      "npc-generation"
+    ]
+  },
   "produced_artifacts": [
     "examples/org-proofs/athenaeum-tavern-story/three-act-story.md",
     "examples/org-proofs/athenaeum-tavern-story/world-state.json"

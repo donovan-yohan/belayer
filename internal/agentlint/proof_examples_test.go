@@ -143,6 +143,111 @@ func TestOrgProofExamplesPersistGeneratedStoryTalent(t *testing.T) {
 	}
 }
 
+func TestOrgProofPlansCarryTalentLifecycleAssignments(t *testing.T) {
+	root := repoRoot(t)
+	proofRoot := filepath.Join(root, "examples", "org-proofs")
+	plans := []string{
+		filepath.Join(proofRoot, "relay-ide-software-company", "org-plan.json"),
+		filepath.Join(proofRoot, "athenaeum-tavern-story", "org-plan.json"),
+	}
+
+	for _, path := range plans {
+		plan := readJSONMap(t, path)
+		assignments, ok := plan["assignments"].([]any)
+		if !ok || len(assignments) == 0 {
+			t.Fatalf("%s: missing assignments", path)
+		}
+		for _, item := range assignments {
+			assignment, ok := item.(map[string]any)
+			if !ok {
+				t.Fatalf("%s: assignment is %T, want object", path, item)
+			}
+			activation, ok := assignment["activation"].(map[string]any)
+			mode, modeOK := activation["mode"].(string)
+			if !ok || !modeOK || strings.TrimSpace(mode) == "" {
+				t.Errorf("%s: assignment %v missing activation.mode", path, assignment["talent"])
+			}
+			runtime, ok := assignment["runtime"].(map[string]any)
+			lifecycle, lifecycleOK := runtime["lifecycle"].(string)
+			if !ok || !lifecycleOK || strings.TrimSpace(lifecycle) == "" {
+				t.Errorf("%s: assignment %v missing runtime.lifecycle", path, assignment["talent"])
+			}
+			contract, ok := assignment["contract"].(map[string]any)
+			if !ok {
+				t.Errorf("%s: assignment %v missing contract", path, assignment["talent"])
+				continue
+			}
+			requireNonEmptyJSONArray(t, path, contract, "accepts")
+			requireNonEmptyJSONArray(t, path, contract, "produces")
+		}
+	}
+}
+
+func TestOrgProofPlanTasksBindOutputsAndGates(t *testing.T) {
+	root := repoRoot(t)
+	proofRoot := filepath.Join(root, "examples", "org-proofs")
+	plans := []string{
+		filepath.Join(proofRoot, "relay-ide-software-company", "org-plan.json"),
+		filepath.Join(proofRoot, "athenaeum-tavern-story", "org-plan.json"),
+	}
+
+	for _, path := range plans {
+		plan := readJSONMap(t, path)
+		tasks, ok := plan["tasks"].([]any)
+		if !ok || len(tasks) == 0 {
+			t.Fatalf("%s: missing tasks", path)
+		}
+		for _, item := range tasks {
+			task, ok := item.(map[string]any)
+			if !ok {
+				t.Fatalf("%s: task is %T, want object", path, item)
+			}
+			requireNonEmptyJSONArray(t, path, task, "expected_outputs")
+			requireNonEmptyJSONArray(t, path, task, "gates")
+		}
+	}
+}
+
+func TestTalentEvaluationsRecordAssignmentLifecycle(t *testing.T) {
+	root := repoRoot(t)
+	proofRoot := filepath.Join(root, "examples", "org-proofs")
+
+	checked := 0
+	err := filepath.WalkDir(proofRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		base := filepath.Base(path)
+		if d.IsDir() || !strings.HasPrefix(base, "talent-evaluation-") || !strings.HasSuffix(base, ".json") {
+			return nil
+		}
+
+		evaluation := readJSONMap(t, path)
+		assignment, ok := evaluation["assignment"].(map[string]any)
+		if !ok {
+			t.Errorf("%s: missing assignment", path)
+			return nil
+		}
+		lifecycle, lifecycleOK := assignment["lifecycle"].(string)
+		if !lifecycleOK || strings.TrimSpace(lifecycle) == "" {
+			t.Errorf("%s: missing assignment.lifecycle", path)
+		}
+		state, stateOK := assignment["state"].(string)
+		if !stateOK || strings.TrimSpace(state) == "" {
+			t.Errorf("%s: missing assignment.state", path)
+		}
+		requireNonEmptyJSONArray(t, path, assignment, "task_ids")
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", proofRoot, err)
+	}
+	if checked == 0 {
+		t.Fatalf("no talent evaluations checked under %s", proofRoot)
+	}
+}
+
 func TestOrgProofExamplesAllJSONHasSchemaVersion(t *testing.T) {
 	root := repoRoot(t)
 	proofRoot := filepath.Join(root, "examples", "org-proofs")
@@ -177,6 +282,14 @@ func readJSONMap(t *testing.T, path string) map[string]any {
 		t.Fatalf("%s: invalid JSON: %v", path, err)
 	}
 	return artifact
+}
+
+func requireNonEmptyJSONArray(t *testing.T, path string, object map[string]any, key string) {
+	t.Helper()
+	items, ok := object[key].([]any)
+	if !ok || len(items) == 0 {
+		t.Errorf("%s: missing non-empty %s", path, key)
+	}
 }
 
 func jsonObjectArrayContains(items []any, key, want string) bool {

@@ -319,7 +319,38 @@ Sides are excluded from broadcast fan-out by construction.
 
 ---
 
-## Agent lifecycle: party mains vs. summoned sides
+## Agent lifecycle: bridge mechanics and talent lifecycle
+
+`kind: main | side` and `ephemeral` are current bridge/runtime mechanics, not the
+long-term crag talent contract. `kind` controls today's mail/tool surface:
+mains have the pull mailbox and broadcast membership, while sides receive work
+through spawn messages and report through final responses, artifacts, status, or
+urgent messages. `ephemeral` controls whether the bridge exits after task
+completion or idles for more work.
+
+Crag/talent metadata should describe runtime intent with
+`runtime.lifecycle: resident | resumable | ephemeral`:
+
+```text
+resident
+  Live process for the climb; idles and wakes in-process.
+
+resumable
+  Assigned durable talent; process may stop, but direct mail or explicit spawn
+  can wake it later with prior Hermes session context.
+
+ephemeral
+  One-shot process; no durable mailbox/wake contract after completion.
+```
+
+The current daemon already persists `agent_runs.hermes_session_id` and can carry
+that value into a same-name respawn. Issue #119 extends that model by making
+assignment, dormant state, and wake-on-direct-mail daemon-owned lifecycle
+concepts instead of prompt-only conventions. Broadcasts should remain scoped to
+resident/live party members by default so dormant talent pools do not wake as a
+side effect of general announcements.
+
+The sections below describe the bridge behavior that exists today.
 
 Two distinct lifecycle models exist inside a single climb. The shape maps
 onto `kind`: mains live through the climb as peer party members; sides are

@@ -3,8 +3,10 @@ package daemon
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/donovan-yohan/belayer/internal/bridge"
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
@@ -71,6 +73,72 @@ func TestSendMessageEnforcesMainAndSideSurfaces(t *testing.T) {
 	msgsRR := doRequest(t, d, "GET", "/sessions/"+created.ID+"/messages?for=pm", nil)
 	if msgsRR.Code != http.StatusBadRequest {
 		t.Fatalf("expected side inbox listing to be rejected, got %d: %s", msgsRR.Code, msgsRR.Body.String())
+	}
+}
+
+func TestSendMessageWakesCompletedSideWithHermesSession(t *testing.T) {
+	d := testDaemon(t)
+	created := decodeJSON[sessionAPIResponse](t, doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "wake-side"}))
+	workdir := t.TempDir()
+	if _, err := d.store.CreateAgentRun(store.AgentRun{
+		SessionID:       created.ID,
+		Name:            "qa",
+		Role:            "qa",
+		Kind:            "side",
+		Profile:         "default",
+		Workdir:         workdir,
+		Status:          "complete",
+		Outcome:         "succeeded",
+		Transport:       "bridge",
+		HermesSessionID: "hermes-qa-123",
+	}); err != nil {
+		t.Fatalf("CreateAgentRun qa: %v", err)
+	}
+
+	var mu sync.Mutex
+	var seen []agentSpawnRequest
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
+		mu.Lock()
+		seen = append(seen, req)
+		mu.Unlock()
+		return nil, nil
+	}
+
+	rr := doRequest(t, d, "POST", "/sessions/"+created.ID+"/messages", sendMessageRequest{
+		From:    "supervisor",
+		To:      "qa",
+		Content: "Please re-check the latest implementation.",
+		Type:    "instruction",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected wake delivery to completed side, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("spawnBridgeAgent call count = %d, want 1", len(seen))
+	}
+	req := seen[0]
+	if req.Name != "qa" || req.Kind != "side" || req.Role != "qa" || req.Profile != "default" {
+		t.Fatalf("unexpected wake spawn request identity fields: %#v", req)
+	}
+	if req.Workdir != workdir {
+		t.Fatalf("wake spawn workdir = %q, want %q", req.Workdir, workdir)
+	}
+	if req.HermesSessionID != "hermes-qa-123" {
+		t.Fatalf("wake spawn HermesSessionID = %q, want hermes-qa-123", req.HermesSessionID)
+	}
+	if !strings.Contains(req.Message, "supervisor") || !strings.Contains(req.Message, "Please re-check") {
+		t.Fatalf("wake spawn message did not preserve sender/content: %q", req.Message)
+	}
+
+	msgs, err := d.store.ListMessagesInSession(created.ID)
+	if err != nil {
+		t.Fatalf("ListMessagesInSession: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("wake delivery to a side should not create mailbox rows, got %#v", msgs)
 	}
 }
 
