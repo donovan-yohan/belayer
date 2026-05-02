@@ -1,0 +1,47 @@
+internal/cli/talent.go
+  cea6ddc0add32c83 12,145,207-208,227-228,285,299-344,365-370
+internal/daemon/daemon.go
+  cea6ddc0add32c83 349
+docs/CRAG_FILESYSTEM.md
+  cea6ddc0add32c83 285-300
+internal/generatedtalent/generatedtalent.go
+  cea6ddc0add32c83 1-226
+internal/daemon/generated_talent_test.go
+  cea6ddc0add32c83 1-98
+plugins/belayer/tests/test_plugin_register.py
+  cea6ddc0add32c83 309-348
+internal/cli/org_talent_test.go
+  cea6ddc0add32c83 324-394
+examples/talent-catalog/story/storyteller/agent.yaml
+  cea6ddc0add32c83 12
+internal/daemon/generated_talent.go
+  cea6ddc0add32c83 1-69
+plugins/belayer/tools.py
+  cea6ddc0add32c83 468-533,944-977,1116
+plugins/belayer/plugin.yaml
+  cea6ddc0add32c83 13
+internal/daemon/daemon_test.go
+  cea6ddc0add32c83 76
+docs/AGENT_ARCHITECTURE.md
+  cea6ddc0add32c83 78,86,175,183,883
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4dfeb30907be062204f05cba38f7dfb8496f48db",
+  "prompts": {
+    "cea6ddc0add32c83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddeb8-5202-7ee3-952f-bf72f3a760bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 702,
+      "total_deletions": 41,
+      "accepted_lines": 2153,
+      "overriden_lines": 2
+    }
+  }
+}
