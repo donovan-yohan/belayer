@@ -28,6 +28,8 @@ The artifact file at `path` should then follow the schema for its `kind`.
 | Kind | Schema | Producer | Purpose |
 |------|--------|----------|---------|
 | `org-plan` | [`org-plan.schema.json`](artifact-schemas/org-plan.schema.json) | lead talent | Task graph, assignments, dependencies, and gate plan |
+| `talent-request` | [`talent-request.schema.json`](artifact-schemas/talent-request.schema.json) | coordinator talent | Mechanical request for a role/domain/lifecycle without domain-specific semantics |
+| `generated-talent` | [`generated-talent.schema.json`](artifact-schemas/generated-talent.schema.json) | coordinator talent or operator | Compact generated talent metadata selected for possible reuse |
 | `gate-result` | [`gate-result.schema.json`](artifact-schemas/gate-result.schema.json) | gate talent | Generic verdict from QA, reviewer, PM, continuity editor, or any custom gate |
 | `org-retro` | [`org-retro.schema.json`](artifact-schemas/org-retro.schema.json) | lead talent | Lessons, bottlenecks, and catalog/prompt follow-ups after a run |
 | `talent-evaluation` | [`talent-evaluation.schema.json`](artifact-schemas/talent-evaluation.schema.json) | lead or gate talent | Per-run performance evidence and growth recommendations for one talent |

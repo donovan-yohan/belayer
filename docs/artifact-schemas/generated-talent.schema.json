@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/donovan-yohan/belayer/docs/artifact-schemas/generated-talent.schema.json",
+  "title": "Belayer Generated Talent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "domain", "role", "lifecycle", "status", "source_request", "reason"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "promoted"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["promotion_evidence"],
+        "properties": {
+          "promotion_evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "belayer-generated-talent/v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domain": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lifecycle": {
+      "enum": ["resident", "resumable", "ephemeral"]
+    },
+    "status": {
+      "enum": ["generated", "promoted", "retired", "discarded"]
+    },
+    "source_request": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
+    "promotion_evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
