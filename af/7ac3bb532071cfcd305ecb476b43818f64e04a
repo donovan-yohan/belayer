@@ -1,0 +1,33 @@
+internal/cli/tool.go
+  d169fdbee9c766f9 70,124
+internal/daemon/daemon.go
+  d169fdbee9c766f9 13,16,42-45,59,75-77
+internal/cli/client.go
+  d169fdbee9c766f9 197,255-316
+internal/cli/root.go
+  d169fdbee9c766f9 44
+internal/agent/executor_test.go
+  d169fdbee9c766f9 34,76
+internal/daemon/daemon_test.go
+  d169fdbee9c766f9 11,24,34-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "af7ac3bb532071cfcd305ecb476b43818f64e04a",
+  "prompts": {
+    "d169fdbee9c766f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f4077eb2-e01c-4a00-9c35-bee716cfaddc",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 84,
+      "total_deletions": 82,
+      "accepted_lines": 82,
+      "overriden_lines": 0
+    }
+  }
+}
