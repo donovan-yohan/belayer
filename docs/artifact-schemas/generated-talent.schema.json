@@ -5,6 +5,26 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "id", "domain", "role", "lifecycle", "status", "source_request", "reason"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "promoted"
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["promotion_evidence"],
+        "properties": {
+          "promotion_evidence": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "schema_version": {
       "const": "belayer-generated-talent/v1"

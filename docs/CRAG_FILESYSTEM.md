@@ -258,7 +258,7 @@ meaning stays outside Belayer.
 generated-talents/
 └── generated-reviewer-1/
     ├── talent.yaml
-    └── notes.md
+    └── notes.md   # optional
 ```
 
 Minimal generated talent metadata:

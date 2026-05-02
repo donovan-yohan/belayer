@@ -266,6 +266,8 @@ func TestTalentGeneratedPersistAndList(t *testing.T) {
 		`voice: warm and watchful`,
 		`constraint: does not know who sent the sealed letter`,
 		`artifacts/talent-evaluation-mara.json`,
+		`created_at:`,
+		`updated_at:`,
 	} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("generated talent missing %q:\n%s", want, string(raw))
@@ -288,8 +290,97 @@ func TestTalentGeneratedPersistAndList(t *testing.T) {
 	if err := listCmd.Execute(); err != nil {
 		t.Fatalf("generated list: %v", err)
 	}
-	if !strings.Contains(listOut.String(), "mara-underbough\tstory\ttavernkeep\tresumable\tgenerated") {
-		t.Fatalf("generated list missing persisted talent:\n%s", listOut.String())
+	if got := strings.Fields(listOut.String()); len(got) < 5 ||
+		got[0] != "mara-underbough" ||
+		got[1] != "story" ||
+		got[2] != "tavernkeep" ||
+		got[3] != "resumable" ||
+		got[4] != "generated" {
+		t.Fatalf("generated list missing persisted talent fields:\n%s", listOut.String())
+	}
+}
+
+func TestTalentGeneratedPersistRejectsPromotedWithoutEvidence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("BELAYER_HOME", home)
+
+	initCmd := newCragCmd()
+	initCmd.SetOut(&bytes.Buffer{})
+	initCmd.SetErr(&bytes.Buffer{})
+	initCmd.SetArgs([]string{"init", "last-lantern"})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatalf("crag init: %v", err)
+	}
+
+	cmd := newTeamCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"generated", "persist", "last-lantern", "mara-underbough",
+		"--domain", "story",
+		"--role", "tavernkeep",
+		"--status", "promoted",
+		"--source-request", "turn-0002",
+		"--reason", "scene needs a local authority",
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected promoted status without evidence to fail")
+	}
+}
+
+func TestTalentGeneratedPersistRejectsEmptyPromotionEvidence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("BELAYER_HOME", home)
+
+	initCmd := newCragCmd()
+	initCmd.SetOut(&bytes.Buffer{})
+	initCmd.SetErr(&bytes.Buffer{})
+	initCmd.SetArgs([]string{"init", "last-lantern"})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatalf("crag init: %v", err)
+	}
+
+	cmd := newTeamCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"generated", "persist", "last-lantern", "mara-underbough",
+		"--domain", "story",
+		"--role", "tavernkeep",
+		"--source-request", "turn-0002",
+		"--reason", "scene needs a local authority",
+		"--promotion-evidence", " ",
+	})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected empty promotion evidence to fail")
+	}
+}
+
+func TestTalentGeneratedListSkipsDanglingDirs(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("BELAYER_HOME", home)
+
+	initCmd := newCragCmd()
+	initCmd.SetOut(&bytes.Buffer{})
+	initCmd.SetErr(&bytes.Buffer{})
+	initCmd.SetArgs([]string{"init", "last-lantern"})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatalf("crag init: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "crags", "last-lantern", "generated-talents", "dangling"), 0o755); err != nil {
+		t.Fatalf("mkdir dangling generated talent: %v", err)
+	}
+
+	cmd := newTeamCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	cmd.SetArgs([]string{"generated", "list", "last-lantern"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("generated list: %v\n%s", err, out.String())
+	}
+	if out.String() != "" {
+		t.Fatalf("expected dangling dir to be skipped, got:\n%s", out.String())
 	}
 }
 

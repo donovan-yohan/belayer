@@ -124,22 +124,25 @@ func TestOrgProofExamplesPersistGeneratedStoryTalent(t *testing.T) {
 	if got := talent["schema_version"]; got != "belayer-generated-talent/v1" {
 		t.Errorf("%s: schema_version = %v, want belayer-generated-talent/v1", path, got)
 	}
-	if got := talent["name"]; got != "mara-underbough" {
-		t.Errorf("%s: name = %v, want mara-underbough", path, got)
+	if got := talent["id"]; got != "tavernkeep-mara" {
+		t.Errorf("%s: id = %v, want tavernkeep-mara", path, got)
 	}
-	origin, ok := talent["origin"].(map[string]any)
-	if !ok {
-		t.Fatalf("%s: missing origin object", path)
+	for _, key := range []string{"name", "category", "origin", "continuity_constraints"} {
+		if _, ok := talent[key]; ok {
+			t.Errorf("%s: legacy generated talent field %q should not be present", path, key)
+		}
 	}
-	if got := origin["session_id"]; got != "example-athenaeum-tavern" {
-		t.Errorf("%s: origin.session_id = %v, want example-athenaeum-tavern", path, got)
+	for _, key := range []string{"domain", "role", "lifecycle", "status", "source_request", "reason"} {
+		if value, ok := talent[key].(string); !ok || strings.TrimSpace(value) == "" {
+			t.Errorf("%s: %s = %v, want non-empty string", path, key, talent[key])
+		}
 	}
-	firstArtifact, ok := origin["first_artifact"].(string)
-	if !ok || !strings.Contains(firstArtifact, "athenaeum-tavern-story/three-act-story.md") {
-		t.Errorf("%s: origin.first_artifact = %v, want tavern story artifact", path, origin["first_artifact"])
+	evidence, ok := talent["promotion_evidence"].([]any)
+	if !ok || len(evidence) == 0 {
+		t.Fatalf("%s: promotion_evidence = %v, want non-empty list", path, talent["promotion_evidence"])
 	}
-	if _, ok := talent["continuity_constraints"]; !ok {
-		t.Errorf("%s: missing continuity_constraints", path)
+	if first, ok := evidence[0].(string); !ok || !strings.Contains(first, "talent-evaluation-tavernkeep-mara.json") {
+		t.Errorf("%s: promotion_evidence[0] = %v, want talent evaluation path", path, evidence[0])
 	}
 }
 

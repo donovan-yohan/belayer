@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	belayer "github.com/donovan-yohan/belayer"
 	"github.com/spf13/cobra"
@@ -22,7 +24,7 @@ func newTeamCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "team",
 		Aliases: []string{"teams", "talent"},
-		Short:   "List, add, and remove local team identities",
+		Short:   "Manage local team identities and generated talent records",
 	}
 	cmd.AddCommand(newTeamListCmd(), newTeamAddCmd(), newTeamRemoveCmd(), newGeneratedTalentCmd())
 	return cmd
@@ -157,6 +159,8 @@ type generatedTalentRecord struct {
 	Reason            string            `yaml:"reason"`
 	Metadata          map[string]string `yaml:"metadata,omitempty"`
 	PromotionEvidence []string          `yaml:"promotion_evidence,omitempty"`
+	CreatedAt         string            `yaml:"created_at"`
+	UpdatedAt         string            `yaml:"updated_at"`
 }
 
 func newGeneratedTalentPersistCmd() *cobra.Command {
@@ -204,19 +208,25 @@ func newGeneratedTalentPersistCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			dir, err := generatedTalentDir(cragName, id)
+			if err := validateNonEmptyValues("promotion-evidence", promotionEvidence); err != nil {
+				return err
+			}
+			if status == "promoted" && len(promotionEvidence) == 0 {
+				return fmt.Errorf("--promotion-evidence is required when --status=promoted")
+			}
+			cragPath, err := cragDir(cragName)
 			if err != nil {
 				return err
 			}
-			if _, err := os.Stat(filepath.Join(filepath.Dir(filepath.Dir(dir)), "crag.yaml")); err != nil {
+			if _, err := os.Stat(filepath.Join(cragPath, "crag.yaml")); err != nil {
 				if os.IsNotExist(err) {
 					return fmt.Errorf("crag %q does not exist", cragName)
 				}
 				return fmt.Errorf("stat crag.yaml: %w", err)
 			}
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return fmt.Errorf("mkdir generated talent: %w", err)
-			}
+			dir := filepath.Join(cragPath, "generated-talents", id)
+			talentPath := filepath.Join(dir, "talent.yaml")
+			now := time.Now().UTC().Format(time.RFC3339)
 			record := generatedTalentRecord{
 				SchemaVersion:     "belayer-generated-talent/v1",
 				ID:                id,
@@ -228,12 +238,13 @@ func newGeneratedTalentPersistCmd() *cobra.Command {
 				Reason:            reason,
 				Metadata:          parsedMetadata,
 				PromotionEvidence: promotionEvidence,
+				CreatedAt:         now,
+				UpdatedAt:         now,
 			}
 			raw, err := yaml.Marshal(record)
 			if err != nil {
 				return fmt.Errorf("marshal generated talent: %w", err)
 			}
-			talentPath := filepath.Join(dir, "talent.yaml")
 			if !force {
 				if _, err := os.Stat(talentPath); err == nil {
 					return fmt.Errorf("generated talent %q already exists in crag %q (use --force to overwrite)", id, cragName)
@@ -241,13 +252,21 @@ func newGeneratedTalentPersistCmd() *cobra.Command {
 					return fmt.Errorf("stat generated talent: %w", err)
 				}
 			}
-			if err := os.WriteFile(talentPath, raw, 0o644); err != nil {
-				return fmt.Errorf("write generated talent: %w", err)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("mkdir generated talent: %w", err)
 			}
+			notesPath := filepath.Join(dir, "notes.md")
 			if note != "" {
-				if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte(note+"\n"), 0o644); err != nil {
+				if err := os.WriteFile(notesPath, []byte(note+"\n"), 0o644); err != nil {
 					return fmt.Errorf("write generated talent notes: %w", err)
 				}
+			} else if force {
+				if err := os.Remove(notesPath); err != nil && !os.IsNotExist(err) {
+					return fmt.Errorf("remove stale generated talent notes: %w", err)
+				}
+			}
+			if err := os.WriteFile(talentPath, raw, 0o644); err != nil {
+				return fmt.Errorf("write generated talent: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Persisted generated talent %s in crag %s\n", id, cragName)
 			return nil
@@ -263,6 +282,10 @@ func newGeneratedTalentPersistCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&promotionEvidence, "promotion-evidence", nil, "Evidence path supporting promotion or reuse; repeatable")
 	cmd.Flags().StringVar(&note, "note", "", "Optional human-readable notes.md content")
 	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing generated talent record")
+	_ = cmd.MarkFlagRequired("domain")
+	_ = cmd.MarkFlagRequired("role")
+	_ = cmd.MarkFlagRequired("source-request")
+	_ = cmd.MarkFlagRequired("reason")
 	return cmd
 }
 
@@ -294,6 +317,8 @@ func newGeneratedTalentListCmd() *cobra.Command {
 				}
 				return fmt.Errorf("read generated talents: %w", err)
 			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			defer w.Flush()
 			for _, entry := range entries {
 				if !entry.IsDir() {
 					continue
@@ -301,6 +326,9 @@ func newGeneratedTalentListCmd() *cobra.Command {
 				path := filepath.Join(root, entry.Name(), "talent.yaml")
 				raw, err := os.ReadFile(path)
 				if err != nil {
+					if os.IsNotExist(err) {
+						continue
+					}
 					return fmt.Errorf("read %s: %w", path, err)
 				}
 				var record generatedTalentRecord
@@ -310,7 +338,7 @@ func newGeneratedTalentListCmd() *cobra.Command {
 				if record.ID == "" {
 					record.ID = entry.Name()
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", record.ID, record.Domain, record.Role, record.Lifecycle, record.Status)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", record.ID, record.Domain, record.Role, record.Lifecycle, record.Status)
 			}
 			return nil
 		},
@@ -348,6 +376,15 @@ func generatedTalentDir(cragName, id string) (string, error) {
 func validateRequiredFlag(name, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("--%s is required", name)
+	}
+	return nil
+}
+
+func validateNonEmptyValues(name string, values []string) error {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("--%s values must be non-empty", name)
+		}
 	}
 	return nil
 }
