@@ -365,14 +365,6 @@ func parseTalentRef(ref string) (string, string, error) {
 	return "", "", fmt.Errorf("invalid team reference %q (use category or category/team)", ref)
 }
 
-func generatedTalentDir(cragName, id string) (string, error) {
-	dir, err := cragDir(cragName)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "generated-talents", id), nil
-}
-
 func validateRequiredFlag(name, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return fmt.Errorf("--%s is required", name)
