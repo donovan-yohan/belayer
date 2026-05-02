@@ -11,8 +11,8 @@ import (
 	"time"
 
 	belayer "github.com/donovan-yohan/belayer"
+	"github.com/donovan-yohan/belayer/internal/generatedtalent"
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v3"
 )
 
 type copySummary struct {
@@ -144,23 +144,8 @@ func newGeneratedTalentCmd() *cobra.Command {
 		Aliases: []string{"generated-talents"},
 		Short:   "Manage generated talent records in a crag-local pool",
 	}
-	cmd.AddCommand(newGeneratedTalentPersistCmd(), newGeneratedTalentListCmd())
+	cmd.AddCommand(newGeneratedTalentPersistCmd(), newGeneratedTalentListCmd(), newGeneratedTalentScaffoldCmd())
 	return cmd
-}
-
-type generatedTalentRecord struct {
-	SchemaVersion     string            `yaml:"schema_version"`
-	ID                string            `yaml:"id"`
-	Domain            string            `yaml:"domain"`
-	Role              string            `yaml:"role"`
-	Lifecycle         string            `yaml:"lifecycle"`
-	Status            string            `yaml:"status"`
-	SourceRequest     string            `yaml:"source_request"`
-	Reason            string            `yaml:"reason"`
-	Metadata          map[string]string `yaml:"metadata,omitempty"`
-	PromotionEvidence []string          `yaml:"promotion_evidence,omitempty"`
-	CreatedAt         string            `yaml:"created_at"`
-	UpdatedAt         string            `yaml:"updated_at"`
 }
 
 func newGeneratedTalentPersistCmd() *cobra.Command {
@@ -227,8 +212,8 @@ func newGeneratedTalentPersistCmd() *cobra.Command {
 			dir := filepath.Join(cragPath, "generated-talents", id)
 			talentPath := filepath.Join(dir, "talent.yaml")
 			now := time.Now().UTC().Format(time.RFC3339)
-			record := generatedTalentRecord{
-				SchemaVersion:     "belayer-generated-talent/v1",
+			record := generatedtalent.Record{
+				SchemaVersion:     generatedtalent.SchemaVersion,
 				ID:                id,
 				Domain:            domain,
 				Role:              role,
@@ -240,10 +225,6 @@ func newGeneratedTalentPersistCmd() *cobra.Command {
 				PromotionEvidence: promotionEvidence,
 				CreatedAt:         now,
 				UpdatedAt:         now,
-			}
-			raw, err := yaml.Marshal(record)
-			if err != nil {
-				return fmt.Errorf("marshal generated talent: %w", err)
 			}
 			if !force {
 				if _, err := os.Stat(talentPath); err == nil {
@@ -265,8 +246,8 @@ func newGeneratedTalentPersistCmd() *cobra.Command {
 					return fmt.Errorf("remove stale generated talent notes: %w", err)
 				}
 			}
-			if err := os.WriteFile(talentPath, raw, 0o644); err != nil {
-				return fmt.Errorf("write generated talent: %w", err)
+			if err := generatedtalent.WriteRecord(talentPath, record); err != nil {
+				return err
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Persisted generated talent %s in crag %s\n", id, cragName)
 			return nil
@@ -324,16 +305,12 @@ func newGeneratedTalentListCmd() *cobra.Command {
 					continue
 				}
 				path := filepath.Join(root, entry.Name(), "talent.yaml")
-				raw, err := os.ReadFile(path)
+				record, err := generatedtalent.ReadRecord(path)
 				if err != nil {
 					if os.IsNotExist(err) {
 						continue
 					}
 					return fmt.Errorf("read %s: %w", path, err)
-				}
-				var record generatedTalentRecord
-				if err := yaml.Unmarshal(raw, &record); err != nil {
-					return fmt.Errorf("parse %s: %w", path, err)
 				}
 				if record.ID == "" {
 					record.ID = entry.Name()
@@ -343,6 +320,52 @@ func newGeneratedTalentListCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newGeneratedTalentScaffoldCmd() *cobra.Command {
+	var target string
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "scaffold <crag> <id>",
+		Short: "Scaffold a runnable project-local identity from generated talent metadata",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cragName, id := args[0], args[1]
+			if err := validateName(cragName, "crag"); err != nil {
+				return err
+			}
+			if err := validateName(id, "generated talent"); err != nil {
+				return err
+			}
+			if target == "" {
+				var err error
+				target, err = os.Getwd()
+				if err != nil {
+					return err
+				}
+			}
+			recordPath, err := generatedTalentRecordPath(cragName, id)
+			if err != nil {
+				return err
+			}
+			record, err := generatedtalent.ReadRecord(recordPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Errorf("generated talent %q does not exist in crag %q", id, cragName)
+				}
+				return err
+			}
+			identityDir, err := generatedtalent.ScaffoldIdentity(target, record, force)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Scaffolded generated talent %s at %s\n", id, identityDir)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&target, "target", "", "Project directory (default cwd)")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing scaffolded identity")
+	return cmd
 }
 
 func parseTalentRef(ref string) (string, string, error) {
@@ -363,6 +386,22 @@ func parseTalentRef(ref string) (string, string, error) {
 		return parts[0], parts[1], nil
 	}
 	return "", "", fmt.Errorf("invalid team reference %q (use category or category/team)", ref)
+}
+
+func generatedTalentRecordPath(cragName, id string) (string, error) {
+	dir, err := generatedTalentDir(cragName, id)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "talent.yaml"), nil
+}
+
+func generatedTalentDir(cragName, id string) (string, error) {
+	dir, err := cragDir(cragName)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "generated-talents", id), nil
 }
 
 func validateRequiredFlag(name, value string) error {

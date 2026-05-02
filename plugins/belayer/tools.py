@@ -465,6 +465,72 @@ SPAWN_AGENT_SCHEMA = {
     },
 }
 
+SCAFFOLD_GENERATED_TALENT_SCHEMA = {
+    "name": "belayer_scaffold_generated_talent",
+    "description": (
+        "Create a runnable project-local identity for a generated talent. Use this when a "
+        "party lead needs a bounded talent and no suitable .belayer/agents identity exists. "
+        "The daemon writes .belayer/agents/<id>/agent.yaml, system-prompt.md, agents.md, and "
+        "talent.yaml from generic mechanical fields. This tool does not promote the talent "
+        "into a global catalog and does not add domain-specific semantics to Belayer.\n\n"
+        "WHEN TO USE belayer_scaffold_generated_talent:\n"
+        "- You need to spawn a new role but no suitable project-local identity exists yet\n"
+        "- The role can be described by domain, role, lifecycle, source request, reason, and "
+        "caller-provided metadata\n"
+        "- You plan to follow up with belayer_spawn_agent using the same id as identity\n\n"
+        "WHEN NOT TO USE:\n"
+        "- A suitable identity already exists under .belayer/agents/ -> use belayer_spawn_agent\n"
+        "- You are only recording a reusable candidate -> create/persist a generated-talent "
+        "artifact instead\n"
+        "- You want to permanently promote a talent into a catalog -> use a reviewed promotion "
+        "flow outside this tool"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "crag": {
+                "type": "string",
+                "description": "Crag or operating context name associated with the generated talent.",
+            },
+            "id": {
+                "type": "string",
+                "description": "Directory-safe generated talent id and future spawn identity.",
+            },
+            "domain": {
+                "type": "string",
+                "description": "Prompt-visible domain metadata. Belayer treats this as a string.",
+            },
+            "role": {
+                "type": "string",
+                "description": "Prompt-visible role metadata. Belayer treats this as a string.",
+            },
+            "lifecycle": {
+                "type": "string",
+                "enum": ["resident", "resumable", "ephemeral"],
+                "description": "Runtime lifecycle for the generated identity.",
+            },
+            "source_request": {
+                "type": "string",
+                "description": "Request, task, or turn id that caused this generated talent to be needed.",
+            },
+            "reason": {
+                "type": "string",
+                "description": "Why this generated talent is needed for the current climb.",
+            },
+            "metadata": {
+                "type": "object",
+                "description": "Caller-provided compact key/value metadata for the generated prompt.",
+                "additionalProperties": {"type": "string"},
+            },
+            "force": {
+                "type": "boolean",
+                "description": "Overwrite an existing project-local identity with the same id.",
+            },
+        },
+        "required": ["crag", "id", "domain", "role", "lifecycle", "source_request", "reason"],
+    },
+}
+
 REQUEST_COMPLETION_SCHEMA = {
     "name": "belayer_request_completion",
     "description": (
@@ -875,6 +941,40 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str) -
     return handler
 
 
+def make_scaffold_generated_talent_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
+    def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
+        args = args or {}
+        payload = {
+            "crag": args.get("crag", ""),
+            "id": args.get("id", ""),
+            "domain": args.get("domain", ""),
+            "role": args.get("role", ""),
+            "lifecycle": args.get("lifecycle", ""),
+            "source_request": args.get("source_request", ""),
+            "reason": args.get("reason", ""),
+            "metadata": args.get("metadata", {}) or {},
+            "force": bool(args.get("force", False)),
+        }
+        status, body = unix_post(
+            socket_path,
+            f"/sessions/{session_id}/generated-talents/scaffold",
+            payload,
+        )
+        if status == 201:
+            identity = payload["id"]
+            try:
+                parsed = json.loads(body) if body else {}
+                if isinstance(parsed, dict):
+                    identity = parsed.get("identity", identity)
+            except json.JSONDecodeError:
+                pass
+            return f"Generated talent identity '{identity}' scaffolded. You can now spawn it with belayer_spawn_agent."
+        logger.warning("scaffold_generated_talent %s failed (%d): %s", payload["id"], status, body[:200])
+        return f"[System] Failed to scaffold generated talent '{payload['id']}'. Error: {body[:200]}"
+
+    return handler
+
+
 def make_request_completion_handler(agent_id: str, session_id: str, socket_path: str) -> Callable:
     def handler(args: Optional[Dict[str, Any]] = None, **_kwargs: Any) -> str:
         args = args or {}
@@ -1013,6 +1113,7 @@ TOOL_SPECS: Dict[str, tuple] = {
     "belayer_report_status": (REPORT_STATUS_SCHEMA, make_report_status_handler),
     "belayer_create_artifact": (CREATE_ARTIFACT_SCHEMA, make_create_artifact_handler),
     "belayer_spawn_agent": (SPAWN_AGENT_SCHEMA, make_spawn_agent_handler),
+    "belayer_scaffold_generated_talent": (SCAFFOLD_GENERATED_TALENT_SCHEMA, make_scaffold_generated_talent_handler),
     "belayer_request_completion": (REQUEST_COMPLETION_SCHEMA, make_request_completion_handler),
     "belayer_approve_completion": (APPROVE_COMPLETION_SCHEMA, make_approve_completion_handler),
     "belayer_reject_completion": (REJECT_COMPLETION_SCHEMA, make_reject_completion_handler),

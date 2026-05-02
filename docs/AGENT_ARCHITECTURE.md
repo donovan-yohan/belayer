@@ -75,6 +75,7 @@ interrupt (`--interrupt` writes to the side's stdin).
 | `belayer_broadcast`            | ✓           | ✓                 | ✗    |
 | `belayer_check_mail`           | ✓           | ✓                 | ✗    |
 | `belayer_spawn_agent`          | ✗           | ✓ (opt-in)        | ✗    |
+| `belayer_scaffold_generated_talent` | ✗      | ✓ (opt-in)        | ✗    |
 | `belayer_request_completion`   | ✗           | ✓ (opt-in)        | ✗    |
 | `belayer_escalate_to_human`    | ✗           | ✓ (opt-in)        | ✗    |
 | `belayer_approve_completion`   | ✗           | ✗                 | ✓ (PM only) |
@@ -82,7 +83,7 @@ interrupt (`--interrupt` writes to the side's stdin).
 
 The mail tools (`send_message`, `broadcast`, `check_mail`) are automatic for
 every `kind: main` and withheld from every `kind: side`. Role-specific tools
-(`spawn_agent`, completion-gate tools) are opt-in via
+(`spawn_agent`, generated-talent scaffolding, completion-gate tools) are opt-in via
 `agent.yaml#belayer_tools:` and enforced at registration time — an identity
 that does not declare a tool spawns without it.
 
@@ -170,15 +171,16 @@ flowchart TB
 | `belayer_check_mail` | — | Poll for queued messages and broadcasts (main only) |
 | `belayer_create_artifact` | `kind`, `path`, `summary?` | Register a durable output (contract, report, task-graph, etc.) |
 | `belayer_report_status` | `status` (working/blocked/done/needs-review), `detail?` | Publish lifecycle state to the session bus |
-| `belayer_spawn_agent` | `name`, `profile`, `message`, `branch?` | Dynamically spawn a specialist agent (supervisor only) |
-| `belayer_request_completion` | `summary`, `spec_artifact?` | Signal work is done, trigger PM verification (supervisor only) |
+| `belayer_spawn_agent` | `name`, `profile`, `message`, `branch?` | Dynamically spawn a specialist agent (party lead only) |
+| `belayer_scaffold_generated_talent` | `crag`, `id`, `domain`, `role`, `lifecycle`, `source_request`, `reason`, `metadata?` | Create a runnable project-local identity for a generated talent (party lead opt-in only) |
+| `belayer_request_completion` | `summary`, `spec_artifact?` | Signal work is done, trigger PM verification (party lead only) |
 | `belayer_approve_completion` | `verification_report` | Approve the climb after spec verification (PM only) |
 | `belayer_reject_completion` | `verification_report`, `gap_list` | Reject the climb with gaps for supervisor to fix (PM only) |
-| `belayer_escalate_to_human` | `reason` (string) | Halt the climb and flag for human review (supervisor only) |
+| `belayer_escalate_to_human` | `reason` (string) | Halt the climb and flag for human review (party lead only) |
 
 The base Hermes tools let an agent do work (read files, write code, run commands). The Belayer coordination tools let an agent coordinate (send messages, register outputs, report status, spawn teammates). The completion gate tools enforce spec verification before a climb can close.
 
-Each agent template declares role-specific tools via the `belayer_tools` field in `agent.yaml`. `report_status` and `create_artifact` are universal baseline tools registered on every agent. Mail tools (`send_message`, `broadcast`, `check_mail`) are registered only for `kind: main`. Role-specific tools are only available to identities that declare them. The supervisor can spawn agents, request completion, and escalate to human. Only the PM can approve or reject a climb. This is enforced at registration time — agents never see tools they aren't authorized to use.
+Each agent template declares role-specific tools via the `belayer_tools` field in `agent.yaml`. `report_status` and `create_artifact` are universal baseline tools registered on every agent. Mail tools (`send_message`, `broadcast`, `check_mail`) are registered only for `kind: main`. Role-specific tools are only available to identities that declare them. A party lead can spawn agents, scaffold generated talent identities, request completion, and escalate to human when its identity allows those tools. The shipped default team names that party lead `supervisor`, but the capability comes from the declared tool contract rather than the literal identity name. Only the PM can approve or reject a climb. This is enforced at registration time — agents never see tools they aren't authorized to use.
 
 Side agents do not receive mail tools; they receive their task in the spawn message and return via `final_response` plus artifacts.
 
@@ -877,10 +879,11 @@ Agents receive belayer tools in two layers:
 2. **Main-mail tools** — registered only for `kind: main`:
    `belayer_send_message`, `belayer_broadcast`, `belayer_check_mail`.
 3. **Role-specific tools** — opt-in via `agent.yaml#belayer_tools:`:
-   - `belayer_spawn_agent` — supervisor only
-   - `belayer_request_completion` — supervisor only
+   - `belayer_spawn_agent` — party lead only
+   - `belayer_scaffold_generated_talent` — party lead opt-in only
+   - `belayer_request_completion` — party lead only
    - `belayer_approve_completion`, `belayer_reject_completion` — PM only
-   - `belayer_escalate_to_human` — supervisor only (last-resort stop)
+   - `belayer_escalate_to_human` — party lead only (last-resort stop)
 
 Side agents (`kind: side`) do not receive mail tools. They receive their task in the spawn message and return via `final_response` plus artifacts.
 

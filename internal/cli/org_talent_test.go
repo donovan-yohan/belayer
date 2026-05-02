@@ -412,6 +412,77 @@ func TestTalentGeneratedPersistRejectsInvalidLifecycle(t *testing.T) {
 	}
 }
 
+func TestTalentGeneratedScaffoldCreatesRunnableIdentity(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	t.Setenv("BELAYER_HOME", home)
+
+	initCmd := newCragCmd()
+	initCmd.SetOut(&bytes.Buffer{})
+	initCmd.SetErr(&bytes.Buffer{})
+	initCmd.SetArgs([]string{"init", "last-lantern", "--kind", "story"})
+	if err := initCmd.Execute(); err != nil {
+		t.Fatalf("crag init: %v", err)
+	}
+
+	persistCmd := newTeamCmd()
+	persistCmd.SetOut(&bytes.Buffer{})
+	persistCmd.SetErr(&bytes.Buffer{})
+	persistCmd.SetArgs([]string{
+		"generated", "persist", "last-lantern", "mara-underbough",
+		"--domain", "story",
+		"--role", "tavernkeep",
+		"--lifecycle", "resumable",
+		"--source-request", "turn-0002",
+		"--reason", "scene needs a reusable local authority",
+		"--metadata", "voice=warm and watchful",
+	})
+	if err := persistCmd.Execute(); err != nil {
+		t.Fatalf("generated persist: %v", err)
+	}
+
+	scaffoldCmd := newTeamCmd()
+	scaffoldOut := &bytes.Buffer{}
+	scaffoldCmd.SetOut(scaffoldOut)
+	scaffoldCmd.SetErr(scaffoldOut)
+	scaffoldCmd.SetArgs([]string{"generated", "scaffold", "last-lantern", "mara-underbough", "--target", project})
+	if err := scaffoldCmd.Execute(); err != nil {
+		t.Fatalf("generated scaffold: %v\n%s", err, scaffoldOut.String())
+	}
+	if !strings.Contains(scaffoldOut.String(), "Scaffolded generated talent mara-underbough") {
+		t.Fatalf("unexpected scaffold output: %s", scaffoldOut.String())
+	}
+
+	identityDir := filepath.Join(project, ".belayer", "agents", "mara-underbough")
+	for _, rel := range []string{"agent.yaml", "system-prompt.md", "agents.md", "talent.yaml"} {
+		if _, err := os.Stat(filepath.Join(identityDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+	agentYAML, err := os.ReadFile(filepath.Join(identityDir, "agent.yaml"))
+	if err != nil {
+		t.Fatalf("read scaffolded agent.yaml: %v", err)
+	}
+	for _, want := range []string{
+		`kind: side`,
+		`ephemeral: false`,
+		`model: gpt-5.4`,
+	} {
+		if !strings.Contains(string(agentYAML), want) {
+			t.Fatalf("agent.yaml missing %q:\n%s", want, string(agentYAML))
+		}
+	}
+	systemPrompt, err := os.ReadFile(filepath.Join(identityDir, "system-prompt.md"))
+	if err != nil {
+		t.Fatalf("read scaffolded system prompt: %v", err)
+	}
+	for _, want := range []string{"domain: story", "role: tavernkeep", "source request: turn-0002", "voice: warm and watchful"} {
+		if !strings.Contains(string(systemPrompt), want) {
+			t.Fatalf("system-prompt.md missing %q:\n%s", want, string(systemPrompt))
+		}
+	}
+}
+
 func TestSetCragLinkBlockReplacesExistingBlocks(t *testing.T) {
 	raw := []byte("log_level: standard\norg:\n  name: old\nruntime:\n  max_concurrent_mains: 8\n")
 	got := string(setCragLinkBlock(raw, "new-crag", ""))

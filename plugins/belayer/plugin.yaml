@@ -10,6 +10,7 @@ provides_tools:
   - belayer_report_status
   - belayer_create_artifact
   - belayer_spawn_agent
+  - belayer_scaffold_generated_talent
   - belayer_request_completion
   - belayer_approve_completion
   - belayer_reject_completion

@@ -282,6 +282,22 @@ Generated talents do not become full `.belayer/agents/` identities by default.
 They start as compact metadata. A later reviewed promotion can turn one into a
 catalog talent or crag team member.
 
+When a coordinator needs to run a generated talent during the current climb,
+Belayer can scaffold a project-local identity from the same mechanical record:
+
+```text
+repo/.belayer/agents/<generated-talent-id>/
+├── agent.yaml
+├── system-prompt.md
+├── agents.md
+└── talent.yaml
+```
+
+This is not promotion. It creates a runnable local identity for the current
+project while preserving the generated talent as a bounded, auditable profile.
+Agents only receive the scaffolding tool when their identity explicitly declares
+`belayer_scaffold_generated_talent` in `agent.yaml#belayer_tools:`.
+
 ### `world-state/`
 
 Story crags may keep campaign or setting state here.

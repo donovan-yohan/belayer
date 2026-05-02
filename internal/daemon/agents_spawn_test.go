@@ -161,6 +161,41 @@ func TestSpawnAgent_BridgeHeartbeatsQuickly(t *testing.T) {
 	}
 }
 
+func TestHandleSpawnAgentUsesIdentityKindFromAgentYAML(t *testing.T) {
+	d := testDaemon(t)
+	workspace := t.TempDir()
+	mustWrite(t, filepath.Join(workspace, ".belayer", "agents", "mara-underbough", "agent.yaml"), "kind: side\n")
+
+	sessRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{Name: "identity-kind-test", WorkspaceDir: workspace})
+	if sessRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d %s", sessRR.Code, sessRR.Body.String())
+	}
+	sess := decodeJSON[sessionAPIResponse](t, sessRR)
+
+	var capturedKind string
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
+		capturedKind = req.Kind
+		return nil, nil
+	}
+
+	rr := doRequest(t, d, "POST", "/sessions/"+sess.ID+"/agents", agentSpawnRequest{
+		Name:     "mara-underbough",
+		Identity: "mara-underbough",
+		Role:     "tavernkeep",
+		Profile:  "default",
+	})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("spawn generated identity: got %d body=%s", rr.Code, rr.Body.String())
+	}
+	run := decodeJSON[agentRunResponse](t, rr)
+	if run.Kind != "side" {
+		t.Fatalf("run.Kind = %q, want side", run.Kind)
+	}
+	if capturedKind != "side" {
+		t.Fatalf("spawn request kind = %q, want side", capturedKind)
+	}
+}
+
 // --- Test: Bridge takes >500ms → spawn returns success (timeout path) ---
 
 // TestSpawnAgent_SlowStartAssumedOK verifies that when neither an event nor a
