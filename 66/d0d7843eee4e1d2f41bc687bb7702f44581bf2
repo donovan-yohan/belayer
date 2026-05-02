@@ -1,0 +1,76 @@
+internal/cli/talent.go
+  cea6ddc0add32c83 12,145,207-208,227-228,285,299-344,365-370
+plugins/belayer/tools.py
+  cea6ddc0add32c83 468-533,944-977,1116
+docs/AGENT_ARCHITECTURE.md
+  cea6ddc0add32c83 78,86,175,183,883
+internal/cli/org_talent_test.go
+  cea6ddc0add32c83 324-394
+docs/CRAG_FILESYSTEM.md
+  cea6ddc0add32c83 285-300
+plugins/belayer/tests/test_plugin_register.py
+  cea6ddc0add32c83 309-348
+internal/daemon/daemon.go
+  cea6ddc0add32c83 349
+internal/daemon/generated_talent_test.go
+  cea6ddc0add32c83 1-98
+internal/daemon/agents.go
+  4f933361bf9b6691 1427-1431
+  beecb793b04ae5d6 225-237,245-247,624-634,1003-1013
+examples/talent-catalog/story/storyteller/agent.yaml
+  cea6ddc0add32c83 12
+internal/daemon/generated_talent.go
+  cea6ddc0add32c83 1-69
+internal/generatedtalent/generatedtalent.go
+  cea6ddc0add32c83 1-226
+internal/daemon/daemon_test.go
+  cea6ddc0add32c83 76
+plugins/belayer/plugin.yaml
+  cea6ddc0add32c83 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "66d0d7843eee4e1d2f41bc687bb7702f44581bf2",
+  "prompts": {
+    "4f933361bf9b6691": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddbc5-c54c-7242-aae3-316e7392228f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1502,
+      "total_deletions": 27,
+      "accepted_lines": 27,
+      "overriden_lines": 0
+    },
+    "beecb793b04ae5d6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "60427526-396c-4ef4-ba78-847e76f541ec",
+        "model": "claude-opus-4-6"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1061,
+      "overriden_lines": 0
+    },
+    "cea6ddc0add32c83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddeb8-5202-7ee3-952f-bf72f3a760bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 702,
+      "total_deletions": 41,
+      "accepted_lines": 2376,
+      "overriden_lines": 0
+    }
+  }
+}
