@@ -10,6 +10,7 @@ import (
 
 	belayer "github.com/donovan-yohan/belayer"
 	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v3"
 )
 
 type copySummary struct {
@@ -23,7 +24,7 @@ func newTeamCmd() *cobra.Command {
 		Aliases: []string{"teams", "talent"},
 		Short:   "List, add, and remove local team identities",
 	}
-	cmd.AddCommand(newTeamListCmd(), newTeamAddCmd(), newTeamRemoveCmd())
+	cmd.AddCommand(newTeamListCmd(), newTeamAddCmd(), newTeamRemoveCmd(), newGeneratedTalentCmd())
 	return cmd
 }
 
@@ -135,6 +136,187 @@ func newTeamRemoveCmd() *cobra.Command {
 	return cmd
 }
 
+func newGeneratedTalentCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "generated",
+		Aliases: []string{"generated-talents"},
+		Short:   "Manage generated talent records in a crag-local pool",
+	}
+	cmd.AddCommand(newGeneratedTalentPersistCmd(), newGeneratedTalentListCmd())
+	return cmd
+}
+
+type generatedTalentRecord struct {
+	SchemaVersion     string            `yaml:"schema_version"`
+	ID                string            `yaml:"id"`
+	Domain            string            `yaml:"domain"`
+	Role              string            `yaml:"role"`
+	Lifecycle         string            `yaml:"lifecycle"`
+	Status            string            `yaml:"status"`
+	SourceRequest     string            `yaml:"source_request"`
+	Reason            string            `yaml:"reason"`
+	Metadata          map[string]string `yaml:"metadata,omitempty"`
+	PromotionEvidence []string          `yaml:"promotion_evidence,omitempty"`
+}
+
+func newGeneratedTalentPersistCmd() *cobra.Command {
+	var domain, role, lifecycle, status, sourceRequest, reason, note string
+	var metadata []string
+	var promotionEvidence []string
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "persist <crag> <id>",
+		Short: "Persist compact generated talent metadata into a crag pool",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cragName, id := args[0], args[1]
+			if err := validateName(cragName, "crag"); err != nil {
+				return err
+			}
+			if err := validateName(id, "generated talent"); err != nil {
+				return err
+			}
+			if err := validateRequiredFlag("domain", domain); err != nil {
+				return err
+			}
+			if err := validateRequiredFlag("role", role); err != nil {
+				return err
+			}
+			if err := validateRequiredFlag("source-request", sourceRequest); err != nil {
+				return err
+			}
+			if err := validateRequiredFlag("reason", reason); err != nil {
+				return err
+			}
+			if lifecycle == "" {
+				lifecycle = "ephemeral"
+			}
+			if status == "" {
+				status = "generated"
+			}
+			if err := validateTalentLifecycle(lifecycle); err != nil {
+				return err
+			}
+			if err := validateGeneratedTalentStatus(status); err != nil {
+				return err
+			}
+			parsedMetadata, err := parseKeyValueFlags(metadata)
+			if err != nil {
+				return err
+			}
+			dir, err := generatedTalentDir(cragName, id)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(filepath.Dir(dir)), "crag.yaml")); err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Errorf("crag %q does not exist", cragName)
+				}
+				return fmt.Errorf("stat crag.yaml: %w", err)
+			}
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return fmt.Errorf("mkdir generated talent: %w", err)
+			}
+			record := generatedTalentRecord{
+				SchemaVersion:     "belayer-generated-talent/v1",
+				ID:                id,
+				Domain:            domain,
+				Role:              role,
+				Lifecycle:         lifecycle,
+				Status:            status,
+				SourceRequest:     sourceRequest,
+				Reason:            reason,
+				Metadata:          parsedMetadata,
+				PromotionEvidence: promotionEvidence,
+			}
+			raw, err := yaml.Marshal(record)
+			if err != nil {
+				return fmt.Errorf("marshal generated talent: %w", err)
+			}
+			talentPath := filepath.Join(dir, "talent.yaml")
+			if !force {
+				if _, err := os.Stat(talentPath); err == nil {
+					return fmt.Errorf("generated talent %q already exists in crag %q (use --force to overwrite)", id, cragName)
+				} else if !os.IsNotExist(err) {
+					return fmt.Errorf("stat generated talent: %w", err)
+				}
+			}
+			if err := os.WriteFile(talentPath, raw, 0o644); err != nil {
+				return fmt.Errorf("write generated talent: %w", err)
+			}
+			if note != "" {
+				if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte(note+"\n"), 0o644); err != nil {
+					return fmt.Errorf("write generated talent notes: %w", err)
+				}
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Persisted generated talent %s in crag %s\n", id, cragName)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&domain, "domain", "", "Prompt-visible domain metadata")
+	cmd.Flags().StringVar(&role, "role", "", "Prompt-visible role metadata")
+	cmd.Flags().StringVar(&lifecycle, "lifecycle", "ephemeral", "Runtime lifecycle: resident, resumable, or ephemeral")
+	cmd.Flags().StringVar(&status, "status", "generated", "Generated talent status: generated, promoted, retired, or discarded")
+	cmd.Flags().StringVar(&sourceRequest, "source-request", "", "Request, task, or turn identifier that caused generation")
+	cmd.Flags().StringVar(&reason, "reason", "", "Why this generated talent was needed")
+	cmd.Flags().StringArrayVar(&metadata, "metadata", nil, "Caller-provided key=value metadata; repeatable")
+	cmd.Flags().StringArrayVar(&promotionEvidence, "promotion-evidence", nil, "Evidence path supporting promotion or reuse; repeatable")
+	cmd.Flags().StringVar(&note, "note", "", "Optional human-readable notes.md content")
+	cmd.Flags().BoolVar(&force, "force", false, "Overwrite an existing generated talent record")
+	return cmd
+}
+
+func newGeneratedTalentListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list <crag>",
+		Short: "List generated talent records for a crag",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cragName := args[0]
+			if err := validateName(cragName, "crag"); err != nil {
+				return err
+			}
+			dir, err := cragDir(cragName)
+			if err != nil {
+				return err
+			}
+			if _, err := os.Stat(filepath.Join(dir, "crag.yaml")); err != nil {
+				if os.IsNotExist(err) {
+					return fmt.Errorf("crag %q does not exist", cragName)
+				}
+				return fmt.Errorf("stat crag.yaml: %w", err)
+			}
+			root := filepath.Join(dir, "generated-talents")
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return fmt.Errorf("read generated talents: %w", err)
+			}
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					continue
+				}
+				path := filepath.Join(root, entry.Name(), "talent.yaml")
+				raw, err := os.ReadFile(path)
+				if err != nil {
+					return fmt.Errorf("read %s: %w", path, err)
+				}
+				var record generatedTalentRecord
+				if err := yaml.Unmarshal(raw, &record); err != nil {
+					return fmt.Errorf("parse %s: %w", path, err)
+				}
+				if record.ID == "" {
+					record.ID = entry.Name()
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", record.ID, record.Domain, record.Role, record.Lifecycle, record.Status)
+			}
+			return nil
+		},
+	}
+}
+
 func parseTalentRef(ref string) (string, string, error) {
 	parts := strings.Split(ref, "/")
 	if len(parts) == 1 {
@@ -153,6 +335,58 @@ func parseTalentRef(ref string) (string, string, error) {
 		return parts[0], parts[1], nil
 	}
 	return "", "", fmt.Errorf("invalid team reference %q (use category or category/team)", ref)
+}
+
+func generatedTalentDir(cragName, id string) (string, error) {
+	dir, err := cragDir(cragName)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "generated-talents", id), nil
+}
+
+func validateRequiredFlag(name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("--%s is required", name)
+	}
+	return nil
+}
+
+func validateTalentLifecycle(lifecycle string) error {
+	switch lifecycle {
+	case "resident", "resumable", "ephemeral":
+		return nil
+	default:
+		return fmt.Errorf("invalid lifecycle %q: must be resident, resumable, or ephemeral", lifecycle)
+	}
+}
+
+func validateGeneratedTalentStatus(status string) error {
+	switch status {
+	case "generated", "promoted", "retired", "discarded":
+		return nil
+	default:
+		return fmt.Errorf("invalid generated talent status %q: must be generated, promoted, retired, or discarded", status)
+	}
+}
+
+func parseKeyValueFlags(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(values))
+	for _, value := range values {
+		key, val, ok := strings.Cut(value, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid metadata %q: use key=value", value)
+		}
+		key = strings.TrimSpace(key)
+		if err := validateName(key, "metadata key"); err != nil {
+			return nil, err
+		}
+		out[key] = strings.TrimSpace(val)
+	}
+	return out, nil
 }
 
 func validateName(name, label string) error {

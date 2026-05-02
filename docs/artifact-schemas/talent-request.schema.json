@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/donovan-yohan/belayer/docs/artifact-schemas/talent-request.schema.json",
+  "title": "Belayer Talent Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "requester", "domain", "role", "lifecycle", "reason", "expected_outputs"],
+  "properties": {
+    "schema_version": {
+      "const": "belayer-talent-request/v1"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requester": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domain": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lifecycle": {
+      "enum": ["resident", "resumable", "ephemeral"]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "expected_outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

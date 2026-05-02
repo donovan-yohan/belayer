@@ -249,12 +249,14 @@ proposals stay auditable but do not alter crag state.
 
 ### `generated-talents/`
 
-Generated talents are short-lived workers or NPCs that were created during a
-climb and then selected for possible reuse.
+Generated talents are short-lived, bounded talents that were requested during a
+climb and then selected for possible reuse. Belayer stores them mechanically by
+domain, role, lifecycle, source request, and caller-provided metadata. Product
+meaning stays outside Belayer.
 
 ```text
 generated-talents/
-└── tavernkeep-mara/
+└── generated-reviewer-1/
     ├── talent.yaml
     └── notes.md
 ```
@@ -262,16 +264,18 @@ generated-talents/
 Minimal generated talent metadata:
 
 ```yaml
-schema_version: "belayer-generated-talent/v1"
-name: tavernkeep-mara
-category: story
-status: candidate
-origin:
-  session_id: "<session-id>"
-  first_artifact: "artifacts/stories/tavern-celebration.md"
-role: "tavernkeep"
-summary: "Warm, watchful innkeeper who remembers debts and rumors"
-reuse_policy: scene-local # options: scene-local | recurring | promoted
+schema_version: belayer-generated-talent/v1
+id: generated-reviewer-1
+domain: development
+role: reviewer
+lifecycle: ephemeral
+status: generated
+source_request: task-42
+reason: "The lead requested a bounded second opinion."
+metadata:
+  specialty: api-contracts
+promotion_evidence:
+  - artifacts/talent-evaluation-generated-reviewer-1.json
 ```
 
 Generated talents do not become full `.belayer/agents/` identities by default.

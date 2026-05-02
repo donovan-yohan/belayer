@@ -140,3 +140,42 @@ func TestCragFilesystemContractCoversRequiredScopes(t *testing.T) {
 		}
 	}
 }
+
+func TestGeneratedTalentContractsStayGeneric(t *testing.T) {
+	root := repoRoot(t)
+	for _, rel := range []string{
+		filepath.Join("docs", "artifact-schemas", "talent-request.schema.json"),
+		filepath.Join("docs", "artifact-schemas", "generated-talent.schema.json"),
+	} {
+		path := filepath.Join(root, rel)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(raw)
+		for _, forbidden := range []string{"NPC", "npc", "tavern", "DND", "D&D", "quest system"} {
+			if strings.Contains(text, forbidden) {
+				t.Fatalf("%s contains story-specific term %q", path, forbidden)
+			}
+		}
+	}
+
+	docPath := filepath.Join(root, "docs", "CRAG_FILESYSTEM.md")
+	raw, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", docPath, err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		"belayer-generated-talent/v1",
+		"domain:",
+		"role:",
+		"lifecycle:",
+		"source_request:",
+		"promotion_evidence:",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%s missing generated talent contract marker %q", docPath, want)
+		}
+	}
+}
