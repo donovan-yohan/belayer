@@ -1,0 +1,33 @@
+docs/artifact-schemas/generated-talent.schema.json
+  cea6ddc0add32c83 8-27
+examples/org-proofs/athenaeum-tavern-story/generated-talents/tavernkeep-mara/talent.yaml
+  cea6ddc0add32c83 1-16
+internal/agentlint/proof_examples_test.go
+  cea6ddc0add32c83 127-128,130-133,135-138,140-142,144-145
+docs/CRAG_FILESYSTEM.md
+  cea6ddc0add32c83 261
+internal/cli/talent.go
+  cea6ddc0add32c83 10-11,27,162-163,211-217,221,227-229,241-242,255-256,258,260,263-269,285-288,320-321,329-331,341,383-387
+internal/cli/org_talent_test.go
+  cea6ddc0add32c83 269-270,293-383
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ef89cdf0f9ae87f60e1f3b2896a32f42c191bbe2",
+  "prompts": {
+    "cea6ddc0add32c83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddeb8-5202-7ee3-952f-bf72f3a760bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 530,
+      "total_deletions": 87,
+      "accepted_lines": 1991,
+      "overriden_lines": 0
+    }
+  }
+}
