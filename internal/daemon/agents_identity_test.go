@@ -66,6 +66,24 @@ func TestLoadAgentIdentity_FallsBackToShipped(t *testing.T) {
 	}
 }
 
+func TestLoadAgentIdentity_ReadsRuntimeKindAndEphemeral(t *testing.T) {
+	root := t.TempDir()
+	belayerRoot := filepath.Join(root, "shipped")
+	mustWrite(t, filepath.Join(belayerRoot, "agents", "mara-underbough", "agent.yaml"),
+		"kind: side\nephemeral: false\n")
+
+	got := loadAgentIdentity("", belayerRoot, "mara-underbough", "")
+	if got.Kind != "side" {
+		t.Errorf("Kind = %q, want side", got.Kind)
+	}
+	if got.Ephemeral == nil {
+		t.Fatal("Ephemeral = nil, want false pointer")
+	}
+	if *got.Ephemeral {
+		t.Errorf("Ephemeral = true, want false")
+	}
+}
+
 // TestLoadAgentIdentity_ModelOverrideWins verifies that an explicit spawn
 // request model takes precedence over the model: line in agent.yaml. The
 // supervisor can force a specialist onto a specific model for a task.

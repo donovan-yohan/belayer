@@ -222,12 +222,28 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 		req.Workdir = sess.WorkspaceDir
 	}
 
+	identityKind := ""
+	if kind == "" {
+		loaded := loadAgentIdentity(req.Workdir, d.config.BelayerRoot, req.identityKey(), req.Model)
+		if loaded.Kind != "" {
+			var kindErr error
+			identityKind, kindErr = validateAgentKind(loaded.Kind)
+			if kindErr != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "identity kind: " + kindErr.Error()})
+				return
+			}
+		}
+	}
+
 	// Check for a prior run of this agent in this session.
 	// If it exists, carry over its Hermes session ID for resume and update
 	// the existing row instead of creating a new one (UNIQUE constraint).
 	prior, priorErr := d.store.GetAgentRun(sessionID, req.Name)
 	if priorErr == nil && kind == "" {
 		kind, _ = validateAgentKind(prior.Kind)
+	}
+	if kind == "" && identityKind != "" {
+		kind = identityKind
 	}
 	if kind == "" {
 		kind = "main"
@@ -589,15 +605,6 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	// Compute Landlock write roots for this agent (used when ConfineAgentWrites is true).
 	writeRoots := computeWriteRoots(req, repoWorkdir, worktreePath, runDir, d.config.AgentSharedWritePaths)
 
-	// Resolve ephemeral flag: explicit request > role-based default.
-	// Supervisors stay alive by default; all other roles exit on task completion.
-	ephemeral := true
-	if req.Ephemeral != nil {
-		ephemeral = *req.Ephemeral
-	} else if req.Role == "supervisor" {
-		ephemeral = false
-	}
-
 	// Load system prompt + agent.yaml settings from the agent's identity dir.
 	// Project-local <workdir>/.belayer/agents/<identity>/ overrides shipped
 	// <BelayerRoot>/agents/<identity>/. Identity defaults to Name when unset.
@@ -613,6 +620,17 @@ func (d *Daemon) bridgeLaunchAgent(req agentSpawnRequest) (*bridge.Process, erro
 	}
 	if loaded.YAMLPath != "" {
 		log.Printf("Loaded agent.yaml from %s for agent %s (identity=%s): model=%q tools=%v toolsets=%v", loaded.YAMLPath, req.Name, identity, agentModel, belayerTools, enabledToolsets)
+	}
+	// Resolve ephemeral flag: explicit request > identity config > role-based
+	// default. Supervisors stay alive by default; all other roles exit on task
+	// completion unless their identity says otherwise.
+	ephemeral := true
+	if req.Ephemeral != nil {
+		ephemeral = *req.Ephemeral
+	} else if loaded.Ephemeral != nil {
+		ephemeral = *loaded.Ephemeral
+	} else if req.Role == "supervisor" {
+		ephemeral = false
 	}
 
 	// Set up stdin pipe for daemon→agent communication.
@@ -982,11 +1000,25 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 			return store.AgentRun{}, kindErr
 		}
 	}
+	identityKind := ""
+	if kind == "" {
+		loaded := loadAgentIdentity(req.Workdir, d.config.BelayerRoot, req.identityKey(), req.Model)
+		if loaded.Kind != "" {
+			var kindErr error
+			identityKind, kindErr = validateAgentKind(loaded.Kind)
+			if kindErr != nil {
+				return store.AgentRun{}, fmt.Errorf("identity kind: %w", kindErr)
+			}
+		}
+	}
 
 	// Check for prior run (resume support).
 	prior, priorErr := d.store.GetAgentRun(req.SessionID, req.Name)
 	if priorErr == nil && kind == "" {
 		kind, _ = validateAgentKind(prior.Kind)
+	}
+	if kind == "" && identityKind != "" {
+		kind = identityKind
 	}
 	if kind == "" {
 		kind = "main"
@@ -1350,6 +1382,8 @@ type agentIdentity struct {
 	EnabledToolsets  []string
 	Model            string
 	MaxTurns         int
+	Kind             string
+	Ephemeral        *bool
 	YAMLPath         string
 }
 
@@ -1386,6 +1420,21 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 			trimmed := strings.TrimSpace(line)
 			if strings.HasPrefix(trimmed, "model:") && out.Model == "" {
 				out.Model = strings.TrimSpace(strings.TrimPrefix(trimmed, "model:"))
+				inTools = false
+				inToolsets = false
+				continue
+			}
+			if strings.HasPrefix(trimmed, "kind:") && out.Kind == "" {
+				out.Kind = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "kind:")), `"'`)
+				inTools = false
+				inToolsets = false
+				continue
+			}
+			if strings.HasPrefix(trimmed, "ephemeral:") && out.Ephemeral == nil {
+				raw := strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "ephemeral:")), `"'`)
+				if parsed, convErr := strconv.ParseBool(raw); convErr == nil {
+					out.Ephemeral = &parsed
+				}
 				inTools = false
 				inToolsets = false
 				continue

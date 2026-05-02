@@ -306,6 +306,46 @@ def test_spawn_agent_forwards_repo_and_branch(monkeypatch):
     assert payload["identity"] == "web-dev"
 
 
+def test_scaffold_generated_talent_is_allowlisted_tool(monkeypatch):
+    plugin = _make_plugin_with_env(
+        monkeypatch,
+        kind="main",
+        tools="belayer_scaffold_generated_talent",
+    )
+    ctx = _FakeCtx()
+    plugin.register(ctx)
+    names = {t["name"] for t in ctx.tools}
+    assert "belayer_scaffold_generated_talent" in names
+
+
+def test_scaffold_generated_talent_posts_to_daemon(monkeypatch):
+    plugin = _make_plugin_with_env(
+        monkeypatch,
+        kind="main",
+        tools="belayer_scaffold_generated_talent",
+    )
+    seen: list[tuple] = []
+    monkeypatch.setattr(plugin.tools, "unix_post", lambda *a: (seen.append(a), (201, "{\"identity\":\"mara-underbough\"}"))[1])
+
+    tool = _register_and_get(plugin, "belayer_scaffold_generated_talent")
+    result = tool["handler"]({
+        "crag": "last-lantern",
+        "id": "mara-underbough",
+        "domain": "story",
+        "role": "tavernkeep",
+        "lifecycle": "resumable",
+        "source_request": "turn-0002",
+        "reason": "scene needs a reusable local authority",
+        "metadata": {"voice": "warm and watchful"},
+    })
+    assert "mara-underbough" in result
+    assert seen[0][1] == "/sessions/sess-1/generated-talents/scaffold"
+    payload = seen[0][2]
+    assert payload["crag"] == "last-lantern"
+    assert payload["id"] == "mara-underbough"
+    assert payload["metadata"]["voice"] == "warm and watchful"
+
+
 def test_request_completion_posts_event(monkeypatch):
     plugin = _make_plugin_with_env(
         monkeypatch,
