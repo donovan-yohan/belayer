@@ -1,0 +1,40 @@
+CLAUDE.md
+  e5bea3485c0de6f9 3,7,9,13,41,43,45-48,50,54,60,66-79,81,86-89
+README.md
+  e5bea3485c0de6f9 118,121-127
+docs/design-docs/index.md
+  e5bea3485c0de6f9 9-10,13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "1ec4ae516f0ca95f1cb3aad0056d06ead790845c",
+  "prompts": {
+    "cea6ddc0add32c83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ddeb8-5202-7ee3-952f-bf72f3a760bc",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1406,
+      "total_deletions": 0,
+      "accepted_lines": 1406,
+      "overriden_lines": 0
+    },
+    "e5bea3485c0de6f9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6b55bc58-e609-4059-be2b-74bd81e28f0e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 45,
+      "total_deletions": 23,
+      "accepted_lines": 45,
+      "overriden_lines": 0
+    }
+  }
+}
