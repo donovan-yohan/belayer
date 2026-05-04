@@ -40,24 +40,24 @@ Agents coordinate through the daemon:
 
 ## Agent identity
 
-Agent identities resolve through four layers (highest precedence first), per `docs/CRAG_FILESYSTEM.md`:
+The daemon loader at `internal/daemon/agents.go:agentIdentityPaths` resolves identities through two layers today:
 
-1. `repo/.belayer/agents/<name>/` — project-local override (`belayer init` scaffolds)
-2. `~/.belayer/crags/<crag>/teams/` — linked crag (only when `.belayer/config.yaml` declares one)
-3. `~/.belayer/talent-catalog/<category>/<name>/` — local talent supply (`belayer team add` copies from here)
-4. `agents/<name>/` — shipped defaults, embedded in binary
+1. `repo/.belayer/agents/<name>/<file>` — project-local override, with walk-up so nested cwds (worktrees, climb workspaces) still see the project root copy
+2. `<belayerRoot>/agents/<name>/<file>` — shipped defaults, embedded in binary via `embed.go`
 
-The loader at `internal/daemon/agents.go` reads in this order. Each identity directory contains:
+The 4-tier precedence (repo → linked crag → talent-catalog → shipped) described in `docs/CRAG_FILESYSTEM.md` is the design contract; the crag and catalog tiers are not yet wired into the spawn-time loader. `belayer team add` copies catalog identities into `repo/.belayer/agents/` so they reach the daemon through tier 1.
+
+Each identity directory contains:
 - `agent.yaml` — `kind`, vendor, model, ephemeral flag, `belayer_tools` allowlist
 - `system-prompt.md` — the agent's soul
 - `agents.md` — operating instructions, tools, workflows
-- `talent.yaml` — optional `belayer-talent/v1` metadata (role, domain, activation, runtime.lifecycle, contract, authority, memory, retention)
+- `talent.yaml` — optional. Two distinct schemas: `belayer-talent/v1` for catalog talents (role, domain, activation, runtime.lifecycle, contract, authority, memory, retention) per `docs/CRAG_MODE.md`, and `belayer-generated-talent/v1` for runtime-scaffolded generated talents (id, domain, role, lifecycle, status, source_request, reason) per `internal/generatedtalent/`.
 
 Shipped default team:
 - **Mains:** `supervisor` (party lead), `backend-dev`, `web-dev`.
 - **Sides:** `pm` (completion gate), `qa`, `reviewer`.
 
-Customize in `.belayer/agents/` — see `agents/README.md` for worked examples. Reusable talent supply lives in `examples/talent-catalog/` (development + story categories) and copies via `belayer team add <category>`.
+Customize in `.belayer/agents/` — see `agents/README.md` for worked examples. `belayer team add <category>` copies team identities into `.belayer/agents/`. The `development` category is a CLI special-case that copies the embedded shipped team from `agents/`; other categories (e.g. `story`) live in `examples/talent-catalog/<category>/`.
 
 System prompts are loaded by the daemon at spawn time and injected via Hermes `ephemeral_system_prompt`. All agents use the `default` Hermes profile for now (see profile bootstrap TODO in AGENT_ARCHITECTURE.md).
 
@@ -65,11 +65,11 @@ The `hermes_bridge` Python package lives in the daemon's runtime dir (default `$
 
 ## Acceptance gate (PM is the default)
 
-When the supervisor calls `belayer finish`, the daemon intercepts and auto-spawns the PM side for adversarial spec-vs-reality verification. PM approves or rejects (up to 3 cycles). The PM gate is one preset of the generic `belayer-gate/v1` contract — crags can declare additional task-stage gates (code-review, runtime-qa, continuity, etc.) or replace the acceptance gate with a stricter one. See `docs/CRAG_MODE.md` for the gate contract and `docs/AGENT_ARCHITECTURE.md` for the daemon enforcement path.
+When the supervisor calls `belayer finish`, the daemon intercepts and auto-spawns the PM side for adversarial spec-vs-reality verification. PM approves or rejects (up to 3 cycles). PM is currently the only runtime-enforced gate. The generic `belayer-gate/v1` contract (`docs/CRAG_MODE.md`) describes additional gate kinds (code-review, runtime-qa, continuity, etc.) as documented contracts and proof examples; the daemon does not yet discover or execute crag-defined task-stage gates. See `docs/AGENT_ARCHITECTURE.md` for the daemon enforcement path.
 
 ## Crag mode
 
-Crags are durable cross-project operating contexts (software company, story world, research group) at `~/.belayer/crags/<name>/`. They store reusable teams, gate presets, evaluations, promotions, and generated talent metadata. A repo opts in by `belayer crag link <name>`, writing the link into `.belayer/config.yaml`. See `docs/CRAG_MODE.md` and `docs/CRAG_FILESYSTEM.md`.
+Crags are durable cross-project operating contexts (software company, story world, research group) at `~/.belayer/crags/<name>/`. They store reusable teams, gates, evaluations, promotions, and generated talent metadata as documented contracts. A repo opts in by `belayer crag link <name>`, writing the link into `.belayer/config.yaml`. The CLI surfaces (`belayer crag init/list/link`, `belayer team add/remove`) and filesystem layout have shipped; runtime crag enforcement (gate discovery, identity precedence) is still in flight. See `docs/CRAG_MODE.md` and `docs/CRAG_FILESYSTEM.md`.
 
 ## CLI surface highlights
 
