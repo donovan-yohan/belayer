@@ -1,0 +1,31 @@
+internal/daemon/agents.go
+  0aec7f289c962a66 345-350,1092-1096,1613-1703
+internal/daemon/agents_profile_spawn_test.go
+  0aec7f289c962a66 1-411
+internal/store/store.go
+  0aec7f289c962a66 410-424
+internal/daemon/profiles.go
+  0aec7f289c962a66 332-394
+internal/daemon/bridge_events.go
+  0aec7f289c962a66 974-976,983
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "4ac52fcac8740d45b3ae21b3bda78b4c270880f3",
+  "prompts": {
+    "0aec7f289c962a66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8767a93-57f9-4279-815e-9f789337b5c5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 689,
+      "total_deletions": 93,
+      "accepted_lines": 599,
+      "overriden_lines": 0
+    }
+  }
+}
