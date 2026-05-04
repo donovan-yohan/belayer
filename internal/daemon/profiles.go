@@ -37,9 +37,14 @@ func ValidateProfileName(name string) error {
 }
 
 // DeriveInstanceID returns a stable 8-character lowercase hex string derived
-// from seed via SHA-256 truncated to 4 bytes. This is used to generate a
-// short unique suffix for parallel main agents (e.g. "a3f9c2d1"). An empty
-// seed signals a singleton talent and returns an empty string.
+// from seed via SHA-256 truncated to 4 bytes (e.g. "a3f9c2d1"). An empty seed
+// returns an empty string.
+//
+// NOTE: As of Phase 5.A the spawn path no longer calls DeriveInstanceID —
+// profile names are now keyed on crag+talent only (stable across climbs).
+// DeriveInstanceID is retained for future callers that need explicit
+// per-instance disambiguation (e.g. a hypothetical parallel-main override
+// where the operator wants distinct profiles per run).
 func DeriveInstanceID(seed string) string {
 	if seed == "" {
 		return ""
@@ -333,35 +338,45 @@ func TeardownProfile(profileName string) error {
 	return nil
 }
 
-// readTalentMetadata reads the .belayer-talent.yaml file from a materialized
+// ReadTalentMetadata reads the .belayer-talent.yaml file from a materialized
 // profile directory and returns the memory_scope field. It is the authoritative
 // source for teardown decisions in Phase 3.B.
 //
 // Returns ("", err) if the file cannot be read or parsed. The caller must treat
 // an unreadable file as "climb" (ephemeral) — see teardownProfileIfClimbScoped.
-func readTalentMetadata(profileName string) (memoryScope string, err error) {
-	meta, err := readFullTalentMetadata(profileName)
+func ReadTalentMetadata(profileName string) (memoryScope string, err error) {
+	meta, err := ReadFullTalentMetadata(profileName)
 	if err != nil {
 		return "", err
 	}
 	if meta.MemoryScope == "" {
-		return "", fmt.Errorf("readTalentMetadata: memory_scope field not found in profile %q", profileName)
+		return "", fmt.Errorf("ReadTalentMetadata: memory_scope field not found in profile %q", profileName)
 	}
 	return meta.MemoryScope, nil
 }
 
-// readFullTalentMetadata reads the .belayer-talent.yaml file from a materialized
+// readTalentMetadata is the package-private alias retained for internal callers.
+func readTalentMetadata(profileName string) (memoryScope string, err error) {
+	return ReadTalentMetadata(profileName)
+}
+
+// readFullTalentMetadata is the package-private alias retained for internal callers.
+func readFullTalentMetadata(profileName string) (talentMetadata, error) {
+	return ReadFullTalentMetadata(profileName)
+}
+
+// ReadFullTalentMetadata reads the .belayer-talent.yaml file from a materialized
 // profile directory and returns all available metadata fields. Returns a zero-value
 // talentMetadata and an error if the file cannot be read or parsed.
-func readFullTalentMetadata(profileName string) (talentMetadata, error) {
+func ReadFullTalentMetadata(profileName string) (talentMetadata, error) {
 	root, err := ProfilesRoot()
 	if err != nil {
-		return talentMetadata{}, fmt.Errorf("readFullTalentMetadata: resolve profiles root: %w", err)
+		return talentMetadata{}, fmt.Errorf("ReadFullTalentMetadata: resolve profiles root: %w", err)
 	}
 	metaPath := filepath.Join(root, profileName, ".belayer-talent.yaml")
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
-		return talentMetadata{}, fmt.Errorf("readFullTalentMetadata: read %s: %w", metaPath, err)
+		return talentMetadata{}, fmt.Errorf("ReadFullTalentMetadata: read %s: %w", metaPath, err)
 	}
 	// Simple line scan — avoids pulling in a YAML library for individual fields.
 	var meta talentMetadata

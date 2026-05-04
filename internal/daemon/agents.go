@@ -1786,14 +1786,17 @@ func (d *Daemon) materializeBridgeProfile(req agentSpawnRequest) agentSpawnReque
 		cragSlug = localCragSlug
 	}
 
-	// Use the agent run's existing UUID as the instance seed. The store row
-	// must already exist (it is created before materializeBridgeProfile is
-	// called). If GetAgentRun fails for any reason, fall back to an empty
-	// instanceID (singleton semantics).
+	// Phase 5.A: pass an empty instanceID so the profile name is stable across
+	// climbs — belayer-<crag>-<talent> — enabling crag-scoped memory persistence.
+	// DeriveInstanceID is no longer called on the spawn path; it is retained for
+	// future callers that need explicit per-instance disambiguation.
+	//
+	// Generated talents use their name as the unique discriminator (handled
+	// inside ResolveProfileName); the instanceID value is irrelevant for them.
+	//
+	// Concurrent sessions on the same profile are safe: Hermes handles contention
+	// via WAL + BEGIN IMMEDIATE + jitter retry (hermes_state.py:167-201).
 	instanceID := ""
-	if existingRun, runErr := d.store.GetAgentRun(req.SessionID, req.Name); runErr == nil {
-		instanceID = DeriveInstanceID(existingRun.ID)
-	}
 
 	forkName, forkErr := ResolveProfileName(cragSlug, req.identityKey(), instanceID)
 	if forkErr != nil {

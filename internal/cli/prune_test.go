@@ -385,3 +385,145 @@ func TestHumanBytes(t *testing.T) {
 		}
 	}
 }
+
+// ── Phase 5.B: scope-aware orphan detection tests ─────────────────────────────
+
+// makeProfileWithScope creates a fake fork profile directory with the given
+// memory_scope in its .belayer-talent.yaml.
+func makeProfileWithScope(t *testing.T, profilesDir, profileName, cragSlug, talentName, memoryScope string) string {
+	t.Helper()
+	profileDir := filepath.Join(profilesDir, profileName)
+	memoriesDir := filepath.Join(profileDir, "memories")
+	if err := os.MkdirAll(memoriesDir, 0o755); err != nil {
+		t.Fatalf("mkdir profile %s: %v", profileName, err)
+	}
+	meta := fmt.Sprintf("profile_name: %s\ntalent_name: %s\ncrag_slug: %s\nmemory_scope: %s\nmaterialized_at: 2026-01-01T00:00:00Z\n",
+		profileName, talentName, cragSlug, memoryScope)
+	if err := os.WriteFile(filepath.Join(profileDir, ".belayer-talent.yaml"), []byte(meta), 0o644); err != nil {
+		t.Fatalf("write .belayer-talent.yaml for %s: %v", profileName, err)
+	}
+	return profileDir
+}
+
+// Test 5B-1: Crag-scoped profile NOT pruned by default.
+func TestPruneCmd_CragScopedNotPrunedByDefault(t *testing.T) {
+	profilesDir, dbFile := setupPruneFixture(t)
+
+	profileName := "belayer-local-supervisor"
+	makeProfileWithScope(t, profilesDir, profileName, "local", "supervisor", "crag")
+
+	stdout, _, err := runPruneCmd(t, "--yes", "--db", dbFile)
+	if err != nil {
+		t.Fatalf("prune with crag-scoped profile: %v", err)
+	}
+
+	// Profile should NOT be removed.
+	if _, statErr := os.Stat(filepath.Join(profilesDir, profileName)); statErr != nil {
+		t.Errorf("crag-scoped profile should not be removed by default: %v", statErr)
+	}
+	// Should report no orphans.
+	if !strings.Contains(stdout, "No orphan profiles found") {
+		t.Errorf("expected 'No orphan profiles found' (crag-scoped is preserved), got: %s", stdout)
+	}
+}
+
+// Test 5B-2: Talent-scoped profile NOT pruned by default.
+func TestPruneCmd_TalentScopedNotPrunedByDefault(t *testing.T) {
+	profilesDir, dbFile := setupPruneFixture(t)
+
+	profileName := "belayer-local-backend-dev"
+	makeProfileWithScope(t, profilesDir, profileName, "local", "backend-dev", "talent")
+
+	stdout, _, err := runPruneCmd(t, "--yes", "--db", dbFile)
+	if err != nil {
+		t.Fatalf("prune with talent-scoped profile: %v", err)
+	}
+
+	// Profile should NOT be removed.
+	if _, statErr := os.Stat(filepath.Join(profilesDir, profileName)); statErr != nil {
+		t.Errorf("talent-scoped profile should not be removed by default: %v", statErr)
+	}
+	if !strings.Contains(stdout, "No orphan profiles found") {
+		t.Errorf("expected 'No orphan profiles found' (talent-scoped is preserved), got: %s", stdout)
+	}
+}
+
+// Test 5B-3: Climb-scoped profile still pruned (regression check).
+func TestPruneCmd_ClimbScopedStillPruned(t *testing.T) {
+	profilesDir, dbFile := setupPruneFixture(t)
+
+	profileName := "belayer-local-qa"
+	makeProfileWithScope(t, profilesDir, profileName, "local", "qa", "climb")
+
+	stdout, _, err := runPruneCmd(t, "--yes", "--db", dbFile)
+	if err != nil {
+		t.Fatalf("prune with climb-scoped profile: %v", err)
+	}
+
+	// Profile should be removed.
+	if _, statErr := os.Stat(filepath.Join(profilesDir, profileName)); !os.IsNotExist(statErr) {
+		t.Errorf("climb-scoped orphan profile should have been removed")
+	}
+	if !strings.Contains(stdout, "Removed 1 profile") {
+		t.Errorf("expected removal summary, got: %s", stdout)
+	}
+}
+
+// Test 5B-4: --include-scoped flag → crag-scoped profiles ARE pruned.
+func TestPruneCmd_IncludeScopedRemovesCragScoped(t *testing.T) {
+	profilesDir, dbFile := setupPruneFixture(t)
+
+	profileName := "belayer-local-supervisor"
+	makeProfileWithScope(t, profilesDir, profileName, "local", "supervisor", "crag")
+
+	stdout, _, err := runPruneCmd(t, "--yes", "--include-scoped", "--db", dbFile)
+	if err != nil {
+		t.Fatalf("prune --include-scoped with crag-scoped profile: %v", err)
+	}
+
+	// Profile should be removed when --include-scoped is set.
+	if _, statErr := os.Stat(filepath.Join(profilesDir, profileName)); !os.IsNotExist(statErr) {
+		t.Errorf("crag-scoped profile should be removed with --include-scoped")
+	}
+	if !strings.Contains(stdout, "Removed 1 profile") {
+		t.Errorf("expected removal summary with --include-scoped, got: %s", stdout)
+	}
+}
+
+// Test 5B-5: Output includes [skipped] lines for preserved profiles.
+func TestPruneCmd_SkippedLinesForPreservedProfiles(t *testing.T) {
+	profilesDir, dbFile := setupPruneFixture(t)
+
+	// One crag-scoped profile (should be skipped) + one climb-scoped (should be pruned).
+	cragProfile := "belayer-local-supervisor"
+	climbProfile := "belayer-local-qa"
+	makeProfileWithScope(t, profilesDir, cragProfile, "local", "supervisor", "crag")
+	makeProfileWithScope(t, profilesDir, climbProfile, "local", "qa", "climb")
+
+	stdout, _, err := runPruneCmd(t, "--yes", "--db", dbFile)
+	if err != nil {
+		t.Fatalf("prune with mixed scope profiles: %v", err)
+	}
+
+	// Crag-scoped profile should appear in [skipped] output.
+	if !strings.Contains(stdout, "[skipped]") {
+		t.Errorf("expected [skipped] line for crag-scoped profile, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, cragProfile) {
+		t.Errorf("expected skipped profile name %q in output, got: %s", cragProfile, stdout)
+	}
+	if !strings.Contains(stdout, "memory.scope=crag") {
+		t.Errorf("expected memory.scope=crag annotation in [skipped] line, got: %s", stdout)
+	}
+	if !strings.Contains(stdout, "--include-scoped") {
+		t.Errorf("expected --include-scoped hint in [skipped] line, got: %s", stdout)
+	}
+	// Climb-scoped profile should be removed.
+	if _, statErr := os.Stat(filepath.Join(profilesDir, climbProfile)); !os.IsNotExist(statErr) {
+		t.Errorf("climb-scoped orphan profile should have been removed")
+	}
+	// Crag-scoped profile should still exist.
+	if _, statErr := os.Stat(filepath.Join(profilesDir, cragProfile)); statErr != nil {
+		t.Errorf("crag-scoped profile should still exist: %v", statErr)
+	}
+}

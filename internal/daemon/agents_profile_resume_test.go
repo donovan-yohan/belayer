@@ -299,9 +299,10 @@ func TestResumable_WakeOnTornDownProfileReMaterializes(t *testing.T) {
 		t.Errorf("fork profile %s should have been re-materialized after prune wake, but stat failed: %v", firstProfile, err)
 	}
 
-	// Profile name must be the same (DeriveInstanceID is stable for the same run UUID).
+	// Profile name must be the same (Phase 5.A: stable crag+talent name — same
+	// identity always resolves to the same fork regardless of run UUID).
 	if capturedProfile != firstProfile {
-		t.Errorf("re-materialized profile name = %q, want %q (DeriveInstanceID should be stable)", capturedProfile, firstProfile)
+		t.Errorf("re-materialized profile name = %q, want %q (profile name must be stable across re-spawns)", capturedProfile, firstProfile)
 	}
 
 	// Memory is gone (no MEMORY.md) — operator accepted by running prune.

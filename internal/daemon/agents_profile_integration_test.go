@@ -82,14 +82,14 @@ func createSession(t *testing.T, d *Daemon, name, workspaceDir string) string {
 	return decodeJSON[sessionAPIResponse](t, rr).ID
 }
 
-// ── Scenario 1: Parallel mains get distinct profile dirs ─────────────────────
+// ── Scenario 1: Parallel mains share one profile dir (Phase 5.A) ─────────────
 
-// TestPhase2Integration_ParallelMainsGetDistinctForkDirs verifies that spawning
-// two parallel main agents with the same identity (backend-dev) but different
-// names produces two distinct fork profile directories, each with the correct
-// crag-and-talent structure, each with working symlinks, and each with the
-// agent_runs.profile row reflecting the actual fork name.
-func TestPhase2Integration_ParallelMainsGetDistinctForkDirs(t *testing.T) {
+// TestPhase2Integration_ParallelMainsShareForkDir verifies that spawning two
+// parallel main agents with the same identity (backend-dev) but different names
+// resolves to the SAME fork profile directory (Phase 5.A: stable crag+talent
+// naming). The fork dir must have correct symlinks and both agent_runs rows must
+// record the same profile name.
+func TestPhase2Integration_ParallelMainsShareForkDir(t *testing.T) {
 	profilesRoot, _ := setupIntegrationBase(t)
 
 	workspace := t.TempDir()
@@ -133,50 +133,44 @@ func TestPhase2Integration_ParallelMainsGetDistinctForkDirs(t *testing.T) {
 	if !strings.Contains(p1, "backend-dev") || !strings.Contains(p2, "backend-dev") {
 		t.Errorf("identity 'backend-dev' missing from fork names: p1=%q p2=%q", p1, p2)
 	}
-	// Distinct (different UUIDs → different hashes).
-	if p1 == p2 {
-		t.Errorf("parallel mains must have distinct fork profiles; both got %q", p1)
+	// Phase 5.A: same identity → same profile (stable crag+talent name, no per-run hash).
+	if p1 != p2 {
+		t.Errorf("parallel mains with same identity must share one fork profile; got p1=%q p2=%q", p1, p2)
 	}
 	// No crag link → "local" slug in both.
 	if !strings.Contains(p1, "-local-") || !strings.Contains(p2, "-local-") {
 		t.Errorf("expected 'local' slug in fork names: p1=%q p2=%q", p1, p2)
 	}
 
-	// Both fork dirs must exist with correct symlinks.
-	for _, p := range []string{p1, p2} {
-		forkDir := filepath.Join(profilesRoot, p)
-		if _, err := os.Stat(forkDir); err != nil {
-			t.Errorf("fork dir %s not created: %v", forkDir, err)
-			continue
-		}
-		// auth.json symlink must exist.
-		authLink := filepath.Join(forkDir, "auth.json")
-		if _, err := os.Readlink(authLink); err != nil {
-			t.Errorf("fork %s: auth.json symlink missing or broken: %v", p, err)
-		}
-		// plugins/belayer symlink must exist.
-		pluginLink := filepath.Join(forkDir, "plugins", "belayer")
-		if _, err := os.Readlink(pluginLink); err != nil {
-			t.Errorf("fork %s: plugins/belayer symlink missing or broken: %v", p, err)
-		}
-		// skills symlink must exist.
-		skillsLink := filepath.Join(forkDir, "skills")
-		if _, err := os.Readlink(skillsLink); err != nil {
-			t.Errorf("fork %s: skills symlink missing or broken: %v", p, err)
-		}
+	// Fork dir must exist with correct symlinks.
+	forkDir := filepath.Join(profilesRoot, p1)
+	if _, err := os.Stat(forkDir); err != nil {
+		t.Fatalf("fork dir %s not created: %v", forkDir, err)
+	}
+	// auth.json symlink must exist.
+	authLink := filepath.Join(forkDir, "auth.json")
+	if _, err := os.Readlink(authLink); err != nil {
+		t.Errorf("fork %s: auth.json symlink missing or broken: %v", p1, err)
+	}
+	// plugins/belayer symlink must exist.
+	pluginLink := filepath.Join(forkDir, "plugins", "belayer")
+	if _, err := os.Readlink(pluginLink); err != nil {
+		t.Errorf("fork %s: plugins/belayer symlink missing or broken: %v", p1, err)
+	}
+	// skills symlink must exist.
+	skillsLink := filepath.Join(forkDir, "skills")
+	if _, err := os.Readlink(skillsLink); err != nil {
+		t.Errorf("fork %s: skills symlink missing or broken: %v", p1, err)
 	}
 
-	// agent_runs.profile must reflect actual fork name for each agent.
-	for _, tc := range []struct{ name, want string }{
-		{"backend-dev-1", p1},
-		{"backend-dev-2", p2},
-	} {
-		stored, err := d.store.GetAgentRun(sessID, tc.name)
+	// agent_runs.profile must reflect the (shared) fork name for each agent.
+	for _, name := range []string{"backend-dev-1", "backend-dev-2"} {
+		stored, err := d.store.GetAgentRun(sessID, name)
 		if err != nil {
-			t.Fatalf("GetAgentRun %q: %v", tc.name, err)
+			t.Fatalf("GetAgentRun %q: %v", name, err)
 		}
-		if stored.Profile != tc.want {
-			t.Errorf("agent_runs.profile for %q = %q, want %q", tc.name, stored.Profile, tc.want)
+		if stored.Profile != p1 {
+			t.Errorf("agent_runs.profile for %q = %q, want %q", name, stored.Profile, p1)
 		}
 	}
 }
@@ -472,27 +466,19 @@ func TestPhase2Integration_AuthJSONSymlinkSurvivesBaseRewrite(t *testing.T) {
 	}
 }
 
-// ── Scenario 6: Re-spawn with new run ID derives new instance hash ────────────
+// ── Scenario 6: Re-spawn reuses the same fork across climbs (Phase 5.A) ───────
 
-// TestPhase2Integration_ReSpawnDerivesFreshInstanceHash verifies that spawning
-// the same identity a second time (new run) produces a new fork profile with a
-// different instance hash, because DeriveInstanceID is keyed off the agent
-// run's UUID which changes on each new run.
-//
-// IMPORTANT: This is intentional behaviour for Phase 2. If Phase 3 ever wants
-// to REUSE the same fork on resume, it must detect the existing run by
-// hermes_session_id and either:
-//   (a) look up the stored profile name from agent_runs.profile, or
-//   (b) not call materializeBridgeProfile when hermes_session_id is set.
-//
-// This test documents the current contract (new run → new hash → new fork) so
-// any future change is a deliberate decision rather than a surprise.
-func TestPhase2Integration_ReSpawnDerivesFreshInstanceHash(t *testing.T) {
+// TestPhase2Integration_ReSpawnReusesSameForkAcrossClimbs verifies that
+// spawning the same identity a second time (same session, new run row) produces
+// the SAME fork profile name. Phase 5.A dropped the per-run instance hash, so
+// the profile is now derived purely from crag + talent — identical across all
+// climbs for the same identity.
+func TestPhase2Integration_ReSpawnReusesSameForkAcrossClimbs(t *testing.T) {
 	profilesRoot, _ := setupIntegrationBase(t)
 
 	workspace := t.TempDir()
 	d := testDaemon(t)
-	sessID := createSession(t, d, "respawn-hash-test", workspace)
+	sessID := createSession(t, d, "respawn-stable-test", workspace)
 
 	// First spawn.
 	profile1 := spawnAgentHTTP(t, d, sessID, agentSpawnRequest{
@@ -528,41 +514,24 @@ func TestPhase2Integration_ReSpawnDerivesFreshInstanceHash(t *testing.T) {
 		t.Errorf("talent name missing: profile1=%q profile2=%q", profile1, profile2)
 	}
 
-	// The two profiles will be the same because the store reuses the same
-	// agent_run row (resume path: prior run found → UpdateAgentRunStatus).
-	// DeriveInstanceID is seeded from the stored run ID which does NOT change
-	// on re-spawn (the row is updated, not re-created). This means the fork
-	// profile is stable across re-spawns — the same agent run always maps to
-	// the same fork.
-	//
-	// NOTE: If Phase 3 introduces a "fresh run" path where a new UUID is
-	// generated on each spawn (rather than re-using the existing row), the hash
-	// would differ. Document this finding here so the expectation is explicit.
-	//
-	// For now: same run ID → same hash → same fork profile.
+	// Phase 5.A: stable crag+talent profile name — both spawns must resolve to
+	// the same fork regardless of session or run UUID.
 	if profile1 != profile2 {
-		// This is also acceptable if the store creates a new row each time.
-		// Log it as a finding rather than a hard failure so the test stays
-		// informative under both store semantics.
-		t.Logf("NOTE: re-spawn produced a different fork profile (profile1=%q profile2=%q)"+
-			" — this means the store created a new run row with a new UUID."+
-			" If intentional (fresh run on re-spawn), this is correct.", profile1, profile2)
+		t.Errorf("re-spawn must reuse the same fork profile; got profile1=%q profile2=%q", profile1, profile2)
 	}
 
-	// Regardless of whether they match, both fork dirs must exist on disk.
-	for _, p := range []string{profile1, profile2} {
-		forkDir := filepath.Join(profilesRoot, p)
-		if _, err := os.Stat(forkDir); err != nil {
-			t.Errorf("fork dir %s not created: %v", forkDir, err)
-		}
+	// Fork dir must exist on disk.
+	forkDir := filepath.Join(profilesRoot, profile1)
+	if _, err := os.Stat(forkDir); err != nil {
+		t.Errorf("fork dir %s not created: %v", forkDir, err)
 	}
 
-	// agent_runs.profile must reflect the latest fork name.
+	// agent_runs.profile must reflect the stable fork name.
 	stored, err := d.store.GetAgentRun(sessID, "supervisor")
 	if err != nil {
 		t.Fatalf("GetAgentRun supervisor: %v", err)
 	}
-	if stored.Profile != profile2 {
-		t.Errorf("after second spawn agent_runs.profile = %q, want %q", stored.Profile, profile2)
+	if stored.Profile != profile1 {
+		t.Errorf("after second spawn agent_runs.profile = %q, want %q", stored.Profile, profile1)
 	}
 }
