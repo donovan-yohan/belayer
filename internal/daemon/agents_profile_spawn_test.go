@@ -330,6 +330,135 @@ func TestSpawnProfile_BaseProfileMissingFallsBackToDefault(t *testing.T) {
 	}
 }
 
+// ── Phase 5.A: stable cross-climb profile naming ─────────────────────────────
+
+// TestSpawnProfile_StableProfileNameAcrossClimbs verifies that spawning the
+// same identity in two different sessions (climbs) resolves to the same fork
+// profile name. Phase 5.A drops the per-run instance hash so the profile is
+// keyed purely on crag+talent.
+func TestSpawnProfile_StableProfileNameAcrossClimbs(t *testing.T) {
+	setupBaseBelayerProfile(t)
+
+	workspace := t.TempDir()
+	d := testDaemon(t)
+
+	// Climb 1: create a session and spawn supervisor.
+	sess1RR := doRequest(t, d, "POST", "/sessions", createSessionRequest{
+		Name:         "climb-1-stable-name",
+		WorkspaceDir: workspace,
+	})
+	if sess1RR.Code != http.StatusCreated {
+		t.Fatalf("create session 1: %d %s", sess1RR.Code, sess1RR.Body.String())
+	}
+	sess1 := decodeJSON[sessionAPIResponse](t, sess1RR)
+
+	var profile1 string
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
+		profile1 = req.Profile
+		return nil, nil
+	}
+
+	rr1 := doRequest(t, d, "POST", "/sessions/"+sess1.ID+"/agents", agentSpawnRequest{
+		Name:    "supervisor",
+		Role:    "supervisor",
+		Profile: belayerBaseProfileName,
+		Workdir: workspace,
+	})
+	if rr1.Code != http.StatusCreated {
+		t.Fatalf("climb-1 spawn: %d %s", rr1.Code, rr1.Body.String())
+	}
+	if !strings.HasPrefix(profile1, "belayer-") {
+		t.Fatalf("climb-1: expected fork profile, got %q", profile1)
+	}
+
+	// Climb 2: different session, same project, same identity.
+	sess2RR := doRequest(t, d, "POST", "/sessions", createSessionRequest{
+		Name:         "climb-2-stable-name",
+		WorkspaceDir: workspace,
+	})
+	if sess2RR.Code != http.StatusCreated {
+		t.Fatalf("create session 2: %d %s", sess2RR.Code, sess2RR.Body.String())
+	}
+	sess2 := decodeJSON[sessionAPIResponse](t, sess2RR)
+
+	var profile2 string
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
+		profile2 = req.Profile
+		return nil, nil
+	}
+
+	rr2 := doRequest(t, d, "POST", "/sessions/"+sess2.ID+"/agents", agentSpawnRequest{
+		Name:    "supervisor",
+		Role:    "supervisor",
+		Profile: belayerBaseProfileName,
+		Workdir: workspace,
+	})
+	if rr2.Code != http.StatusCreated {
+		t.Fatalf("climb-2 spawn: %d %s", rr2.Code, rr2.Body.String())
+	}
+	if !strings.HasPrefix(profile2, "belayer-") {
+		t.Fatalf("climb-2: expected fork profile, got %q", profile2)
+	}
+
+	// Phase 5.A: same crag + same identity → same profile across climbs.
+	if profile1 != profile2 {
+		t.Errorf("cross-climb profile mismatch: climb-1=%q climb-2=%q; same identity in same crag must resolve to the same fork", profile1, profile2)
+	}
+}
+
+// TestSpawnProfile_ParallelMainsShareProfile verifies that two parallel main
+// agents with the same identity (backend-dev) but different names resolve to
+// the same profile: belayer-local-backend-dev. Phase 5.A dropped per-run
+// hashes, so identity alone determines the fork.
+func TestSpawnProfile_ParallelMainsShareProfile(t *testing.T) {
+	setupBaseBelayerProfile(t)
+
+	workspace := t.TempDir()
+	d := testDaemon(t)
+
+	sessRR := doRequest(t, d, "POST", "/sessions", createSessionRequest{
+		Name:         "parallel-mains-share-profile",
+		WorkspaceDir: workspace,
+	})
+	if sessRR.Code != http.StatusCreated {
+		t.Fatalf("create session: %d %s", sessRR.Code, sessRR.Body.String())
+	}
+	sess := decodeJSON[sessionAPIResponse](t, sessRR)
+
+	profiles := make(map[string]string)
+	d.spawnBridgeAgent = func(req agentSpawnRequest) (*bridge.Process, error) {
+		profiles[req.Name] = req.Profile
+		return nil, nil
+	}
+
+	for _, name := range []string{"backend-dev-1", "backend-dev-2"} {
+		rr := doRequest(t, d, "POST", "/sessions/"+sess.ID+"/agents", agentSpawnRequest{
+			Name:     name,
+			Identity: "backend-dev",
+			Role:     "backend-dev",
+			Profile:  belayerBaseProfileName,
+			Workdir:  workspace,
+		})
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("spawn %q: %d %s", name, rr.Code, rr.Body.String())
+		}
+	}
+
+	p1 := profiles["backend-dev-1"]
+	p2 := profiles["backend-dev-2"]
+
+	// Both must resolve to the same stable profile name.
+	if p1 != p2 {
+		t.Errorf("parallel mains with same identity must share one profile; got backend-dev-1=%q backend-dev-2=%q", p1, p2)
+	}
+
+	// Profile name must be belayer-local-backend-dev (no hash suffix).
+	const wantProfile = "belayer-local-backend-dev"
+	if p1 != wantProfile {
+		t.Errorf("profile = %q, want %q", p1, wantProfile)
+	}
+}
+
 // TestResolveCragSlug tests the crag slug resolver helper directly.
 func TestResolveCragSlug(t *testing.T) {
 	t.Parallel()

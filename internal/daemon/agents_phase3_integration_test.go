@@ -601,34 +601,20 @@ func TestPhase3Integration_CragScopedAcrossTwoClimbs(t *testing.T) {
 		t.Fatalf("climb-2: expected fork profile, got %q", profile2)
 	}
 
-	// TODO(Phase 4): This assertion documents the CURRENT LIMITATION.
-	// Cross-climb persistence requires a stable identifier independent of run ID.
-	// Today: profile1 ≠ profile2 (different sessions → different run UUIDs →
-	// different DeriveInstanceID → different fork names → sentinel NOT visible).
-	//
-	// Once Phase 4 implements stable cross-climb IDs (keyed on crag+talent),
-	// profile1 should equal profile2, and the sentinel should be accessible in
-	// climb 2's profile.
-	if profile1 == profile2 {
-		// Unexpected today — log but don't fail, in case Phase 4 lands first.
-		t.Logf("INFO: climb-1 and climb-2 produced the same fork profile %q. "+
-			"This means cross-climb reuse already works. If Phase 4 is not yet landed, "+
-			"investigate whether the store reused the same run UUID.", profile1)
-	} else {
-		// Expected today: different sessions → different profiles (Phase 4 limitation).
-		t.Logf("KNOWN LIMITATION (Phase 4): climb-2 got a different profile (%q) than climb-1 (%q). "+
-			"Cross-climb memory persistence is not yet implemented. The sentinel written in climb-1 "+
-			"is not accessible in climb-2. Phase 4 should implement stable crag+talent-keyed profiles.",
-			profile2, profile1)
+	// Phase 5.A: stable crag+talent profile name — climb-2 must resolve to the
+	// same fork as climb-1. This enables crag-scoped memory to persist across
+	// climbs without any extra bookkeeping.
+	if profile1 != profile2 {
+		t.Errorf("cross-climb profile mismatch: climb-1=%q climb-2=%q; same identity in same crag must resolve to the same fork (Phase 5.A)", profile1, profile2)
+	}
 
-		// Verify the sentinel is NOT in climb-2's profile (confirms the limitation).
-		sentinel2Path := filepath.Join(profilesRoot, profile2, "memories", "MEMORY.md")
-		if _, err := os.Stat(sentinel2Path); err == nil {
-			// Sentinel appeared in climb-2's profile — this would be surprising today
-			// (implies profiles got cross-contaminated), but would be correct in Phase 4.
-			t.Logf("INFO: sentinel found in climb-2 profile — cross-climb memory reuse may be partially working.")
-		}
-		// else: sentinel not in climb-2 profile — expected limitation, no error.
+	// Sentinel written in climb-1 must be accessible in climb-2's profile dir.
+	sentinel2Path := filepath.Join(profilesRoot, profile2, "memories", "MEMORY.md")
+	got2, err := os.ReadFile(sentinel2Path)
+	if err != nil {
+		t.Errorf("sentinel not accessible in climb-2 profile: %v", err)
+	} else if string(got2) != sentinelContent {
+		t.Errorf("sentinel in climb-2 = %q, want %q", string(got2), sentinelContent)
 	}
 
 	// Climb-1 profile must still exist (it's crag-scoped, not swept by climb-2).

@@ -37,9 +37,14 @@ func ValidateProfileName(name string) error {
 }
 
 // DeriveInstanceID returns a stable 8-character lowercase hex string derived
-// from seed via SHA-256 truncated to 4 bytes. This is used to generate a
-// short unique suffix for parallel main agents (e.g. "a3f9c2d1"). An empty
-// seed signals a singleton talent and returns an empty string.
+// from seed via SHA-256 truncated to 4 bytes (e.g. "a3f9c2d1"). An empty seed
+// returns an empty string.
+//
+// NOTE: As of Phase 5.A the spawn path no longer calls DeriveInstanceID —
+// profile names are now keyed on crag+talent only (stable across climbs).
+// DeriveInstanceID is retained for future callers that need explicit
+// per-instance disambiguation (e.g. a hypothetical parallel-main override
+// where the operator wants distinct profiles per run).
 func DeriveInstanceID(seed string) string {
 	if seed == "" {
 		return ""
