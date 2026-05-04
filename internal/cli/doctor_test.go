@@ -385,3 +385,162 @@ func TestDoctorCmd_DiskUsage(t *testing.T) {
 		t.Errorf("expected non-zero disk usage, got:\n%s", stdout)
 	}
 }
+
+// ── Phase 5.B: scope-aware orphan detection tests ─────────────────────────────
+
+// mkProfileDirWithScope creates a minimal belayer-* profile directory with the
+// given memory_scope. Useful for testing scope-aware orphan detection.
+func mkProfileDirWithScope(t *testing.T, hermesHome, profileName, cragSlug, talentName, memoryScope string) {
+	t.Helper()
+	dir := filepath.Join(hermesHome, "profiles", profileName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkProfileDirWithScope: %v", err)
+	}
+	meta := "profile_name: " + profileName + "\n" +
+		"talent_name: " + talentName + "\n" +
+		"crag_slug: " + cragSlug + "\n" +
+		"memory_scope: " + memoryScope + "\n" +
+		"materialized_at: 2026-01-01T00:00:00Z\n"
+	if err := os.WriteFile(filepath.Join(dir, ".belayer-talent.yaml"), []byte(meta), 0o644); err != nil {
+		t.Fatalf("mkProfileDirWithScope: write .belayer-talent.yaml: %v", err)
+	}
+}
+
+// Test 5B-1: Profile with memory.scope=crag and no matching run → reported
+// [preserved-crag], NOT counted in orphan count.
+func TestDoctorCmd_CragScopedPreservedNotOrphan(t *testing.T) {
+	tmp := t.TempDir()
+	hermesHome := filepath.Join(tmp, "hermes")
+	t.Setenv("HERMES_HOME", hermesHome)
+
+	profileName := "belayer-myproject-supervisor"
+	mkProfileDirWithScope(t, hermesHome, profileName, "myproject", "supervisor", "crag")
+	dbPath := mkDoctorDB(t) // empty store — no matching agent_runs row
+
+	stdout, _, err := runDoctorCmd(t, "--db", dbPath)
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+
+	if !strings.Contains(stdout, "[preserved-crag]") {
+		t.Errorf("expected [preserved-crag] label, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "[orphan]") {
+		t.Errorf("unexpected [orphan] label for crag-scoped profile, got:\n%s", stdout)
+	}
+	// Should NOT appear in the orphan count issues.
+	if strings.Contains(stdout, "orphan profile(s) found") {
+		t.Errorf("crag-scoped profile should not appear in orphan count issues, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "belayer prune") {
+		t.Errorf("crag-scoped profile should not trigger prune recommendation, got:\n%s", stdout)
+	}
+}
+
+// Test 5B-2: Profile with memory.scope=talent and no matching run → reported
+// [preserved-talent].
+func TestDoctorCmd_TalentScopedPreservedNotOrphan(t *testing.T) {
+	tmp := t.TempDir()
+	hermesHome := filepath.Join(tmp, "hermes")
+	t.Setenv("HERMES_HOME", hermesHome)
+
+	profileName := "belayer-myproject-backend-dev"
+	mkProfileDirWithScope(t, hermesHome, profileName, "myproject", "backend-dev", "talent")
+	dbPath := mkDoctorDB(t) // empty store
+
+	stdout, _, err := runDoctorCmd(t, "--db", dbPath)
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+
+	if !strings.Contains(stdout, "[preserved-talent]") {
+		t.Errorf("expected [preserved-talent] label, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "[orphan]") {
+		t.Errorf("unexpected [orphan] label for talent-scoped profile, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "orphan profile(s) found") {
+		t.Errorf("talent-scoped profile should not appear in orphan count issues, got:\n%s", stdout)
+	}
+}
+
+// Test 5B-3: Profile with memory.scope=climb and no matching run → still [orphan]
+// (regression check).
+func TestDoctorCmd_ClimbScopedStillOrphan(t *testing.T) {
+	tmp := t.TempDir()
+	hermesHome := filepath.Join(tmp, "hermes")
+	t.Setenv("HERMES_HOME", hermesHome)
+
+	profileName := "belayer-myproject-qa"
+	mkProfileDirWithScope(t, hermesHome, profileName, "myproject", "qa", "climb")
+	dbPath := mkDoctorDB(t) // empty store
+
+	stdout, _, err := runDoctorCmd(t, "--db", dbPath)
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+
+	if !strings.Contains(stdout, "[orphan]") {
+		t.Errorf("expected [orphan] label for climb-scoped profile, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "[preserved-crag]") || strings.Contains(stdout, "[preserved-talent]") {
+		t.Errorf("unexpected preserved label for climb-scoped profile, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "orphan profile(s) found") {
+		t.Errorf("expected orphan count in issues, got:\n%s", stdout)
+	}
+}
+
+// Test 5B-4: Profile with no .belayer-talent.yaml → defaults to orphan
+// (climb default).
+func TestDoctorCmd_NoMetadataFileDefaultsToOrphan(t *testing.T) {
+	tmp := t.TempDir()
+	hermesHome := filepath.Join(tmp, "hermes")
+	t.Setenv("HERMES_HOME", hermesHome)
+
+	// Create profile dir WITHOUT any .belayer-talent.yaml.
+	profileName := "belayer-myproject-reviewer"
+	dir := filepath.Join(hermesHome, "profiles", profileName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir profile: %v", err)
+	}
+	dbPath := mkDoctorDB(t) // empty store
+
+	stdout, _, err := runDoctorCmd(t, "--db", dbPath)
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+
+	if !strings.Contains(stdout, "[orphan]") {
+		t.Errorf("expected [orphan] label when metadata file missing (defaults to climb), got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "[preserved-") {
+		t.Errorf("unexpected preserved label when no metadata file present, got:\n%s", stdout)
+	}
+}
+
+// Test 5B-5: --include-scoped flag → preserved-crag reported as orphan.
+func TestDoctorCmd_IncludeScopedFlagTreatsCragAsOrphan(t *testing.T) {
+	tmp := t.TempDir()
+	hermesHome := filepath.Join(tmp, "hermes")
+	t.Setenv("HERMES_HOME", hermesHome)
+
+	profileName := "belayer-myproject-supervisor"
+	mkProfileDirWithScope(t, hermesHome, profileName, "myproject", "supervisor", "crag")
+	dbPath := mkDoctorDB(t) // empty store
+
+	stdout, _, err := runDoctorCmd(t, "--db", dbPath, "--include-scoped")
+	if err != nil {
+		t.Fatalf("doctor --include-scoped: %v", err)
+	}
+
+	if !strings.Contains(stdout, "[orphan]") {
+		t.Errorf("expected [orphan] label with --include-scoped, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "[preserved-crag]") {
+		t.Errorf("unexpected [preserved-crag] with --include-scoped, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "orphan profile(s) found") {
+		t.Errorf("expected orphan count in issues with --include-scoped, got:\n%s", stdout)
+	}
+}

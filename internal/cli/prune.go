@@ -22,12 +22,20 @@ type pruneOrphan struct {
 	ProfileDir  string
 	CragSlug    string
 	TalentName  string
+	MemoryScope string
 	DiskBytes   int64
+}
+
+// pruneSkipped holds metadata about a preserved (non-orphan) profile that was
+// skipped because its memory scope is crag or talent.
+type pruneSkipped struct {
+	ProfileName string
+	MemoryScope string
 }
 
 func newPruneCmd() *cobra.Command {
 	var cragFilter string
-	var dryRun, keepMemories, yes bool
+	var dryRun, keepMemories, yes, includeScoped bool
 	var dbPath string
 
 	cmd := &cobra.Command{
@@ -38,6 +46,10 @@ func newPruneCmd() *cobra.Command {
 An orphan is a profile directory that starts with "belayer-" but has no
 matching row in the agent_runs store. This can happen when a session ends
 abnormally or a profile is left behind after cleanup failures.
+
+Profiles with memory.scope=crag or memory.scope=talent are intentionally
+preserved across climbs and are skipped by default. Use --include-scoped
+to include them in the prune target list.
 
 By default the command lists orphans and prompts for confirmation before
 removing anything. Use --dry-run to inspect without removing, or --yes for
@@ -53,10 +65,16 @@ non-interactive use in scripts.`,
 				resolvedDB = filepath.Join(home, ".belayer", "belayer.db")
 			}
 
-			// 1. Find orphans.
-			orphans, err := pruneListOrphans(resolvedDB, cragFilter)
+			// 1. Find orphans (and skipped preserved profiles).
+			orphans, skipped, err := pruneListOrphansWithScope(resolvedDB, cragFilter, includeScoped)
 			if err != nil {
 				return fmt.Errorf("prune: find orphans: %w", err)
+			}
+
+			// 2. Print skipped preserved profiles.
+			for _, s := range skipped {
+				fmt.Fprintf(cmd.OutOrStdout(), "[skipped] %s — memory.scope=%s (preserved across climbs; use --include-scoped to remove)\n",
+					s.ProfileName, s.MemoryScope)
 			}
 
 			if len(orphans) == 0 {
@@ -64,16 +82,16 @@ non-interactive use in scripts.`,
 				return nil
 			}
 
-			// 2. Print list.
+			// 3. Print list.
 			printOrphanList(cmd.OutOrStdout(), orphans)
 
-			// 3. If --dry-run, exit without removing.
+			// 4. If --dry-run, exit without removing.
 			if dryRun {
 				fmt.Fprintf(cmd.OutOrStdout(), "\n(dry-run) Would remove %d profile(s).\n", len(orphans))
 				return nil
 			}
 
-			// 4. Prompt unless --yes.
+			// 5. Prompt unless --yes.
 			if !yes {
 				if !isatty.IsTerminal(os.Stdin.Fd()) {
 					return fmt.Errorf("stdin is not a terminal; use --yes to confirm non-interactively")
@@ -91,7 +109,7 @@ non-interactive use in scripts.`,
 				}
 			}
 
-			// 5. Remove each orphan (with optional memory archive).
+			// 6. Remove each orphan (with optional memory archive).
 			removed := 0
 			archived := 0
 			for _, o := range orphans {
@@ -111,7 +129,7 @@ non-interactive use in scripts.`,
 				removed++
 			}
 
-			// 6. Print summary.
+			// 7. Print summary.
 			if keepMemories {
 				fmt.Fprintf(cmd.OutOrStdout(), "Removed %d profile(s), archived %d memory snapshot(s).\n", removed, archived)
 			} else {
@@ -126,6 +144,7 @@ non-interactive use in scripts.`,
 	cmd.Flags().BoolVar(&keepMemories, "keep-memories", false, "Archive memories/ before delete")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Skip interactive confirmation")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite database path (default ~/.belayer/belayer.db)")
+	cmd.Flags().BoolVar(&includeScoped, "include-scoped", false, "Include crag/talent-scoped profiles in prune targets (override preservation safety)")
 	return cmd
 }
 
@@ -133,22 +152,35 @@ non-interactive use in scripts.`,
 // matching row in agent_runs. If cragFilter is non-empty, only profiles whose
 // crag_slug matches are included.
 //
+// Kept for backward compatibility; delegates to pruneListOrphansWithScope with
+// includeScoped=false (safe default: climb-scoped orphans only).
+func pruneListOrphans(dbPath, cragFilter string) ([]pruneOrphan, error) {
+	orphans, _, err := pruneListOrphansWithScope(dbPath, cragFilter, false)
+	return orphans, err
+}
+
+// pruneListOrphansWithScope finds all belayer-* profile directories that have
+// no matching row in agent_runs, separating them into orphans (to remove) and
+// skipped (preserved across climbs). If includeScoped is true, crag/talent-scoped
+// profiles are treated as orphans. If cragFilter is non-empty, only profiles
+// whose crag_slug matches are included.
+//
 // NOTE: orphan detection logic is duplicated from doctor (Task 4.A) to avoid
 // a merge conflict in parallel implementation. TODO: DRY into profile_health.go.
-func pruneListOrphans(dbPath, cragFilter string) ([]pruneOrphan, error) {
+func pruneListOrphansWithScope(dbPath, cragFilter string, includeScoped bool) (orphans []pruneOrphan, skipped []pruneSkipped, _ error) {
 	// Find profiles root.
 	profilesRoot, err := daemon.ProfilesRoot()
 	if err != nil {
-		return nil, fmt.Errorf("resolve profiles root: %w", err)
+		return nil, nil, fmt.Errorf("resolve profiles root: %w", err)
 	}
 
 	// Enumerate all belayer-* subdirectories.
 	entries, err := os.ReadDir(profilesRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("read profiles dir %s: %w", profilesRoot, err)
+		return nil, nil, fmt.Errorf("read profiles dir %s: %w", profilesRoot, err)
 	}
 
 	var candidates []string
@@ -165,34 +197,43 @@ func pruneListOrphans(dbPath, cragFilter string) ([]pruneOrphan, error) {
 	}
 
 	if len(candidates) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Open the store read-only to query known profiles.
 	st, err := store.Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open store %s: %w", dbPath, err)
+		return nil, nil, fmt.Errorf("open store %s: %w", dbPath, err)
 	}
 	defer st.Close()
 
 	// Build a set of profile names referenced by any agent_runs row.
 	knownProfiles, err := pruneKnownProfiles(st)
 	if err != nil {
-		return nil, fmt.Errorf("query known profiles: %w", err)
+		return nil, nil, fmt.Errorf("query known profiles: %w", err)
 	}
 
-	// Identify orphans.
-	var orphans []pruneOrphan
+	// Identify orphans and preserved profiles.
 	for _, name := range candidates {
 		if knownProfiles[name] {
 			continue
 		}
 
-		// Parse crag slug from .belayer-talent.yaml metadata (best-effort).
-		cragSlug, talentName := pruneReadMetadata(filepath.Join(profilesRoot, name))
+		// Parse crag slug and metadata from .belayer-talent.yaml (best-effort).
+		cragSlug, talentName, memoryScope := pruneReadMetadataWithScope(filepath.Join(profilesRoot, name))
 
 		// Apply crag filter if set.
 		if cragFilter != "" && cragSlug != cragFilter {
+			continue
+		}
+
+		// Determine if this profile should be preserved (crag/talent-scoped) or pruned.
+		isPreserved := !includeScoped && (memoryScope == "crag" || memoryScope == "talent")
+		if isPreserved {
+			skipped = append(skipped, pruneSkipped{
+				ProfileName: name,
+				MemoryScope: memoryScope,
+			})
 			continue
 		}
 
@@ -204,11 +245,12 @@ func pruneListOrphans(dbPath, cragFilter string) ([]pruneOrphan, error) {
 			ProfileDir:  filepath.Join(profilesRoot, name),
 			CragSlug:    cragSlug,
 			TalentName:  talentName,
+			MemoryScope: memoryScope,
 			DiskBytes:   size,
 		})
 	}
 
-	return orphans, nil
+	return orphans, skipped, nil
 }
 
 // pruneKnownProfiles returns a set of profile names that appear in the
@@ -233,6 +275,47 @@ func pruneKnownProfiles(st *store.Store) (map[string]bool, error) {
 		}
 	}
 	return known, rows.Err()
+}
+
+// pruneReadMetadataWithScope reads crag_slug, talent_name, and memory_scope
+// from a profile's .belayer-talent.yaml. Falls back to parsing the profile name
+// for crag/talent and defaults memory_scope to "climb" (ephemeral) if missing.
+func pruneReadMetadataWithScope(profileDir string) (cragSlug, talentName, memoryScope string) {
+	data, err := os.ReadFile(filepath.Join(profileDir, ".belayer-talent.yaml"))
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "crag_slug:") {
+				cragSlug = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "crag_slug:")), `"'`)
+			}
+			if strings.HasPrefix(line, "talent_name:") {
+				talentName = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "talent_name:")), `"'`)
+			}
+			if strings.HasPrefix(line, "memory_scope:") {
+				memoryScope = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "memory_scope:")), `"'`)
+			}
+		}
+		if cragSlug != "" {
+			if memoryScope == "" {
+				memoryScope = "climb"
+			}
+			return
+		}
+	}
+
+	// Fallback: parse from profile name "belayer-<crag>-<talent>".
+	profileName := filepath.Base(profileDir)
+	rest := strings.TrimPrefix(profileName, "belayer-")
+	parts := strings.SplitN(rest, "-", 2)
+	if len(parts) == 2 {
+		cragSlug, talentName = parts[0], parts[1]
+	} else {
+		cragSlug = rest
+	}
+	if memoryScope == "" {
+		memoryScope = "climb"
+	}
+	return
 }
 
 // pruneReadMetadata reads crag_slug and talent_name from a profile's

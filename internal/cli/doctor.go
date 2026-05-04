@@ -22,8 +22,10 @@ const doctorAuthStaleDefaultDays = 30
 type doctorProfileStatus string
 
 const (
-	doctorProfileActive doctorProfileStatus = "active"
-	doctorProfileOrphan doctorProfileStatus = "orphan"
+	doctorProfileActive          doctorProfileStatus = "active"
+	doctorProfileOrphan          doctorProfileStatus = "orphan"
+	doctorProfilePreservedCrag   doctorProfileStatus = "preserved-crag"
+	doctorProfilePreservedTalent doctorProfileStatus = "preserved-talent"
 )
 
 // doctorProfileEntry holds display data for one belayer-* profile.
@@ -68,6 +70,7 @@ func newDoctorCmd() *cobra.Command {
 	var cragFilter string
 	var jsonOut bool
 	var dbPath string
+	var includeScoped bool
 
 	cmd := &cobra.Command{
 		Use:   "doctor",
@@ -79,6 +82,10 @@ Lists all belayer-* Hermes profiles, groups them by crag slug, and checks:
   - Orphaned agent_runs rows (profile dir gone).
   - Base belayer profile presence and auth.json staleness.
   - Disk usage per crag.
+
+Profiles with memory.scope=crag or memory.scope=talent are intentionally
+preserved across climbs and are shown as [preserved-crag] or [preserved-talent]
+rather than [orphan]. Use --include-scoped to treat them as orphans too.
 
 Use --crag to filter to a single crag. Use --json to emit structured JSON
 for tooling (e.g. jq).
@@ -104,7 +111,7 @@ Read-only: doctor never modifies any state.`,
 				}
 			}
 
-			report, err := buildDoctorReport(resolvedDB, cragFilter, staleDays)
+			report, err := buildDoctorReport(resolvedDB, cragFilter, staleDays, includeScoped)
 			if err != nil {
 				return fmt.Errorf("doctor: %w", err)
 			}
@@ -120,11 +127,14 @@ Read-only: doctor never modifies any state.`,
 	cmd.Flags().StringVar(&cragFilter, "crag", "", "Filter to one crag slug")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON instead of human-readable text")
 	cmd.Flags().StringVar(&dbPath, "db", "", "SQLite database path (default ~/.belayer/belayer.db)")
+	cmd.Flags().BoolVar(&includeScoped, "include-scoped", false, "Treat crag/talent-scoped profiles as orphans (override preservation safety)")
 	return cmd
 }
 
 // buildDoctorReport assembles a doctorReport from the profile dirs and store.
-func buildDoctorReport(dbPath, cragFilter string, staleDays int) (doctorReport, error) {
+// includeScoped controls whether crag/talent-scoped profiles without a live run
+// are classified as orphans (true) or preserved (false, the safe default).
+func buildDoctorReport(dbPath, cragFilter string, staleDays int, includeScoped bool) (doctorReport, error) {
 	var report doctorReport
 
 	// 1. Resolve ProfilesRoot and stat base profile.
@@ -173,8 +183,24 @@ func buildDoctorReport(dbPath, cragFilter string, staleDays int) (doctorReport, 
 		status := doctorProfileActive
 		reason := ""
 		if !knownProfiles[profileName] {
-			status = doctorProfileOrphan
-			reason = "no matching agent_run"
+			// Determine the memory scope to decide if this is a true orphan or a
+			// preserved cross-climb profile.
+			scope := doctorReadMemoryScope(filepath.Join(profilesRoot, profileName), profileName)
+			switch {
+			case includeScoped || scope == "climb" || scope == "":
+				status = doctorProfileOrphan
+				reason = "no matching agent_run"
+			case scope == "crag":
+				status = doctorProfilePreservedCrag
+				reason = "memory.scope=crag (preserved across climbs)"
+			case scope == "talent":
+				status = doctorProfilePreservedTalent
+				reason = "memory.scope=talent (preserved across climbs)"
+			default:
+				// Unknown scope — treat conservatively as orphan.
+				status = doctorProfileOrphan
+				reason = "no matching agent_run"
+			}
 		}
 
 		diskBytes := pruneDirSize(filepath.Join(profilesRoot, profileName))
@@ -370,6 +396,26 @@ func doctorReadCragSlug(profileDir, profileName string) (cragSlug, talentName st
 	return doctorSplitProfileName(profileName)
 }
 
+// doctorReadMemoryScope reads the memory_scope field from a profile's
+// .belayer-talent.yaml. Returns "climb" as the safe default if the file is
+// missing or unreadable (ephemeral by default).
+func doctorReadMemoryScope(profileDir, profileName string) string {
+	data, err := os.ReadFile(filepath.Join(profileDir, ".belayer-talent.yaml"))
+	if err != nil {
+		return "climb"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "memory_scope:") {
+			scope := strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "memory_scope:")), `"'`)
+			if scope != "" {
+				return scope
+			}
+		}
+	}
+	return "climb"
+}
+
 // doctorSplitProfileName extracts (cragSlug, talentName) from a profile name
 // of the form "belayer-<crag>-<talent>". Best-effort single-segment split.
 func doctorSplitProfileName(profileName string) (cragSlug, talentName string) {
@@ -451,13 +497,24 @@ func printDoctorText(cmd *cobra.Command, report doctorReport, staleDays int) {
 		}
 		fmt.Fprintf(out, "Crag: %s (%d profile(s))\n", slug, len(crag.Profiles))
 		for _, p := range crag.Profiles {
-			statusLabel := "[active]"
+			var statusLabel string
 			suffix := ""
-			if p.Status == doctorProfileOrphan {
+			switch p.Status {
+			case doctorProfileActive:
+				statusLabel = "[active]"
+			case doctorProfileOrphan:
 				statusLabel = "[orphan]"
 				suffix = fmt.Sprintf("  -- %s", p.Reason)
+			case doctorProfilePreservedCrag:
+				statusLabel = "[preserved-crag]"
+				suffix = fmt.Sprintf("  -- %s", p.Reason)
+			case doctorProfilePreservedTalent:
+				statusLabel = "[preserved-talent]"
+				suffix = fmt.Sprintf("  -- %s", p.Reason)
+			default:
+				statusLabel = "[unknown]"
 			}
-			fmt.Fprintf(out, "  %-52s %-10s %s%s\n",
+			fmt.Fprintf(out, "  %-52s %-18s %s%s\n",
 				p.ProfileName, statusLabel, humanBytes(p.DiskBytes), suffix)
 		}
 		fmt.Fprintln(out)
