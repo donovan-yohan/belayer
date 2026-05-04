@@ -22,6 +22,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/google/uuid"
+	"go.yaml.in/yaml/v3"
 )
 
 type agentSpawnRequest struct {
@@ -1396,6 +1397,9 @@ type agentIdentity struct {
 	Kind             string
 	Ephemeral        *bool
 	YAMLPath         string
+	// MemoryScope is read from talent.yaml#memory.scope. Empty string means
+	// "not specified" — callers should default to "climb".
+	MemoryScope string
 }
 
 // loadAgentIdentity resolves an agent's identity files (system-prompt.md and
@@ -1511,7 +1515,47 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 		break
 	}
 
+	// Read talent.yaml#memory.scope if present. talent.yaml is optional —
+	// many shipped agents don't have it. Uses go.yaml.in/yaml/v3 (already
+	// in go.mod and used elsewhere in this package) rather than a hand-rolled
+	// scanner because talent.yaml has a nested structure (memory.scope) that is
+	// awkward to scan line-by-line without a small state machine.
+	for _, talentPath := range agentIdentityPaths(workdir, belayerRoot, identity, "talent.yaml") {
+		data, err := os.ReadFile(talentPath)
+		if err != nil {
+			continue
+		}
+		var tf talentYAMLFile
+		if err := yaml.Unmarshal(data, &tf); err != nil {
+			log.Printf("loadAgentIdentity: parse talent.yaml %s: %v — ignoring", talentPath, err)
+			continue
+		}
+		scope := strings.TrimSpace(tf.Memory.Scope)
+		if scope == "" {
+			// talent.yaml present but memory.scope missing/empty — treat as absent.
+			break
+		}
+		if !validMemoryScopes[scope] {
+			// Invalid scope value — log a warning and default to "climb" (graceful
+			// operator experience: a typo shouldn't hard-fail the spawn).
+			log.Printf("loadAgentIdentity: talent.yaml %s has invalid memory.scope %q (must be climb|crag|talent) — defaulting to \"climb\"",
+				talentPath, scope)
+			break
+		}
+		out.MemoryScope = scope
+		break
+	}
+
 	return out
+}
+
+// talentYAMLFile is the minimal struct used to parse talent.yaml#memory.scope.
+// Only the fields needed for Phase 3.A are decoded; additional fields in the
+// belayer-talent/v1 schema are intentionally ignored here.
+type talentYAMLFile struct {
+	Memory struct {
+		Scope string `yaml:"scope"`
+	} `yaml:"memory"`
 }
 
 // agentIdentityPaths returns the ordered list of candidate paths to look up
@@ -1679,7 +1723,7 @@ func (d *Daemon) materializeBridgeProfile(req agentSpawnRequest) agentSpawnReque
 		BaseProfileDir: baseProfileDir,
 		SystemPrompt:   loaded.SystemPrompt,
 		Model:          loaded.Model,
-		MemoryScope:    "", // default ("climb"); talent.yaml#memory.scope wired in Phase 3
+		MemoryScope:    loaded.MemoryScope, // read from talent.yaml#memory.scope (Phase 3.A); empty → "climb" default in MaterializeProfile
 	})
 	if matErr != nil {
 		// Base profile missing (operator hasn't run `belayer auth`) or I/O error.
