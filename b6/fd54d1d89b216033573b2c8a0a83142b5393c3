@@ -1,0 +1,27 @@
+internal/daemon/profiles.go
+  0aec7f289c962a66 315-316
+internal/cli/uninstall.go
+  0aec7f289c962a66 63
+internal/store/store.go
+  0aec7f289c962a66 412-413
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "b6fd54d1d89b216033573b2c8a0a83142b5393c3",
+  "prompts": {
+    "0aec7f289c962a66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8767a93-57f9-4279-815e-9f789337b5c5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 5,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}
