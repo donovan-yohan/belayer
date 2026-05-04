@@ -87,7 +87,7 @@ func newRunStartCmd() *cobra.Command {
 			}
 
 			if strings.TrimSpace(supervisorProfile) == "" {
-				supervisorProfile = "default"
+				supervisorProfile = belayerProfileName
 			}
 
 			// Parse repos.
@@ -173,7 +173,7 @@ func newRunStartCmd() *cobra.Command {
 	cmd.Flags().StringVar(&socket, "socket", "", "Daemon socket path")
 	cmd.Flags().StringVar(&name, "name", "", "Climb/session name")
 	cmd.Flags().StringVar(&task, "task", "", "Initial task text for the supervisor")
-	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", "default", "Hermes profile for the supervisor")
+	cmd.Flags().StringVar(&supervisorProfile, "supervisor-profile", belayerProfileName, "Hermes profile for the supervisor (default: belayer; run `belayer auth ensure` first)")
 	cmd.Flags().StringVar(&workdir, "workdir", "", "Working directory (defaults to cwd)")
 	cmd.Flags().StringVar(&reposFlag, "repos", "", "Repos to include: name=path,name=path (e.g. frontend=../fe,backend=../be)")
 	cmd.Flags().StringArrayVar(&exitConditions, "exit-condition", nil, "Override .belayer/config.yaml#exit_conditions for this climb. Repeatable. When present, these replace the file's list entirely.")

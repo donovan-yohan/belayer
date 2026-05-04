@@ -6,6 +6,7 @@ claims from a design note.
 
 ## Current Or Recently Implemented Designs
 
+- [Belayer Hermes profiles spec](2026-05-03-belayer-hermes-profiles-spec.md) — Forward-looking. Per-talent-instance Hermes profile materialization replacing the shared `default` profile. Epic #131; phase issues #133–#137; pattern-harvest sibling #132.
 - [Org Mode Nightshift plan](2026-04-30-org-mode-nightshift-plan.md) — Stack plan for crag-mode rollout: filesystem contract, CLI, proof examples. Shipped via PRs #117–#129. Prefer `docs/CRAG_MODE.md` and `docs/CRAG_FILESYSTEM.md` for current behavior.
 - [Talent lifecycle contract plan](2026-05-01-talent-lifecycle-contract-plan.md) — Defines `belayer-talent/v1` contract: `role`/`domain`, `activation`, `runtime.lifecycle`, typed `contract`, gate bindings, and lifecycle evidence in evaluations. Docs+schema step shipped; daemon wake-on-mail follow-up tracked separately.
 - [Observability log tiers and API design](2026-04-19-observability-log-tiers-and-api-design.md) — Tiered logging, consolidated CLI+HTTP API, SSE with digests, per-agent spill files, Nightshift-friendly archives.

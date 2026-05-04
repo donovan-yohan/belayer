@@ -59,7 +59,7 @@ Shipped default team:
 
 Customize in `.belayer/agents/` — see `agents/README.md` for worked examples. `belayer team add <category>` copies team identities into `.belayer/agents/`. The `development` category is a CLI special-case that copies the embedded shipped team from `agents/`; other categories (e.g. `story`) live in `examples/talent-catalog/<category>/`.
 
-System prompts are loaded by the daemon at spawn time and injected via Hermes `ephemeral_system_prompt`. All agents use the `default` Hermes profile for now (see profile bootstrap TODO in AGENT_ARCHITECTURE.md).
+System prompts are loaded by the daemon at spawn time and injected via Hermes `ephemeral_system_prompt`. The daemon defaults to the `belayer` Hermes profile (`~/.hermes/profiles/belayer/`); run `belayer auth ensure` once to scaffold it. Per-talent profile forks (`belayer-<crag>-<instance>/`) are coming in Phase 2 (#135). See `docs/design-docs/2026-05-03-belayer-hermes-profiles-spec.md` for the full plan.
 
 The `hermes_bridge` Python package lives in the daemon's runtime dir (default `$XDG_STATE_HOME/belayer/runtime`), not inside any workspace. This protects the module from workspace agent cleanup (`rm -rf .belayer/`).
 
@@ -74,6 +74,7 @@ Crags are durable cross-project operating contexts (software company, story worl
 ## CLI surface highlights
 
 - `belayer climb start` (alias `run`) — start a climb
+- `belayer auth ensure|status` — scaffold/inspect the base `belayer` Hermes profile
 - `belayer crag init|list|link` — manage local crags
 - `belayer team list|add|remove` — manage talent catalog rosters
 - Full surface: `belayer --help` and `belayer <cmd> --help`
