@@ -56,6 +56,7 @@ over SQLite.`,
 		newTeamCmd(),
 		newCragCmd(),
 		newInitCmd(),
+		newAuthCmd(),
 		newArchiveCmd(),
 		newBridgesCmd(),
 	)
