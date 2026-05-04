@@ -60,7 +60,7 @@ func validateCragSlug(slug string) error {
 		return fmt.Errorf("crag slug %q must not contain \"..\"", slug)
 	}
 	// Reuse Hermes profile name validation: the slug becomes a segment of
-	// "belayer-<slug>-<talent>" so it must meet the same character constraints.
+	// "blyr-<slug>-<talent>" so it must meet the same character constraints.
 	if err := daemon.ValidateProfileName("blyr-" + slug + "-x"); err != nil {
 		return fmt.Errorf("crag slug %q is invalid: only lowercase alphanumeric, hyphens, and underscores are allowed", slug)
 	}

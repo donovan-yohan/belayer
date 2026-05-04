@@ -312,8 +312,8 @@ func MaterializeProfile(opts MaterializeOptions) error {
 // TeardownProfile removes the profile directory for a per-talent-instance
 // profile. It is idempotent: a missing directory is not an error.
 //
-// Safety: refuses to remove the base belayer profile or any name that does
-// not start with "belayer-" to prevent accidental destruction of unrelated
+// Safety: refuses to remove the base blyr profile or any name that does
+// not start with "blyr-" to prevent accidental destruction of unrelated
 // profiles.
 func TeardownProfile(profileName string) error {
 	if profileName == "" {

@@ -409,8 +409,8 @@ func (s *Store) UpdateAgentRunHermesSessionID(sessionID, name, hermesSessionID s
 
 // UpdateAgentRunProfile updates the profile for an agent run. This is called
 // after spawn-time profile materialization to record the actual fork profile
-// name (e.g. "belayer-local-supervisor") instead of the input flag value
-// (e.g. "belayer"). Phase 4 reconciliation reads this column.
+// name (e.g. "blyr-local-supervisor") instead of the input flag value
+// (e.g. "blyr"). Phase 4 reconciliation reads this column.
 func (s *Store) UpdateAgentRunProfile(sessionID, name, profile string) error {
 	_, err := s.db.Exec(
 		`UPDATE agent_runs SET profile = ?, updated_at = ? WHERE session_id = ? AND name = ?`,
