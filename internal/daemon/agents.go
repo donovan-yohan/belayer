@@ -1400,6 +1400,9 @@ type agentIdentity struct {
 	// MemoryScope is read from talent.yaml#memory.scope. Empty string means
 	// "not specified" — callers should default to "climb".
 	MemoryScope string
+	// RuntimeLifecycle is read from talent.yaml#runtime.lifecycle. Empty string
+	// means "not specified". Known values: "resumable", "resident", "ephemeral".
+	RuntimeLifecycle string
 }
 
 // loadAgentIdentity resolves an agent's identity files (system-prompt.md and
@@ -1515,11 +1518,10 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 		break
 	}
 
-	// Read talent.yaml#memory.scope if present. talent.yaml is optional —
-	// many shipped agents don't have it. Uses go.yaml.in/yaml/v3 (already
-	// in go.mod and used elsewhere in this package) rather than a hand-rolled
-	// scanner because talent.yaml has a nested structure (memory.scope) that is
-	// awkward to scan line-by-line without a small state machine.
+	// Read talent.yaml#memory.scope and talent.yaml#runtime.lifecycle if present.
+	// talent.yaml is optional — many shipped agents don't have it. Uses
+	// go.yaml.in/yaml/v3 (already in go.mod and used elsewhere in this package)
+	// rather than a hand-rolled scanner because talent.yaml has nested structure.
 	for _, talentPath := range agentIdentityPaths(workdir, belayerRoot, identity, "talent.yaml") {
 		data, err := os.ReadFile(talentPath)
 		if err != nil {
@@ -1531,31 +1533,35 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 			continue
 		}
 		scope := strings.TrimSpace(tf.Memory.Scope)
-		if scope == "" {
-			// talent.yaml present but memory.scope missing/empty — treat as absent.
-			break
+		if scope != "" {
+			if !validMemoryScopes[scope] {
+				// Invalid scope value — log a warning and default to "climb" (graceful
+				// operator experience: a typo shouldn't hard-fail the spawn).
+				log.Printf("loadAgentIdentity: talent.yaml %s has invalid memory.scope %q (must be climb|crag|talent) — defaulting to \"climb\"",
+					talentPath, scope)
+			} else {
+				out.MemoryScope = scope
+			}
 		}
-		if !validMemoryScopes[scope] {
-			// Invalid scope value — log a warning and default to "climb" (graceful
-			// operator experience: a typo shouldn't hard-fail the spawn).
-			log.Printf("loadAgentIdentity: talent.yaml %s has invalid memory.scope %q (must be climb|crag|talent) — defaulting to \"climb\"",
-				talentPath, scope)
-			break
+		if lc := strings.TrimSpace(tf.Runtime.Lifecycle); lc != "" {
+			out.RuntimeLifecycle = lc
 		}
-		out.MemoryScope = scope
 		break
 	}
 
 	return out
 }
 
-// talentYAMLFile is the minimal struct used to parse talent.yaml#memory.scope.
-// Only the fields needed for Phase 3.A are decoded; additional fields in the
-// belayer-talent/v1 schema are intentionally ignored here.
+// talentYAMLFile is the minimal struct used to parse talent.yaml fields needed
+// by the daemon. Only the fields needed for Phase 3.A/3.E are decoded;
+// additional fields in the belayer-talent/v1 schema are intentionally ignored.
 type talentYAMLFile struct {
 	Memory struct {
 		Scope string `yaml:"scope"`
 	} `yaml:"memory"`
+	Runtime struct {
+		Lifecycle string `yaml:"lifecycle"`
+	} `yaml:"runtime"`
 }
 
 // agentIdentityPaths returns the ordered list of candidate paths to look up
@@ -1810,13 +1816,21 @@ func (d *Daemon) materializeBridgeProfile(req agentSpawnRequest) agentSpawnReque
 	// compared to the cost of spawning a subprocess.
 	loaded := loadAgentIdentity(req.Workdir, d.config.BelayerRoot, req.identityKey(), req.Model)
 
+	// Phase 3.E: resumable agents default to crag-scoped memory so that dormancy
+	// and wake (#118) reuse the same fork profile and accumulated memory. An
+	// explicit memory.scope in talent.yaml always wins (operator's choice).
+	memScope := loaded.MemoryScope
+	if loaded.RuntimeLifecycle == "resumable" && memScope == "" {
+		memScope = "crag"
+	}
+
 	baseProfileDir := filepath.Join(profilesRoot, belayerBaseProfileName)
 	matErr := MaterializeProfile(MaterializeOptions{
 		ProfileName:    forkName,
 		BaseProfileDir: baseProfileDir,
 		SystemPrompt:   loaded.SystemPrompt,
 		Model:          loaded.Model,
-		MemoryScope:    loaded.MemoryScope, // read from talent.yaml#memory.scope (Phase 3.A); empty → "climb" default in MaterializeProfile
+		MemoryScope:    memScope, // read from talent.yaml#memory.scope (Phase 3.A); resumable defaults to "crag" (Phase 3.E); empty → "climb" in MaterializeProfile
 	})
 	if matErr != nil {
 		// Base profile missing (operator hasn't run `belayer auth`) or I/O error.
