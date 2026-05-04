@@ -540,3 +540,99 @@ def test_active_peers_ignores_capitalised_keys(monkeypatch):
     ]
 
     assert module.active_peers(roster, "supervisor") == []
+
+
+def _load_main_module_with_session_db_capture(monkeypatch):
+    """Like _load_main_module but returns a SessionDB class that records db_path."""
+    import pathlib
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_state = types.ModuleType("hermes_state")
+    fake_hermes_cli = types.ModuleType("hermes_cli")
+
+    class _PlaceholderAIAgent:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.session_id = "placeholder-session"
+
+        def run_conversation(self, **kwargs):  # pragma: no cover - replaced per test
+            return kwargs
+
+    class _CapturingSessionDB:
+        instances: list = []
+
+        def __init__(self, *args, **kwargs):
+            _CapturingSessionDB.instances.append(self)
+            self.db_path = kwargs.get("db_path")
+
+    fake_run_agent.AIAgent = _PlaceholderAIAgent
+    fake_state.SessionDB = _CapturingSessionDB
+    fake_hermes_cli.__version__ = "0.12.0"
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+    monkeypatch.setitem(sys.modules, "hermes_state", fake_state)
+    monkeypatch.setitem(sys.modules, "hermes_cli", fake_hermes_cli)
+    monkeypatch.delitem(sys.modules, "hermes_bridge.__main__", raising=False)
+    _CapturingSessionDB.instances.clear()
+    module = importlib.import_module("hermes_bridge.__main__")
+    return module, _CapturingSessionDB
+
+
+def test_session_db_uses_hermes_home_when_set(monkeypatch):
+    """SessionDB db_path should follow HERMES_HOME when the env var is set."""
+    import pathlib
+
+    monkeypatch.setenv("HERMES_HOME", "/tmp/foo-profile")
+    module, CapturingSessionDB = _load_main_module_with_session_db_capture(monkeypatch)
+    _set_required_env(monkeypatch)
+    # Use side kind so the agent exits immediately after completion without
+    # entering the idle polling loop.
+    monkeypatch.setenv("BELAYER_AGENT_KIND", "side")
+    monkeypatch.setenv("HERMES_HOME", "/tmp/foo-profile")  # ensure it survives _set_required_env
+
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(monkeypatch, module, result)
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert CapturingSessionDB.instances, "expected SessionDB to be constructed"
+    assert CapturingSessionDB.instances[0].db_path == pathlib.Path("/tmp/foo-profile/state.db"), (
+        f"expected /tmp/foo-profile/state.db, got {CapturingSessionDB.instances[0].db_path}"
+    )
+
+
+def test_session_db_falls_back_to_dot_hermes_when_hermes_home_unset(monkeypatch):
+    """SessionDB db_path should fall back to ~/.hermes/state.db when HERMES_HOME is unset."""
+    import pathlib
+
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    module, CapturingSessionDB = _load_main_module_with_session_db_capture(monkeypatch)
+    _set_required_env(monkeypatch)
+    # Use side kind so the agent exits immediately after completion without
+    # entering the idle polling loop.
+    monkeypatch.setenv("BELAYER_AGENT_KIND", "side")
+    monkeypatch.delenv("HERMES_HOME", raising=False)  # ensure it stays unset after _set_required_env
+
+    result = {
+        "completed": True,
+        "final_response": "done",
+        "messages": [],
+    }
+    _patch_bridge_runtime(monkeypatch, module, result)
+
+    post_event = MagicMock()
+    monkeypatch.setattr(module, "post_event", post_event)
+
+    module.main()
+
+    assert CapturingSessionDB.instances, "expected SessionDB to be constructed"
+    expected = pathlib.Path.home() / ".hermes" / "state.db"
+    assert CapturingSessionDB.instances[0].db_path == expected, (
+        f"expected {expected}, got {CapturingSessionDB.instances[0].db_path}"
+    )
