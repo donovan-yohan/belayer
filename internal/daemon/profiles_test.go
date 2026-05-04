@@ -454,6 +454,38 @@ func TestMaterializeProfile(t *testing.T) {
 		}
 	})
 
+	t.Run("config.yaml model value is quoted preventing newline injection", func(t *testing.T) {
+		root, base := profilesRootForTest(t)
+		opts := MaterializeOptions{
+			ProfileName:    "belayer-myproject-injected-model",
+			BaseProfileDir: base,
+			SystemPrompt:   "soul",
+			// A model string with an embedded newline must not inject YAML keys.
+			Model: "gpt-5.4\nmalicious: true",
+		}
+		if err := MaterializeProfile(opts); err != nil {
+			t.Fatalf("MaterializeProfile() unexpected error: %v", err)
+		}
+		data, err := os.ReadFile(filepath.Join(root, opts.ProfileName, "config.yaml"))
+		if err != nil {
+			t.Fatalf("read config.yaml: %v", err)
+		}
+		content := string(data)
+		// The injected newline must not produce a bare top-level YAML key.
+		// We check that no line starts with "malicious:" (which would happen if
+		// the newline were unescaped and the attacker-controlled suffix were
+		// written as a new YAML key).
+		for _, line := range strings.Split(content, "\n") {
+			if strings.HasPrefix(line, "malicious:") {
+				t.Errorf("config.yaml has injected top-level key 'malicious:' at line %q:\n%s", line, content)
+			}
+		}
+		// The escaped model value must appear on the model: line (quoted with \n).
+		if !strings.Contains(content, `"gpt-5.4\nmalicious: true"`) {
+			t.Errorf("config.yaml should contain model value quoted with escaped newline, got:\n%s", content)
+		}
+	})
+
 	t.Run("config.yaml has plugins.enabled without model when Model is empty", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
@@ -556,6 +588,39 @@ func TestMaterializeProfile(t *testing.T) {
 		}
 		if string(got) != edited {
 			t.Errorf("SOUL.md was overwritten: got %q, want %q", string(got), edited)
+		}
+	})
+
+	t.Run("idempotent: plugins/ deleted after first run is recreated on re-run", func(t *testing.T) {
+		root, base := profilesRootForTest(t)
+		opts := MaterializeOptions{
+			ProfileName:    "belayer-myproject-plugins-rerun",
+			BaseProfileDir: base,
+			SystemPrompt:   "soul",
+		}
+		if err := MaterializeProfile(opts); err != nil {
+			t.Fatalf("first MaterializeProfile() unexpected error: %v", err)
+		}
+		profileDir := filepath.Join(root, opts.ProfileName)
+
+		// Simulate manual deletion of the plugins/ directory.
+		if err := os.RemoveAll(filepath.Join(profileDir, "plugins")); err != nil {
+			t.Fatalf("remove plugins/: %v", err)
+		}
+
+		// Re-run must recreate plugins/ and the belayer symlink inside it.
+		if err := MaterializeProfile(opts); err != nil {
+			t.Fatalf("second MaterializeProfile() unexpected error: %v", err)
+		}
+
+		belayerLink := filepath.Join(profileDir, "plugins", "belayer")
+		got, err := os.Readlink(belayerLink)
+		if err != nil {
+			t.Fatalf("Readlink(plugins/belayer) after re-run: %v", err)
+		}
+		want := filepath.Join(base, "plugins", "belayer")
+		if got != want {
+			t.Errorf("plugins/belayer symlink = %q, want %q", got, want)
 		}
 	})
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -103,7 +104,7 @@ func ResolveProfileName(cragSlug, talentName, instanceID string) (string, error)
 
 // ── Profile materialization ──────────────────────────────────────────────────
 
-// talentProfileDirsNoSkills mirrors hermesProfileDirs from internal/cli/auth.go
+// talentProfileDirs mirrors hermesProfileDirs from internal/cli/auth.go
 // (which itself mirrors hermes_cli/profiles.py#_PROFILE_DIRS) but omits
 // "skills" because that entry is replaced by a symlink to the base profile's
 // skills directory. This avoids creating an empty local skills/ that would
@@ -238,10 +239,13 @@ func MaterializeProfile(opts MaterializeOptions) error {
 				return fmt.Errorf("MaterializeProfile: mkdir profile %s: %w", sub, err)
 			}
 		}
-		// plugins/ parent dir — required so we can place a belayer symlink inside.
-		if err := os.MkdirAll(filepath.Join(profileDir, "plugins"), 0o755); err != nil {
-			return fmt.Errorf("MaterializeProfile: mkdir profile plugins/: %w", err)
-		}
+	}
+
+	// plugins/ parent dir — always recreated so that the plugins/belayer symlink
+	// refresh below succeeds even if plugins/ was manually deleted after the
+	// initial materialization.
+	if err := os.MkdirAll(filepath.Join(profileDir, "plugins"), 0o755); err != nil {
+		return fmt.Errorf("MaterializeProfile: mkdir profile plugins/: %w", err)
 	}
 
 	// Symlinks — always refresh if missing or broken regardless of isNew.
@@ -323,7 +327,7 @@ func TeardownProfile(profileName string) error {
 	}
 	profileDir := filepath.Join(root, profileName)
 
-	if err := os.RemoveAll(profileDir); err != nil && !os.IsNotExist(err) {
+	if err := os.RemoveAll(profileDir); err != nil {
 		return fmt.Errorf("TeardownProfile: remove %s: %w", profileDir, err)
 	}
 	return nil
@@ -409,26 +413,20 @@ func ensureSymlink(linkPath, target string) error {
 		if rmErr := os.Remove(linkPath); rmErr != nil {
 			return fmt.Errorf("remove stale symlink %s: %w", linkPath, rmErr)
 		}
-	} else if !isNoSuchFileError(err) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		// Readlink failed for a reason other than "not found". Check if it's a
 		// regular file/dir rather than a symlink.
 		if _, statErr := os.Lstat(linkPath); statErr == nil {
 			return fmt.Errorf("path %s exists and is not a symlink", linkPath)
 		}
-		// Lstat failed too (e.g. broken symlink on some platforms). Fall
-		// through to create the symlink fresh.
+		// Lstat also failed — possibly a permissions error; fall through and
+		// let Symlink fail with a clear message.
 	}
 	// Create the symlink. Parent dir must already exist.
 	if err := os.Symlink(target, linkPath); err != nil {
 		return fmt.Errorf("symlink %s → %s: %w", linkPath, target, err)
 	}
 	return nil
-}
-
-// isNoSuchFileError reports whether err is an os.ErrNotExist variant, which
-// is what Readlink returns for a missing path.
-func isNoSuchFileError(err error) bool {
-	return os.IsNotExist(err)
 }
 
 // formatProfileConfig returns the minimal config.yaml content for a fork
@@ -439,9 +437,10 @@ func formatProfileConfig(model string) string {
 	var sb strings.Builder
 	sb.WriteString("plugins:\n  enabled:\n    - belayer\n")
 	if model != "" {
-		sb.WriteString("model: ")
-		sb.WriteString(model)
-		sb.WriteString("\n")
+		// Use %q (Go double-quoted string) to prevent newline injection in YAML.
+		// YAML accepts double-quoted scalars, so this is a safe and round-trippable
+		// encoding. A raw model string could otherwise inject arbitrary YAML keys.
+		sb.WriteString(fmt.Sprintf("model: %q\n", model))
 	}
 	return sb.String()
 }
@@ -465,9 +464,14 @@ func formatTalentMetadata(m talentMetadata) string {
 // the remainder after "belayer-" is returned as the talent name with an empty
 // crag slug.
 //
-// Example: "belayer-software-co-supervisor" → cragSlug="software-co", talentName="supervisor"
-// This is a best-effort parse; the authoritative decomposition is done by
-// ResolveProfileName at spawn time.
+// This is a best-effort single-segment split: for "belayer-software-co-supervisor"
+// it returns cragSlug="software", talentName="co-supervisor" because SplitN
+// only splits at the first dash after "belayer-". It is accurate for single-word
+// crag slugs but not for multi-word ones.
+//
+// NOTE: the authoritative decomposition is the profile_name field stored in
+// .belayer-talent.yaml; Phase 4 should read that file rather than parsing the
+// profile name string.
 func splitProfileName(profileName string) (talentName, cragSlug string) {
 	// Strip "belayer-" prefix.
 	rest := strings.TrimPrefix(profileName, "belayer-")
