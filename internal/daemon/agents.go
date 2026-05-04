@@ -22,6 +22,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/sandbox"
 	"github.com/donovan-yohan/belayer/internal/store"
 	"github.com/google/uuid"
+	"go.yaml.in/yaml/v3"
 )
 
 type agentSpawnRequest struct {
@@ -1396,6 +1397,12 @@ type agentIdentity struct {
 	Kind             string
 	Ephemeral        *bool
 	YAMLPath         string
+	// MemoryScope is read from talent.yaml#memory.scope. Empty string means
+	// "not specified" — callers should default to "climb".
+	MemoryScope string
+	// RuntimeLifecycle is read from talent.yaml#runtime.lifecycle. Empty string
+	// means "not specified". Known values: "resumable", "resident", "ephemeral".
+	RuntimeLifecycle string
 }
 
 // loadAgentIdentity resolves an agent's identity files (system-prompt.md and
@@ -1511,7 +1518,50 @@ func loadAgentIdentity(workdir, belayerRoot, identity, modelOverride string) age
 		break
 	}
 
+	// Read talent.yaml#memory.scope and talent.yaml#runtime.lifecycle if present.
+	// talent.yaml is optional — many shipped agents don't have it. Uses
+	// go.yaml.in/yaml/v3 (already in go.mod and used elsewhere in this package)
+	// rather than a hand-rolled scanner because talent.yaml has nested structure.
+	for _, talentPath := range agentIdentityPaths(workdir, belayerRoot, identity, "talent.yaml") {
+		data, err := os.ReadFile(talentPath)
+		if err != nil {
+			continue
+		}
+		var tf talentYAMLFile
+		if err := yaml.Unmarshal(data, &tf); err != nil {
+			log.Printf("loadAgentIdentity: parse talent.yaml %s: %v — ignoring", talentPath, err)
+			continue
+		}
+		scope := strings.TrimSpace(tf.Memory.Scope)
+		if scope != "" {
+			if !validMemoryScopes[scope] {
+				// Invalid scope value — log a warning and default to "climb" (graceful
+				// operator experience: a typo shouldn't hard-fail the spawn).
+				log.Printf("loadAgentIdentity: talent.yaml %s has invalid memory.scope %q (must be climb|crag|talent) — defaulting to \"climb\"",
+					talentPath, scope)
+			} else {
+				out.MemoryScope = scope
+			}
+		}
+		if lc := strings.TrimSpace(tf.Runtime.Lifecycle); lc != "" {
+			out.RuntimeLifecycle = lc
+		}
+		break
+	}
+
 	return out
+}
+
+// talentYAMLFile is the minimal struct used to parse talent.yaml fields needed
+// by the daemon. Only the fields needed for Phase 3.A/3.E are decoded;
+// additional fields in the belayer-talent/v1 schema are intentionally ignored.
+type talentYAMLFile struct {
+	Memory struct {
+		Scope string `yaml:"scope"`
+	} `yaml:"memory"`
+	Runtime struct {
+		Lifecycle string `yaml:"lifecycle"`
+	} `yaml:"runtime"`
 }
 
 // agentIdentityPaths returns the ordered list of candidate paths to look up
@@ -1595,6 +1645,99 @@ func parseInlineYAMLList(raw string) []string {
 	return out
 }
 
+// teardownProfileIfClimbScoped tears down a per-talent profile fork after a
+// bridge subprocess signals completion, but only when the profile is climb-scoped
+// (ephemeral). Profiles with scope=crag or scope=talent are preserved so their
+// accumulated memories survive across runs.
+//
+// Phase 3.D: before tearing down a climb-scoped profile, this function writes a
+// talent-evaluation/v1 artifact to the climb's artifacts directory capturing the
+// agent's accumulated MEMORY.md (and USER.md when present). The artifact write is
+// best-effort: failure is logged but does not block teardown.
+//
+// Safety rules (mirrors TeardownProfile's own checks, applied early to avoid
+// unnecessary filesystem access):
+//   - Returns early for profile == "default" or "belayer" (no teardown).
+//   - Returns early if the profile name does not start with "belayer-".
+//   - If .belayer-talent.yaml is missing or unreadable, defaults to "climb" (safe:
+//     an unrecognised profile is more likely orphaned than intentionally persistent).
+//
+// Failures during teardown are logged but not propagated so agent completion
+// always succeeds even when the cleanup step encounters a filesystem error.
+//
+// Parameters:
+//   - sessionID    — the climb's session UUID; used to resolve the artifact dir.
+//   - agentRunID   — the agent_runs.id for this run; used in the artifact filename.
+//   - workspaceDir — the session workspace root; empty string disables artifact write.
+//   - profileName  — the materialized Hermes profile name (e.g. "belayer-local-supervisor").
+func (d *Daemon) teardownProfileIfClimbScoped(sessionID, agentRunID, workspaceDir, profileName string) {
+	// Guard: only operate on belayer-managed fork profiles.
+	if profileName == "" || profileName == "default" || profileName == belayerBaseProfileName {
+		return
+	}
+	if !strings.HasPrefix(profileName, "belayer-") {
+		return
+	}
+
+	meta, err := readFullTalentMetadata(profileName)
+	if err != nil {
+		// Missing or unreadable metadata → treat as climb (ephemeral/orphaned).
+		log.Printf("INFO: teardownProfileIfClimbScoped: metadata unreadable for profile %q (%v) — treating as climb-scoped, tearing down", profileName, err)
+		meta = talentMetadata{MemoryScope: "climb"}
+	}
+	scope := meta.MemoryScope
+	if scope == "" {
+		scope = "climb"
+	}
+
+	switch scope {
+	case "crag", "talent":
+		log.Printf("INFO: teardownProfileIfClimbScoped: preserving profile %q (scope=%s)", profileName, scope)
+		return
+	default:
+		// "climb" or any unrecognised value → ephemeral.
+		if scope != "climb" {
+			log.Printf("INFO: teardownProfileIfClimbScoped: unrecognised scope %q for profile %q — treating as climb-scoped, tearing down", scope, profileName)
+		}
+	}
+
+	// Phase 3.D: capture talent evaluation artifact before destroying profile.
+	if workspaceDir != "" && sessionID != "" {
+		d.writeTalentEvaluationArtifact(sessionID, agentRunID, workspaceDir, profileName, meta)
+	}
+
+	if err := TeardownProfile(profileName); err != nil {
+		log.Printf("ERROR: teardownProfileIfClimbScoped: TeardownProfile(%q) failed: %v — completion not affected", profileName, err)
+		return
+	}
+	log.Printf("INFO: teardownProfileIfClimbScoped: torn down climb-scoped profile %q", profileName)
+}
+
+// sweepSessionProfiles walks all agent_runs for the session and tears down any
+// climb-scoped fork profiles that are still on disk. This is the Phase 3.C
+// end-of-session sweep that catches agents whose bridge processes never emitted
+// final_response (crashed, timed out, budget exhausted, incomplete escalation).
+//
+// The sweep is best-effort: errors from individual agents are logged and do not
+// block the session-end transition. Re-running the sweep on an already-cleaned
+// session is safe because teardownProfileIfClimbScoped is idempotent (missing
+// dirs are silently skipped by TeardownProfile).
+func (d *Daemon) sweepSessionProfiles(sessionID string) {
+	runs, err := d.store.ListAgentRuns(sessionID)
+	if err != nil {
+		log.Printf("ERROR: sweepSessionProfiles: list agent runs for session %q: %v", sessionID, err)
+		return
+	}
+	sess, sessErr := d.store.GetSession(sessionID)
+	workspaceDir := ""
+	if sessErr == nil {
+		workspaceDir = sess.WorkspaceDir
+	}
+	for _, run := range runs {
+		d.teardownProfileIfClimbScoped(sessionID, run.ID, workspaceDir, run.Profile)
+	}
+}
+
 // buildAgentInitialMessage prepends a workspace context header to the agent's
 // initial message when the agent is isolated to a git worktree on a specific
 // branch. When branch is empty the message is returned unchanged.
@@ -1673,13 +1816,21 @@ func (d *Daemon) materializeBridgeProfile(req agentSpawnRequest) agentSpawnReque
 	// compared to the cost of spawning a subprocess.
 	loaded := loadAgentIdentity(req.Workdir, d.config.BelayerRoot, req.identityKey(), req.Model)
 
+	// Phase 3.E: resumable agents default to crag-scoped memory so that dormancy
+	// and wake (#118) reuse the same fork profile and accumulated memory. An
+	// explicit memory.scope in talent.yaml always wins (operator's choice).
+	memScope := loaded.MemoryScope
+	if loaded.RuntimeLifecycle == "resumable" && memScope == "" {
+		memScope = "crag"
+	}
+
 	baseProfileDir := filepath.Join(profilesRoot, belayerBaseProfileName)
 	matErr := MaterializeProfile(MaterializeOptions{
 		ProfileName:    forkName,
 		BaseProfileDir: baseProfileDir,
 		SystemPrompt:   loaded.SystemPrompt,
 		Model:          loaded.Model,
-		MemoryScope:    "", // default ("climb"); talent.yaml#memory.scope wired in Phase 3
+		MemoryScope:    memScope, // read from talent.yaml#memory.scope (Phase 3.A); resumable defaults to "crag" (Phase 3.E); empty → "climb" in MaterializeProfile
 	})
 	if matErr != nil {
 		// Base profile missing (operator hasn't run `belayer auth`) or I/O error.

@@ -1033,6 +1033,10 @@ func (d *Daemon) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 			// archiver reads session state before any teardown side-effects can
 			// perturb the session row.
 			d.stopAllBridgeAgents(id, "session status changed to "+req.Status)
+			// Phase 3.C: sweep climb-scoped fork profiles that were not already
+			// torn down by a final_response event (crashed, timed out, budget
+			// exhausted, or incomplete escalation paths).
+			d.sweepSessionProfiles(id)
 			d.archiver.ArchiveTerminal(id)
 			d.terminateSandbox(r.Context(), id)
 		} else {
