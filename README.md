@@ -114,9 +114,19 @@ belayer team add development
 belayer climb start --task "Pick up this backlog item end to end"
 ```
 
-A crag stores reusable teams, playbooks, gates, evaluations, promotions, and
-generated team metadata under `~/.belayer/crags/<name>/`. Story worlds use the
+A crag stores reusable teams, gates, evaluations, promotions, and
+generated talent metadata under `~/.belayer/crags/<name>/`. Story worlds use the
 same shape with `--kind story`, story teams, continuity gates, and world state.
+
+Catalog talent metadata (`talent.yaml`, schema `belayer-talent/v1`) describes
+intent beyond the bridge mechanics: `runtime.lifecycle: resident | resumable | ephemeral`,
+`activation.mode`, typed `contract.accepts/produces/requires`, gate authority,
+and `memory.scope`. Generated talents use a separate `belayer-generated-talent/v1`
+schema for runtime-scaffolded records. Gates follow the `belayer-gate/v1` shape;
+PM is the only gate the daemon enforces today (the session-level acceptance
+gate). Additional crag-defined gates (code-review, runtime-qa, continuity, etc.)
+are documented contracts and proof examples — the daemon does not yet discover
+or execute them. See `docs/CRAG_MODE.md` and `docs/CRAG_FILESYSTEM.md`.
 
 ## How a climb flows
 

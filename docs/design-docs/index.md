@@ -6,9 +6,11 @@ claims from a design note.
 
 ## Current Or Recently Implemented Designs
 
+- [Org Mode Nightshift plan](2026-04-30-org-mode-nightshift-plan.md) — Stack plan for crag-mode rollout: filesystem contract, CLI, proof examples. Shipped via PRs #117–#129. Prefer `docs/CRAG_MODE.md` and `docs/CRAG_FILESYSTEM.md` for current behavior.
+- [Talent lifecycle contract plan](2026-05-01-talent-lifecycle-contract-plan.md) — Defines `belayer-talent/v1` contract: `role`/`domain`, `activation`, `runtime.lifecycle`, typed `contract`, gate bindings, and lifecycle evidence in evaluations. Docs+schema step shipped; daemon wake-on-mail follow-up tracked separately.
 - [Observability log tiers and API design](2026-04-19-observability-log-tiers-and-api-design.md) — Tiered logging, consolidated CLI+HTTP API, SSE with digests, per-agent spill files, Nightshift-friendly archives.
 - [Template-team exit conditions, prompt discipline, and CI lint](2026-04-20-template-team-exit-conditions-and-prompt-discipline.md) — Implemented prompt/tool/doc-drift cleanup. This file already carries implementation deviations; check shipped prompts and current docs before copying examples.
-- [Belayer-in-clamshell](2026-04-17-belayer-in-clamshell-design.md) — Current direction for container-per-run sandboxing, but not the organization-mode execution adapter boundary.
+- [Belayer-in-clamshell](2026-04-17-belayer-in-clamshell-design.md) — Current direction for container-per-climb sandboxing, but not the organization-mode execution adapter boundary.
 - [Embed hermes_bridge + deployment docs](2026-04-17-embed-hermes-bridge-design.md) — Historical design behind embedded bridge distribution and deployment docs.
 
 ## Historical Or Superseded Designs
