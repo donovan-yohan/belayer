@@ -407,7 +407,12 @@ def main() -> None:
 
     # --- Shared SessionDB for persistence and resume -----------------------
     from pathlib import Path
-    session_db = SessionDB(db_path=Path.home() / ".hermes" / "state.db")
+    _hermes_home_env = os.environ.get("HERMES_HOME", "").strip()
+    if _hermes_home_env:
+        _hermes_home = Path(_hermes_home_env)
+    else:
+        _hermes_home = Path.home() / ".hermes"
+    session_db = SessionDB(db_path=_hermes_home / "state.db")
 
     agent_kwargs: dict = {
         "quiet_mode": True,

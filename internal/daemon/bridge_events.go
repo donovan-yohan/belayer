@@ -971,13 +971,16 @@ If gaps exist: call belayer_reject_completion with the specific gaps so the supe
 
 	// Auto-spawn the acceptance gate talent. The built-in preset keeps the
 	// historical PM path intact unless a project config overrides it.
+	// Use belayerBaseProfileName so the PM gets its own materialized profile
+	// fork (same as any other talent). Downstream the spawn path applies the
+	// "belayer" → fork-name logic, so this is the right default.
 	go func() {
 		_, err := d.spawnAgentInternal(agentSpawnRequest{
 			SessionID: sessionID,
 			Name:      acceptanceTalent,
 			Role:      acceptanceTalent,
 			Kind:      "side",
-			Profile:   "default",
+			Profile:   belayerBaseProfileName,
 			Message:   gateMessage,
 		})
 		if err != nil {
