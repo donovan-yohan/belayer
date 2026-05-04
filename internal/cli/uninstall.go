@@ -24,11 +24,11 @@ func newUninstallCmd() *cobra.Command {
 		Long: `Remove belayer Hermes profiles and workspace state.
 
 Per-crag mode (--crag <slug>):
-  Removes all belayer-<slug>-* profiles and ~/.belayer/crags/<slug>/ workspace
-  state. Preserves the base belayer profile, other crags, and the talent catalog.
+  Removes all blyr-<slug>-* profiles and ~/.belayer/crags/<slug>/ workspace
+  state. Preserves the base blyr profile, other crags, and the talent catalog.
 
 Global mode (no --crag):
-  Removes ALL belayer-* profiles (including the base belayer profile) and the
+  Removes ALL blyr-* profiles (including the base blyr profile) and the
   entire ~/.belayer/ directory. Other Hermes profiles (default, etc.) are left
   intact. ~/.hermes/auth.json is preserved.
 
@@ -61,7 +61,7 @@ func validateCragSlug(slug string) error {
 	}
 	// Reuse Hermes profile name validation: the slug becomes a segment of
 	// "belayer-<slug>-<talent>" so it must meet the same character constraints.
-	if err := daemon.ValidateProfileName("belayer-" + slug + "-x"); err != nil {
+	if err := daemon.ValidateProfileName("blyr-" + slug + "-x"); err != nil {
 		return fmt.Errorf("crag slug %q is invalid: only lowercase alphanumeric, hyphens, and underscores are allowed", slug)
 	}
 	return nil
@@ -91,7 +91,7 @@ func confirmPrompt(out io.Writer, in io.Reader, prompt string) bool {
 }
 
 // listBelayerProfiles returns all profile names under the profiles root that
-// start with "belayer-". The base "belayer" profile is never included.
+// start with "blyr-". The base "blyr" profile is never included.
 func listBelayerProfiles(root string) ([]string, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -102,20 +102,20 @@ func listBelayerProfiles(root string) ([]string, error) {
 	}
 	var names []string
 	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "belayer-") {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "blyr-") {
 			names = append(names, e.Name())
 		}
 	}
 	return names, nil
 }
 
-// listCragProfiles returns only profile names that start with "belayer-<slug>-".
+// listCragProfiles returns only profile names that start with "blyr-<slug>-".
 func listCragProfiles(root, slug string) ([]string, error) {
 	all, err := listBelayerProfiles(root)
 	if err != nil {
 		return nil, err
 	}
-	prefix := "belayer-" + slug + "-"
+	prefix := "blyr-" + slug + "-"
 	var names []string
 	for _, n := range all {
 		if strings.HasPrefix(n, prefix) {
@@ -223,8 +223,8 @@ func archiveProfileMemories(profiles []string, profilesRoot, archiveRoot string)
 	for _, p := range profiles {
 		memoriesDir := filepath.Join(profilesRoot, p, "memories")
 		// Extract a human-readable talent segment from the profile name for the
-		// archive subdirectory name. We use everything after "belayer-<crag>-".
-		// E.g. "belayer-software-co-supervisor" → we strip the "belayer-" prefix
+		// archive subdirectory name. We use everything after "blyr-<crag>-".
+		// E.g. "blyr-software-co-supervisor" → we strip the "blyr-" prefix
 		// and find the remaining path.
 		talentSegment := p // fallback: use full profile name
 		parts := strings.SplitN(p, "-", 3)
@@ -275,14 +275,14 @@ func uninstallGlobal(cmd *cobra.Command, yes bool) error {
 		return fmt.Errorf("resolve profiles root: %w", err)
 	}
 
-	// Collect all belayer-* profiles (excludes "belayer" base profile).
+	// Collect all blyr-* profiles (excludes "blyr" base profile).
 	forkProfiles, err := listBelayerProfiles(profilesRoot)
 	if err != nil {
 		return err
 	}
 
-	// Check whether the base "belayer" profile exists.
-	baseProfileDir := filepath.Join(profilesRoot, "belayer")
+	// Check whether the base "blyr" profile exists.
+	baseProfileDir := filepath.Join(profilesRoot, "blyr")
 	baseExists := false
 	if _, statErr := os.Stat(baseProfileDir); statErr == nil {
 		baseExists = true
@@ -337,7 +337,7 @@ func uninstallGlobal(cmd *cobra.Command, yes bool) error {
 		removedForks++
 	}
 
-	// Remove the base "belayer" profile directly (TeardownProfile refuses base).
+	// Remove the base "blyr" profile directly (TeardownProfile refuses base).
 	if baseExists {
 		if err := os.RemoveAll(baseProfileDir); err != nil {
 			return fmt.Errorf("remove base profile %s: %w", baseProfileDir, err)

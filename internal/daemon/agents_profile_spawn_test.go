@@ -71,8 +71,8 @@ func TestSpawnProfile_BelayerProfileMaterializesFork(t *testing.T) {
 	if capturedProfile == belayerBaseProfileName {
 		t.Errorf("expected fork profile name, got bare %q — materialization did not run", belayerBaseProfileName)
 	}
-	if !strings.HasPrefix(capturedProfile, "belayer-") {
-		t.Errorf("fork profile name %q does not start with 'belayer-'", capturedProfile)
+	if !strings.HasPrefix(capturedProfile, "blyr-") {
+		t.Errorf("fork profile name %q does not start with 'blyr-'", capturedProfile)
 	}
 	// No crag link → should include "local" slug.
 	if !strings.Contains(capturedProfile, "-local-") {
@@ -142,7 +142,7 @@ func TestSpawnProfile_DefaultProfileSkipsMaterialization(t *testing.T) {
 	// No fork directories should have been created under the profiles root.
 	entries, _ := os.ReadDir(profilesRoot)
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "belayer-") {
+		if strings.HasPrefix(e.Name(), "blyr-") {
 			t.Errorf("unexpected fork profile dir created for 'default' spawn: %s", e.Name())
 		}
 	}
@@ -191,7 +191,7 @@ func TestSpawnProfile_CustomProfileSkipsMaterialization(t *testing.T) {
 	// No fork directories should have been created.
 	entries, _ := os.ReadDir(profilesRoot)
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "belayer-") {
+		if strings.HasPrefix(e.Name(), "blyr-") {
 			t.Errorf("unexpected fork profile dir created for custom profile spawn: %s", e.Name())
 		}
 	}
@@ -367,7 +367,7 @@ func TestSpawnProfile_StableProfileNameAcrossClimbs(t *testing.T) {
 	if rr1.Code != http.StatusCreated {
 		t.Fatalf("climb-1 spawn: %d %s", rr1.Code, rr1.Body.String())
 	}
-	if !strings.HasPrefix(profile1, "belayer-") {
+	if !strings.HasPrefix(profile1, "blyr-") {
 		t.Fatalf("climb-1: expected fork profile, got %q", profile1)
 	}
 
@@ -396,7 +396,7 @@ func TestSpawnProfile_StableProfileNameAcrossClimbs(t *testing.T) {
 	if rr2.Code != http.StatusCreated {
 		t.Fatalf("climb-2 spawn: %d %s", rr2.Code, rr2.Body.String())
 	}
-	if !strings.HasPrefix(profile2, "belayer-") {
+	if !strings.HasPrefix(profile2, "blyr-") {
 		t.Fatalf("climb-2: expected fork profile, got %q", profile2)
 	}
 
@@ -452,8 +452,8 @@ func TestSpawnProfile_ParallelMainsShareProfile(t *testing.T) {
 		t.Errorf("parallel mains with same identity must share one profile; got backend-dev-1=%q backend-dev-2=%q", p1, p2)
 	}
 
-	// Profile name must be belayer-local-backend-dev (no hash suffix).
-	const wantProfile = "belayer-local-backend-dev"
+	// Profile name must be blyr-local-backend-dev (no hash suffix).
+	const wantProfile = "blyr-local-backend-dev"
 	if p1 != wantProfile {
 		t.Errorf("profile = %q, want %q", p1, wantProfile)
 	}

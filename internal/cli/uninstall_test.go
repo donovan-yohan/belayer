@@ -49,10 +49,10 @@ func createFakeProfile(t *testing.T, profilesRoot, name string) {
 	}
 }
 
-// createFakeBaseProfile creates the canonical "belayer" base profile.
+// createFakeBaseProfile creates the canonical "blyr" base profile.
 func createFakeBaseProfile(t *testing.T, profilesRoot string) {
 	t.Helper()
-	dir := filepath.Join(profilesRoot, "belayer")
+	dir := filepath.Join(profilesRoot, "blyr")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir base profile: %v", err)
 	}
@@ -108,9 +108,9 @@ func TestUninstallCrag_YesRemovesCragProfilesAndWorkspace(t *testing.T) {
 	belayerDir := setupBelayerHome(t)
 
 	// Create two profiles for "software-co" and one for another crag "other".
-	createFakeProfile(t, profilesRoot, "belayer-software-co-supervisor")
-	createFakeProfile(t, profilesRoot, "belayer-software-co-backend-dev")
-	createFakeProfile(t, profilesRoot, "belayer-other-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-software-co-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-software-co-backend-dev")
+	createFakeProfile(t, profilesRoot, "blyr-other-supervisor")
 	createFakeBaseProfile(t, profilesRoot)
 	createCragWorkspace(t, belayerDir, "software-co")
 
@@ -120,7 +120,7 @@ func TestUninstallCrag_YesRemovesCragProfilesAndWorkspace(t *testing.T) {
 	}
 
 	// The two software-co profiles must be gone.
-	for _, p := range []string{"belayer-software-co-supervisor", "belayer-software-co-backend-dev"} {
+	for _, p := range []string{"blyr-software-co-supervisor", "blyr-software-co-backend-dev"} {
 		if _, err := os.Stat(filepath.Join(profilesRoot, p)); !os.IsNotExist(err) {
 			t.Errorf("expected profile %s to be removed, stat: %v", p, err)
 		}
@@ -144,7 +144,7 @@ func TestUninstallCrag_PreservesBaseProfile(t *testing.T) {
 	profilesRoot := setupHermesHome(t)
 	belayerDir := setupBelayerHome(t)
 
-	createFakeProfile(t, profilesRoot, "belayer-software-co-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-software-co-supervisor")
 	createFakeBaseProfile(t, profilesRoot)
 	createCragWorkspace(t, belayerDir, "software-co")
 
@@ -153,7 +153,7 @@ func TestUninstallCrag_PreservesBaseProfile(t *testing.T) {
 		t.Fatalf("uninstall crag: %v", err)
 	}
 
-	baseDir := filepath.Join(profilesRoot, "belayer")
+	baseDir := filepath.Join(profilesRoot, "blyr")
 	if _, err := os.Stat(baseDir); err != nil {
 		t.Errorf("expected base profile %s to survive, stat: %v", baseDir, err)
 	}
@@ -165,9 +165,9 @@ func TestUninstallCrag_PreservesOtherCrags(t *testing.T) {
 	profilesRoot := setupHermesHome(t)
 	belayerDir := setupBelayerHome(t)
 
-	createFakeProfile(t, profilesRoot, "belayer-software-co-supervisor")
-	createFakeProfile(t, profilesRoot, "belayer-other-supervisor")
-	createFakeProfile(t, profilesRoot, "belayer-other-backend-dev")
+	createFakeProfile(t, profilesRoot, "blyr-software-co-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-other-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-other-backend-dev")
 	createCragWorkspace(t, belayerDir, "software-co")
 	createCragWorkspace(t, belayerDir, "other")
 
@@ -177,7 +177,7 @@ func TestUninstallCrag_PreservesOtherCrags(t *testing.T) {
 	}
 
 	// Other crag profiles must survive.
-	for _, p := range []string{"belayer-other-supervisor", "belayer-other-backend-dev"} {
+	for _, p := range []string{"blyr-other-supervisor", "blyr-other-backend-dev"} {
 		if _, err := os.Stat(filepath.Join(profilesRoot, p)); err != nil {
 			t.Errorf("expected other-crag profile %s to survive, stat: %v", p, err)
 		}
@@ -196,7 +196,7 @@ func TestUninstallCrag_PreservesTalentCatalog(t *testing.T) {
 	profilesRoot := setupHermesHome(t)
 	belayerDir := setupBelayerHome(t)
 
-	createFakeProfile(t, profilesRoot, "belayer-software-co-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-software-co-supervisor")
 	createCragWorkspace(t, belayerDir, "software-co")
 	catalogDir := createTalentCatalog(t, belayerDir)
 
@@ -219,7 +219,7 @@ func TestUninstallCrag_KeepMemoriesWritesArchiveOutsideCragDir(t *testing.T) {
 	belayerDir := setupBelayerHome(t)
 
 	// Create a profile with memory files.
-	profName := "belayer-software-co-supervisor"
+	profName := "blyr-software-co-supervisor"
 	createFakeProfile(t, profilesRoot, profName)
 	memoriesDir := filepath.Join(profilesRoot, profName, "memories")
 	if err := os.WriteFile(filepath.Join(memoriesDir, "MEMORY.md"), []byte("# memory content"), 0o644); err != nil {
@@ -326,9 +326,9 @@ func TestUninstallGlobal_YesRemovesAllProfilesAndHome(t *testing.T) {
 	profilesRoot := setupHermesHome(t)
 	belayerDir := setupBelayerHome(t)
 
-	createFakeProfile(t, profilesRoot, "belayer-software-co-supervisor")
-	createFakeProfile(t, profilesRoot, "belayer-software-co-backend-dev")
-	createFakeProfile(t, profilesRoot, "belayer-other-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-software-co-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-software-co-backend-dev")
+	createFakeProfile(t, profilesRoot, "blyr-other-supervisor")
 	createFakeBaseProfile(t, profilesRoot)
 	// Plant something in belayer home to confirm it's removed.
 	if err := os.WriteFile(filepath.Join(belayerDir, "daemon.db"), []byte("db"), 0o644); err != nil {
@@ -342,17 +342,17 @@ func TestUninstallGlobal_YesRemovesAllProfilesAndHome(t *testing.T) {
 
 	// All belayer-* profiles must be gone.
 	for _, p := range []string{
-		"belayer-software-co-supervisor",
-		"belayer-software-co-backend-dev",
-		"belayer-other-supervisor",
+		"blyr-software-co-supervisor",
+		"blyr-software-co-backend-dev",
+		"blyr-other-supervisor",
 	} {
 		if _, err := os.Stat(filepath.Join(profilesRoot, p)); !os.IsNotExist(err) {
 			t.Errorf("expected profile %s to be removed, stat: %v", p, err)
 		}
 	}
 
-	// Base belayer profile must be gone.
-	baseDir := filepath.Join(profilesRoot, "belayer")
+	// Base blyr profile must be gone.
+	baseDir := filepath.Join(profilesRoot, "blyr")
 	if _, err := os.Stat(baseDir); !os.IsNotExist(err) {
 		t.Errorf("expected base profile to be removed, stat: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestUninstallGlobal_PreservesOtherHermesProfiles(t *testing.T) {
 	setupBelayerHome(t)
 
 	// Create belayer profiles.
-	createFakeProfile(t, profilesRoot, "belayer-software-co-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-software-co-supervisor")
 	createFakeBaseProfile(t, profilesRoot)
 
 	// Create non-belayer profiles that must survive.
@@ -421,7 +421,7 @@ func TestUninstallNoYes_NonTTYStdinReturnsError(t *testing.T) {
 
 	profilesRoot := setupHermesHome(t)
 	belayerDir := setupBelayerHome(t)
-	createFakeProfile(t, profilesRoot, "belayer-myapp-supervisor")
+	createFakeProfile(t, profilesRoot, "blyr-myapp-supervisor")
 	createCragWorkspace(t, belayerDir, "myapp")
 
 	// Per-crag without --yes.
@@ -525,10 +525,10 @@ func TestListCragProfiles(t *testing.T) {
 	setupBelayerHome(t)
 
 	for _, name := range []string{
-		"belayer-software-co-supervisor",
-		"belayer-software-co-backend-dev",
-		"belayer-other-supervisor",
-		"belayer",
+		"blyr-software-co-supervisor",
+		"blyr-software-co-backend-dev",
+		"blyr-other-supervisor",
+		"blyr",
 		"default",
 	} {
 		dir := filepath.Join(profilesRoot, name)
@@ -545,18 +545,18 @@ func TestListCragProfiles(t *testing.T) {
 		t.Errorf("got %d profiles, want 2: %v", len(got), got)
 	}
 	for _, g := range got {
-		if !strings.HasPrefix(g, "belayer-software-co-") {
+		if !strings.HasPrefix(g, "blyr-software-co-") {
 			t.Errorf("unexpected profile %q in result", g)
 		}
 	}
 
-	// Verify that "belayer" (base) and "default" (non-belayer) are never included.
+	// Verify that "blyr" (base) and "default" (non-belayer) are never included.
 	all, err := listBelayerProfiles(profilesRoot)
 	if err != nil {
 		t.Fatalf("listBelayerProfiles: %v", err)
 	}
 	for _, a := range all {
-		if a == "belayer" || a == "default" {
+		if a == "blyr" || a == "default" {
 			t.Errorf("listBelayerProfiles returned non-fork profile %q", a)
 		}
 	}

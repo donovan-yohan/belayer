@@ -303,7 +303,7 @@ func TestSpawnProfile_TalentYAMLInvalidScopeDefaultsToClimb(t *testing.T) {
 	}
 
 	// Fork must still be created and default to climb.
-	if !strings.HasPrefix(capturedProfile, "belayer-") {
+	if !strings.HasPrefix(capturedProfile, "blyr-") {
 		t.Fatalf("expected fork profile name, got %q", capturedProfile)
 	}
 

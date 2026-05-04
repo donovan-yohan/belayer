@@ -105,8 +105,8 @@ func TestPhase5Integration_ParallelMainsShareProfile(t *testing.T) {
 	p2 := profiles["backend-dev-2"]
 	mu.Unlock()
 
-	// Both must resolve to "belayer-local-backend-dev" (Phase 5.A stable naming).
-	const wantProfile = "belayer-local-backend-dev"
+	// Both must resolve to "blyr-local-backend-dev" (Phase 5.A stable naming).
+	const wantProfile = "blyr-local-backend-dev"
 	if p1 != wantProfile {
 		t.Errorf("backend-dev-1 profile = %q, want %q", p1, wantProfile)
 	}
@@ -155,7 +155,7 @@ func TestPhase5Integration_ParallelMainsShareProfile(t *testing.T) {
 	}
 	var forkCount int
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "belayer-local-backend-dev") {
+		if strings.HasPrefix(e.Name(), "blyr-local-backend-dev") {
 			forkCount++
 		}
 	}
@@ -242,7 +242,7 @@ func TestPhase5Integration_ParallelMainsConcurrentStateDB(t *testing.T) {
 	profilesRoot, _ := setupIntegrationBase(t)
 
 	// Create the shared profile dir that both "agents" will use.
-	forkDir := filepath.Join(profilesRoot, "belayer-local-backend-dev")
+	forkDir := filepath.Join(profilesRoot, "blyr-local-backend-dev")
 	if err := os.MkdirAll(forkDir, 0o755); err != nil {
 		t.Fatalf("mkdir fork profile: %v", err)
 	}

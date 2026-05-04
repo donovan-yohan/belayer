@@ -86,7 +86,7 @@ func ResolveProfileName(cragSlug, talentName, instanceID string) (string, error)
 		resolvedInstance = talentName + "-" + instanceID
 	}
 
-	profileName := "belayer-" + cragSlug + "-" + resolvedInstance
+	profileName := "blyr-" + cragSlug + "-" + resolvedInstance
 
 	if err := ValidateProfileName(profileName); err != nil {
 		// Provide a more actionable error by naming the offending segments.
@@ -94,7 +94,7 @@ func ResolveProfileName(cragSlug, talentName, instanceID string) (string, error)
 		if totalLen > 64 {
 			return "", fmt.Errorf(
 				"resolved profile name %q is %d characters (max 64): "+
-					"belayer-(8) + cragSlug %q (%d) + \"-\"(1) + instance %q (%d) = %d",
+					"blyr-(5) + cragSlug %q (%d) + \"-\"(1) + instance %q (%d) = %d",
 				profileName, totalLen,
 				cragSlug, len(cragSlug),
 				resolvedInstance, len(resolvedInstance),
@@ -291,7 +291,7 @@ func MaterializeProfile(opts MaterializeOptions) error {
 
 		// Write .belayer-talent.yaml metadata for Phase 3.
 		// Derive talent name and crag slug from profile name by stripping the
-		// "belayer-<crag>-" prefix.  We parse them conservatively because the
+		// "blyr-<crag>-" prefix.  We parse them conservatively because the
 		// caller has already validated the name via ResolveProfileName.
 		talentName, cragSlug := splitProfileName(opts.ProfileName)
 		meta := formatTalentMetadata(talentMetadata{
@@ -319,11 +319,11 @@ func TeardownProfile(profileName string) error {
 	if profileName == "" {
 		return fmt.Errorf("TeardownProfile: profileName must not be empty")
 	}
-	if profileName == "belayer" {
-		return fmt.Errorf("TeardownProfile: refusing to tear down the base belayer profile")
+	if profileName == "blyr" {
+		return fmt.Errorf("TeardownProfile: refusing to tear down the base blyr profile")
 	}
-	if !strings.HasPrefix(profileName, "belayer-") {
-		return fmt.Errorf("TeardownProfile: profileName %q does not start with \"belayer-\" — only belayer-managed profiles may be torn down", profileName)
+	if !strings.HasPrefix(profileName, "blyr-") {
+		return fmt.Errorf("TeardownProfile: profileName %q does not start with \"blyr-\" — only belayer-managed profiles may be torn down", profileName)
 	}
 
 	root, err := ProfilesRoot()
@@ -456,10 +456,10 @@ func ResolveCragSlug(projectDir string) (string, error) {
 
 // belayerBaseProfileName is the canonical Hermes profile name that holds the
 // shared auth.json, plugin registration, and skills. Per-talent fork profiles
-// are named belayer-<cragSlug>-<instance> and inherit from this base.
+// are named blyr-<cragSlug>-<instance> and inherit from this base.
 // Agents spawned with Profile == belayerBaseProfileName get a materialized fork;
 // Profile == "default" preserves legacy behaviour (HERMES_HOME unset).
-const belayerBaseProfileName = "belayer"
+const belayerBaseProfileName = "blyr"
 
 // ── internal helpers ─────────────────────────────────────────────────────────
 
@@ -523,24 +523,24 @@ func formatTalentMetadata(m talentMetadata) string {
 	return sb.String()
 }
 
-// splitProfileName splits a profile name of the form "belayer-<cragSlug>-<talentName>"
+// splitProfileName splits a profile name of the form "blyr-<cragSlug>-<talentName>"
 // into its crag slug and talent name components. The profile name must start
-// with "belayer-". If the name has fewer than three dash-delimited segments
-// the remainder after "belayer-" is returned as the talent name with an empty
+// with "blyr-". If the name has fewer than three dash-delimited segments
+// the remainder after "blyr-" is returned as the talent name with an empty
 // crag slug.
 //
-// This is a best-effort single-segment split: for "belayer-software-co-supervisor"
+// This is a best-effort single-segment split: for "blyr-software-co-supervisor"
 // it returns cragSlug="software", talentName="co-supervisor" because SplitN
-// only splits at the first dash after "belayer-". It is accurate for single-word
+// only splits at the first dash after "blyr-". It is accurate for single-word
 // crag slugs but not for multi-word ones.
 //
 // NOTE: the authoritative decomposition is the profile_name field stored in
 // .belayer-talent.yaml; Phase 4 should read that file rather than parsing the
 // profile name string.
 func splitProfileName(profileName string) (talentName, cragSlug string) {
-	// Strip "belayer-" prefix.
-	rest := strings.TrimPrefix(profileName, "belayer-")
-	// The profile format is belayer-<cragSlug>-<instance> where cragSlug and
+	// Strip "blyr-" prefix.
+	rest := strings.TrimPrefix(profileName, "blyr-")
+	// The profile format is blyr-<cragSlug>-<instance> where cragSlug and
 	// instance are both variable length. We can't deterministically split them
 	// without knowing the crag slug, so we record the raw remainder and let
 	// Phase 3 use the stored metadata for precise decomposition.

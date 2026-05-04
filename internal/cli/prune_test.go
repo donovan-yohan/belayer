@@ -22,17 +22,17 @@ func setupPruneFixture(t *testing.T) (hermesHome string, dbFile string) {
 	t.Helper()
 	tmp := t.TempDir()
 
-	// Create base "belayer" profile directory.
+	// Create base "blyr" profile directory.
 	profilesDir := filepath.Join(tmp, "profiles")
-	if err := os.MkdirAll(filepath.Join(profilesDir, "belayer"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(profilesDir, "blyr"), 0o755); err != nil {
 		t.Fatalf("mkdir base profile: %v", err)
 	}
 
 	// Point daemon.ProfilesRoot() at our temp dir.
 	// ProfilesRoot honours HERMES_HOME: if it ends in /profiles/<name>, the
-	// parent /profiles is returned. We set HERMES_HOME to the base belayer
+	// parent /profiles is returned. We set HERMES_HOME to the base blyr
 	// profile path so ProfilesRoot returns profilesDir.
-	t.Setenv("HERMES_HOME", filepath.Join(profilesDir, "belayer"))
+	t.Setenv("HERMES_HOME", filepath.Join(profilesDir, "blyr"))
 
 	// In-memory DB for store access.
 	st, err := store.Open(":memory:")
@@ -134,7 +134,7 @@ func runPruneCmd(t *testing.T, args ...string) (string, string, error) {
 func TestPruneCmd_DryRunListsWithoutRemoving(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
-	orphanName := "belayer-local-orphan"
+	orphanName := "blyr-local-orphan"
 	makeProfile(t, profilesDir, orphanName, "local", "orphan", false)
 
 	stdout, _, err := runPruneCmd(t, "--dry-run", "--db", dbFile)
@@ -160,7 +160,7 @@ func TestPruneCmd_DryRunListsWithoutRemoving(t *testing.T) {
 func TestPruneCmd_YesRemovesWithoutPrompt(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
-	orphanName := "belayer-local-supervisor"
+	orphanName := "blyr-local-supervisor"
 	makeProfile(t, profilesDir, orphanName, "local", "supervisor", false)
 
 	stdout, _, err := runPruneCmd(t, "--yes", "--db", dbFile)
@@ -185,7 +185,7 @@ func TestPruneCmd_KeepMemoriesArchives(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	orphanName := "belayer-local-remembering"
+	orphanName := "blyr-local-remembering"
 	makeProfile(t, profilesDir, orphanName, "local", "remembering", true)
 
 	stdout, stderr, err := runPruneCmd(t, "--yes", "--keep-memories", "--db", dbFile)
@@ -232,8 +232,8 @@ func TestPruneCmd_KeepMemoriesArchives(t *testing.T) {
 func TestPruneCmd_CragFilterScopesSearch(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
-	localOrphan := "belayer-local-filterable"
-	otherOrphan := "belayer-other-filterable"
+	localOrphan := "blyr-local-filterable"
+	otherOrphan := "blyr-other-filterable"
 	makeProfile(t, profilesDir, localOrphan, "local", "filterable", false)
 	makeProfile(t, profilesDir, otherOrphan, "other", "filterable", false)
 
@@ -262,7 +262,7 @@ func TestPruneCmd_CragFilterScopesSearch(t *testing.T) {
 func TestPruneCmd_ActiveProfileNotPruned(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
-	activeProfile := "belayer-local-active"
+	activeProfile := "blyr-local-active"
 	makeProfile(t, profilesDir, activeProfile, "local", "active", false)
 
 	// Register this profile in agent_runs so it is considered "active".
@@ -302,7 +302,7 @@ func TestPruneCmd_BaseProfileNeverPruned(t *testing.T) {
 	}
 
 	// Base profile must still be present.
-	if _, statErr := os.Stat(filepath.Join(profilesDir, "belayer")); statErr != nil {
+	if _, statErr := os.Stat(filepath.Join(profilesDir, "blyr")); statErr != nil {
 		t.Errorf("base profile should never be removed: %v", statErr)
 	}
 }
@@ -328,7 +328,7 @@ func TestPruneCmd_StdinNotTTYWithoutYes(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
 	// Create an orphan so the prompt code is reached.
-	makeProfile(t, profilesDir, "belayer-local-ttyprompt", "local", "ttyprompt", false)
+	makeProfile(t, profilesDir, "blyr-local-ttyprompt", "local", "ttyprompt", false)
 
 	// Pipe stdin from /dev/null (non-TTY).
 	origStdin := os.Stdin
@@ -409,7 +409,7 @@ func makeProfileWithScope(t *testing.T, profilesDir, profileName, cragSlug, tale
 func TestPruneCmd_CragScopedNotPrunedByDefault(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
-	profileName := "belayer-local-supervisor"
+	profileName := "blyr-local-supervisor"
 	makeProfileWithScope(t, profilesDir, profileName, "local", "supervisor", "crag")
 
 	stdout, _, err := runPruneCmd(t, "--yes", "--db", dbFile)
@@ -431,7 +431,7 @@ func TestPruneCmd_CragScopedNotPrunedByDefault(t *testing.T) {
 func TestPruneCmd_TalentScopedNotPrunedByDefault(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
-	profileName := "belayer-local-backend-dev"
+	profileName := "blyr-local-backend-dev"
 	makeProfileWithScope(t, profilesDir, profileName, "local", "backend-dev", "talent")
 
 	stdout, _, err := runPruneCmd(t, "--yes", "--db", dbFile)
@@ -452,7 +452,7 @@ func TestPruneCmd_TalentScopedNotPrunedByDefault(t *testing.T) {
 func TestPruneCmd_ClimbScopedStillPruned(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
-	profileName := "belayer-local-qa"
+	profileName := "blyr-local-qa"
 	makeProfileWithScope(t, profilesDir, profileName, "local", "qa", "climb")
 
 	stdout, _, err := runPruneCmd(t, "--yes", "--db", dbFile)
@@ -473,7 +473,7 @@ func TestPruneCmd_ClimbScopedStillPruned(t *testing.T) {
 func TestPruneCmd_IncludeScopedRemovesCragScoped(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
-	profileName := "belayer-local-supervisor"
+	profileName := "blyr-local-supervisor"
 	makeProfileWithScope(t, profilesDir, profileName, "local", "supervisor", "crag")
 
 	stdout, _, err := runPruneCmd(t, "--yes", "--include-scoped", "--db", dbFile)
@@ -495,8 +495,8 @@ func TestPruneCmd_SkippedLinesForPreservedProfiles(t *testing.T) {
 	profilesDir, dbFile := setupPruneFixture(t)
 
 	// One crag-scoped profile (should be skipped) + one climb-scoped (should be pruned).
-	cragProfile := "belayer-local-supervisor"
-	climbProfile := "belayer-local-qa"
+	cragProfile := "blyr-local-supervisor"
+	climbProfile := "blyr-local-qa"
 	makeProfileWithScope(t, profilesDir, cragProfile, "local", "supervisor", "crag")
 	makeProfileWithScope(t, profilesDir, climbProfile, "local", "qa", "climb")
 

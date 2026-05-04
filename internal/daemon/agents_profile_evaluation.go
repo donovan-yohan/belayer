@@ -96,7 +96,7 @@ type talentEvalAssignment struct {
 //   - sessionID     — the climb's session UUID.
 //   - agentRunID    — the agent_runs.id for this run (used in the filename).
 //   - workspaceDir  — the session's workspace root (used to locate the climb dir).
-//   - profileName   — the materialized Hermes profile name (e.g. "belayer-local-supervisor").
+//   - profileName   — the materialized Hermes profile name (e.g. "blyr-local-supervisor").
 //   - meta          — the full talent metadata read from .belayer-talent.yaml.
 func (d *Daemon) writeTalentEvaluationArtifact(
 	sessionID, agentRunID, workspaceDir, profileName string,
@@ -123,7 +123,7 @@ func (d *Daemon) writeTalentEvaluationArtifact(
 	memoryExcerpt := readProfileMemories(memoriesDir)
 
 	// Build talent name: prefer .belayer-talent.yaml TalentName; fall back to
-	// stripping the "belayer-<crag>-" prefix from the profile name.
+	// stripping the "blyr-<crag>-" prefix from the profile name.
 	talentName := meta.TalentName
 	if talentName == "" {
 		talentName, _ = splitProfileName(profileName)

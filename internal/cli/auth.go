@@ -14,9 +14,9 @@ import (
 
 // belayerProfileName is the canonical Hermes profile name that holds shared
 // auth, plugin registration, and skill catalog for all per-talent forks.
-// Per-talent profiles in Phase 2 will be named belayer-<crag>-<instance>
-// and symlink auth.json + plugins/ + skills/ from this base profile.
-const belayerProfileName = "belayer"
+// Per-talent profiles are named blyr-<crag>-<instance> and symlink
+// auth.json + plugins/ + skills/ from this base profile.
+const belayerProfileName = "blyr"
 
 // hermesProfileDirs mirrors hermes_cli/profiles.py#_PROFILE_DIRS so a profile
 // scaffolded by belayer matches one created by `hermes profile create` in shape.
@@ -37,10 +37,10 @@ var hermesProfileDirs = []string{
 func newAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
-		Short: "Manage the base belayer Hermes profile (auth, plugin install)",
-		Long: `Manage the base belayer Hermes profile.
+		Short: "Manage the base blyr Hermes profile (auth, plugin install)",
+		Long: `Manage the base blyr Hermes profile.
 
-The base profile lives at ~/.hermes/profiles/belayer/ and holds shared auth
+The base profile lives at ~/.hermes/profiles/blyr/ and holds shared auth
 credentials, the belayer Hermes plugin, and skill catalog. Per-talent forks
 created during a climb symlink auth.json + plugins/ + skills/ from this base,
 so a single 'belayer auth' login propagates to every spawned talent.`,
@@ -53,8 +53,8 @@ func newAuthEnsureCmd() *cobra.Command {
 	var skipLogin bool
 	cmd := &cobra.Command{
 		Use:   "ensure",
-		Short: "Scaffold ~/.hermes/profiles/belayer/, install belayer plugin, run hermes auth login",
-		Long: `Idempotent setup of the base belayer profile.
+		Short: "Scaffold ~/.hermes/profiles/blyr/, install belayer plugin, run hermes auth login",
+		Long: `Idempotent setup of the base blyr profile.
 
 Creates the profile directory tree (matching Hermes's profile schema), extracts
 the embedded belayer plugin into <profile>/plugins/belayer/, ensures the plugin
@@ -73,9 +73,9 @@ pruned. Use --skip-login for headless setup or test environments.`,
 				return fmt.Errorf("scaffold profile: %w", err)
 			}
 			if created {
-				fmt.Fprintf(cmd.OutOrStdout(), "Created belayer profile at %s\n", profileDir)
+				fmt.Fprintf(cmd.OutOrStdout(), "Created blyr profile at %s\n", profileDir)
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "Belayer profile present at %s\n", profileDir)
+				fmt.Fprintf(cmd.OutOrStdout(), "Blyr profile present at %s\n", profileDir)
 			}
 			if err := extractPluginsToHermesHome(profileDir); err != nil {
 				return fmt.Errorf("install belayer plugin: %w", err)
@@ -99,7 +99,7 @@ pruned. Use --skip-login for headless setup or test environments.`,
 func newAuthStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Report base belayer profile state (path, auth.json mtime, plugin presence)",
+		Short: "Report base blyr profile state (path, auth.json mtime, plugin presence)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			profileDir, err := belayerProfileDir()
 			if err != nil {
@@ -141,10 +141,10 @@ func newAuthStatusCmd() *cobra.Command {
 	}
 }
 
-// belayerProfileDir returns the absolute path to the base belayer Hermes
+// belayerProfileDir returns the absolute path to the base blyr Hermes
 // profile. Honours HERMES_HOME's parent layout: when HERMES_HOME is set we
-// place profiles under HERMES_HOME/../profiles/belayer if HERMES_HOME ends
-// in /profiles/<name>, otherwise HERMES_HOME/profiles/belayer.
+// place profiles under HERMES_HOME/../profiles/blyr if HERMES_HOME ends
+// in /profiles/<name>, otherwise HERMES_HOME/profiles/blyr.
 //
 // Today's only caller is the auth command, which always wants the canonical
 // home location. We keep the env-aware logic so test fixtures can redirect

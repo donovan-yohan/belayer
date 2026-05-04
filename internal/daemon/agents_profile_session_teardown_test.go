@@ -53,9 +53,9 @@ func TestSessionEnd_AllClimbScopedForksTornDown(t *testing.T) {
 
 	// Set up fork profiles before creating the daemon so HERMES_HOME is set.
 	profiles := []string{
-		"belayer-local-agent1",
-		"belayer-local-agent2",
-		"belayer-local-agent3",
+		"blyr-local-agent1",
+		"blyr-local-agent2",
+		"blyr-local-agent3",
 	}
 	for _, p := range profiles {
 		setupForkProfile(t, profilesRoot, p, "climb")
@@ -92,9 +92,9 @@ func TestSessionEnd_CragAndTalentScopedForksPreserved(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
 	const (
-		climbProfile  = "belayer-local-climber"
-		cragProfile   = "belayer-local-cragger"
-		talentProfile = "belayer-local-talented"
+		climbProfile  = "blyr-local-climber"
+		cragProfile   = "blyr-local-cragger"
+		talentProfile = "blyr-local-talented"
 	)
 
 	setupForkProfile(t, profilesRoot, climbProfile, "climb")
@@ -158,8 +158,8 @@ func TestSessionEnd_AfterPartialFinalResponse(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
 	const (
-		profileAgent1 = "belayer-local-already-done"
-		profileAgent2 = "belayer-local-still-running"
+		profileAgent1 = "blyr-local-already-done"
+		profileAgent2 = "blyr-local-still-running"
 	)
 
 	setupForkProfile(t, profilesRoot, profileAgent1, "climb")
@@ -210,8 +210,8 @@ func TestSessionEnd_SweepErrorOneAgentDoesNotBlockOthers(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
 	const (
-		profileBad  = "belayer-local-bad-perms"
-		profileGood = "belayer-local-good"
+		profileBad  = "blyr-local-bad-perms"
+		profileGood = "blyr-local-good"
 	)
 
 	// Create both profiles with climb scope.
@@ -264,7 +264,7 @@ func TestSessionEnd_SweepErrorOneAgentDoesNotBlockOthers(t *testing.T) {
 func TestSessionEnd_SweepIsIdempotent(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-idempotent"
+	const profileName = "blyr-local-idempotent"
 	setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	d := testDaemon(t)
@@ -308,7 +308,7 @@ func TestSessionEnd_SweepWorksForDifferentTerminalStatuses(t *testing.T) {
 		t.Run("status="+status, func(t *testing.T) {
 			profilesRoot, _ := setupBaseBelayerProfile(t)
 
-			profileName := "belayer-local-" + filepath.Base(t.TempDir())
+			profileName := "blyr-local-" + filepath.Base(t.TempDir())
 			setupForkProfile(t, profilesRoot, profileName, "climb")
 
 			d := testDaemon(t)

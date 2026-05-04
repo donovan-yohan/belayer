@@ -70,7 +70,7 @@ func TestResumable_ReSpawnReusesForkProfile(t *testing.T) {
 		t.Fatal("spawnBridgeAgent not called on first spawn")
 	}
 	firstProfile := capturedProfiles[0]
-	if !strings.HasPrefix(firstProfile, "belayer-") {
+	if !strings.HasPrefix(firstProfile, "blyr-") {
 		t.Fatalf("expected fork profile name on first spawn, got %q", firstProfile)
 	}
 
@@ -162,7 +162,7 @@ func TestResumable_DefaultsMemoryScopeToCrag(t *testing.T) {
 		t.Fatalf("spawn agent: %d %s", rr.Code, rr.Body.String())
 	}
 
-	if !strings.HasPrefix(capturedProfile, "belayer-") {
+	if !strings.HasPrefix(capturedProfile, "blyr-") {
 		t.Fatalf("expected fork profile name, got %q", capturedProfile)
 	}
 
@@ -197,7 +197,7 @@ func TestResumable_ExplicitClimbScopeTeardown(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
 	// Create a climb-scoped fork profile for a resumable agent (operator's override).
-	const profileName = "belayer-local-lorekeeper"
+	const profileName = "blyr-local-lorekeeper"
 	setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	d := testDaemon(t)

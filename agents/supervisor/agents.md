@@ -38,7 +38,7 @@ template under `.belayer/agents/<identity>/`. `--identity` defaults to
 `--name` for single-instance roles, so the shorthand is fine for one-off
 spawns. `--profile` is the Hermes runtime profile (model defaults, tool
 inventory) and is independent of identity. Omit `--profile` to let the
-daemon materialize a per-talent fork from the base `belayer` profile;
+daemon materialize a per-talent fork from the base `blyr` profile;
 pass `--profile <name>` only when you need a non-default Hermes config.
 
 ```bash

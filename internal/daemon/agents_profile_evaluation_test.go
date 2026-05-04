@@ -106,7 +106,7 @@ func readArtifactInDir(t *testing.T, artifactsDir, prefix string) []byte {
 func TestEvaluation_MEMORYMDPresent(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	profileDir := setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	// Write MEMORY.md to the profile's memories directory.
@@ -169,7 +169,7 @@ func TestEvaluation_MEMORYMDPresent(t *testing.T) {
 func TestEvaluation_MEMORYMDAbsent(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	setupForkProfile(t, profilesRoot, profileName, "climb")
 	// No MEMORY.md written.
 
@@ -214,7 +214,7 @@ func TestEvaluation_UserMDAlsoCaptured(t *testing.T) {
 
 	// Use a supervisor-named profile to match what setupForkProfile writes
 	// in talent_name. See setupForkProfile: it always writes talent_name: supervisor.
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	profileDir := setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	memoriesDir := filepath.Join(profileDir, "memories")
@@ -276,7 +276,7 @@ func TestEvaluation_UserMDAlsoCaptured(t *testing.T) {
 func TestEvaluation_ArtifactDirMissingGracefulTeardown(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	d := testDaemon(t)
@@ -325,7 +325,7 @@ func TestEvaluation_ArtifactDirMissingGracefulTeardown(t *testing.T) {
 func TestEvaluation_CragScopedProfileNoArtifact(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	setupForkProfile(t, profilesRoot, profileName, "crag")
 
 	d := testDaemon(t)
