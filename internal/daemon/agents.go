@@ -1687,6 +1687,26 @@ func (d *Daemon) teardownProfileIfClimbScoped(profileName string) {
 	log.Printf("INFO: teardownProfileIfClimbScoped: torn down climb-scoped profile %q", profileName)
 }
 
+// sweepSessionProfiles walks all agent_runs for the session and tears down any
+// climb-scoped fork profiles that are still on disk. This is the Phase 3.C
+// end-of-session sweep that catches agents whose bridge processes never emitted
+// final_response (crashed, timed out, budget exhausted, incomplete escalation).
+//
+// The sweep is best-effort: errors from individual agents are logged and do not
+// block the session-end transition. Re-running the sweep on an already-cleaned
+// session is safe because teardownProfileIfClimbScoped is idempotent (missing
+// dirs are silently skipped by TeardownProfile).
+func (d *Daemon) sweepSessionProfiles(sessionID string) {
+	runs, err := d.store.ListAgentRuns(sessionID)
+	if err != nil {
+		log.Printf("ERROR: sweepSessionProfiles: list agent runs for session %q: %v", sessionID, err)
+		return
+	}
+	for _, run := range runs {
+		d.teardownProfileIfClimbScoped(run.Profile)
+	}
+}
+
 // buildAgentInitialMessage prepends a workspace context header to the agent's
 // initial message when the agent is isolated to a git worktree on a specific
 // branch. When branch is empty the message is returned unchanged.
