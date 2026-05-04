@@ -83,12 +83,12 @@ func TestBelayerProfileDir_HermesHomeOverride(t *testing.T) {
 		{
 			name:       "profile-style HERMES_HOME",
 			hermesHome: "/tmp/hermes/profiles/coder",
-			want:       "/tmp/hermes/profiles/belayer",
+			want:       "/tmp/hermes/profiles/blyr",
 		},
 		{
 			name:       "root-style HERMES_HOME",
 			hermesHome: "/tmp/custom-hermes",
-			want:       "/tmp/custom-hermes/profiles/belayer",
+			want:       "/tmp/custom-hermes/profiles/blyr",
 		},
 	}
 	for _, tc := range tests {
@@ -106,7 +106,7 @@ func TestBelayerProfileDir_HermesHomeOverride(t *testing.T) {
 }
 
 // TestBelayerProfileDir_NoEnvFallsBackToHome verifies the default path
-// when HERMES_HOME is unset: ~/.hermes/profiles/belayer.
+// when HERMES_HOME is unset: ~/.hermes/profiles/blyr.
 func TestBelayerProfileDir_NoEnvFallsBackToHome(t *testing.T) {
 	t.Setenv("HERMES_HOME", "")
 	got, err := belayerProfileDir()
@@ -117,7 +117,7 @@ func TestBelayerProfileDir_NoEnvFallsBackToHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UserHomeDir: %v", err)
 	}
-	want := filepath.Join(home, ".hermes", "profiles", "belayer")
+	want := filepath.Join(home, ".hermes", "profiles", "blyr")
 	if got != want {
 		t.Errorf("belayerProfileDir() = %q, want %q", got, want)
 	}
@@ -141,7 +141,7 @@ func TestAuthEnsure_SkipLogin_ScaffoldsAndInstallsPlugin(t *testing.T) {
 		t.Fatalf("ensure --skip-login: %v\nstderr: %s", err, stderr.String())
 	}
 
-	profileDir := filepath.Join(tmp, "fake-hermes-home", "profiles", "belayer")
+	profileDir := filepath.Join(tmp, "fake-hermes-home", "profiles", "blyr")
 
 	for _, sub := range hermesProfileDirs {
 		if _, err := os.Stat(filepath.Join(profileDir, sub)); err != nil {
@@ -162,7 +162,7 @@ func TestAuthEnsure_SkipLogin_ScaffoldsAndInstallsPlugin(t *testing.T) {
 		t.Errorf("config.yaml does not list belayer plugin:\n%s", string(cfg))
 	}
 
-	if !strings.Contains(stdout.String(), "Created belayer profile at") {
+	if !strings.Contains(stdout.String(), "Created blyr profile at") {
 		t.Errorf("expected creation log line, got: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Skipped 'hermes auth login'") {

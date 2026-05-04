@@ -98,6 +98,17 @@ The existing `agent.yaml#kind` and bridge `ephemeral` flag remain compatibility
 mechanics for current Hermes spawns. New crag metadata should describe the
 talent contract above and let the adapter derive bridge settings when possible.
 
+## Hermes Profile Materialization
+
+When a talent is spawned, the daemon automatically forks the base `blyr` Hermes
+profile into a per-talent profile (`blyr-<crag>-<instance>/`) that symlinks shared
+auth credentials and plugin state from the base. Operators run `belayer auth ensure`
+once to set up the base profile; per-talent forks are managed entirely by the daemon.
+Profiles with `memory.scope: crag` or `memory.scope: talent` are preserved across
+climbs and skipped by `belayer prune`. See
+`docs/design-docs/2026-05-03-belayer-hermes-profiles-spec.md` for the full
+profile lifecycle design.
+
 ## Talent Lifecycle
 
 Crag mode separates a talent definition from a running process:

@@ -54,7 +54,7 @@ func TestPhase3Integration_FullEphemeralLifecycle(t *testing.T) {
 
 	// Create a climb-scoped (ephemeral) fork profile with memory content so the
 	// evaluation artifact is populated.
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	profileDir := setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	memoriesDir := filepath.Join(profileDir, "memories")
@@ -234,7 +234,7 @@ func TestPhase3Integration_FullResumableLifecycle(t *testing.T) {
 func TestPhase3Integration_ResidentMainSessionEndSweep(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-resident-main"
+	const profileName = "blyr-local-resident-main"
 	profileDir := setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	// Write MEMORY.md so the evaluation has content to capture.
@@ -333,7 +333,7 @@ func TestPhase3Integration_MixedRoster(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
 	// Profile A: climb-scoped → will be torn down on final_response.
-	const profileA = "belayer-local-agent-a"
+	const profileA = "blyr-local-agent-a"
 	profileADir := setupForkProfile(t, profilesRoot, profileA, "climb")
 
 	// Write MEMORY.md for agent A so evaluation has content.
@@ -346,11 +346,11 @@ func TestPhase3Integration_MixedRoster(t *testing.T) {
 	}
 
 	// Profile B: crag-scoped → preserved by both 3.B and 3.C.
-	const profileB = "belayer-local-agent-b"
+	const profileB = "blyr-local-agent-b"
 	setupForkProfile(t, profilesRoot, profileB, "crag")
 
 	// Profile C: crag-scoped (explicit) → preserved by 3.C sweep.
-	const profileC = "belayer-local-agent-c"
+	const profileC = "blyr-local-agent-c"
 	setupForkProfile(t, profilesRoot, profileC, "crag")
 
 	d := testDaemon(t)
@@ -525,7 +525,7 @@ func TestPhase3Integration_CragScopedAcrossTwoClimbs(t *testing.T) {
 		t.Fatalf("climb-1 spawn: %d %s", rr1.Code, rr1.Body.String())
 	}
 
-	if !strings.HasPrefix(profile1, "belayer-") {
+	if !strings.HasPrefix(profile1, "blyr-") {
 		t.Fatalf("climb-1: expected fork profile, got %q", profile1)
 	}
 
@@ -597,7 +597,7 @@ func TestPhase3Integration_CragScopedAcrossTwoClimbs(t *testing.T) {
 	}
 
 	// Climb-2 spawn must succeed.
-	if !strings.HasPrefix(profile2, "belayer-") {
+	if !strings.HasPrefix(profile2, "blyr-") {
 		t.Fatalf("climb-2: expected fork profile, got %q", profile2)
 	}
 

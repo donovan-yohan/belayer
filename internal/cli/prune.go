@@ -40,10 +40,10 @@ func newPruneCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "prune",
-		Short: "Remove orphaned belayer-* Hermes profiles",
-		Long: `Remove orphaned belayer-* Hermes profiles.
+		Short: "Remove orphaned blyr-* Hermes profiles",
+		Long: `Remove orphaned blyr-* Hermes profiles.
 
-An orphan is a profile directory that starts with "belayer-" but has no
+An orphan is a profile directory that starts with "blyr-" but has no
 matching row in the agent_runs store. This can happen when a session ends
 abnormally or a profile is left behind after cleanup failures.
 
@@ -189,8 +189,8 @@ func pruneListOrphansWithScope(dbPath, cragFilter string, includeScoped bool) (o
 			continue
 		}
 		name := e.Name()
-		// Must be a belayer-managed fork (not the base "belayer" profile itself).
-		if name == "belayer" || !strings.HasPrefix(name, "belayer-") {
+		// Must be a belayer-managed fork (not the base "blyr" profile itself).
+		if name == "blyr" || !strings.HasPrefix(name, "blyr-") {
 			continue
 		}
 		candidates = append(candidates, name)
@@ -303,9 +303,9 @@ func pruneReadMetadataWithScope(profileDir string) (cragSlug, talentName, memory
 		}
 	}
 
-	// Fallback: parse from profile name "belayer-<crag>-<talent>".
+	// Fallback: parse from profile name "blyr-<crag>-<talent>".
 	profileName := filepath.Base(profileDir)
-	rest := strings.TrimPrefix(profileName, "belayer-")
+	rest := strings.TrimPrefix(profileName, "blyr-")
 	parts := strings.SplitN(rest, "-", 2)
 	if len(parts) == 2 {
 		cragSlug, talentName = parts[0], parts[1]
@@ -338,9 +338,9 @@ func pruneReadMetadata(profileDir string) (cragSlug, talentName string) {
 		}
 	}
 
-	// Fallback: parse from profile name "belayer-<crag>-<talent>".
+	// Fallback: parse from profile name "blyr-<crag>-<talent>".
 	profileName := filepath.Base(profileDir)
-	rest := strings.TrimPrefix(profileName, "belayer-")
+	rest := strings.TrimPrefix(profileName, "blyr-")
 	parts := strings.SplitN(rest, "-", 2)
 	if len(parts) == 2 {
 		return parts[0], parts[1]

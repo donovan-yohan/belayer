@@ -425,8 +425,11 @@ SPAWN_AGENT_SCHEMA = {
                     "Hermes runtime profile to launch the agent under (sets BELAYER_PROFILE "
                     "/ HERMES_HOME). Independent of 'identity' — 'profile' chooses the "
                     "Hermes config (tool inventory, model defaults, credentials) while "
-                    "'identity' chooses the soul. Most spawns use 'default'; only change "
-                    "this when an agent needs a non-default Hermes configuration."
+                    "'identity' chooses the soul. Optional: omit (or pass 'belayer') and "
+                    "the daemon materializes a per-talent fork from the base belayer "
+                    "profile, with auth/skills/plugins symlinked from the base. Pass an "
+                    "explicit profile name only when an agent needs a non-belayer Hermes "
+                    "configuration (e.g. an operator-managed nightshift-* profile)."
                 ),
             },
             "message": {
@@ -461,7 +464,7 @@ SPAWN_AGENT_SCHEMA = {
                 ),
             },
         },
-        "required": ["name", "profile", "message"],
+        "required": ["name", "message"],
     },
 }
 
@@ -910,7 +913,9 @@ def make_spawn_agent_handler(agent_id: str, session_id: str, socket_path: str) -
         args = args or {}
         name = args.get("name", "")
         identity = args.get("identity", "") or name
-        profile = args.get("profile", "")
+        # Default to "belayer" so the daemon materializes a per-talent fork
+        # from the base belayer profile (Phase 2.D / Phase 5.A semantics).
+        profile = args.get("profile") or "belayer"
         message = args.get("message", "")
         branch = args.get("branch", "")
         repo = args.get("repo", "")

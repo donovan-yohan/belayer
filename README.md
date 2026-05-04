@@ -68,27 +68,36 @@ the daemon (default is to log a warning and continue).
 ## Quick start
 
 ```bash
-go build ./cmd/belayer
+go install github.com/donovan-yohan/belayer/cmd/belayer@latest
+
+# One-time setup: scaffold the base blyr Hermes profile and log in
+belayer auth ensure
+
+# Create a durable crag for cross-project context
+belayer crag init personal --kind development
 
 # In your project repo:
 belayer init                     # scaffold .belayer/ (config, agents)
+belayer crag link personal       # link this repo to your crag
 belayer daemon                   # start the daemon (also installs the Hermes plugin)
 
 # Launch a climb (creates session, spawns supervisor via Hermes bridge)
-belayer climb start --task "Add rate limiting to /api/v1/cards" --workdir /path/to/repo
+belayer climb start --task "Add rate limiting to /api/v1/cards"
 
 # Monitor
 belayer status
 belayer logs <session-id> -f
 belayer roster --session <session-id>
 
-# Agents coordinate through the daemon
-belayer message send --to supervisor --content "API tests passing"
-belayer artifact create --kind spec --path docs/spec.md
-
 # Supervisor signals done, PM verifies
 belayer finish "All spec items implemented"
 ```
+
+The `blyr` base Hermes profile (`~/.hermes/profiles/blyr/`) holds your auth
+credentials and the belayer plugin. Each spawned agent automatically gets a
+per-talent fork (`blyr-<crag>-<instance>/`) so auth isolation works without
+extra `hermes auth` logins. See `docs/design-docs/2026-05-03-belayer-hermes-profiles-spec.md`
+for the profile materialization details.
 
 ## Climbs And Crags
 
@@ -171,78 +180,18 @@ themselves are yours.
 ## Customizing your team
 
 `.belayer/agents/` is project-owned. Edit, rename, delete, or replace
-identities. `belayer init --force` refreshes the shipped defaults without
-touching `config.yaml`.
-
-### Example: add a `data-eng` main
+identities. The daemon reads `.belayer/agents/<name>/` first, falls back to the
+shipped copy only if the name is not defined locally.
 
 ```bash
-mkdir -p .belayer/agents/data-eng
-cat > .belayer/agents/data-eng/agent.yaml <<'YAML'
-schema_version: "1"
-description: "Data engineer — main implementer for ETL pipelines"
-kind: main
-vendor: codex
-model: gpt-5.4
-max_turns: 100
-max_duration: "2h"
-ephemeral: false
-workspace: inherit
-belayer_tools: []
-YAML
-# system-prompt.md + agents.md follow the same pattern as backend-dev/
+$EDITOR .belayer/agents/reviewer/system-prompt.md  # edit in place
+rm -r .belayer/agents/qa                           # drop unused identity
 ```
 
-After that, your supervisor can `belayer_spawn_agent(identity="data-eng", ...)`
-and the new peer joins the party with a mailbox.
-
-### Example: swap in a stricter reviewer
-
-```bash
-# Option A: edit in place
-$EDITOR .belayer/agents/reviewer/system-prompt.md
-
-# Option B: replace entirely
-rm -r .belayer/agents/reviewer
-cp -r ~/my-templates/strict-reviewer .belayer/agents/reviewer
-```
-
-The daemon reads `.belayer/agents/<name>/` first, falls back to the shipped
-copy only if your project-local tree does not define the name. That means you
-can slim the team (delete `qa/` if your project has no UI) or add your own
-(`docs-writer/`, `sre/`, `release-manager/`) without touching belayer source.
-
-### `agent.yaml` fields
-
-| Field             | Purpose                                                   |
-|-------------------|-----------------------------------------------------------|
-| `kind`            | `main` or `side`. Controls mailbox + tool surface.        |
-| `vendor` / `model`| LLM vendor + model ID (Hermes resolves).                  |
-| `max_turns`       | Budget cap; bridge emits `bridge:budget_exhausted` at limit. |
-| `max_duration`    | Wallclock cap.                                            |
-| `ephemeral`       | `true` for sides (exit on completion), `false` for mains. |
-| `workspace`       | `inherit` (shared cwd), `none`, or a named sub-workspace. |
-| `belayer_tools`   | Opt-in role-specific tools (see below).                   |
-
-Baseline tools are registered automatically per kind. Add to `belayer_tools`
-only when an identity needs a role-specific capability.
-
-| Tool                           | Who gets it                     |
-|--------------------------------|---------------------------------|
-| `belayer_report_status`        | everyone (baseline)             |
-| `belayer_create_artifact`      | everyone (baseline)             |
-| `belayer_send_message`         | mains (baseline)                |
-| `belayer_broadcast`            | mains (baseline)                |
-| `belayer_check_mail`           | mains (baseline)                |
-| `belayer_spawn_agent`          | supervisor (opt-in)             |
-| `belayer_request_completion`   | supervisor (opt-in)             |
-| `belayer_escalate_to_human`    | supervisor (opt-in)             |
-| `belayer_approve_completion`   | pm (opt-in)                     |
-| `belayer_reject_completion`    | pm (opt-in)                     |
-
-See `examples/templates/` for alternative starter teams (pilot + sprites +
-per-repo implementers) and `docs/AGENT_ARCHITECTURE.md` for the full spawn,
-mail, and completion-gate contracts.
+`belayer init --force` refreshes the shipped defaults without touching
+`config.yaml`. See `agents/README.md` for field reference, tool table,
+4-layer identity resolution, and `examples/templates/` for alternative
+team shapes.
 
 ## Architecture
 
@@ -274,48 +223,28 @@ belayer session list|stop   Session lifecycle
 belayer logs                Event stream
 belayer status              Running sessions overview
 belayer recall              Full-text event search
+belayer auth ensure|status  Scaffold/inspect the base blyr Hermes profile
+belayer doctor              Report blyr-* profile health (orphans, staleness, disk usage)
+belayer prune               Remove orphaned blyr-* profiles
+belayer uninstall           Remove belayer profiles and state (per-crag or global)
 ```
+
+Run `belayer --help` or `belayer <cmd> --help` for current flags.
 
 ## Web UI
 
-Belayer ships two web interfaces — no build step, dark theme, vanilla JS.
-
-### Per-daemon UI
-
-When the daemon binds a TCP listener, it serves an embedded dashboard at `/ui/`:
+The daemon serves a dark-theme, vanilla-JS UI at `/ui/` when a TCP listener is
+bound. A separate `belayer dashboard` command aggregates multiple daemons.
 
 ```bash
 belayer daemon --tcp-addr 0.0.0.0:7523
-# open http://localhost:7523/ui/ in your browser
-```
+# open http://localhost:7523/ui/
 
-- **Live SSE stream** of session events, messages, and agent activity
-- **Three-panel layout**: sessions list, event timeline, agent roster
-- **Color-coded agents** by identity
-- No npm, no bundler — assets are embedded in the Go binary
-
-### Multi-daemon dashboard
-
-Aggregate multiple daemons into a single UI:
-
-```bash
-# 1. Write a config file
-cat > dashboard.yaml <<'YAML'
-daemons:
-  - name: extend-api
-    url: http://localhost:7523
-    token: <auth-token>
-  - name: relay-ide
-    url: http://localhost:7524
-    token: <auth-token>
-YAML
-
-# 2. Start the dashboard
 belayer dashboard --config dashboard.yaml --port 7525
 # open http://localhost:7525/ui/
 ```
 
-The dashboard is a thin reverse-proxy + static-file server. It holds no state — all session data is fetched live from the configured daemons.
+See `docs/webui-spec.md` and `docs/dashboard-spec.md` for design details.
 
 ## Docs
 

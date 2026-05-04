@@ -343,7 +343,7 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	unlockSpawn()
 
-	// Materialize a per-talent fork profile when req.Profile == "belayer".
+	// Materialize a per-talent fork profile when req.Profile == "blyr".
 	// Must happen after the store row exists (so GetAgentRun can supply the
 	// run UUID as the instance seed) and before the bridge subprocess is
 	// launched (so it receives the resolved BELAYER_PROFILE).
@@ -1090,7 +1090,7 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		unlockSpawn()
 	}
 
-	// Materialize a per-talent fork profile when req.Profile == "belayer".
+	// Materialize a per-talent fork profile when req.Profile == "blyr".
 	// Must happen after the store row exists and before the bridge subprocess
 	// is launched.
 	req = d.materializeBridgeProfile(req)
@@ -1657,8 +1657,8 @@ func parseInlineYAMLList(raw string) []string {
 //
 // Safety rules (mirrors TeardownProfile's own checks, applied early to avoid
 // unnecessary filesystem access):
-//   - Returns early for profile == "default" or "belayer" (no teardown).
-//   - Returns early if the profile name does not start with "belayer-".
+//   - Returns early for profile == "default" or "blyr" (no teardown).
+//   - Returns early if the profile name does not start with "blyr-".
 //   - If .belayer-talent.yaml is missing or unreadable, defaults to "climb" (safe:
 //     an unrecognised profile is more likely orphaned than intentionally persistent).
 //
@@ -1669,13 +1669,13 @@ func parseInlineYAMLList(raw string) []string {
 //   - sessionID    — the climb's session UUID; used to resolve the artifact dir.
 //   - agentRunID   — the agent_runs.id for this run; used in the artifact filename.
 //   - workspaceDir — the session workspace root; empty string disables artifact write.
-//   - profileName  — the materialized Hermes profile name (e.g. "belayer-local-supervisor").
+//   - profileName  — the materialized Hermes profile name (e.g. "blyr-local-supervisor").
 func (d *Daemon) teardownProfileIfClimbScoped(sessionID, agentRunID, workspaceDir, profileName string) {
 	// Guard: only operate on belayer-managed fork profiles.
 	if profileName == "" || profileName == "default" || profileName == belayerBaseProfileName {
 		return
 	}
-	if !strings.HasPrefix(profileName, "belayer-") {
+	if !strings.HasPrefix(profileName, "blyr-") {
 		return
 	}
 
@@ -1761,7 +1761,7 @@ func buildAgentInitialMessage(branch, worktreePath, message string) string {
 //
 // Three modes:
 //
-//   req.Profile == "belayer" (new default): resolve crag slug, compute fork
+//   req.Profile == "blyr" (new default): resolve crag slug, compute fork
 //     name via ResolveProfileName, call MaterializeProfile, set req.Profile to
 //     the fork name, and update agent_runs.profile in the store.
 //

@@ -22,35 +22,35 @@ func TestResolveProfileName(t *testing.T) {
 			cragSlug:   "software-co",
 			talentName: "supervisor",
 			instanceID: "",
-			want:       "belayer-software-co-supervisor",
+			want:       "blyr-software-co-supervisor",
 		},
 		{
 			name:       "parallel main with hash suffix",
 			cragSlug:   "foo",
 			talentName: "backend-dev",
 			instanceID: "a3f9c2d1",
-			want:       "belayer-foo-backend-dev-a3f9c2d1",
+			want:       "blyr-foo-backend-dev-a3f9c2d1",
 		},
 		{
 			name:       "generated talent instanceID ignored",
 			cragSlug:   "foo",
 			talentName: "generated-reviewer-1",
 			instanceID: "ignored-hash",
-			want:       "belayer-foo-generated-reviewer-1",
+			want:       "blyr-foo-generated-reviewer-1",
 		},
 		{
 			name:       "generated talent no instanceID",
 			cragSlug:   "foo",
 			talentName: "generated-reviewer-1",
 			instanceID: "",
-			want:       "belayer-foo-generated-reviewer-1",
+			want:       "blyr-foo-generated-reviewer-1",
 		},
 		{
 			name:       "singleton web-dev",
 			cragSlug:   "myproject",
 			talentName: "web-dev",
 			instanceID: "",
-			want:       "belayer-myproject-web-dev",
+			want:       "blyr-myproject-web-dev",
 		},
 		{
 			name:       "empty cragSlug returns error",
@@ -275,9 +275,9 @@ func TestProfilesRoot(t *testing.T) {
 
 	t.Run("honours HERMES_HOME as profile dir (parent is 'profiles')", func(t *testing.T) {
 		// Simulate HERMES_HOME pointing directly at a named profile:
-		// e.g. HERMES_HOME=/tmp/profiles/belayer → root is /tmp/profiles
+		// e.g. HERMES_HOME=/tmp/profiles/blyr → root is /tmp/profiles
 		tmp := t.TempDir()
-		hermesHome := filepath.Join(tmp, "profiles", "belayer")
+		hermesHome := filepath.Join(tmp, "profiles", "blyr")
 		t.Setenv("HERMES_HOME", hermesHome)
 		got, err := ProfilesRoot()
 		if err != nil {
@@ -306,12 +306,12 @@ func TestProfilesRoot(t *testing.T) {
 
 // ── MaterializeProfile tests ──────────────────────────────────────────────────
 
-// setupBaseProfile creates a minimal fake base belayer profile at
-// <root>/belayer/ with auth.json, plugins/belayer/plugin.yaml, and skills/.
+// setupBaseProfile creates a minimal fake base blyr profile at
+// <root>/blyr/ with auth.json, plugins/belayer/plugin.yaml, and skills/.
 // Returns the path to the base profile dir.
 func setupBaseProfile(t *testing.T, root string) string {
 	t.Helper()
-	base := filepath.Join(root, "belayer")
+	base := filepath.Join(root, "blyr")
 	for _, sub := range []string{
 		"plugins/belayer",
 		"skills",
@@ -342,7 +342,7 @@ func profilesRootForTest(t *testing.T) (profilesRoot string, baseProfile string)
 	}
 	// Point HERMES_HOME at a "profile" dir inside profilesRoot so that
 	// ProfilesRoot() detects parent == "profiles" and returns profilesRoot.
-	t.Setenv("HERMES_HOME", filepath.Join(profilesRoot, "belayer"))
+	t.Setenv("HERMES_HOME", filepath.Join(profilesRoot, "blyr"))
 	baseProfile = setupBaseProfile(t, profilesRoot)
 	return profilesRoot, baseProfile
 }
@@ -353,7 +353,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("fresh materialization creates dir tree", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-supervisor",
+			ProfileName:    "blyr-myproject-supervisor",
 			BaseProfileDir: base,
 			SystemPrompt:   "You are the supervisor.",
 			Model:          "gpt-5.4",
@@ -378,7 +378,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("all three symlinks created with correct targets", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-backend-dev",
+			ProfileName:    "blyr-myproject-backend-dev",
 			BaseProfileDir: base,
 			SystemPrompt:   "You are backend-dev.",
 		}
@@ -411,7 +411,7 @@ func TestMaterializeProfile(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		soul := "You are a special reviewer.\n\nBe thorough."
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-reviewer",
+			ProfileName:    "blyr-myproject-reviewer",
 			BaseProfileDir: base,
 			SystemPrompt:   soul,
 		}
@@ -430,7 +430,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("config.yaml has plugins.enabled and model when provided", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-web-dev",
+			ProfileName:    "blyr-myproject-web-dev",
 			BaseProfileDir: base,
 			SystemPrompt:   "You are web-dev.",
 			Model:          "gpt-5.4",
@@ -457,7 +457,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("config.yaml model value is quoted preventing newline injection", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-injected-model",
+			ProfileName:    "blyr-myproject-injected-model",
 			BaseProfileDir: base,
 			SystemPrompt:   "soul",
 			// A model string with an embedded newline must not inject YAML keys.
@@ -489,7 +489,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("config.yaml has plugins.enabled without model when Model is empty", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-qa",
+			ProfileName:    "blyr-myproject-qa",
 			BaseProfileDir: base,
 			SystemPrompt:   "You are qa.",
 			Model:          "", // no model
@@ -513,7 +513,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run(".belayer-talent.yaml has all metadata fields", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-pm",
+			ProfileName:    "blyr-myproject-pm",
 			BaseProfileDir: base,
 			SystemPrompt:   "You are pm.",
 			MemoryScope:    "crag",
@@ -532,7 +532,7 @@ func TestMaterializeProfile(t *testing.T) {
 			"crag_slug:",
 			"memory_scope:",
 			"materialized_at:",
-			"belayer-myproject-pm",
+			"blyr-myproject-pm",
 			"crag",
 		} {
 			if !strings.Contains(content, want) {
@@ -544,7 +544,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("MemoryScope defaults to climb when empty", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-scout",
+			ProfileName:    "blyr-myproject-scout",
 			BaseProfileDir: base,
 			SystemPrompt:   "You are scout.",
 			MemoryScope:    "",
@@ -564,7 +564,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("idempotent: re-running on existing profile returns no error and does not overwrite SOUL.md", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-supervisor2",
+			ProfileName:    "blyr-myproject-supervisor2",
 			BaseProfileDir: base,
 			SystemPrompt:   "Original soul.",
 		}
@@ -594,7 +594,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("idempotent: plugins/ deleted after first run is recreated on re-run", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-plugins-rerun",
+			ProfileName:    "blyr-myproject-plugins-rerun",
 			BaseProfileDir: base,
 			SystemPrompt:   "soul",
 		}
@@ -627,7 +627,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("idempotent: broken symlink is refreshed on re-run", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-broken-sym",
+			ProfileName:    "blyr-myproject-broken-sym",
 			BaseProfileDir: base,
 			SystemPrompt:   "soul",
 		}
@@ -659,7 +659,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("invalid memory scope returns error", func(t *testing.T) {
 		_, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-badscope",
+			ProfileName:    "blyr-myproject-badscope",
 			BaseProfileDir: base,
 			SystemPrompt:   "soul",
 			MemoryScope:    "session", // invalid
@@ -685,7 +685,7 @@ func TestMaterializeProfile(t *testing.T) {
 	t.Run("missing base profile dir returns error", func(t *testing.T) {
 		profilesRootForTest(t) // sets HERMES_HOME
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-nobody",
+			ProfileName:    "blyr-myproject-nobody",
 			BaseProfileDir: "/nonexistent/base/profile",
 			SystemPrompt:   "soul",
 		}
@@ -705,7 +705,7 @@ func TestTeardownProfile(t *testing.T) {
 	t.Run("existing profile removed cleanly", func(t *testing.T) {
 		root, base := profilesRootForTest(t)
 		opts := MaterializeOptions{
-			ProfileName:    "belayer-myproject-teardown",
+			ProfileName:    "blyr-myproject-teardown",
 			BaseProfileDir: base,
 			SystemPrompt:   "soul",
 		}
@@ -726,21 +726,21 @@ func TestTeardownProfile(t *testing.T) {
 
 	t.Run("missing profile is not an error", func(t *testing.T) {
 		profilesRootForTest(t)
-		if err := TeardownProfile("belayer-nonexistent-talent"); err != nil {
+		if err := TeardownProfile("blyr-nonexistent-talent"); err != nil {
 			t.Fatalf("TeardownProfile() on missing profile should not error, got: %v", err)
 		}
 	})
 
-	t.Run("refuses to delete the base belayer profile", func(t *testing.T) {
+	t.Run("refuses to delete the base blyr profile", func(t *testing.T) {
 		profilesRootForTest(t)
-		if err := TeardownProfile("belayer"); err == nil {
-			t.Error("expected error when trying to delete base belayer profile, got nil")
-		} else if !strings.Contains(err.Error(), "refusing to tear down the base belayer profile") {
+		if err := TeardownProfile("blyr"); err == nil {
+			t.Error("expected error when trying to delete base blyr profile, got nil")
+		} else if !strings.Contains(err.Error(), "refusing to tear down the base blyr profile") {
 			t.Errorf("error %q does not mention refusal", err.Error())
 		}
 	})
 
-	t.Run("refuses to delete a name not starting with belayer-", func(t *testing.T) {
+	t.Run("refuses to delete a name not starting with blyr-", func(t *testing.T) {
 		profilesRootForTest(t)
 		if err := TeardownProfile("default"); err == nil {
 			t.Error("expected error when trying to delete non-belayer profile, got nil")

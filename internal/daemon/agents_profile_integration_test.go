@@ -126,8 +126,8 @@ func TestPhase2Integration_ParallelMainsShareForkDir(t *testing.T) {
 	if p1 == belayerBaseProfileName || p2 == belayerBaseProfileName {
 		t.Errorf("expected fork profile names, got p1=%q p2=%q", p1, p2)
 	}
-	if !strings.HasPrefix(p1, "belayer-") || !strings.HasPrefix(p2, "belayer-") {
-		t.Errorf("fork names must start with 'belayer-': p1=%q p2=%q", p1, p2)
+	if !strings.HasPrefix(p1, "blyr-") || !strings.HasPrefix(p2, "blyr-") {
+		t.Errorf("fork names must start with 'blyr-': p1=%q p2=%q", p1, p2)
 	}
 	// Identity "backend-dev" must appear in both names.
 	if !strings.Contains(p1, "backend-dev") || !strings.Contains(p2, "backend-dev") {
@@ -197,7 +197,7 @@ func TestPhase2Integration_GeneratedTalentProfileName(t *testing.T) {
 	})
 
 	// Must be a fork name.
-	if !strings.HasPrefix(capturedProfile, "belayer-") {
+	if !strings.HasPrefix(capturedProfile, "blyr-") {
 		t.Fatalf("expected fork name, got %q", capturedProfile)
 	}
 	// Must contain the generated talent name verbatim.
@@ -206,8 +206,8 @@ func TestPhase2Integration_GeneratedTalentProfileName(t *testing.T) {
 	}
 	// Must NOT have an extra hash suffix appended after the generated name.
 	// The generated name already encodes uniqueness; instanceID is ignored for
-	// generated talents. So the name is belayer-local-generated-reviewer-1
-	// (not belayer-local-generated-reviewer-1-<hash>).
+	// generated talents. So the name is blyr-local-generated-reviewer-1
+	// (not blyr-local-generated-reviewer-1-<hash>).
 	suffix := capturedProfile[strings.LastIndex(capturedProfile, "generated-reviewer-1")+len("generated-reviewer-1"):]
 	if suffix != "" {
 		t.Errorf("generated talent fork name %q has unexpected suffix %q after talent name (instanceID should be ignored)", capturedProfile, suffix)
@@ -366,8 +366,8 @@ func TestPhase2Integration_PMAutoSpawnGetsForkProfile(t *testing.T) {
 	if capturedPMProfile == "default" {
 		t.Errorf("PM received 'default' profile — fork materialization fell back (base profile missing or error)")
 	}
-	if !strings.HasPrefix(capturedPMProfile, "belayer-") {
-		t.Errorf("PM fork profile %q does not start with 'belayer-'", capturedPMProfile)
+	if !strings.HasPrefix(capturedPMProfile, "blyr-") {
+		t.Errorf("PM fork profile %q does not start with 'blyr-'", capturedPMProfile)
 	}
 	if !strings.Contains(capturedPMProfile, "pm") {
 		t.Errorf("PM fork profile %q does not contain 'pm'", capturedPMProfile)
@@ -425,7 +425,7 @@ func TestPhase2Integration_AuthJSONSymlinkSurvivesBaseRewrite(t *testing.T) {
 		Workdir: workspace,
 	})
 
-	if !strings.HasPrefix(capturedProfile, "belayer-") {
+	if !strings.HasPrefix(capturedProfile, "blyr-") {
 		t.Fatalf("expected fork profile, got %q", capturedProfile)
 	}
 
@@ -488,7 +488,7 @@ func TestPhase2Integration_ReSpawnReusesSameForkAcrossClimbs(t *testing.T) {
 		Workdir: workspace,
 	})
 
-	if !strings.HasPrefix(profile1, "belayer-") {
+	if !strings.HasPrefix(profile1, "blyr-") {
 		t.Fatalf("first spawn: expected fork profile, got %q", profile1)
 	}
 
@@ -505,7 +505,7 @@ func TestPhase2Integration_ReSpawnReusesSameForkAcrossClimbs(t *testing.T) {
 		Workdir: workspace,
 	})
 
-	if !strings.HasPrefix(profile2, "belayer-") {
+	if !strings.HasPrefix(profile2, "blyr-") {
 		t.Fatalf("second spawn: expected fork profile, got %q", profile2)
 	}
 

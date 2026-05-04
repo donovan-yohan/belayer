@@ -1,3 +1,5 @@
+> **Status:** Design spec — `belayer dashboard` has shipped. This document describes the intended architecture; actual behavior may diverge. Prefer `belayer dashboard --help` for current flags.
+
 # Belayer Dashboard — Multi-Daemon Unified Web UI
 
 ## Goal

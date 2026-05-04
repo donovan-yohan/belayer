@@ -79,10 +79,10 @@ func mkProfileDir(t *testing.T, hermesHome, profileName, cragSlug, talentName st
 	}
 }
 
-// mkBaseProfile creates the base belayer profile dir under <hermesHome>/profiles/belayer/.
+// mkBaseProfile creates the base blyr profile dir under <hermesHome>/profiles/blyr/.
 func mkBaseProfile(t *testing.T, hermesHome string) string {
 	t.Helper()
-	dir := filepath.Join(hermesHome, "profiles", "belayer")
+	dir := filepath.Join(hermesHome, "profiles", "blyr")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkBaseProfile: %v", err)
 	}
@@ -116,8 +116,8 @@ func TestDoctorCmd_NoProfiles(t *testing.T) {
 		t.Fatalf("doctor: %v", err)
 	}
 
-	if !strings.Contains(stdout, "No belayer-* profiles found") {
-		t.Errorf("expected 'No belayer-* profiles found', got:\n%s", stdout)
+	if !strings.Contains(stdout, "No blyr-* profiles found") {
+		t.Errorf("expected 'No blyr-* profiles found', got:\n%s", stdout)
 	}
 }
 
@@ -127,7 +127,7 @@ func TestDoctorCmd_ActiveProfile(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileName := "belayer-myproject-supervisor"
+	profileName := "blyr-myproject-supervisor"
 	mkProfileDir(t, hermesHome, profileName, "myproject", "supervisor")
 	dbPath := mkDoctorDBWithProfiles(t, profileName)
 
@@ -154,7 +154,7 @@ func TestDoctorCmd_OrphanProfile(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileName := "belayer-local-orphan-dev"
+	profileName := "blyr-local-orphan-dev"
 	mkProfileDir(t, hermesHome, profileName, "local", "orphan-dev")
 	dbPath := mkDoctorDB(t) // empty store
 
@@ -181,7 +181,7 @@ func TestDoctorCmd_OrphanAgentRunsRow(t *testing.T) {
 	t.Setenv("HERMES_HOME", hermesHome)
 
 	// Store references a profile that has no directory.
-	missingProfile := "belayer-local-missing-agent"
+	missingProfile := "blyr-local-missing-agent"
 	dbPath := mkDoctorDBWithProfiles(t, missingProfile)
 	// No directory created → orphan agent_runs row.
 
@@ -207,8 +207,8 @@ func TestDoctorCmd_CragFilter(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileA := "belayer-alpha-supervisor"
-	profileB := "belayer-beta-supervisor"
+	profileA := "blyr-alpha-supervisor"
+	profileB := "blyr-beta-supervisor"
 	mkProfileDir(t, hermesHome, profileA, "alpha", "supervisor")
 	mkProfileDir(t, hermesHome, profileB, "beta", "supervisor")
 	dbPath := mkDoctorDBWithProfiles(t, profileA, profileB)
@@ -232,7 +232,7 @@ func TestDoctorCmd_JSONOutput(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileName := "belayer-myproject-supervisor"
+	profileName := "blyr-myproject-supervisor"
 	mkProfileDir(t, hermesHome, profileName, "myproject", "supervisor")
 	dbPath := mkDoctorDBWithProfiles(t, profileName)
 
@@ -334,8 +334,8 @@ func TestDoctorCmd_MixedActiveOrphan(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	activeProfile := "belayer-myproject-supervisor"
-	orphanProfile := "belayer-myproject-backend-dev"
+	activeProfile := "blyr-myproject-supervisor"
+	orphanProfile := "blyr-myproject-backend-dev"
 	mkProfileDir(t, hermesHome, activeProfile, "myproject", "supervisor")
 	mkProfileDir(t, hermesHome, orphanProfile, "myproject", "backend-dev")
 	dbPath := mkDoctorDBWithProfiles(t, activeProfile) // only active is in store
@@ -362,7 +362,7 @@ func TestDoctorCmd_DiskUsage(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileName := "belayer-myproject-qa"
+	profileName := "blyr-myproject-qa"
 	mkProfileDir(t, hermesHome, profileName, "myproject", "qa")
 	// Write a file into the profile dir to give it a known size.
 	profileDir := filepath.Join(hermesHome, "profiles", profileName)
@@ -413,7 +413,7 @@ func TestDoctorCmd_CragScopedPreservedNotOrphan(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileName := "belayer-myproject-supervisor"
+	profileName := "blyr-myproject-supervisor"
 	mkProfileDirWithScope(t, hermesHome, profileName, "myproject", "supervisor", "crag")
 	dbPath := mkDoctorDB(t) // empty store — no matching agent_runs row
 
@@ -444,7 +444,7 @@ func TestDoctorCmd_TalentScopedPreservedNotOrphan(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileName := "belayer-myproject-backend-dev"
+	profileName := "blyr-myproject-backend-dev"
 	mkProfileDirWithScope(t, hermesHome, profileName, "myproject", "backend-dev", "talent")
 	dbPath := mkDoctorDB(t) // empty store
 
@@ -471,7 +471,7 @@ func TestDoctorCmd_ClimbScopedStillOrphan(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileName := "belayer-myproject-qa"
+	profileName := "blyr-myproject-qa"
 	mkProfileDirWithScope(t, hermesHome, profileName, "myproject", "qa", "climb")
 	dbPath := mkDoctorDB(t) // empty store
 
@@ -499,7 +499,7 @@ func TestDoctorCmd_NoMetadataFileDefaultsToOrphan(t *testing.T) {
 	t.Setenv("HERMES_HOME", hermesHome)
 
 	// Create profile dir WITHOUT any .belayer-talent.yaml.
-	profileName := "belayer-myproject-reviewer"
+	profileName := "blyr-myproject-reviewer"
 	dir := filepath.Join(hermesHome, "profiles", profileName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir profile: %v", err)
@@ -525,7 +525,7 @@ func TestDoctorCmd_IncludeScopedFlagTreatsCragAsOrphan(t *testing.T) {
 	hermesHome := filepath.Join(tmp, "hermes")
 	t.Setenv("HERMES_HOME", hermesHome)
 
-	profileName := "belayer-myproject-supervisor"
+	profileName := "blyr-myproject-supervisor"
 	mkProfileDirWithScope(t, hermesHome, profileName, "myproject", "supervisor", "crag")
 	dbPath := mkDoctorDB(t) // empty store
 

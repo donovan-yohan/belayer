@@ -93,7 +93,7 @@ func profileExists(t *testing.T, profilesRoot, profileName string) bool {
 func TestTeardown_ClimbScopedProfileRemovedOnFinalResponse(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	d := testDaemon(t)
@@ -117,7 +117,7 @@ func TestTeardown_ClimbScopedProfileRemovedOnFinalResponse(t *testing.T) {
 func TestTeardown_CragScopedProfilePreservedOnFinalResponse(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	setupForkProfile(t, profilesRoot, profileName, "crag")
 
 	d := testDaemon(t)
@@ -141,7 +141,7 @@ func TestTeardown_CragScopedProfilePreservedOnFinalResponse(t *testing.T) {
 func TestTeardown_TalentScopedProfilePreservedOnFinalResponse(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	setupForkProfile(t, profilesRoot, profileName, "talent")
 
 	d := testDaemon(t)
@@ -190,7 +190,7 @@ func TestTeardown_DefaultProfileNoTeardownAttempted(t *testing.T) {
 
 // TestTeardown_CustomProfileNoTeardownAttempted verifies that a custom
 // operator-override profile (e.g. "nightshift-planner") is not torn down
-// because it does not start with "belayer-".
+// because it does not start with "blyr-".
 func TestTeardown_CustomProfileNoTeardownAttempted(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
@@ -224,7 +224,7 @@ func TestTeardown_CustomProfileNoTeardownAttempted(t *testing.T) {
 func TestTeardown_MissingMetadataDefaultsToClimb(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	// Pass empty memoryScope → no .belayer-talent.yaml written.
 	setupForkProfile(t, profilesRoot, profileName, "")
 
@@ -254,7 +254,7 @@ func TestTeardown_MissingMetadataDefaultsToClimb(t *testing.T) {
 func TestTeardown_TeardownErrorDoesNotBlockCompletion(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
-	const profileName = "belayer-local-supervisor"
+	const profileName = "blyr-local-supervisor"
 	profileDir := setupForkProfile(t, profilesRoot, profileName, "climb")
 
 	// Make the profile directory itself read-only so RemoveAll cannot delete it.

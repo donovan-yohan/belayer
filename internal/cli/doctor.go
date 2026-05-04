@@ -75,12 +75,12 @@ func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Report Hermes profile health (orphans, auth staleness, disk usage)",
-		Long: `Report health of belayer-* Hermes profiles.
+		Long: `Report health of blyr-* Hermes profiles.
 
-Lists all belayer-* Hermes profiles, groups them by crag slug, and checks:
+Lists all blyr-* Hermes profiles, groups them by crag slug, and checks:
   - Active vs orphaned profiles (no matching agent_runs row).
   - Orphaned agent_runs rows (profile dir gone).
-  - Base belayer profile presence and auth.json staleness.
+  - Base blyr profile presence and auth.json staleness.
   - Disk usage per crag.
 
 Profiles with memory.scope=crag or memory.scope=talent are intentionally
@@ -143,10 +143,10 @@ func buildDoctorReport(dbPath, cragFilter string, staleDays int, includeScoped b
 		return report, fmt.Errorf("resolve profiles root: %w", err)
 	}
 
-	baseProfileDir := filepath.Join(profilesRoot, "belayer")
+	baseProfileDir := filepath.Join(profilesRoot, "blyr")
 	report.Base = buildBaseProfileReport(baseProfileDir, staleDays)
 
-	// 2. Enumerate belayer-* profile dirs (excludes base "belayer").
+	// 2. Enumerate blyr-* profile dirs (excludes base "blyr").
 	profileDirs, err := doctorListProfileDirs(profilesRoot)
 	if err != nil {
 		return report, fmt.Errorf("list profile dirs: %w", err)
@@ -299,8 +299,8 @@ func buildBaseProfileReport(baseProfileDir string, staleDays int) doctorBaseProf
 	return base
 }
 
-// doctorListProfileDirs returns the names (not full paths) of all belayer-*
-// profile directories under profilesRoot, excluding the base "belayer" profile.
+// doctorListProfileDirs returns the names (not full paths) of all blyr-*
+// profile directories under profilesRoot, excluding the base "blyr" profile.
 func doctorListProfileDirs(profilesRoot string) ([]string, error) {
 	entries, err := os.ReadDir(profilesRoot)
 	if err != nil {
@@ -316,7 +316,7 @@ func doctorListProfileDirs(profilesRoot string) ([]string, error) {
 			continue
 		}
 		name := e.Name()
-		if name == "belayer" || !strings.HasPrefix(name, "belayer-") {
+		if name == "blyr" || !strings.HasPrefix(name, "blyr-") {
 			continue
 		}
 		names = append(names, name)
@@ -337,7 +337,7 @@ func doctorQueryStore(dbPath string, profileDirs []string) (map[string]bool, []s
 
 	db := st.DB()
 	rows, err := db.Query(
-		`SELECT DISTINCT profile FROM agent_runs WHERE profile != '' AND profile IS NOT NULL AND profile LIKE 'belayer-%'`,
+		`SELECT DISTINCT profile FROM agent_runs WHERE profile != '' AND profile IS NOT NULL AND profile LIKE 'blyr-%'`,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("query agent_runs: %w", err)
@@ -392,7 +392,7 @@ func doctorReadCragSlug(profileDir, profileName string) (cragSlug, talentName st
 			return
 		}
 	}
-	// Fallback: parse from profile name "belayer-<crag>-<talent>".
+	// Fallback: parse from profile name "blyr-<crag>-<talent>".
 	return doctorSplitProfileName(profileName)
 }
 
@@ -417,9 +417,9 @@ func doctorReadMemoryScope(profileDir, profileName string) string {
 }
 
 // doctorSplitProfileName extracts (cragSlug, talentName) from a profile name
-// of the form "belayer-<crag>-<talent>". Best-effort single-segment split.
+// of the form "blyr-<crag>-<talent>". Best-effort single-segment split.
 func doctorSplitProfileName(profileName string) (cragSlug, talentName string) {
-	rest := strings.TrimPrefix(profileName, "belayer-")
+	rest := strings.TrimPrefix(profileName, "blyr-")
 	parts := strings.SplitN(rest, "-", 2)
 	if len(parts) == 2 {
 		return parts[0], parts[1]
@@ -487,7 +487,7 @@ func printDoctorText(cmd *cobra.Command, report doctorReport, staleDays int) {
 
 	// Per-crag sections.
 	if len(report.Crags) == 0 && len(report.OrphanAgentRuns) == 0 {
-		fmt.Fprintln(out, "No belayer-* profiles found.")
+		fmt.Fprintln(out, "No blyr-* profiles found.")
 	}
 
 	for _, crag := range report.Crags {

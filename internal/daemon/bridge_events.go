@@ -998,7 +998,7 @@ If gaps exist: call belayer_reject_completion with the specific gaps so the supe
 	// historical PM path intact unless a project config overrides it.
 	// Use belayerBaseProfileName so the PM gets its own materialized profile
 	// fork (same as any other talent). Downstream the spawn path applies the
-	// "belayer" → fork-name logic, so this is the right default.
+	// "blyr" → fork-name logic, so this is the right default.
 	go func() {
 		_, err := d.spawnAgentInternal(agentSpawnRequest{
 			SessionID: sessionID,

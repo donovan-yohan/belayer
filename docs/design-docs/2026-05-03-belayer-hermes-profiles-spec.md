@@ -41,8 +41,8 @@ Belayer reads/writes Hermes profiles via the existing `hermes_cli.profiles` API 
 
 ```
 ~/.hermes/profiles/
-├── belayer/                                 ← base, single source of auth + plugin reg
-├── belayer-<cragSlug>-<instanceID>/         ← per-talent-instance, forked from base
+├── blyr/                                    ← base, single source of auth + plugin reg
+├── blyr-<cragSlug>-<instanceID>/            ← per-talent-instance, forked from base
 ```
 
 `instanceID` resolution:
@@ -50,7 +50,9 @@ Belayer reads/writes Hermes profiles via the existing `hermes_cli.profiles` API 
 - Parallel mains: `<talentName>-<short8hex>` (e.g. `backend-dev-a3f9c2d1`)
 - Generated talent: `<generatedTalentID>` (e.g. `generated-reviewer-1`)
 
-Char budget: `belayer-` (8) + crag (≤20) + `-` (1) + instance (≤35) ≤ 64 chars (Hermes regex `^[a-z0-9][a-z0-9_-]{0,63}$`). Validate at `belayer crag init`.
+Char budget: `blyr-` (5) + crag (≤20) + `-` (1) + instance (≤38) ≤ 64 chars (Hermes regex `^[a-z0-9][a-z0-9_-]{0,63}$`). Validate at `belayer crag init`.
+
+Note: Phase 6.A (#144) renamed the base profile from `belayer` to `blyr` and the fork prefix from `belayer-` to `blyr-`, saving 3 characters per profile dir name (8-char `belayer-` prefix → 5-char `blyr-` prefix) to give more room within the 64-char Hermes profile name limit.
 
 ## Forward materialization (.belayer → profile)
 
@@ -58,9 +60,9 @@ Spawn sequence:
 
 1. Resolve identity through 4-layer precedence (already shipped, `internal/daemon/agents.go`).
 2. Resolve crag context from `.belayer/config.yaml#crag.name` or explicit flag.
-3. Compute profile name: `belayer-<crag>-<instanceID>`.
+3. Compute profile name: `blyr-<crag>-<instanceID>`.
 4. If profile dir missing:
-   - Fork from `belayer` base with config + skills + memory seed copied.
+   - Fork from `blyr` base with config + skills + memory seed copied.
    - Auth: see "Auth fork strategy" below.
 5. Render `system-prompt.md` template → write `<profile>/SOUL.md`.
 6. Materialize `talent.yaml`-derived config:
@@ -68,7 +70,7 @@ Spawn sequence:
    - `retention.scope` → archive rule.
    - `authority.tools` → `BELAYER_TOOLS` env (existing wiring).
    - `model` → `config.yaml` model field or `BELAYER_MODEL` env.
-7. Set `HERMES_HOME=~/.hermes/profiles/belayer-<crag>-<instance>` and spawn bridge subprocess via existing path.
+7. Set `HERMES_HOME=~/.hermes/profiles/blyr-<crag>-<instance>` and spawn bridge subprocess via existing path.
 
 ## Backward sync (profile → .belayer)
 
@@ -95,14 +97,14 @@ No new contract fields required.
 
 ## Auth fork strategy
 
-**Resolved by Phase 0 spike (#133).** Symlink `auth.json` from each fork to base `belayer/auth.json`. Hermes's `utils.atomic_replace` (utils.py:61-82) preserves symlinks via `os.path.realpath` per #16743 upstream — token rotation in base propagates to all forks transparently.
+**Resolved by Phase 0 spike (#133).** Symlink `auth.json` from each fork to base `blyr/auth.json`. Hermes's `utils.atomic_replace` (utils.py:61-82) preserves symlinks via `os.path.realpath` per #16743 upstream — token rotation in base propagates to all forks transparently.
 
 Same pattern extends to `plugins/` and `skills/` subdirs (plugin discovery walks symlinks). Per-fork dir holds only mutable state: `memories/`, `sessions/`, `state.db`, `SOUL.md`, `config.yaml`.
 
 ## CLI surface
 
 ```
-belayer auth                            # creates ~/.hermes/profiles/belayer/, runs hermes auth login
+belayer auth                            # creates ~/.hermes/profiles/blyr/, runs hermes auth login
 belayer auth status                     # base profile auth state, refresh time
 
 belayer doctor                          # profile health: orphans, mismatched agent_runs/profiles, auth staleness
@@ -111,8 +113,8 @@ belayer doctor --crag <slug>            # scoped to one crag
 belayer prune                           # interactive: list orphan profiles, remove
 belayer prune --crag <slug>             # scoped
 
-belayer uninstall --crag <slug>         # remove all belayer-<slug>-* + .belayer/crags/<slug>/
-belayer uninstall                       # global: remove all belayer-* + base + ~/.belayer/
+belayer uninstall --crag <slug>         # remove all blyr-<slug>-* + .belayer/crags/<slug>/
+belayer uninstall                       # global: remove all blyr-* + base + ~/.belayer/
 ```
 
 ## Why not Hermes Kanban
@@ -147,7 +149,7 @@ real_path = os.path.realpath(target_str) if os.path.islink(target_str) else targ
 os.replace(str(tmp_path), real_path)
 ```
 
-`_save_auth_store` (auth.py:853-886) uses `atomic_replace`. Token rotation in base `belayer/auth.json` propagates to every symlinked fork. Decision: **Option 1 (symlink) selected**. Drop Options 2 (watch+sync) and 3 (lazy copy).
+`_save_auth_store` (auth.py:853-886) uses `atomic_replace`. Token rotation in base `blyr/auth.json` propagates to every symlinked fork. Decision: **Option 1 (symlink) selected**. Drop Options 2 (watch+sync) and 3 (lazy copy).
 
 **2. Plugin/skill discovery from symlinked profile dirs: walks symlinks correctly.**
 
@@ -178,11 +180,11 @@ NousResearch/hermes-agent#19436 — proposing `hermes profile create --link-auth
 
 Estimate vs actual: 1 day budget; resolved in single session via source reading. No runtime experiments needed because Hermes already documents the symlink-preserving pattern in source.
 
-### Phase 1 — base belayer profile + `belayer auth` (#134, blocked by #133)
+### Phase 1 — base blyr profile + `belayer auth` (#134, blocked by #133)
 
-- `belayer auth` command scaffolds `~/.hermes/profiles/belayer/`.
-- Plugin install path: `~/.hermes/profiles/belayer/plugins/belayer/` (symlink or copy).
-- Daemon defaults to `belayer` profile (was `default`).
+- `belayer auth` command scaffolds `~/.hermes/profiles/blyr/`.
+- Plugin install path: `~/.hermes/profiles/blyr/plugins/belayer/` (symlink or copy).
+- Daemon defaults to `blyr` profile (was `default`).
 - Backwards-compat: `--profile default` still works.
 
 ### Phase 2 — talent → profile materialization (#135, blocked by #134)
