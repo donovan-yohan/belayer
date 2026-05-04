@@ -329,6 +329,69 @@ func TeardownProfile(profileName string) error {
 	return nil
 }
 
+// ── Crag context ─────────────────────────────────────────────────────────────
+
+// localCragSlug is the fallback crag slug used when the project is not linked
+// to any crag. This keeps profile names bounded and well-formed for operators
+// who have not yet run `belayer crag link`.
+const localCragSlug = "local"
+
+// ResolveCragSlug returns the crag slug for the project rooted at projectDir.
+// It reads .belayer/config.yaml#crag.name using a simple line scan (avoids
+// pulling in a YAML library for a single field lookup). Returns localCragSlug
+// ("local") if the config file is missing, the crag block is absent, or the
+// name field is empty — so per-talent profile names are always bounded.
+//
+// Phase 2.D: unlinked projects default to "local". Phase 3 can add stricter
+// validation or a warning when crag is absent.
+func ResolveCragSlug(projectDir string) (string, error) {
+	if projectDir == "" {
+		return localCragSlug, nil
+	}
+	cfgPath := filepath.Join(projectDir, ".belayer", "config.yaml")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return localCragSlug, nil
+		}
+		return "", fmt.Errorf("ResolveCragSlug: read %s: %w", cfgPath, err)
+	}
+	// Scan for `name:` under a top-level `crag:` block. The format written by
+	// org.go#setCragLinkBlock is:
+	//   crag:
+	//     name: "<slug>"
+	// We look for the `crag:` key at column 0, then find the first `name:` at
+	// exactly two-space indentation immediately following it.
+	inCragBlock := false
+	for _, line := range splitLines(string(data)) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " \t"))
+		if indent == 0 {
+			// New top-level key.
+			inCragBlock = trimmed == "crag:"
+			continue
+		}
+		if inCragBlock && strings.HasPrefix(trimmed, "name:") {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "name:"))
+			val = strings.Trim(val, `"'`)
+			if val != "" {
+				return val, nil
+			}
+		}
+	}
+	return localCragSlug, nil
+}
+
+// belayerBaseProfileName is the canonical Hermes profile name that holds the
+// shared auth.json, plugin registration, and skills. Per-talent fork profiles
+// are named belayer-<cragSlug>-<instance> and inherit from this base.
+// Agents spawned with Profile == belayerBaseProfileName get a materialized fork;
+// Profile == "default" preserves legacy behaviour (HERMES_HOME unset).
+const belayerBaseProfileName = "belayer"
+
 // ── internal helpers ─────────────────────────────────────────────────────────
 
 // ensureSymlink creates a symlink at linkPath pointing to target. If a symlink

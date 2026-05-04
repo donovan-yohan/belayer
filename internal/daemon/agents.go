@@ -342,6 +342,12 @@ func (d *Daemon) handleSpawnAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	unlockSpawn()
 
+	// Materialize a per-talent fork profile when req.Profile == "belayer".
+	// Must happen after the store row exists (so GetAgentRun can supply the
+	// run UUID as the instance seed) and before the bridge subprocess is
+	// launched (so it receives the resolved BELAYER_PROFILE).
+	req = d.materializeBridgeProfile(req)
+
 	proc, err := d.spawnBridgeAgent(req)
 	if err != nil {
 		log.Printf("spawn agent %s failed: %v", req.Name, err)
@@ -1083,6 +1089,11 @@ func (d *Daemon) spawnAgentInternal(req agentSpawnRequest) (store.AgentRun, erro
 		unlockSpawn()
 	}
 
+	// Materialize a per-talent fork profile when req.Profile == "belayer".
+	// Must happen after the store row exists and before the bridge subprocess
+	// is launched.
+	req = d.materializeBridgeProfile(req)
+
 	proc, err := d.spawnBridgeAgent(req)
 	if err != nil {
 		_ = d.store.UpdateAgentRunStatus(req.SessionID, req.Name, "failed")
@@ -1597,6 +1608,99 @@ func buildAgentInitialMessage(branch, worktreePath, message string) string {
 	}
 	prefix := fmt.Sprintf("[workspace: %s (git worktree on branch %s)]\n\n", worktreePath, branch)
 	return prefix + message
+}
+
+// materializeBridgeProfile resolves the effective Hermes profile for a bridge
+// spawn and, when appropriate, materializes a per-talent-instance fork of the
+// base belayer profile. It mutates req.Profile in the returned copy so that
+// downstream callers (both the real bridgeLaunchAgent and test stubs) receive
+// the resolved profile name.
+//
+// Three modes:
+//
+//   req.Profile == "belayer" (new default): resolve crag slug, compute fork
+//     name via ResolveProfileName, call MaterializeProfile, set req.Profile to
+//     the fork name, and update agent_runs.profile in the store.
+//
+//   req.Profile == "default" (legacy explicit override): return req unchanged.
+//     HERMES_HOME is left unset by the bridge; agents use ~/.hermes directly.
+//
+//   Any other value (operator override e.g. "nightshift-planner"): return req
+//     unchanged; the bridge passes the name through to BELAYER_PROFILE.
+//
+// On any error during materialization (base profile missing, I/O error, name
+// too long) the function logs a warning and falls back to Profile == "default"
+// so the spawn continues rather than hard-failing.
+func (d *Daemon) materializeBridgeProfile(req agentSpawnRequest) agentSpawnRequest {
+	if req.Profile != belayerBaseProfileName {
+		return req
+	}
+
+	cragSlug, cragErr := ResolveCragSlug(req.Workdir)
+	if cragErr != nil {
+		log.Printf("spawn %s: resolve crag slug (workdir=%s): %v — falling back to %q",
+			req.Name, req.Workdir, cragErr, localCragSlug)
+		cragSlug = localCragSlug
+	}
+
+	// Use the agent run's existing UUID as the instance seed. The store row
+	// must already exist (it is created before materializeBridgeProfile is
+	// called). If GetAgentRun fails for any reason, fall back to an empty
+	// instanceID (singleton semantics).
+	instanceID := ""
+	if existingRun, runErr := d.store.GetAgentRun(req.SessionID, req.Name); runErr == nil {
+		instanceID = DeriveInstanceID(existingRun.ID)
+	}
+
+	forkName, forkErr := ResolveProfileName(cragSlug, req.identityKey(), instanceID)
+	if forkErr != nil {
+		log.Printf("spawn %s: resolve fork profile name (crag=%s identity=%s instance=%s): %v — falling back to default profile",
+			req.Name, cragSlug, req.identityKey(), instanceID, forkErr)
+		req.Profile = "default"
+		return req
+	}
+
+	profilesRoot, rootErr := ProfilesRoot()
+	if rootErr != nil {
+		log.Printf("spawn %s: resolve profiles root: %v — skipping materialization, using default", req.Name, rootErr)
+		req.Profile = "default"
+		return req
+	}
+
+	// Load identity to get systemPrompt and model for MaterializeProfile.
+	// bridgeLaunchAgent also loads identity, so this is an extra call on the
+	// production path. The overhead is two small file reads per spawn — acceptable
+	// compared to the cost of spawning a subprocess.
+	loaded := loadAgentIdentity(req.Workdir, d.config.BelayerRoot, req.identityKey(), req.Model)
+
+	baseProfileDir := filepath.Join(profilesRoot, belayerBaseProfileName)
+	matErr := MaterializeProfile(MaterializeOptions{
+		ProfileName:    forkName,
+		BaseProfileDir: baseProfileDir,
+		SystemPrompt:   loaded.SystemPrompt,
+		Model:          loaded.Model,
+		MemoryScope:    "", // default ("climb"); talent.yaml#memory.scope wired in Phase 3
+	})
+	if matErr != nil {
+		// Base profile missing (operator hasn't run `belayer auth`) or I/O error.
+		// Fall back to "default" so the spawn continues working as before the
+		// profile-fork feature was introduced.
+		log.Printf("spawn %s: materialize profile %s: %v — falling back to default profile (run `belayer auth` to enable per-talent isolation)",
+			req.Name, forkName, matErr)
+		req.Profile = "default"
+		return req
+	}
+
+	log.Printf("spawn %s: using fork profile %s (crag=%s identity=%s)", req.Name, forkName, cragSlug, req.identityKey())
+	req.Profile = forkName
+
+	// Record the actual fork profile name in the store so Phase 4 reconciliation
+	// can correlate agent_runs with Hermes profiles.
+	if updateErr := d.store.UpdateAgentRunProfile(req.SessionID, req.Name, forkName); updateErr != nil {
+		log.Printf("spawn %s: update agent_run profile to %s: %v (continuing)", req.Name, forkName, updateErr)
+	}
+
+	return req
 }
 
 // validateAgentName rejects names that could escape a filesystem path.
