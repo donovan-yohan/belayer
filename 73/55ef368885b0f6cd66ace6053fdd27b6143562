@@ -1,0 +1,31 @@
+internal/cli/prune.go
+  0aec7f289c962a66 25,29-35,38,50-53,68-69,74-79,85,88,94,112,132,147,155-167,170,174,181,183,200,206,213,216,222-223,230-239,248,253,280-320
+internal/cli/doctor_test.go
+  0aec7f289c962a66 388-546
+internal/daemon/profiles.go
+  0aec7f289c962a66 341,347-348,353,358-368,371,374,379
+internal/cli/doctor.go
+  0aec7f289c962a66 25-28,73,86-89,114,130,135-137,186-203,399-418,500,502-505,508-515,517
+internal/cli/prune_test.go
+  0aec7f289c962a66 388-529
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "7355ef368885b0f6cd66ace6053fdd27b6143562",
+  "prompts": {
+    "0aec7f289c962a66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8767a93-57f9-4279-815e-9f789337b5c5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 142,
+      "total_deletions": 0,
+      "accepted_lines": 624,
+      "overriden_lines": 0
+    }
+  }
+}
