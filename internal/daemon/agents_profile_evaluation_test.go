@@ -100,10 +100,10 @@ func readArtifactInDir(t *testing.T, artifactsDir, prefix string) []byte {
 	return nil
 }
 
-// TestEvaluation_MemoryPresentWritesArtifactWithExcerpt verifies that when
-// MEMORY.md exists in the profile's memories/ dir, the artifact is written
-// with a non-empty memory_excerpt.memory_excerpt["MEMORY.md"] field.
-func TestEvaluation_MemoryPresentWritesArtifactWithExcerpt(t *testing.T) {
+// TestEvaluation_MEMORYMDPresent verifies that when MEMORY.md exists in the
+// profile's memories/ dir, the artifact is written with a single strength-type
+// observation whose summary contains the MEMORY.md content.
+func TestEvaluation_MEMORYMDPresent(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
 	const profileName = "belayer-local-supervisor"
@@ -152,18 +152,21 @@ func TestEvaluation_MemoryPresentWritesArtifactWithExcerpt(t *testing.T) {
 	if art.Session.ID != sessID {
 		t.Errorf("session.id = %q, want %q", art.Session.ID, sessID)
 	}
-	if art.MemoryExcerpt == nil {
-		t.Fatal("memory_excerpt should be present when MEMORY.md exists")
+	if len(art.Observations) == 0 {
+		t.Fatal("observations should be non-empty when MEMORY.md exists")
 	}
-	got := art.MemoryExcerpt["MEMORY.md"]
-	if got != memoryContent {
-		t.Errorf("memory_excerpt[MEMORY.md] = %q, want %q", got, memoryContent)
+	obs := art.Observations[0]
+	if obs.Type != "strength" {
+		t.Errorf("observations[0].type = %q, want strength", obs.Type)
+	}
+	if obs.Summary != memoryContent {
+		t.Errorf("observations[0].summary = %q, want %q", obs.Summary, memoryContent)
 	}
 }
 
-// TestEvaluation_MemoryAbsentWritesArtifactWithoutExcerpt verifies that when
-// no MEMORY.md exists, the artifact is still written but without memory_excerpt.
-func TestEvaluation_MemoryAbsentWritesArtifactWithoutExcerpt(t *testing.T) {
+// TestEvaluation_MEMORYMDAbsent verifies that when no MEMORY.md exists, the
+// artifact is still written but with an empty observations array.
+func TestEvaluation_MEMORYMDAbsent(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
 	const profileName = "belayer-local-supervisor"
@@ -193,8 +196,8 @@ func TestEvaluation_MemoryAbsentWritesArtifactWithoutExcerpt(t *testing.T) {
 	if err := json.Unmarshal(raw, &art); err != nil {
 		t.Fatalf("unmarshal artifact: %v", err)
 	}
-	if art.MemoryExcerpt != nil {
-		t.Errorf("memory_excerpt should be nil when no memories exist, got %v", art.MemoryExcerpt)
+	if len(art.Observations) != 0 {
+		t.Errorf("observations should be empty when no memories exist, got %v", art.Observations)
 	}
 	if art.SchemaVersion != "belayer-talent-evaluation/v1" {
 		t.Errorf("schema_version = %q, want belayer-talent-evaluation/v1", art.SchemaVersion)
@@ -202,10 +205,10 @@ func TestEvaluation_MemoryAbsentWritesArtifactWithoutExcerpt(t *testing.T) {
 }
 
 // TestEvaluation_UserMDAlsoCaptured verifies that when both MEMORY.md and
-// USER.md exist in the profile's memories/ directory, both are included in
-// memory_excerpt. Uses a "backend-dev" agent run with a climb-scoped profile
-// whose metadata records talent_name as "supervisor" (the setupForkProfile
-// helper hardcodes this). The artifact filename therefore uses "supervisor".
+// USER.md exist in the profile's memories/ directory, both are captured as a
+// single strength-type observation with the contents joined by "--- USER ---".
+// Uses a supervisor-named profile (setupForkProfile always writes talent_name:
+// supervisor), so the artifact filename uses "supervisor".
 func TestEvaluation_UserMDAlsoCaptured(t *testing.T) {
 	profilesRoot, _ := setupBaseBelayerProfile(t)
 
@@ -251,14 +254,19 @@ func TestEvaluation_UserMDAlsoCaptured(t *testing.T) {
 	if err := json.Unmarshal(raw, &art); err != nil {
 		t.Fatalf("unmarshal artifact: %v", err)
 	}
-	if art.MemoryExcerpt == nil {
-		t.Fatal("memory_excerpt should not be nil when MEMORY.md and USER.md exist")
+	if len(art.Observations) == 0 {
+		t.Fatal("observations should be non-empty when MEMORY.md and USER.md exist")
 	}
-	if art.MemoryExcerpt["MEMORY.md"] != memContent {
-		t.Errorf("memory_excerpt[MEMORY.md] = %q, want %q", art.MemoryExcerpt["MEMORY.md"], memContent)
+	obs := art.Observations[0]
+	if obs.Type != "strength" {
+		t.Errorf("observations[0].type = %q, want strength", obs.Type)
 	}
-	if art.MemoryExcerpt["USER.md"] != userContent {
-		t.Errorf("memory_excerpt[USER.md] = %q, want %q", art.MemoryExcerpt["USER.md"], userContent)
+	wantSummary := memContent + "\n\n--- USER ---\n\n" + userContent
+	if obs.Summary != wantSummary {
+		t.Errorf("observations[0].summary = %q, want %q", obs.Summary, wantSummary)
+	}
+	if len(art.Observations) != 1 {
+		t.Errorf("expected exactly 1 observation (joined MEMORY+USER), got %d", len(art.Observations))
 	}
 }
 

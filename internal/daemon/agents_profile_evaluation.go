@@ -13,19 +13,20 @@ package daemon
 // Phase 3.D scope — fields populated here:
 //   schema_version, talent, org, session.id, tasks (empty), assignment
 //   (placeholder), gate_outcomes (empty), recommendations (empty),
-//   evaluated_at, memory_excerpt (Phase 3.D extension, not yet in schema).
+//   evaluated_at, observations (memory content from MEMORY.md / USER.md).
+//
+// Memory content is captured as a single strength-type observation so the
+// artifact remains conformant with the schema's additionalProperties: false
+// constraint. MEMORY.md and USER.md (when present) are joined in one
+// observation summary separated by "--- USER ---".
 //
 // Out of scope for Phase 3.D (Phase 4+):
 //   produced_artifacts  — requires listing artifacts registered by this agent run.
 //   gate_outcomes       — requires querying gate-result artifacts for this run.
 //   metrics             — requires token-usage accounting from the bridge.
-//   observations        — can be synthesised from the above once available.
 //   recommendations     — requires gate outcome data to be meaningful.
 //   tasks               — requires task-graph integration from the org-plan.
 //   assignment.source/lifecycle/state/task_ids — requires talent-request artifact.
-//   memory_excerpt is an extension field not in the v1 schema; it is included
-//   here because it is the primary data captured at this lifecycle event.
-//   A future schema bump (v2) should formalise it or replace it with observations.
 
 import (
 	"encoding/json"
@@ -42,19 +43,23 @@ import (
 // as a talent-evaluation/v1 JSON artifact. Only the fields populated by
 // Phase 3.D are present; see package-level comment for omissions.
 type talentEvaluationArtifact struct {
-	SchemaVersion string                    `json:"schema_version"`
-	Talent        string                    `json:"talent"`
-	Org           string                    `json:"org"`
-	Session       talentEvalSession         `json:"session"`
-	Tasks         []any                     `json:"tasks"`
-	Assignment    talentEvalAssignment      `json:"assignment"`
-	GateOutcomes  []any                     `json:"gate_outcomes"`
-	Recommendations []any                   `json:"recommendations"`
-	EvaluatedAt   string                    `json:"evaluated_at"`
-	// MemoryExcerpt is a Phase 3.D extension: the raw content of the agent's
-	// MEMORY.md (and USER.md when present) captured immediately before profile
-	// teardown. Not in the v1 schema; tracked for schema v2 / Phase 4 formalisation.
-	MemoryExcerpt map[string]string         `json:"memory_excerpt,omitempty"`
+	SchemaVersion   string               `json:"schema_version"`
+	Talent          string               `json:"talent"`
+	Org             string               `json:"org"`
+	Session         talentEvalSession    `json:"session"`
+	Tasks           []any                `json:"tasks"`
+	Assignment      talentEvalAssignment `json:"assignment"`
+	GateOutcomes    []any                `json:"gate_outcomes"`
+	Observations    []talentObservation  `json:"observations,omitempty"`
+	Recommendations []any                `json:"recommendations"`
+	EvaluatedAt     string               `json:"evaluated_at"`
+}
+
+// talentObservation is the schema's observation object (type + summary + evidence).
+type talentObservation struct {
+	Type     string   `json:"type"`
+	Summary  string   `json:"summary"`
+	Evidence []string `json:"evidence"`
 }
 
 type talentEvalSession struct {
@@ -145,8 +150,25 @@ func (d *Daemon) writeTalentEvaluationArtifact(
 		Recommendations: []any{},
 		EvaluatedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
-	if len(memoryExcerpt) > 0 {
-		artifact.MemoryExcerpt = memoryExcerpt
+	// Capture memory content as a strength observation so the artifact stays
+	// conformant with the schema's additionalProperties: false constraint.
+	// MEMORY.md and USER.md (when present) are joined in one observation
+	// summary separated by "--- USER ---".
+	//
+	// TODO(Phase 4): store-dedup — re-running writeTalentEvaluationArtifact
+	// (e.g. on agent re-spawn) calls CreateArtifact again, producing duplicate
+	// rows. The file is overwritten cleanly, but the store accumulates stale
+	// entries. Phase 4 should upsert by (session_id, kind, producer) instead.
+	if memContent, ok := memoryExcerpt["MEMORY.md"]; ok {
+		summary := memContent
+		if userContent, hasUser := memoryExcerpt["USER.md"]; hasUser {
+			summary += "\n\n--- USER ---\n\n" + userContent
+		}
+		artifact.Observations = append(artifact.Observations, talentObservation{
+			Type:     "strength",
+			Summary:  summary,
+			Evidence: []string{},
+		})
 	}
 
 	// Build filename: talent-evaluation-<talent>-<agent_run_id>.json
