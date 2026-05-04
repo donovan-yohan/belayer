@@ -9,8 +9,14 @@ directory:
 .belayer/agents/<name>/
 ├── agent.yaml          # vendor, model, kind, tool allowlist
 ├── system-prompt.md    # the agent's soul (injected via ephemeral_system_prompt)
-└── agents.md           # operating instructions, tools, workflows
+├── agents.md           # operating instructions, tools, workflows
+└── talent.yaml         # optional: catalog metadata (belayer-talent/v1) or
+                        #           generated-talent record (belayer-generated-talent/v1)
 ```
+
+The daemon uses only `agent.yaml`, `system-prompt.md`, and `agents.md` at spawn
+time. `talent.yaml` is for catalog browsing, documentation, and future selection
+logic — the daemon ignores it during bridge construction.
 
 ## How these files reach your project
 
@@ -34,12 +40,24 @@ flowchart LR
     classDef bridge fill:#161b22,stroke:#30363d,color:#c9d1d9
 ```
 
-- `agents/` here: shipped starter templates, embedded in the `belayer` binary.
-- `belayer init`: copies this tree into your project at `.belayer/agents/`.
-- `.belayer/agents/` in your project: your runtime team definition — you own
-  it. Edit, delete, rename, add; nothing in the framework source changes.
-- At spawn time the daemon reads project-local first, falls back to the
-  embedded copy only if the name is not defined locally.
+The daemon resolves identity files through four layers in this order:
+
+1. **`repo/.belayer/agents/<name>/`** — project-local override; wins over everything.
+2. **Linked crag** — `~/.belayer/crags/<crag>/teams/<team>/<name>/` (via `crag link`).
+3. **User talent catalog** — `~/.belayer/talent-catalog/<category>/<name>/` (added via `belayer team add`).
+4. **Shipped defaults** — this `agents/` directory, embedded in the binary.
+
+The 4-tier precedence is the design contract (see `docs/CRAG_FILESYSTEM.md`). At
+present, `belayer team add` copies catalog identities into tier 1 so they reach
+the daemon through the project-local layer. Direct crag and catalog tiers are not
+yet wired into the spawn-time loader. `belayer init` copies the shipped defaults
+into tier 1 on first use.
+
+**Profile forks.** The daemon materializes a per-talent Hermes profile fork
+(`blyr-<crag>-<instance>/`) at spawn time. Operators do not manage these manually;
+they are created, symlinked to the base `blyr` auth, and torn down by the daemon.
+Run `belayer auth ensure` once to set up the base profile. See
+`docs/design-docs/2026-05-03-belayer-hermes-profiles-spec.md` for details.
 
 ## The shipped default team
 

@@ -325,6 +325,15 @@ When resolving an identity or crag asset, use this order:
 This mirrors existing agent resolution: local project intent wins over shipped
 defaults.
 
+## Hermes Profile Scope
+
+Hermes per-talent profile forks (`~/.hermes/profiles/blyr-<crag>-<instance>/`)
+are not stored in the crag directory. They live in the Hermes profiles root and
+are managed by the daemon at spawn/teardown time. `belayer prune` removes orphaned
+forks; `belayer uninstall --crag <slug>` removes all profiles for a crag plus its
+crag directory. See `docs/design-docs/2026-05-03-belayer-hermes-profiles-spec.md`
+for the full profile lifecycle and naming contract.
+
 ## Privacy And Safety
 
 Cross-project knowledge is opt-in per repo. A normal climb must not silently

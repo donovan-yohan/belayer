@@ -1,3 +1,5 @@
+> **Status:** Design spec — the per-daemon web UI at `/ui/` has shipped. This document describes the intended design; actual behavior may diverge. Prefer `belayer daemon --help` and the live UI for current behavior.
+
 # Belayer Web UI Spec
 
 ## Goal

@@ -1,3 +1,5 @@
+> **Status:** Speculative deployment guide for a specific Proxmox + Tailscale topology. This predates the Phase 6 `blyr` profile model; auth setup steps do not reflect `belayer auth ensure`. Preserved for topology reference only.
+
 # Hermes Agent on Proxmox LXC
 
 Deploy Hermes Agent to a privileged Proxmox LXC container with persistent data via bind mounts, Tailscale SSH for keyless access, and network containment to prevent lateral movement.

@@ -676,7 +676,7 @@ Crag (always-on daemon, owns queue + targets + web UI)
     │   └── Bridge process manager (spawn, monitor, stdin pipes)
     │
     ├── Supervisor (non-ephemeral)
-    │   ├── Hermes agent (Opus, profile: nightshift-supervisor)
+    │   ├── Hermes agent (Opus, profile: blyr-<crag>-supervisor)
     │   ├── Base tools (Read, Write, Edit, Bash, Grep, Glob, ...)
     │   ├── Belayer tools (send_message, create_artifact, report_status, spawn_agent)
     │   ├── Completion tool: belayer_request_completion (signals "work done, verify")
@@ -684,7 +684,7 @@ Crag (always-on daemon, owns queue + targets + web UI)
     │   └── Lifecycle: running → idle (waiting) → running → ... → request completion
     │
     ├── Specialist "api" (ephemeral, spawned by supervisor)
-    │   ├── Hermes agent (Sonnet, profile: nightshift-api)
+    │   ├── Hermes agent (Sonnet, profile: blyr-<crag>-api)
     │   ├── Git worktree: .belayer/worktrees/api/ (branch: feat/api-items)
     │   ├── Base tools + Belayer tools (no spawn_agent)
     │   ├── Callbacks → daemon event log
@@ -692,14 +692,14 @@ Crag (always-on daemon, owns queue + targets + web UI)
     │   └── Name persists in roster for re-assignment with session resume
     │
     ├── PM "pm" (ephemeral, auto-spawned by daemon on completion request)
-    │   ├── Hermes agent (Sonnet, profile: default)
+    │   ├── Hermes agent (Sonnet, profile: blyr-<crag>-pm)
     │   ├── Completion tools: belayer_approve_completion, belayer_reject_completion
     │   ├── Reads spec artifact, git diff, artifact registry
     │   ├── Lifecycle: spawned → verify → approve (session complete) or reject (gaps to supervisor)
     │   └── Bounded: max 3 rejection cycles before escalating to human
     │
     └── Specialist "qa" (ephemeral, spawned by supervisor)
-        ├── Hermes agent (Sonnet, profile: nightshift-qa)
+        ├── Hermes agent (Sonnet, profile: blyr-<crag>-qa)
         ├── Same workdir as supervisor (no worktree, reads but doesn't write code)
         ├── Base tools + Belayer tools (no spawn_agent)
         ├── Callbacks → daemon event log
@@ -821,9 +821,7 @@ flowchart LR
 - **The spec is the source of truth, not the supervisor's summary.** The PM reads the original spec artifact directly. It receives the supervisor's summary for context but verifies against the spec.
 - **Tool access is declared in agent templates.** Each template's `agent.yaml` declares which belayer tools that role receives. The supervisor gets spawn and request_completion. The PM gets approve and reject. Specialists get baseline only. The Belayer Hermes plugin enforces this at plugin-discovery time: it reads the per-agent `BELAYER_TOOLS` allowlist (set by the daemon from `agent.yaml`) and only registers tools the agent is permitted to call.
 - **PM is ephemeral.** It spawns, verifies, decides, and exits. If rejected, a new PM process spawns on the next `belayer finish` call.
-- **PM identity lives in `agents/pm/` (shipped) and `.belayer/agents/pm/` (project-local override).** The system prompt is injected via Hermes's `ephemeral_system_prompt` at spawn time. The Hermes profile stays `default` for now.
-
-> **TODO: Hermes profile bootstrap.** Currently all bridge agents use the `default` Hermes profile, with identity injected via `ephemeral_system_prompt` and model overridden via `BELAYER_MODEL`. This works for local testing because every agent shares the machine's auth context. But a Hermes profile controls more than the soul: provider selection, API keys, OAuth token state, model routing, skills, plugins, and MCP server configs. When agents need different providers (e.g. PM on Anthropic sonnet, implementer on OpenAI codex) or deploy to Crag where there's no interactive `hermes auth`, the default profile can't cover it. Belayer needs a way to construct or materialize per-agent Hermes profiles at spawn time, either from `agents/<name>/agent.yaml` declarations or from daemon-held credential sets.
+- **PM identity lives in `agents/pm/` (shipped) and `.belayer/agents/pm/` (project-local override).** The system prompt is injected via Hermes's `ephemeral_system_prompt` at spawn time. At spawn the daemon materializes a per-talent fork of the base `blyr` profile (`blyr-<crag>-<instance>/`) so each agent gets auth isolation without a separate `hermes auth` login. Run `belayer auth ensure` once to set up the base profile before starting a climb.
 
 ### Implementation files
 
