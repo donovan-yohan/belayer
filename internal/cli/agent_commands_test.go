@@ -7,7 +7,7 @@ import (
 	"github.com/donovan-yohan/belayer/internal/store"
 )
 
-func TestRootCmdRegistersNightshiftCommands(t *testing.T) {
+func TestRootCmdRegistersAgentCommands(t *testing.T) {
 	cmd := NewRootCmd()
 
 	want := []string{"climb", "spawn", "roster", "finish", "request-completion", "message"}
@@ -18,7 +18,7 @@ func TestRootCmdRegistersNightshiftCommands(t *testing.T) {
 
 	for _, name := range want {
 		if !seen[name] {
-			t.Fatalf("missing nightshift command %q", name)
+			t.Fatalf("missing agent command %q", name)
 		}
 	}
 }
