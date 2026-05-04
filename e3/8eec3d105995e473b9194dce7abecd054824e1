@@ -1,0 +1,71 @@
+internal/daemon/agents_profile_memoryscope_test.go
+  0aec7f289c962a66 306
+internal/cli/prune.go
+  0aec7f289c962a66 43-44,46,192-193,306,308,341,343
+internal/daemon/profiles_test.go
+  0aec7f289c962a66 25,32,39,46,53,278,280,309-310,314,345,356,381,414,433,460,492,516,535,547,567,597,630,662,688,708,729,734,736-738,743
+internal/daemon/agents_profile_spawn_test.go
+  0aec7f289c962a66 74-75,145,194,370,399,455-456
+internal/daemon/agents.go
+  0aec7f289c962a66 346,1093,1660-1661,1672,1678,1764
+internal/cli/auth_test.go
+  0aec7f289c962a66 86,91,109,120,144,165
+internal/cli/prune_test.go
+  0aec7f289c962a66 25,27,33,35,137,163,188,235-236,265,305,331,412,434,455,476,498-499
+docs/design-docs/2026-05-03-belayer-hermes-profiles-spec.md
+  0aec7f289c962a66 44-45,53-55,63,65,73,100,107,116-117,152,183,185-187
+CLAUDE.md
+  0aec7f289c962a66 62,77
+internal/daemon/bridge_events.go
+  0aec7f289c962a66 1001
+internal/daemon/agents_profile_evaluation_test.go
+  0aec7f289c962a66 109,172,217,279,328
+internal/daemon/agents_profile_resume_test.go
+  0aec7f289c962a66 73,165,200
+internal/cli/doctor_test.go
+  0aec7f289c962a66 82,85,119-120,130,157,184,210-211,235,337-338,365,416,447,474,502,528
+internal/cli/doctor.go
+  0aec7f289c962a66 78,80,83,146,149,302-303,319,340,395,420,422,490
+internal/cli/uninstall.go
+  0aec7f289c962a66 27-28,31,64,94,105,112,118,226-227,278,284-285,340
+internal/daemon/agents_profile_session_teardown_test.go
+  0aec7f289c962a66 56-58,95-97,161-162,213-214,267,311
+internal/daemon/agents_profile_teardown_test.go
+  0aec7f289c962a66 96,120,144,193,227,257
+internal/cli/auth.go
+  0aec7f289c962a66 17-19,40-41,43,56-57,76,78,102,144,146-147
+internal/daemon/agents_phase3_integration_test.go
+  0aec7f289c962a66 57,237,336,349,353,528,600
+internal/daemon/agents_phase5_integration_test.go
+  0aec7f289c962a66 108-109,158,245
+internal/daemon/agents_profile_integration_test.go
+  0aec7f289c962a66 129-130,200,209-210,369-370,428,491,508
+internal/daemon/profiles.go
+  0aec7f289c962a66 89,97,294,322-323,325-326,459,462,526,528-529,532,534,541-543
+internal/cli/uninstall_test.go
+  0aec7f289c962a66 52,55,111-113,123,147,156,168-170,180,199,222,329-331,345-347,354-355,377,424,528-531,548,553,559
+internal/daemon/agents_profile_evaluation.go
+  0aec7f289c962a66 99,126
+agents/supervisor/agents.md
+  0aec7f289c962a66 41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "e38eec3d105995e473b9194dce7abecd054824e1",
+  "prompts": {
+    "0aec7f289c962a66": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8767a93-57f9-4279-815e-9f789337b5c5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 258,
+      "total_deletions": 256,
+      "accepted_lines": 258,
+      "overriden_lines": 0
+    }
+  }
+}
