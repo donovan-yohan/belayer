@@ -244,8 +244,6 @@ belayer dashboard --config dashboard.yaml --port 7525
 # open http://localhost:7525/ui/
 ```
 
-See `docs/webui-spec.md` and `docs/dashboard-spec.md` for design details.
-
 ## Docs
 
 - `docs/README.md` — current docs map and historical-design warning
