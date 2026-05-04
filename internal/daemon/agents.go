@@ -1644,6 +1644,11 @@ func parseInlineYAMLList(raw string) []string {
 // (ephemeral). Profiles with scope=crag or scope=talent are preserved so their
 // accumulated memories survive across runs.
 //
+// Phase 3.D: before tearing down a climb-scoped profile, this function writes a
+// talent-evaluation/v1 artifact to the climb's artifacts directory capturing the
+// agent's accumulated MEMORY.md (and USER.md when present). The artifact write is
+// best-effort: failure is logged but does not block teardown.
+//
 // Safety rules (mirrors TeardownProfile's own checks, applied early to avoid
 // unnecessary filesystem access):
 //   - Returns early for profile == "default" or "belayer" (no teardown).
@@ -1653,7 +1658,13 @@ func parseInlineYAMLList(raw string) []string {
 //
 // Failures during teardown are logged but not propagated so agent completion
 // always succeeds even when the cleanup step encounters a filesystem error.
-func (d *Daemon) teardownProfileIfClimbScoped(profileName string) {
+//
+// Parameters:
+//   - sessionID    — the climb's session UUID; used to resolve the artifact dir.
+//   - agentRunID   — the agent_runs.id for this run; used in the artifact filename.
+//   - workspaceDir — the session workspace root; empty string disables artifact write.
+//   - profileName  — the materialized Hermes profile name (e.g. "belayer-local-supervisor").
+func (d *Daemon) teardownProfileIfClimbScoped(sessionID, agentRunID, workspaceDir, profileName string) {
 	// Guard: only operate on belayer-managed fork profiles.
 	if profileName == "" || profileName == "default" || profileName == belayerBaseProfileName {
 		return
@@ -1662,10 +1673,14 @@ func (d *Daemon) teardownProfileIfClimbScoped(profileName string) {
 		return
 	}
 
-	scope, err := readTalentMetadata(profileName)
+	meta, err := readFullTalentMetadata(profileName)
 	if err != nil {
 		// Missing or unreadable metadata → treat as climb (ephemeral/orphaned).
 		log.Printf("INFO: teardownProfileIfClimbScoped: metadata unreadable for profile %q (%v) — treating as climb-scoped, tearing down", profileName, err)
+		meta = talentMetadata{MemoryScope: "climb"}
+	}
+	scope := meta.MemoryScope
+	if scope == "" {
 		scope = "climb"
 	}
 
@@ -1678,6 +1693,11 @@ func (d *Daemon) teardownProfileIfClimbScoped(profileName string) {
 		if scope != "climb" {
 			log.Printf("INFO: teardownProfileIfClimbScoped: unrecognised scope %q for profile %q — treating as climb-scoped, tearing down", scope, profileName)
 		}
+	}
+
+	// Phase 3.D: capture talent evaluation artifact before destroying profile.
+	if workspaceDir != "" && sessionID != "" {
+		d.writeTalentEvaluationArtifact(sessionID, agentRunID, workspaceDir, profileName, meta)
 	}
 
 	if err := TeardownProfile(profileName); err != nil {
@@ -1702,8 +1722,13 @@ func (d *Daemon) sweepSessionProfiles(sessionID string) {
 		log.Printf("ERROR: sweepSessionProfiles: list agent runs for session %q: %v", sessionID, err)
 		return
 	}
+	sess, sessErr := d.store.GetSession(sessionID)
+	workspaceDir := ""
+	if sessErr == nil {
+		workspaceDir = sess.WorkspaceDir
+	}
 	for _, run := range runs {
-		d.teardownProfileIfClimbScoped(run.Profile)
+		d.teardownProfileIfClimbScoped(sessionID, run.ID, workspaceDir, run.Profile)
 	}
 }
 

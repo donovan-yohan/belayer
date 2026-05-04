@@ -340,25 +340,47 @@ func TeardownProfile(profileName string) error {
 // Returns ("", err) if the file cannot be read or parsed. The caller must treat
 // an unreadable file as "climb" (ephemeral) — see teardownProfileIfClimbScoped.
 func readTalentMetadata(profileName string) (memoryScope string, err error) {
+	meta, err := readFullTalentMetadata(profileName)
+	if err != nil {
+		return "", err
+	}
+	if meta.MemoryScope == "" {
+		return "", fmt.Errorf("readTalentMetadata: memory_scope field not found in profile %q", profileName)
+	}
+	return meta.MemoryScope, nil
+}
+
+// readFullTalentMetadata reads the .belayer-talent.yaml file from a materialized
+// profile directory and returns all available metadata fields. Returns a zero-value
+// talentMetadata and an error if the file cannot be read or parsed.
+func readFullTalentMetadata(profileName string) (talentMetadata, error) {
 	root, err := ProfilesRoot()
 	if err != nil {
-		return "", fmt.Errorf("readTalentMetadata: resolve profiles root: %w", err)
+		return talentMetadata{}, fmt.Errorf("readFullTalentMetadata: resolve profiles root: %w", err)
 	}
 	metaPath := filepath.Join(root, profileName, ".belayer-talent.yaml")
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
-		return "", fmt.Errorf("readTalentMetadata: read %s: %w", metaPath, err)
+		return talentMetadata{}, fmt.Errorf("readFullTalentMetadata: read %s: %w", metaPath, err)
 	}
-	// Simple line scan — avoids pulling in a YAML library for a single field.
+	// Simple line scan — avoids pulling in a YAML library for individual fields.
+	var meta talentMetadata
 	for _, line := range splitLines(string(data)) {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "memory_scope:") {
-			scope := strings.TrimSpace(strings.TrimPrefix(trimmed, "memory_scope:"))
-			scope = strings.Trim(scope, `"'`)
-			return scope, nil
+		switch {
+		case strings.HasPrefix(trimmed, "profile_name:"):
+			meta.ProfileName = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "profile_name:")), `"'`)
+		case strings.HasPrefix(trimmed, "talent_name:"):
+			meta.TalentName = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "talent_name:")), `"'`)
+		case strings.HasPrefix(trimmed, "crag_slug:"):
+			meta.CragSlug = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "crag_slug:")), `"'`)
+		case strings.HasPrefix(trimmed, "memory_scope:"):
+			meta.MemoryScope = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "memory_scope:")), `"'`)
+		case strings.HasPrefix(trimmed, "materialized_at:"):
+			meta.MaterializedAt = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "materialized_at:")), `"'`)
 		}
 	}
-	return "", fmt.Errorf("readTalentMetadata: memory_scope field not found in %s", metaPath)
+	return meta, nil
 }
 
 // ── Crag context ─────────────────────────────────────────────────────────────
