@@ -166,6 +166,23 @@ func (d *Daemon) handleBridgeFinished(sessionID, agentName string, data map[stri
 
 	// Check if the session is now stalled (all agents done, no completion approval).
 	d.checkSessionStalled(sessionID)
+
+	// Phase 3.B: tear down climb-scoped fork profiles on final_response.
+	// The agent_runs row (including the profile column) is already persisted
+	// above, so reading it here gives a consistent snapshot even after removal.
+	// Only fires when bridge:finished carries a final_response field (clean exit).
+	if _, hasFinal := data["final_response"]; hasFinal {
+		profile := ""
+		if run, getErr := d.store.GetAgentRun(sessionID, agentName); getErr == nil {
+			profile = run.Profile
+		} else if err == nil {
+			// Fall back to the run we already fetched at the top of this handler.
+			profile = current.Profile
+		}
+		if profile != "" {
+			d.teardownProfileIfClimbScoped(profile)
+		}
+	}
 }
 
 func (d *Daemon) handleBridgeBudgetExhausted(sessionID, agentName string, data map[string]any) {

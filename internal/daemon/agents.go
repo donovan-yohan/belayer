@@ -1639,6 +1639,54 @@ func parseInlineYAMLList(raw string) []string {
 	return out
 }
 
+// teardownProfileIfClimbScoped tears down a per-talent profile fork after a
+// bridge subprocess signals completion, but only when the profile is climb-scoped
+// (ephemeral). Profiles with scope=crag or scope=talent are preserved so their
+// accumulated memories survive across runs.
+//
+// Safety rules (mirrors TeardownProfile's own checks, applied early to avoid
+// unnecessary filesystem access):
+//   - Returns early for profile == "default" or "belayer" (no teardown).
+//   - Returns early if the profile name does not start with "belayer-".
+//   - If .belayer-talent.yaml is missing or unreadable, defaults to "climb" (safe:
+//     an unrecognised profile is more likely orphaned than intentionally persistent).
+//
+// Failures during teardown are logged but not propagated so agent completion
+// always succeeds even when the cleanup step encounters a filesystem error.
+func (d *Daemon) teardownProfileIfClimbScoped(profileName string) {
+	// Guard: only operate on belayer-managed fork profiles.
+	if profileName == "" || profileName == "default" || profileName == belayerBaseProfileName {
+		return
+	}
+	if !strings.HasPrefix(profileName, "belayer-") {
+		return
+	}
+
+	scope, err := readTalentMetadata(profileName)
+	if err != nil {
+		// Missing or unreadable metadata → treat as climb (ephemeral/orphaned).
+		log.Printf("INFO: teardownProfileIfClimbScoped: metadata unreadable for profile %q (%v) — treating as climb-scoped, tearing down", profileName, err)
+		scope = "climb"
+	}
+
+	switch scope {
+	case "crag", "talent":
+		log.Printf("INFO: teardownProfileIfClimbScoped: preserving profile %q (scope=%s)", profileName, scope)
+		return
+	default:
+		// "climb" or any unrecognised value → ephemeral.
+		if scope != "climb" {
+			log.Printf("INFO: teardownProfileIfClimbScoped: unrecognised scope %q for profile %q — treating as climb-scoped, tearing down", scope, profileName)
+		}
+	}
+
+	if err := TeardownProfile(profileName); err != nil {
+		log.Printf("ERROR: teardownProfileIfClimbScoped: TeardownProfile(%q) failed: %v — completion not affected", profileName, err)
+		return
+	}
+	log.Printf("INFO: teardownProfileIfClimbScoped: torn down climb-scoped profile %q", profileName)
+}
+
 // buildAgentInitialMessage prepends a workspace context header to the agent's
 // initial message when the agent is isolated to a git worktree on a specific
 // branch. When branch is empty the message is returned unchanged.

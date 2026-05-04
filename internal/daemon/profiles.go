@@ -333,6 +333,34 @@ func TeardownProfile(profileName string) error {
 	return nil
 }
 
+// readTalentMetadata reads the .belayer-talent.yaml file from a materialized
+// profile directory and returns the memory_scope field. It is the authoritative
+// source for teardown decisions in Phase 3.B.
+//
+// Returns ("", err) if the file cannot be read or parsed. The caller must treat
+// an unreadable file as "climb" (ephemeral) — see teardownProfileIfClimbScoped.
+func readTalentMetadata(profileName string) (memoryScope string, err error) {
+	root, err := ProfilesRoot()
+	if err != nil {
+		return "", fmt.Errorf("readTalentMetadata: resolve profiles root: %w", err)
+	}
+	metaPath := filepath.Join(root, profileName, ".belayer-talent.yaml")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return "", fmt.Errorf("readTalentMetadata: read %s: %w", metaPath, err)
+	}
+	// Simple line scan — avoids pulling in a YAML library for a single field.
+	for _, line := range splitLines(string(data)) {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "memory_scope:") {
+			scope := strings.TrimSpace(strings.TrimPrefix(trimmed, "memory_scope:"))
+			scope = strings.Trim(scope, `"'`)
+			return scope, nil
+		}
+	}
+	return "", fmt.Errorf("readTalentMetadata: memory_scope field not found in %s", metaPath)
+}
+
 // ── Crag context ─────────────────────────────────────────────────────────────
 
 // localCragSlug is the fallback crag slug used when the project is not linked
