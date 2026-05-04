@@ -37,21 +37,23 @@ The `--name` flag is the session-local handle; `--identity` selects the
 template under `.belayer/agents/<identity>/`. `--identity` defaults to
 `--name` for single-instance roles, so the shorthand is fine for one-off
 spawns. `--profile` is the Hermes runtime profile (model defaults, tool
-inventory) and is independent of identity.
+inventory) and is independent of identity. Omit `--profile` to let the
+daemon materialize a per-talent fork from the base `belayer` profile;
+pass `--profile <name>` only when you need a non-default Hermes config.
 
 ```bash
 # Spawn a worktree-isolated implementer for a feature branch.
-belayer spawn --name web-dev-1 --identity web-dev --profile default \
+belayer spawn --name web-dev-1 --identity web-dev \
   --branch feature/checkout-flow
 
 # Spawn a reviewer for a one-cycle review (no worktree needed).
-belayer spawn --name reviewer-1 --identity reviewer --profile default
+belayer spawn --name reviewer-1 --identity reviewer
 
 # Spawn a second reviewer in the same session.
-belayer spawn --name reviewer-2 --identity reviewer --profile default
+belayer spawn --name reviewer-2 --identity reviewer
 
 # Spawn QA to drive the climbing app from the outside.
-belayer spawn --name qa-1 --identity qa --profile default
+belayer spawn --name qa-1 --identity qa
 ```
 
 Spawned peers persist until they exit or you stop them. Budget your spawns — each peer consumes tokens.
@@ -83,7 +85,7 @@ When working across web-dev and backend-dev workspaces:
 When an implementer signals completion:
 
 1. Ask the implementer to summarize their changes (diff + rationale)
-2. Spawn a reviewer: `belayer spawn --name reviewer-1 --identity reviewer --profile default`
+2. Spawn a reviewer: `belayer spawn --name reviewer-1 --identity reviewer`
 3. Send the diff and context to the reviewer via `belayer message send`
 4. Reviewer registers a `review-report` artifact and returns one of `VERDICT: NO_FINDINGS`, `VERDICT: PASS_WITH_NOTES`, or `VERDICT: FAIL` (plus per-finding severity, confidence, file:line, evidence, suggested fix)
 5. On FAIL: ensure CRITICAL findings are addressed by relaying them to the implementer with your guidance on what to fix. Spawn a second reviewer (reviewer-2) on the updated diff. After two rounds on the same diff with zero CRITICALs, ship — do not spawn a third reviewer on that diff. If reviewer-2 still returns `VERDICT: FAIL`, have the implementer fix the remaining CRITICAL findings, commit the changes, and then restart review on the new diff only; do not re-review unchanged code.
